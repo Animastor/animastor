@@ -39,8 +39,37 @@ Animastor — AI-powered animated storytelling platform. Система прео
 - **Graceful shutdown (SIGTERM)** — HTTP server → Redis → PostgreSQL последовательное завершение
 - **Startup resume** — возобновление прерванных сессий генерации при старте
 
-### Frontend (Android/Kotlin)
-Мобильное приложение с bottom-навигацией: файлы, редактор, плеер, навигация, AI-ассистент.
+### Frontend (Web + Android)
+- **Web (Preact + Vite):** Responsive SPA (`frontends/app/`): MobileShell (<1180px) / DesktopShell (≥1180px). Pages: File, Generator, Player, Editor, Navigator, Settings.
+- **Android (Kotlin):** Single-activity с bottom-навигацией: файлы/библиотека/редактор/плеер/навигация/AI/настройки (`frontends/android/`).
+
+### Auth & Identity (август 2026)
+- **Authentication MVP:** register/login/logout (auth-service.js), server-side sessions в PG (token-hash-only), scrypt пароли.
+- **Guest Workspace:** анонимный пользователь → временный workspace (TTL 7 + grace 23 дня). Cookie `animastor_gid`.
+- **Session cookie:** `animastor_sid` (HttpOnly, 30 дней). Кросс-поддоменные через COOKIE_DOMAIN=animastor.in.
+- **Workspace ownership:** `resolveWorkspaceForBook` — single point of resolution. Книги привязаны к workspace через books.workspace_id.
+- **Book access guards:** `requireBookAccess` — workspace membership check на всех book-keyed endpoints.
+- **Guest→User conversion:** при register с live guest cookie — конвертация workspace in-place.
+
+### Worker Auth (PW-1/2/4, август 2026)
+- **FAIL CLOSED credential model:** `wrk.<worker_id>.<secret>` → worker identity. Malformed/unknown/revoked → 401.
+- **PG authoritative:** `workers` таблица — durable source of truth. Redis mirror `animastor:worker-auth` — hot path для GPU Hub.
+- **Three modes:** private (workspace-owned), share (workspace-owned, community pool), system (Animastor-operated, workspace-less).
+- **workers_scope_check:** CHECK constraint — mode ≠ system → workspace_id NOT NULL.
+- **Worker routes:** POST/GET/DELETE /api/v1/workers (user-only, workspace-scoped).
+- **GPU Hub auth:** Bearer token через Redis mirror; workspace-scoped queues.
+
+### Admin System (август 2026)
+- **Admin routes:** /api/v1/admin/system-ai (kill switch + system provider).
+- **Guard:** requireAdmin (role='admin' OR ADMIN_USERNAMES allowlist). Второй слой: nginx Basic Auth на admin.animastor.in.
+- **System AI control:** kill switch + system provider (admin-configured endpoint/key/model).
+
+### Workspace AI Provider (август 2026)
+- **Per-workspace AI provider:** один активный провайдер на workspace.
+- **AES-256-GCM encryption:** API keys хранятся в PG encrypted (WORKSPACE_SECRET_KEY).
+- **Resolver chain:** workspace row → system fallback (kill switch enforced) → noProvider().
+- **Connection testing:** /api/v1/settings/ai/test (не сохраняет ключ).
+- **SSRF guard:** endpoint validation (safeFetch) на всех user-controlled endpoints.
 
 ### Orchestration Layer
 Пять компонентов:
@@ -191,7 +220,7 @@ TXT / VBook
 | Layer config | `backend/src/services/layer-config.js` | Профили генерации (AUDIO_ONLY, IMAGE_ONLY, VIDEO_ONLY и др.) |
 | Gen scope | `backend/src/services/gen-scope.js` | Область генерации (сцена/глава/книга) |
 | Scene asset registry (PG) | `backend/src/services/scene-asset-registry.js` | PostgreSQL реестр asset'ов (markReady, getDirtyUnitIds, dirty_flag) |
-| PG repositories | `backend/src/storage/postgres/repositories/` | 10 репозиториев: book, cache, task, iu, sceneAssets, chat, chatSession, events, genSession, bookSource |
+| PG repositories | `backend/src/storage/postgres/repositories/` | 15+ репозиториев: book, cache, task, iu, sceneAssets, chat, chatSession, events, genSession, bookSource, user, workspace, session, guest, worker |
 | Book diff | `backend/src/services/book-diff.cjs` | Diff книг, dirty scene marking (через orchestrator.markDirty) |
 | Book source | `backend/src/services/book-source.js` | Канонический индекс сцен из Book JSON |
 | Book sync | `backend/src/services/book-sync.js` | Синхронизация JSON ↔ DB через scene_hash |
@@ -205,7 +234,16 @@ TXT / VBook
 | Knowledge base | `backend/src/services/knowledge-base.js` | Загрузка ai/ файлов (не используется в prompts) |
 | Startup resume | `backend/src/startup-resume.js` | Возобновление сессий при старте |
 | Workflow manager | `backend/src/services/workflow-manager.js` | Управление workflow и connector routes |
-| GPU Hub | `gpu-hub/gpu-hub.js` | Диспетчер GPU-очередей + requeue + graceful shutdown |
-| Worker | `worker/worker/worker.js` | GPU-воркер ComfyUI (ESM, multi-image) |
-| Database | `backend/src/storage/postgres/` | PostgreSQL (25+ таблиц, 10 репозиториев) |
+| Auth service | `backend/src/auth/auth-service.js` | Регистрация/вход/выход, server-side sessions, guest workspaces |
+| Worker auth | `backend/src/services/worker-auth.js` | FAIL CLOSED credential model, Redis mirror, PG authoritative |
+| Audio orchestrator | `backend/src/services/audio-orchestrator.js` | Phase machine для аудио-merge (WAITING_CHUNKS → MERGING → DONE) |
+| Video orchestrator | `backend/src/services/video-orchestrator.js` | Phase machine для видео-merge (зеркало audio) |
+| Entity cleanup | `backend/src/services/entity-cleanup.cjs` | Deep cleanup при удалении scene/unit (PG/Redis/FS/GPU-hub) |
+| Workspace AI provider | `backend/src/services/workspace-ai-provider.js` | Per-workspace encrypted AI provider, resolver chain |
+| System AI | `backend/src/services/system-ai.js` | AI kill switch + system provider (admin) |
+| Progress pub/sub | `backend/src/services/progress-pubsub.cjs` | Redis pub/sub для real-time SSE progress |
+| Generation progress | `backend/src/services/generation-progress.js` | Independent generation task registry |
+| GPU Hub | `gpu-hub/gpu-hub.js` | Workspace-scoped queues, auth, orphan sweep, error delivery, dead letter |
+| Worker | `worker/worker/worker.cjs` | GPU-воркер ComfyUI (CJS, private worker mode, PW-2) |
+| Database | `backend/src/storage/postgres/` | PostgreSQL (30+ таблиц, 15+ репозиториев) |
 | Runtime config | `backend/src/config/runtime-config.js` | Централизованная конфигурация |

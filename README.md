@@ -11,8 +11,8 @@ AI-powered animated storytelling platform.
 | `worker`    | Background job workers (image/video)| Node.js        |
 | `gpu-hub`   | GPU compute dispatcher             | Node.js         |
 | `proxy`     | Nginx reverse proxy                | nginx           |
-| `frontends/website` | Public website (animastor.in)            | HTML        |
-| `frontends/app`     | Responsive web app (app.animastor.in) | Preact       |
+| `frontends/website` | Public website (animastor.in)            | HTML/CSS    |
+| `frontends/app`     | Responsive web app (app.animastor.in) | Preact + Vite |
 | `tools/mobile-web-tester` | Android phone-preview tester for the mobile web | Kotlin, Gradle |
 
 ## Quick Start

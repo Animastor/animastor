@@ -65,10 +65,15 @@
 │   │   │   │   ├── import-routes.cjs            #   Импорт
 │   │   │   │   └── recovery-routes.cjs          #   Восстановление
 │   │   │   ├── ai-routes.cjs                    # AI-чат
+│   │   │   ├── auth-routes.cjs                  # Аутентификация (register/login/logout/me)
+│   │   │   ├── worker-routes.cjs                # Приватные GPU-воркеры (create/list/rotate/revoke)
+│   │   │   ├── admin-routes.cjs                 # Admin: system AI kill switch + provider
+│   │   │   ├── settings-ai-routes.cjs           # Workspace AI provider (CRUD + test)
+│   │   │   ├── config-routes.cjs                # Клиентские лимиты (image_prompt_max_chars)
 │   │   │   ├── generation-routes.cjs            # Генерация (общие endpoints)
 │   │   │   ├── debug-routes.cjs                 # Отладка
-│   │   │   ├── connector-routes.cjs             # Коннекторы (13 эндпоинтов)
-│   │   │   └── workflow-routes.cjs              # Workflow (4 эндпоинта)
+│   │   │   ├── connector-routes.cjs             # Коннекторы
+│   │   │   └── workflow-routes.cjs              # Workflow
 │   │   ├── services/
 │   │   │   ├── agent/                           # [DECOMPOSED] AI-пайплайн
 │   │   │   │   ├── bootstrap.js                 #   Первое окно
@@ -94,14 +99,20 @@
 │   │   │   ├── knowledge-base.js                # Загрузка ai/ файлов
 │   │   │   ├── layer-config.js                  # Профили генерации (5)
 │   │   │   ├── placeholder-audio.js             # MP3-заглушки
-│   │   │   ├── prompt-dependency-registry.js    # Реестр зависимостей промптов
-│   │   │   ├── scene-asset-registry.js          # PG реестр asset'ов
-│   │   │   ├── source-coverage.js               # Покрытие исходного текста
-│   │   │   ├── source-coverage-audit.js         # Аудит покрытия
-│   │   │   ├── task-handler.cjs                 # Обработчик callback'ов GPU
-│   │   │   ├── txt-importer.js                  # Импорт TXT
-│   │   │   ├── waveform-service.js              # Waveform
-│   │   │   ├── window-generator.cjs             # Фоновая оконная генерация
+│   │   │   ├── audio-orchestrator.js            # Phase machine для аудио-merge
+│   │   │   ├── video-orchestrator.js            # Phase machine для видео-merge
+│   │   │   ├── entity-cleanup.cjs               # Deep cleanup при удалении scene/unit
+│   │   │   ├── worker-auth.js                   # Worker credential model (FAIL CLOSED)
+│   │   │   ├── workspace-ai-provider.js         # Per-workspace encrypted AI provider
+│   │   │   ├── system-ai.js                     # AI kill switch + system provider (admin)
+│   │   │   ├── progress-pubsub.cjs              # Redis pub/sub для real-time SSE progress
+│   │   │   ├── generation-progress.js           # Independent generation task registry
+│   │   │   ├── prompt-profile-loader.js         # Model-specific prompt profiles
+│   │   │   ├── profile-override.js              # User-selected prompt profile (Redis)
+│   │   │   ├── url-safety.js                    # SSRF guard для workspace endpoints
+│   │   │   ├── language-detector.js             # Определение языка текста
+│   │   │   ├── structure-detector.js            # Определение структуры текста
+│   │   │   ├── agent-session.js                 # Agent session management
 │   │   │   └── workflow-manager.js              # Менеджер workflow
 │   │   ├── audio/                               # [DECOMPOSED] Аудио-подсистема
 │   │   │   ├── index.js
@@ -155,9 +166,19 @@
 │   │   │   ├── retry-budget-manager.js          # [LIVE] Бюджет ретраев
 
 │   │   │   # NB: 16 dead governance-модулей удалены 2026-06-27 (D.3/L1, 311f44a)
+│   │   ├── auth/
+│   │   │   ├── auth-service.js                   # Регистрация/вход/выход, server-side sessions
+│   │   │   └── password.js                       # Scrypt хеширование паролей
+│   │   ├── middleware/
+│   │   │   ├── auth-context.js                   # Session cookie → req.user/workspace
+│   │   │   ├── ai-book-guard.js                  # AI chat book-scoped guard
+│   │   │   ├── workspace-ownership.js            # Book → workspace ownership resolution
+│   │   │   └── worker-auth-middleware.js          # Bearer wrk.* → req.authenticatedWorker
+│   │   ├── metrics/
+│   │   │   └── prometheus.js                      # Prometheus metrics (/metrics)
 │   │   ├── state/
 │   │   │   ├── index.js
-│   │   │   └── scene-state.js                   # [CORE] Dual state model
+│   │   │   └── scene-state.js                   # Per-asset state (canonical, Redis HASH)
 │   │   ├── storage/
 │   │   │   ├── index.js
 │   │   │   ├── asset-registry.js                # Redis-реестр (legacy)
@@ -165,18 +186,24 @@
 │   │   │   ├── manifest.js                      # Манифест
 │   │   │   └── postgres/
 │   │   │       ├── database.js                  # Подключение
-│   │   │       ├── schema.js                    # DDL (25+ таблиц)
+│   │   │       ├── schema.js                    # DDL (30+ таблиц)
 │   │   │       └── repositories/
-│   │   │           ├── book-repo.js
-│   │   │           ├── book-source-repo.js
-│   │   │           ├── cache-repo.js
-│   │   │           ├── chat-repo.js
-│   │   │           ├── chat-session-repo.js
-│   │   │           ├── events-repo.js
-│   │   │           ├── gen-session-repo.js
-│   │   │           ├── iu-repo.js
-│   │   │           ├── scene-assets-repo.js
-│   │   │           └── task-repo.js
+│   │   │           ├── book-repo.js             # CRUD книг, workspace ownership
+│   │   │           ├── book-source-repo.js      # Source dedup registry
+│   │   │           ├── cache-repo.js            # Cache entries
+│   │   │           ├── chat-repo.js             # AI chat messages
+│   │   │           ├── chat-session-repo.js     # AI chat sessions
+│   │   │           ├── events-repo.js           # Book events
+│   │   │           ├── gen-session-repo.js      # Agent sessions
+│   │   │           ├── iu-repo.js               # Image units
+│   │   │           ├── scene-assets-repo.js     # Scene assets + dirty flags
+│   │   │           ├── task-repo.js             # Generation tasks
+│   │   │           ├── user-repo.js             # User CRUD, case-insensitive
+│   │   │           ├── workspace-repo.js        # Workspace + members
+│   │   │           ├── session-repo.js          # Server-side sessions
+│   │   │           ├── guest-repo.js            # Guest identities + purge
+│   │   │           ├── worker-repo.js           # Worker registration + credentials
+│   │   │           └── generation-cancel-repo.js # Cancellation tracking
 │   │   ├── utils/
 │   │   │   ├── scene-title-utils.js             # Утилиты заголовков сцен
 │   │   │   ├── scene-hash.js                    # Хэширование сцен
@@ -214,7 +241,7 @@
 ├── worker/                                      # GPU-воркеры (ESM)
 │   ├── worker/
 │   │   ├── package.json
-│   │   └── worker.js                            # [CORE] Polling → ComfyUI → result
+│   │   └── worker.cjs                            # [CORE] CJS: Polling → ComfyUI → result (PW-2 private worker)
 │   ├── start-video.sh
 │   ├── start-worker.sh
 │   ├── mc.sh
@@ -227,7 +254,7 @@
 │   ├── package.json
 │   ├── Dockerfile
 │   ├── server.js                                # [ENTRY]
-│   └── gpu-hub.js                               # [CORE] Очереди, requeue, heartbeat
+│   └── gpu-hub.js                               # [CORE] Workspace-scoped queues, auth, orphan sweep, dead letter
 │
 ├── proxy/
 │   ├── docker-compose.yml
@@ -237,7 +264,9 @@
 │   ├── website/
 │   │   ├── index.html                       # Публичный сайт (animastor.in)
 │   │   └── library/index.html               # Публичная Library (/library, без auth)
-│   ├── app/                                 # Responsive веб-приложение (app.animastor.in)
+│   ├── app/                                 # Responsive веб-приложение (app.animastor.in, Preact + Vite)
+│   │   ├── package.json
+│   │   ├── vite.config.ts
 │   │   └── src/
 │   │       ├── layouts/                     # MobileShell / DesktopShell
 │   │       ├── pages/                       # File, Generator, Player, Editor, Navigator…

@@ -45,13 +45,26 @@ TXT / VBook  →  AI-анализ (агент)  →  структура книг
 | **Workflow / Connector слой** | `backend/src/workflows/*`, `services/workflow-manager.js`, `backend/ai/workflows/`, `backend/ai/connectors/` | Загрузка и адаптация JSON-шаблонов ComfyUI; коннекторы как декларативные описания задач. |
 | **GPU Hub** | `gpu-hub/gpu-hub.js` | Очереди задач в Redis, раздача воркерам, requeue по таймауту, возврат результата в backend. |
 | **GPU Worker** | `worker/worker/worker.js` | ESM-воркер: polling Hub → ComfyUI → результат (base64 / fallback с диска). |
-| **Storage** | `backend/src/storage/*`, `book/*` | PostgreSQL (25 таблиц), Redis (runtime), файловая система (книги multi-file, ассеты). |
-| **Frontend** | `frontend/app/...` (Kotlin) | Single-activity, фрагменты: файлы/библиотека/редактор/плеер/навигация/AI/настройки. |
+| **Storage** | `backend/src/storage/*`, `book/*` | PostgreSQL (30+ таблиц), Redis (runtime), файловая система (книги multi-file, ассеты). || **Frontend (Web)** | `frontends/app/` (Preact + Vite) | Responsive SPA: MobileShell / DesktopShell; pages: File, Generator, Player, Editor, Navigator, Settings |
+| **Frontend (Android)** | `frontends/android/` (Kotlin) | Single-activity, bottom navigation: файлы/библиотека/редактор/плеер/навигация/AI/настройки. |
+| **Auth & Identity** | `backend/src/auth/`, `backend/src/middleware/` | Authentication MVP: register/login/logout, session cookies, guest workspaces, workspace ownership, book access guards. |
+| **Worker Auth** | `backend/src/services/worker-auth.js`, `worker-repo.js` | FAIL CLOSED credential model: `wrk.*` tokens, Redis mirror, PG authoritative. Private/Share/System modes (PW-4). |
+| **Admin System** | `backend/src/routes/admin-routes.cjs`, `services/system-ai.js` | Platform-level admin: AI kill switch, system provider, requireAdmin guard. |
+| **Workspace AI Provider** | `backend/src/services/workspace-ai-provider.js` | Per-workspace AI provider (AES-256-GCM encrypted keys), connection testing, fallback chain. |
+| **Audio/Video Orchestrators** | `services/audio-orchestrator.js`, `services/video-orchestrator.js` | Phase machines for merge orchestration (WAITING_CHUNKS → MERGING → DONE). |
+| **Entity Cleanup** | `services/entity-cleanup.cjs` | Deep cleanup across PG/Redis/FS/GPU-hub for scene/unit deletion. |
+| **Metrics** | `backend/src/metrics/prometheus` | Prometheus metrics endpoint (`/metrics`). |
 
 **Подсистемы, недопредставленные в обзорной документации, но реально присутствующие в коде:**
-- **Connectors** — `connector-loader.js`, `routes/connector-routes.cjs` (13 эндпоинтов), `backend/ai/connectors/conn-*.json`. Отдельный декларативный слой описания задач генерации.
-- **Workflow Manager** — `services/workflow-manager.js` (~19 КБ), `routes/workflow-routes.cjs` (4 эндпоинта).
-- **Startup Recovery** — `services/startup-recovery.js` (~12 КБ) — отдельный от `startup-resume.js` модуль восстановления состояния из PG/диска на старте.
+- **Connectors** — `connector-loader.js`, `routes/connector-routes.cjs`, `backend/ai/connectors/conn-*.json`. Декларативный слой описания задач генерации.
+- **Workflow Manager** — `services/workflow-manager.js`, `routes/workflow-routes.cjs`.
+- **Startup Recovery** — `services/startup-recovery.js` — модуль восстановления состояния из PG/диска на старте.
+- **Prompt Profile Loader** — `services/prompt-profile-loader.js` — model-specific prompting rules из `backend/ai/skills/`.
+- **Profile Override** — `services/profile-override.js` — user-selected prompt profile per type (global, Redis-persisted).
+- **Progress Pub/Sub** — `services/progress-pubsub.cjs` — Redis pub/sub для real-time SSE progress push.
+- **Generation Progress** — `services/generation-progress.js` — independent generation task registry (per command).
+- **URL Safety** — `services/url-safety.js` — SSRF guard для workspace provider endpoints.
+- **Language Detector** — `services/language-detector.js` — определение языка текста.
 
 ---
 
@@ -116,7 +129,7 @@ Android-плеер (`PlaybackViewModel` + `SceneAudioPlayer` на ExoPlayer/Medi
 
 ### 4.1 PostgreSQL — «то, что нельзя потерять»
 
-25 таблиц (`storage/postgres/schema.js`). Ключевые группы:
+30+ таблиц (`storage/postgres/schema.js`). Ключевые группы:
 - **Книга/структура:** `books`, `book_snapshots`, `scenes`, `image_units`, `storyboard_elements`, `audio_layers`, `book_source`.
 - **Состояние генерации:** `scene_assets` (status: pending/ready/stale/failed/missing/placeholder + версии `scene_content_version`, `scene_audio_config_version`), `asset_states`, `asset_dependencies`, `generation_tasks`, `output_manifests`, `book_generation_sessions`, `workers`, `reconciliation_events`.
 - **AI-агент:** `agent_sessions`, `agent_steps`, `agent_conversations`, `agent_messages`.
@@ -205,11 +218,13 @@ Redis выполняет три роли одновременно:
 | 7.3 | `gpu-dispatcher` имеет `sendVideo` | Нет такого метода | `gpu-dispatcher.js:56` |
 | 7.4 | Все 6 governance-модулей — **мёртвый код** | 3 живут (`circuit-breaker`, `retry-budget`, `fairness`), 3 удалены | `dispatch-engine.js` |
 | 7.5 | `scene-orchestrator.js` **~1200 строк** | **~173 строки** (фасад) | `orchestration/*` |
-| 7.6 | Route-файлов **4** | **6**: +connector, +workflow | `routes/` |
+| 7.6 | Route-файлов **4** | **11+**: auth, worker, admin, settings-ai, config + book/ decomposition (17 подмодулей) | `routes/` |
+| 7.7 | Frontend в `frontend/app/...` (Kotlin) | Android в `frontends/android/`, Web в `frontends/app/` (Preact + Vite) | `frontends/` |
+| 7.8 | 10 репозиториев | 15+ репозиториев: +user, workspace, session, guest, worker, generation-cancel | `repositories/` |
 
-> **Примечание:** Эти противоречия исправлены в обновлённых версиях документов (июнь 2026).
+> **Примечание:** Противоречия 7.1–7.6 исправлены в обновлённых версиях документов (июнь 2026).
 
-### 7.7 Новые изменения (июль 2026)
+### 7.7 Новые изменения (июль–август 2026)
 
 | # | Факт в коде |
 |---|---|
@@ -221,6 +236,14 @@ Redis выполняет три роли одновременно:
 | 7.7.6 | Книги хранят `locations.json` и `voices.json` отдельно от bible |
 | 7.7.7 | `bible.json` включает `country` и `epoch` |
 | 7.7.8 | `AI_API_BASE_URL` конфигурируемый (по умолчанию OpenRouter, модель qwen3-32b) |
+| 7.7.9 | **Auth system** (август 2026): register/login/logout, session cookies, guest workspaces, workspace ownership — полностью реализовано |
+| 7.7.10 | **Worker auth** (PW-1/2/4): `wrk.*` credential model, private/share/system modes, Redis mirror, PG authoritative |
+| 7.7.11 | **Admin system** (август 2026): AI kill switch, system provider, requireAdmin guard |
+| 7.7.12 | **Workspace AI provider** (август 2026): per-workspace encrypted keys, AES-256-GCM, connection testing |
+| 7.7.13 | **Audio/Video orchestrators** (август 2026): phase machines для merge-оркестрации (WAITING_CHUNKS → MERGING → DONE) |
+| 7.7.14 | **Entity cleanup** (август 2026): deep cleanup across PG/Redis/FS/GPU-hub при удалении scene/unit |
+| 7.7.15 | **Book routes decomposition**: 17 подмодулей в `routes/book/` |
+| 7.7.16 | **PW-4 (Fail-closed worker model)**: mode='system' workspace-less, workers_scope_check constraint |
 
 ---
 
@@ -229,9 +252,6 @@ Redis выполняет три роли одновременно:
 ### 8.1 Per-asset state — единственный source of truth (T8 + Dead code cleanup, июль 2026)
 
 **Линейное состояние (`SceneState` / `animastor:scene-state:*`) полностью удалено.**
-`getSceneState()`, `setSceneState()`, `transitionSceneState()`, `SCENE_STATE_KEY_PREFIX` — удалены.
-Ключи `animastor:scene-state:*` больше не пишутся и не читаются.
-
 Per-asset состояния (`animastor:asset-state:*`, HSET с полями `audio`/`image`/`video`) —
 единственный runtime source of truth.
 
@@ -243,6 +263,23 @@ Per-asset состояния (`animastor:asset-state:*`, HSET с полями `a
 
 `circuit-breaker`, `retry-budget`, `fairness` — LIVE. `policy-engine`/`workload-classifier`/`cost-estimator` — удалены.
 
+### 8.4 Auth & Identity (август 2026)
+
+Полная система аутентификации: register/login/logout (auth-service.js), server-side sessions в PG, guest workspaces с TTL, workspace ownership (workspace-ownership.js), book access guards (requireBookAccess). Cookie-based: `animastor_sid` (user), `animastor_gid` (guest). Кросс-поддоменные через COOKIE_DOMAIN.
+
+### 8.5 Worker Identity Model (PW-1/2/4, август 2026)
+
+Три режима воркеров:
+- **private** — workspace-owned, serves only that workspace
+- **share** — workspace-owned, volunteered to community pool
+- **system** — Animastor-operated, workspace-less (admin-only creation)
+
+FAIL CLOSED: `workers_scope_check` CHECK constraint — mode ≠ system → workspace_id NOT NULL.
+
+### 8.6 Audio/Video Merge Orchestrators (август 2026)
+
+Отдельные state machines для merge-оркестрации аудио/видео. Решают проблему race conditions при параллельном приходе чанков/групп.
+
 ---
 
-*Конец карты. Описание текущего состояния на 2026-06-25 с обновлениями по состоянию на 2026-06-28.*
+*Конец карты. Описание текущего состояния на 2026-08-24 (аудит документации).*

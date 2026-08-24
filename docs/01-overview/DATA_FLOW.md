@@ -5,7 +5,7 @@
 **Запрос:** `POST /api/v1/book/import-txt` (multipart file upload)
 
 **Участвующие компоненты:**
-1. `book-routes.cjs:356` → Route handler
+1. `routes/book/import-routes.cjs` → Route handler (book-routes decomposition)
 2. `txt-importer.js:decodeTxtBuffer()` → Декодирование (UTF-8/CP1251)
 3. `lazy-book.js:createDraftBook()` → Создание draft-книги (RAW_IMPORTED)
 4. `book-source-repo.js:registerSource()` → Регистрация в PG
@@ -34,7 +34,7 @@ Client → [HTTP POST multipart] → book-routes
 **Запрос:** `POST /api/v1/book/:bookId/bootstrap`
 
 **Участвующие компоненты:**
-1. `book-routes.cjs:426` → Route handler
+1. `routes/book/import-routes.cjs` → Route handler (bootstrap)
 2. `txt-importer.js:bootstrapImportedText()` → Вход в AI-пайплайн
 3. `agent-service.js:bootstrapWithAgent()` → AI-анализ
 

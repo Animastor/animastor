@@ -51,7 +51,70 @@
 ### 2.6 Workflow Routes (`backend/src/routes/workflow-routes.cjs`)
 **Ответственность:** Управление workflow (4 эндпоинта).
 
-> **UPD 2026-06-26:** Добавлены connector-routes и workflow-routes (всего 6, не 4). Код: `routes/`.
+### 2.7 Auth Routes (`backend/src/routes/auth-routes.cjs`)
+**Ответственность:** Аутентификация: register, login, logout, me. Публичные/pre-auth эндпоинты.
+
+**API:**
+- `POST /api/v1/auth/register` — создание аккаунта (+ workspace + сессия); при вызове с гостевым cookie — конвертация гостевого workspace in-place.
+- `POST /api/v1/auth/login` — username/password → session cookie (HttpOnly).
+- `POST /api/v1/auth/logout` — инвалидация сессии/гостевой идентичности.
+- `GET /api/v1/auth/me` — текущая идентичность: user | guest | none.
+
+**Сессии:** Server-side в PG (`sessions` таблица), cookie `animastor_sid`. Кросс-поддоменные через `COOKIE_DOMAIN=animastor.in`.
+
+### 2.8 Worker Routes (`backend/src/routes/worker-routes.cjs`)
+**Ответственность:** Регистрация и lifecycle приватных GPU-воркеров (только authenticated users).
+
+**API:**
+- `POST /api/v1/workers` — создать воркера + выдать credential (one-time).
+- `GET /api/v1/workers` — список воркеров workspace (без секретов).
+- `GET /api/v1/workers/:workerId` — детали одного воркера.
+- `POST /api/v1/workers/:workerId/rotate` — ротация credential (старый умирает).
+- `DELETE /api/v1/workers/:workerId` — отзыв воркера (soft delete).
+
+**Инварианты:** workspace_id всегда из `req.workspace` (никогда из body/guest).
+
+### 2.9 Admin Routes (`backend/src/routes/admin-routes.cjs`)
+**Ответственность:** Платформенный admin-уровень: system AI kill switch + system provider.
+
+**API:**
+- `GET /api/v1/admin/system-ai` — состояние kill switch + provider meta.
+- `PUT /api/v1/admin/system-ai` — toggle enabled/upsert provider.
+- `POST /api/v1/admin/system-ai/test` — тест соединения (не сохраняет ключ).
+
+**Guard:** `requireAdmin` (role='admin' OR ADMIN_USERNAMES allowlist). Второй слой: nginx Basic Auth на `admin.animastor.in`.
+
+### 2.10 Settings AI Routes (`backend/src/routes/settings-ai-routes.cjs`)
+**Ответственность:** Workspace AI provider — один активный провайдер на workspace.
+
+**API:**
+- `GET/PUT/DELETE /api/v1/settings/ai/provider` — CRUD workspace провайдера.
+- `POST /api/v1/settings/ai/test` — тест соединения.
+
+**Identity:** user OR guest с workspace; anonymous → 401.
+
+### 2.11 Config Routes (`backend/src/routes/config-routes.cjs`)
+**Ответственность:** Клиентские лимиты для редакторов (image_prompt_max_chars).
+
+### 2.12 Book Sub-Routes (`backend/src/routes/book/`)
+**Ответственность:** Book routes декомпозированы на 17 подмодулей:
+
+| Модуль | Роль |
+|---|---|
+| `core-routes.cjs` | GET/PUT/PATCH book, DELETE, source-coverage, cover |
+| `import-routes.cjs` | load-vbook, import-txt, bootstrap, resume-bootstrap, bootstrap-next-window |
+| `export-routes.cjs` | Экспорт vbook, storyboard, audio, video |
+| `generation-routes.cjs` | regenerate, cancel-generation, generate-next |
+| `chunks-routes.cjs` | GET chunks, GET assets-state |
+| `agent-routes.cjs` | GET agent-status |
+| `progress-panel.cjs` | Прогресс-панель (pre-computed worker list) |
+| `recovery-routes.cjs` | recover-placeholders |
+| `versions-routes.cjs` | Версии сцен |
+| `recent-books-routes.cjs` | Недавние книги (session restore) |
+| `entity-crud-routes.cjs` | Add/delete персонажей/локаций/голосов |
+| `status-routes.cjs` | Status/read-only endpoints |
+| `parse-routes.cjs` | Parse/source/snapshot |
+| `cache-routes.cjs` | Cache inspection + teardown |
 
 ## 3. Orchestration Layer
 
@@ -280,23 +343,48 @@
 ### 4.17 Cleanup Service (`backend/src/services/cleanup-service.cjs`)
 **Ответственность:** Управление жизненным циклом сборок, распределённые блокировки очистки, периодическая очистка stale audio scene locks.
 
-### 4.18 GPU Hub Cleanup (`backend/src/routes/book/generation-routes.cjs`)
-**Ответственность:** Очистка stale-задач GPU Hub при регенерации/отмене.
+### 4.18 GPU Hub Cleanup
+**Ответственность:** Очистка stale-задач GPU Hub при регенерации/отмене (в `routes/book/generation-routes.cjs`).
 
 **Функция `clearGpuHubQueues(redis, bookId, sceneFilter?)`:**
 - Очищает dedup-ключи `animastor:job:*` и `animastor:result-processed:*`
 - Фильтрует очереди `animastor:queue:audio|image|video`
 - Удаляет running-задачи из `animastor:running`
 - Очищает кэш результатов `animastor:result:*`
-- sceneFilter позволяет чистить только задачи для конкретных сцен (не трогая параллельные генерации)
+- sceneFilter позволяет чистить только задачи для конкретных сцен
 
-**Связанные функции:**
-- `removeScenesFromActiveIndex()` в `runtime-scheduler.js` — scene-specific удаление из active index
-- `clearLeasesForScenes()` в `dispatch-engine.js` — scene-specific удаление dispatch leases
+### 4.19 Audio Orchestrator (`backend/src/services/audio-orchestrator.js`)
+**Ответственность:** Единая state machine для аудио-генерации сцены.
 
-Подробнее: `docs/02-orchestration/GPU_HUB_CLEANUP.md`
+**Phase machine:** `NEW → PLACEHOLDER_READY → GENERATING → WAITING_CHUNKS → MERGING → FAILED/DONE`
 
-### 4.19 Audio Recovery (`backend/src/services/audio-recovery.cjs`)
+**Роль:** Единственный владелец merge-оркестрации. Все компоненты (startScene, executeAudioDispatch, completeChunk, completeMerge) читают phase из Redis-ключа `animastor:audio-orch:{bookId}:{chapterId}:{sceneId}` и принимают решения ТОЛЬКО на основе phase.
+
+**Инварианты:** phase=DONE ⇔ asset.audio=READY; phase=FAILED ⇒ asset.audio=FAILED.
+
+**Функции:** `completeChunk` (приём чанка, проверка комплектности, retry-логика, merge), `failWaitingScene` (единственный владелец WAITING_CHUNKS → FAILED), `scanAllStates` (для recovery).
+
+### 4.20 Video Orchestrator (`backend/src/services/video-orchestrator.js`)
+**Ответственность:** State machine для видео-генерации сцены (зеркало audio-orchestrator).
+
+**Phase machine:** `NEW → GENERATING → WAITING_CHUNKS → MERGING → FAILED/DONE`
+
+**Решённая проблема (2026-08-11):** Видео сцены разбивается на N групп (`_g1`..`_gN`), но первый результат вызывал completeStage → finalizeDispatch удалял metadata/lease, и остальные группы отклонялись. Решение — state machine по образцу audio-orchestrator.
+
+**Отличие от аудио:** Видео-группы НЕ склеиваются в обязательный единый файл — чанки остаются отдельными (`_gN.mp4`). Склейка `_g1.._gN → scene.mp4` выполняется только для плеера.
+
+### 4.21 Entity Cleanup (`backend/src/services/entity-cleanup.cjs`)
+**Ответственность:** Deep cleanup при ручном удалении scene / unit (entity). Удаление производного состояния через все слои:
+
+- **PostgreSQL** — scene_assets, generation_tasks, image_units, storyboard_elements, audio_layers, asset_states, cache_entries, scenes
+- **Redis** — chunks, per-asset states, active index, audio/video orchestrators, dispatch leases, retry counters, GPU dedup keys
+- **Filesystem** — аудио/чанки/IU/превью/видео файлы сцены
+- **In-flight** — отмена GPU dispatch leases + hub jobs
+- **Invalidation** — пометка родительской сцены dirty для регенерации
+
+**Безопасность:** Каждый шаг отчитывается ok/error. Неполные очистки записываются в `animastor:pending-purge` set; periodic reconcileCycle повторяет (max 5 попыток).
+
+### 4.22 Audio Recovery (`backend/src/services/audio-recovery.cjs`)
 **Ответственность:** Периодическое (5s) сканирование Redis для восстановления потерянных audio/image результатов.
 
 ### 4.20 Placeholder Audio (`backend/src/services/placeholder-audio.js`)
@@ -311,10 +399,51 @@
 ### 4.23 Knowledge Base (`backend/src/services/knowledge-base.js`)
 **Ответственность:** Загрузка примеров/rules/skills из `backend/ai/`. **Важно:** Загружается, но НЕ включается в промпты agent-service (мёртвый код).
 
-### 4.24 Startup Resume (`backend/src/startup-resume.js`)
+### 4.24 Auth Service (`backend/src/auth/auth-service.js`)
+**Ответственность:** Аутентификация: register / login / logout / current-identity. Server-side sessions в PG, scrypt хеширование паролей.
+
+**Ключевые модели:**
+- **Guest Workspace MVP:** анонимный пользователь получает временный workspace (TTL 7 + grace 23 дня). Cookie `animastor_gid`.
+- **Registered User:** username/password → session cookie `animastor_sid` (30 дней). Personal workspace привязан к пользователю.
+- **Кросс-поддоменные сессии:** `COOKIE_DOMAIN=animastor.in` — одна сессия для animastor.in + app.animastor.in.
+- **Guest→User conversion:** при register с live guest cookie — конвертация workspace in-place.
+
+### 4.25 Auth Middleware (`backend/src/middleware/`)
+**Ответственность:** Express middleware для разделения идентичности:
+
+- **`auth-context.js`** — `authContext`: session/guest cookie → `req.user`/`req.workspace`; `requireAuth`: registered users only; `requireBookAccess`: workspace membership guard.
+- **`ai-book-guard.js`** — `aiBookGuard`: AI chat endpoints book-scoped, resolve `req.scopedBookId`.
+- **`workspace-ownership.js`** — `resolveWorkspaceForBook`: single point of resolution «кто владеет книгой».
+- **`worker-auth-middleware.js`** — `requireWorkerAuth`: Bearer `wrk.*` token → `req.authenticatedWorker` (FAIL CLOSED).
+
+### 4.26 Worker Auth Service (`backend/src/services/worker-auth.js`)
+**Ответственность:** Единая граница аутентификации воркеров. FAIL CLOSED: missing/malformed/unknown/revoked credential → null (caller 401).
+
+**Роль:**
+- PG `workers` таблица — durable source of truth.
+- Redis mirror `animastor:worker-auth` (hash: token_hash → identity JSON) — hot path для GPU Hub.
+- Mirror поддерживается через startup rebuild + periodic resync (5 мин) + point updates на create/rotate/revoke.
+
+**API:** `authenticateWorker`, `extractBearerToken`, `syncWorkerAuthMirror`, `mirrorPut`, `mirrorDrop`, `startWorkerAuthMirrorSync`.
+
+### 4.27 Workspace AI Provider (`backend/src/services/workspace-ai-provider.js`)
+**Ответственность:** Один активный AI провайдер на workspace. API key хранится в PG в AES-256-GCM (WORKSPACE_SECRET_KEY).
+
+**Резолвер:** workspace row first → system fallback (admin kill switch enforced) → noProvider(). Кэш 30 сек, invalidated on write.
+
+**Функции:** `resolveAIForWorkspace`, `resolveAIForBook`, `resolveAIProvider(workspaceId, purpose)`, `testConnection`, `upsertProvider`, `deleteProvider`.
+
+### 4.28 System AI Control (`backend/src/services/system-ai.js`)
+**Ответственность:** Platform-level AI kill switch + admin-configured system provider.
+
+- **Kill switch:** `system_settings.system_ai` → `{enabled: boolean}`. Default ON.
+- **System provider:** `system_ai_providers` row id='default'. Admin-configured endpoint/key/model.
+- **Кэш:** enabled flag ~5 сек. `invalidateAll()` сбрасывает и workspace resolver cache.
+
+### 4.29 Startup Resume (`backend/src/startup-resume.js`)
 **Ответственность:** Возобновление прерванных сессий генерации при старте сервера.
 
-### 4.25 Book Diff (`backend/src/services/book-diff.cjs`)
+### 4.30 Book Diff (`backend/src/services/book-diff.cjs`)
 **Ответственность:** Сравнение сцен, вычисление diff, пометка dirty-сцен, применение profiles к layer config.
 
 ---
@@ -336,18 +465,37 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 ## 6. Storage Layer
 
 ### 6.1 PostgreSQL (`backend/src/storage/postgres/`)
-**Ответственность:** Каноническое состояние. Схема: 25+ таблиц (users, books, book_snapshots, scenes, asset_states, cache_entries, asset_dependencies, generation_tasks, workers, reconciliation_events, output_manifests, image_units, storyboard_elements, audio_layers, scene_assets, ai_chat_sessions, chat_sessions, chat_messages, book_events, agent_sessions, agent_steps, agent_conversations, agent_messages, book_source, book_generation_sessions).
+**Ответственность:** Каноническое состояние. Схема: 30+ таблиц.
 
-**Репозитории** (`backend/src/storage/postgres/repositories/`):
-- `book-repo.js` — CRUD операций с книгами
-- `scene-assets-repo.js` — scene_assets: markReady, getAsset, getDirtyUnitIds, clearDirtyUnitIds, setDirtyUnitIds, clearDirtyFlag
-- `iu-repo.js` — image_units
-- `task-repo.js` — generation_tasks
-- `cache-repo.js` — cache_entries
-- `chat-repo.js` / `chat-session-repo.js` — чаты AI-ассистента
-- `events-repo.js` — book_events
-- `gen-session-repo.js` — agent_sessions
-- `book-source-repo.js` — book_source
+**Ключевые группы таблиц:**
+- **Книга/структура:** books, book_snapshots, scenes, image_units, storyboard_elements, audio_layers, book_source
+- **Состояние генерации:** scene_assets, asset_states, asset_dependencies, generation_tasks, output_manifests, book_generation_sessions, workers, reconciliation_events
+- **AI-агент:** agent_sessions, agent_steps, agent_conversations, agent_messages
+- **Чат:** chat_sessions, chat_messages, ai_chat_sessions
+- **Аутентификация:** users, workspaces, workspace_members, sessions, guest_identities
+- **AI провайдеры:** workspace_ai_providers, system_ai_providers, system_settings
+- **Прочее:** users, cache_entries, book_events
+
+**Репозитории** (`backend/src/storage/postgres/repositories/`) — 15 репозиториев:
+
+| Репозиторий | Таблица | Роль |
+|---|---|
+| `book-repo.js` | books | CRUD книг, workspace ownership |
+| `scene-assets-repo.js` | scene_assets | markReady, dirty flags, version bump |
+| `iu-repo.js` | image_units | Image unit registry |
+| `task-repo.js` | generation_tasks | Task tracking |
+| `cache-repo.js` | cache_entries | Cache registry |
+| `chat-repo.js` | chat_messages | AI chat messages |
+| `chat-session-repo.js` | ai_chat_sessions | AI chat sessions |
+| `events-repo.js` | book_events | Book event log |
+| `gen-session-repo.js` | agent_sessions | Agent sessions |
+| `book-source-repo.js` | book_source | Source dedup registry |
+| `user-repo.js` | users | User CRUD, case-insensitive lookup |
+| `workspace-repo.js` | workspaces + workspace_members | Workspace management |
+| `session-repo.js` | sessions | Server-side sessions (token-hash only) |
+| `guest-repo.js` | guest_identities | Guest workspace TTL + purge |
+| `worker-repo.js` | workers | Worker registration, credential lifecycle |
+| `generation-cancel-repo.js` | — | Generation cancellation tracking |
 
 **Входы:** SQL-запросы от сервисов и репозиториев.
 **Выходы:** Данные.
@@ -418,18 +566,37 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 ## 8. GPU Infrastructure
 
 ### 8.1 GPU Hub (`gpu-hub/gpu-hub.js`)
-**Ответственность:** Центральный диспетчер задач на GPU. Управление очередями (audio/image/video), дедупликация, таймауты (10 min), requeue при timeout, возврат результатов (с ретраем 5 попыток), heartbeat воркеров, очистка очередей per-book.
+**Ответственность:** Центральный диспетчер задач на GPU. Workspace-scoped очереди, дедупликация, таймауты (10 min), error delivery в backend, orphan sweep, dead letter.
 
-**API:** POST /task, GET /task/next, POST /task/result, POST /task/error, POST /beacon, GET /health, DELETE /queue/clear.
+**Ключевые особенности (PW-2/4):**
+- **Workspace-scoped queues:** `queue:{type}:ws:{workspaceId}` для приватных воркеров; system pool `queue:{type}` для legacy/system.
+- **Worker auth:** Bearer token через Redis mirror `animastor:worker-auth`. Identity derivable ONLY from credential.
+- **Claimer-only:** /task/result и /task/error проверяют, что submitter = claimer (worker + workspace match).
+- **Orphan sweep:** Processing entries без running record → requeue после grace (60s); max 3 requeues → dead letter.
+- **Error delivery:** ошибки задач доставляются в backend → orchestrator.failStage (5 retries, fallback в Redis key).
+- **Per-job timeout:** прокидывается из backend через layer-config (video может быть 20-60+ мин).
+- **Worker source:** GET /worker-source отдаёт worker.cjs для onboarding.
+- **API key auth:** GPU_HUB_API_KEY (header-only, FAIL CLOSED). GPU_HUB_ALLOW_OPEN=1 для dev.
+
+**API:** POST /task, GET /task/next, POST /task/result, POST /task/error, POST /beacon, GET /health, GET /worker-source, DELETE /queue/clear.
 
 **Зависимости:** Express, ioredis.
 
-**Graceful shutdown:** SIGTERM → server.close() → redis.quit()
+**Graceful shutdown:** SIGTERM → stopIntervals → server.close() → redis.quit()
 
-### 8.2 Worker (`worker/worker/worker.js`)
-**Ответственность:** GPU-воркер. ESM-модуль. Polling задач из GPU Hub, запуск ComfyUI, возврат base64-результата. Поддержка multi-image assets, filesystem fallback для видео.
+### 8.2 Worker (`worker/worker/worker.cjs`)
+**Ответственность:** GPU-воркер. CJS-модуль (Node 20+ с global fetch). Polling задач из GPU Hub, запуск ComfyUI, возврат base64-результата.
+
+**Ключевые особенности (PW-2):**
+- **Private worker mode:** `ANIMASTOR_WORKER_TOKEN=wrk.*` → Bearer credential на все hub calls. Workspace-scoped.
+- **Legacy mode:** без token → system pool (backward compatible).
+- **Per-job timeout:** `task.timeout_ms` пробрасывается из backend → hub → worker. Video fallback: 2 часа.
+- **OOM-safe:** результаты читаются с диска (ComfyUI output), не через HTTP re-download.
+- **Filesystem fallback:** видео-результаты ищутся в COMFY_OUTPUT_DIR если ComfyUI history не вернул.
 
 **Поддержка:** image (single/multi), audio (TTS), video (LTX).
+
+**Protocol:** PROTOCOL_VERSION=2. Несовместимые задачи отклоняются с `protocol_version_mismatch`.
 
 ---
 

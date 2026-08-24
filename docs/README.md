@@ -1,7 +1,9 @@
 # Документация Animastor
 
 > **Структурирована по темам.** Интегрированы документы из `docs-claude/`.
-> Статус: актуально на 28 июня 2026.
+> Статус: актуально на 24 августа 2026 (аудит документации).
+> 
+> **Аудит авг 2026:** обновлена ARCHITECTURE.md, SYSTEM_MAP.md, SYSTEM_OVERVIEW.md, PROJECT_STRUCTURE.md, DATA_FLOW.md — добавлены auth, worker auth, admin, workspace AI provider, audio/video orchestrators, entity cleanup, book routes decomposition, new repositories.
 
 ---
 
