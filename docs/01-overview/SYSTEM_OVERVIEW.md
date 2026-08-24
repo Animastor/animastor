@@ -27,7 +27,7 @@ Animastor — AI-powered animated storytelling platform. Система прео
 
 ### Backend (Node.js/Express)
 Центральный сервер API + оркестратор. Управляет состоянием книги, сценами, dispatching задач на GPU.
-- **State Model (Per-Asset):** per-asset состояния (audio/image/video) — канонический источник истины. Линейная FSM удалена в v2.1.0 (блокировала параллельный диспатч). `SceneState` константы сохранены как производная проекция для backward compat. Per-asset состояния хранятся как Redis HASH (HSET/HGETALL) — атомарные per-field операции, без RMW race.
+- **State Model (Per-Asset):** per-asset состояния (audio/image/video) — канонический источник истины. Линейная FSM и SceneState enum удалены в v2.2.0/T8 (блокировала параллельный диспатч). Per-asset состояния хранятся как Redis HASH (HSET/HGETALL) — атомарные per-field операции, без RMW race.
 - **Orchestrator Facade (M5):** Единый арбитр состояния — 11 команд (markDirty, markDirtyScene, planScene, beginStage, completeStage, completeStageWithoutVideo, completeStageWithoutImage, setScenePending, setSceneAllReady, setScenePlaceholder, reconcile). Все писатели lifecycle-состояния проходят через фасад.
 - **Version Gate:** `completeStage` проверяет PG-версию перед READY — stale GPU callback не отменяет force-regen.
 - **Atomic Quotas:** Lua EVAL для атомарного acquire квоты — устранён race condition между checkQuota (GET) и incrementActiveCounter (INCR).
@@ -56,11 +56,11 @@ Animastor — AI-powered animated storytelling platform. Система прео
 - **PG authoritative:** `workers` таблица — durable source of truth. Redis mirror `animastor:worker-auth` — hot path для GPU Hub.
 - **Three modes:** private (workspace-owned), share (workspace-owned, community pool), system (Animastor-operated, workspace-less).
 - **workers_scope_check:** CHECK constraint — mode ≠ system → workspace_id NOT NULL.
-- **Worker routes:** POST/GET/DELETE /api/v1/workers (user-only, workspace-scoped).
+- **Worker routes:** POST /api/v1/worker/verify, POST/GET/GET/:id/POST/:id/rotate/DELETE /api/v1/workers (user-only, workspace-scoped). PW-4: mode support (private/share), confirm_share for share.
 - **GPU Hub auth:** Bearer token через Redis mirror; workspace-scoped queues.
 
 ### Admin System (август 2026)
-- **Admin routes:** /api/v1/admin/system-ai (kill switch + system provider).
+- **Admin routes:** /api/v1/admin/system-ai (kill switch + system provider) + /api/v1/admin/workers/system (SYSTEM worker registry: create/list/rotate/revoke).
 - **Guard:** requireAdmin (role='admin' OR ADMIN_USERNAMES allowlist). Второй слой: nginx Basic Auth на admin.animastor.in.
 - **System AI control:** kill switch + system provider (admin-configured endpoint/key/model).
 
@@ -75,7 +75,7 @@ Animastor — AI-powered animated storytelling platform. Система прео
 Пять компонентов:
 1. **Runtime Scheduler** (tick-based, 5s) — чистая функция `shouldScheduleAssets()`, решает что генерировать, но НЕ пишет состояние (Д.2). Version-stale reset — явный пред-проход в `attemptDispatch()`.
 2. **Dispatch Engine** — lease-механизм (NX TTL), quota-контроль (Lua-атомарный), governance (circuit-breaker/retry-budget/fairness).
-3. **Orchestrator Facade** (`orchestrator.js`) — единственный API записи lifecycle-состояния. 11 команд, все пишут per-asset state + syncLinearState автоматически.
+3. **Orchestrator Facade** (`orchestrator.js`) — единственный API записи lifecycle-состояния. 11 команд, все пишут per-asset state. syncLinearState удалён (T8) — per-asset единственный source of truth.
 4. **Scene Orchestrator** (`scene-orchestrator.js`) — dispatch execution (audio/image/video), чистый исполнитель без принятия решений о состоянии.
 5. **Scene Window** — оконный менеджер, scope-aware, все записи через facade.
 
@@ -95,7 +95,7 @@ Animastor — AI-powered animated storytelling platform. Система прео
 Центральный диспетчер задач на GPU. Принимает задачи от backend, ставит в Redis-очереди, распределяет по воркерам. Graceful shutdown, requeue при timeout (10 min), heartbeat, per-book queue clear.
 
 ### Workers (Node.js + ComfyUI)
-GPU-воркеры (ESM-модули), выполняющие генерацию через ComfyUI: image (SD), audio (TTS), video (LTX). Поддержка multi-image assets.
+GPU-воркеры (CJS-модуль `worker.cjs`, Node 20+ с global fetch), выполняющие генерацию через ComfyUI: image (SD), audio (TTS), video (LTX). Поддержка multi-image assets. PW-2: private worker mode (`ANIMASTOR_WORKER_TOKEN=wrk.*` → Bearer credential), workspace-scoped queues. PW-4: FAIL CLOSED — missing credential → 401, нет uncredentialed lane.
 
 ### Workflow Loader + Connector System
 - **Workflow Loader** — загружает JSON-шаблоны ComfyUI из `/app/ai/workflows/`
@@ -103,8 +103,8 @@ GPU-воркеры (ESM-модули), выполняющие генерацию
 - **Entity Schema** (`entity-schema.js`) — все типы данных, которыми обмениваются backend и ComfyUI
 
 ### Storage
-- **PostgreSQL (25+ таблиц)** — каноническое состояние (книги, сцены, assets, чаты, события, сессии агентов, image_units, scene_assets, cache_entries, generation_tasks, output_manifests). Репозитории: `storage/postgres/repositories/` (10 репозиториев: book, cache, task, iu, sceneAssets, chat, chatSession, events, genSession, bookSource).
-- **Redis (persisted)** — runtime-состояние: asset-state (HASH), scene-state (JSON), очереди задач, heartbeat воркеров, dispatch-аренда (NX TTL), dispatch-completed marker (NX), квоты (counter), event journal (List, TTL 7d), chunks, iu-progress, iu-in-flight.
+- **PostgreSQL (30+ таблиц)** — каноническое состояние (книги, сцены, assets, чаты, события, сессии агентов, image_units, scene_assets, cache_entries, generation_tasks, output_manifests, workers). Репозитории: `storage/postgres/repositories/` (15+ репозиториев: book, cache, task, iu, sceneAssets, chat, chatSession, events, genSession, bookSource, user, workspace, session, guest, worker, generation-cancel).
+- **Redis (persisted)** — runtime-состояние: asset-state (HASH — канон per-asset state), worker-auth (HASH — auth mirror для GPU Hub), worker heartbeat (STRING JSON — liveness + scope), active-scenes (SET), очереди GPU (LIST: system pool + workspace-scoped), dispatch-аренда (SET NX TTL), dispatch-completed marker (NX), квоты (counter), event journal (List, TTL 7d), chunks, iu-progress, iu-in-flight.
 - **Filesystem (multi-file)** — файлы книг (JSON, multi-file format), аудио (MP3), изображения (PNG), видео (MP4)
 
 ### Services Layer
@@ -199,7 +199,7 @@ TXT / VBook
 | GPU dispatcher | `backend/src/runtime/gpu-dispatcher.js` | HTTP-клиент для отправки задач в GPU Hub (send/sendVideo/sendUnified) |
 | Scene window | `backend/src/runtime/scene-window.js` | Оконный менеджер генерации (scope-aware, cancel, recover, все записи через facade) |
 | Active scenes index | `backend/src/runtime/active-scenes-index.js` | Redis-индекс активных сцен |
-| Scene state | `backend/src/state/scene-state.js` | Per-asset state (canonical, Redis HASH), linear SceneState as derived projection |
+| Scene state | `backend/src/state/scene-state.js` | Per-asset state (canonical, Redis HASH). SceneState enum удалён (T8). |
 | Lease manager | `backend/src/runtime/lease-manager.js` | Продление аренды dispatch (TTL refresh) |
 | Counter reconciliation | `backend/src/runtime/counter-reconciliation.js` | Сверка счётчиков backpressure |
 | Reconciliation engine | `backend/src/runtime/reconciliation-engine.js` | Self-healing: auto-fix рассинхрона PG↔Redis |

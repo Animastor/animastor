@@ -131,10 +131,10 @@ NEW → PENDING → GENERATING → READY
   DIRTY → PENDING
 ```
 
-- Key: `animastor:scene-assets-state:{bookId}:{chapterId}:{sceneId}`
+- Key: `animastor:asset-state:{bookId}:{chapterId}:{sceneId}`
 - Поля: `{ audio, image, video }` ∈ {NEW, PENDING, GENERATING, READY, FAILED, DIRTY, PLACEHOLDER}
 - **Единственный источник истины** для lifecycle с точки зрения scheduler'а.
-- `syncLinearState()` — производная проекция для плеера (legacy, будет удалена).
+- ~~`syncLinearState()`~~ — удалён (T8). Per-asset — единственный source of truth.
 
 ### 2.6 Runtime Loop (`runtime-loop.js`)
 
@@ -452,7 +452,7 @@ Scheduler tick
 
 ```
 # Runtime state
-animastor:scene-assets-state:{bid}:{cid}:{sid}    # per-asset states (JSON)
+animastor:asset-state:{bid}:{cid}:{sid}     # per-asset states (HASH: audio/image/video)
 animastor:audio-orch:{bid}:{cid}:{sid}            # audio-orch phase (JSON)
 animastor:video-orch:{bid}:{cid}:{sid}            # video-orch phase (JSON, groups)
 animastor:dispatch-lease:{bid}:{cid}:{sid}:{type}  # lease (SET NX)

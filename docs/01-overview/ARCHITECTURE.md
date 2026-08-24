@@ -63,26 +63,37 @@
 **Сессии:** Server-side в PG (`sessions` таблица), cookie `animastor_sid`. Кросс-поддоменные через `COOKIE_DOMAIN=animastor.in`.
 
 ### 2.8 Worker Routes (`backend/src/routes/worker-routes.cjs`)
-**Ответственность:** Регистрация и lifecycle приватных GPU-воркеров (только authenticated users).
+**Ответственность:** Регистрация и lifecycle воркеров workspace (PW-4 fail-closed model).
 
 **API:**
-- `POST /api/v1/workers` — создать воркера + выдать credential (one-time).
+- `POST /api/v1/worker/verify` — проверка credential (worker CLI first-run). FAIL CLOSED: missing/invalid/revoked → 401. Возвращает identity + mode из PG (authoritative).
+- `POST /api/v1/workers` — создать воркера + выдать credential (one-time). Mode: `private` (default) или `share` (с `confirm_share=true`). `system` — admin-only, отклоняется.
 - `GET /api/v1/workers` — список воркеров workspace (без секретов).
 - `GET /api/v1/workers/:workerId` — детали одного воркера.
 - `POST /api/v1/workers/:workerId/rotate` — ротация credential (старый умирает).
 - `DELETE /api/v1/workers/:workerId` — отзыв воркера (soft delete).
 
-**Инварианты:** workspace_id всегда из `req.workspace` (никогда из body/guest).
+**Инварианты:** workspace_id всегда из `req.workspace` (никогда из body/guest). Only registered users (guests get 401/403).
 
 ### 2.9 Admin Routes (`backend/src/routes/admin-routes.cjs`)
-**Ответственность:** Платформенный admin-уровень: system AI kill switch + system provider.
+**Ответственность:** Платформенный admin-уровень: system AI kill switch + system provider + SYSTEM worker registry.
 
-**API:**
+**API — System AI:**
 - `GET /api/v1/admin/system-ai` — состояние kill switch + provider meta.
 - `PUT /api/v1/admin/system-ai` — toggle enabled/upsert provider.
 - `POST /api/v1/admin/system-ai/test` — тест соединения (не сохраняет ключ).
 
+**API — SYSTEM Worker Registry (PW-4):**
+- `POST /api/v1/admin/workers/system` — создать SYSTEM воркер (Animastor-operated pool). Token выдаётся ОДИН раз.
+- `GET /api/v1/admin/workers/system` — список SYSTEM воркеров.
+- `POST /api/v1/admin/workers/system/:workerId/rotate` — ротация credential (старый умирает, новый ОДИН раз).
+- `DELETE /api/v1/admin/workers/system/:workerId` — отзыв (immediate soft delete).
+
+SYSTEM воркеры workspace-less (workers_scope_check), создаются ТОЛЬКО здесь. Tenant routes отклоняют mode='system'.
+
 **Guard:** `requireAdmin` (role='admin' OR ADMIN_USERNAMES allowlist). Второй слой: nginx Basic Auth на `admin.animastor.in`.
+
+**Примечание:** admin-routes получает `redis` (для worker auth mirror updates при create/rotate/revoke).
 
 ### 2.10 Settings AI Routes (`backend/src/routes/settings-ai-routes.cjs`)
 **Ответственность:** Workspace AI provider — один активный провайдер на workspace.
@@ -514,6 +525,14 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 - `animastor:chunk:*` — JSON metadata per chunk
 - `animastor:iu-progress:*` — counter TTL 14400s
 - `animastor:iu-in-flight:*` — marker EX 1200
+- `animastor:worker-auth` — HASH (token_hash → identity JSON) — hot path для GPU Hub worker auth mirror
+- `animastor:worker:heartbeat:<type>:<worker_id>` — JSON payload (liveness + scope: mode, workspace_id)
+- `animastor:active-scenes` — SET активных сцен
+- `animastor:queue:{type}[:ws:{workspaceId}]` — LIST очередей GPU Hub (system pool + workspace-scoped)
+- `animastor:running` — HASH job_id → claim JSON (running tasks)
+- `animastor:processing` — LIST (rpoplpush source)
+- `animastor:job:*` — SET NX EX (dedup)
+- `animastor:result:*` — STRING JSON (GPU results, TTL 1h)
 
 **Персистентность:** Redis-данные сохраняются через docker volume `redis-data:/data`.
 
@@ -587,9 +606,10 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 ### 8.2 Worker (`worker/worker/worker.cjs`)
 **Ответственность:** GPU-воркер. CJS-модуль (Node 20+ с global fetch). Polling задач из GPU Hub, запуск ComfyUI, возврат base64-результата.
 
-**Ключевые особенности (PW-2):**
+**Ключевые особенности (PW-2/4):**
 - **Private worker mode:** `ANIMASTOR_WORKER_TOKEN=wrk.*` → Bearer credential на все hub calls. Workspace-scoped.
-- **Legacy mode:** без token → system pool (backward compatible).
+- **FAIL CLOSED (PW-4):** missing/invalid credential → 401 на всех worker-facing endpoints Hub'а. Нет uncredentialed lane.
+- **Mode-scoped pop:** private → workspace queue ONLY; share/system → system pool ONLY. Cross-workspace access structurally impossible.
 - **Per-job timeout:** `task.timeout_ms` пробрасывается из backend → hub → worker. Video fallback: 2 часа.
 - **OOM-safe:** результаты читаются с диска (ComfyUI output), не через HTTP re-download.
 - **Filesystem fallback:** видео-результаты ищутся в COMFY_OUTPUT_DIR если ComfyUI history не вернул.

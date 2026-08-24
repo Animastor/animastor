@@ -139,7 +139,7 @@ orchestrator.beginStage() → dispatchEngine.dispatchStage()
       → placeholder replacement
     → Version gate: проверка asset_version < scene_version
       → stale → DIRTY (force-regen не отменяется)
-      → OK → setAssetState(READY) + syncLinearState
+      → OK → setAssetState(READY) (syncLinearState удалён — T8)
     → finally: markDispatchCompleted (release lease + quota, РОВНО один раз — C1/C4)
 ```
 

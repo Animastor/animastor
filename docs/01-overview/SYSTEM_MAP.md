@@ -44,7 +44,7 @@ TXT / VBook  →  AI-анализ (агент)  →  структура книг
 | **Генераторы** | `backend/src/{audio,image,video}/*` | Сборка ComfyUI-workflow и отправка задач на GPU. |
 | **Workflow / Connector слой** | `backend/src/workflows/*`, `services/workflow-manager.js`, `backend/ai/workflows/`, `backend/ai/connectors/` | Загрузка и адаптация JSON-шаблонов ComfyUI; коннекторы как декларативные описания задач. |
 | **GPU Hub** | `gpu-hub/gpu-hub.js` | Очереди задач в Redis, раздача воркерам, requeue по таймауту, возврат результата в backend. |
-| **GPU Worker** | `worker/worker/worker.js` | ESM-воркер: polling Hub → ComfyUI → результат (base64 / fallback с диска). |
+| **GPU Worker** | `worker/worker/worker.cjs` | CJS-воркер (Node 20+ с global fetch): polling Hub → ComfyUI → результат (base64 / fallback с диска). PW-2: private worker mode, PW-4: FAIL CLOSED. |
 | **Storage** | `backend/src/storage/*`, `book/*` | PostgreSQL (30+ таблиц), Redis (runtime), файловая система (книги multi-file, ассеты). || **Frontend (Web)** | `frontends/app/` (Preact + Vite) | Responsive SPA: MobileShell / DesktopShell; pages: File, Generator, Player, Editor, Navigator, Settings |
 | **Frontend (Android)** | `frontends/android/` (Kotlin) | Single-activity, bottom navigation: файлы/библиотека/редактор/плеер/навигация/AI/настройки. |
 | **Auth & Identity** | `backend/src/auth/`, `backend/src/middleware/` | Authentication MVP: register/login/logout, session cookies, guest workspaces, workspace ownership, book access guards. |
