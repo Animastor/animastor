@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="frontends/app/public/logo.png" alt="Animastor Logo" width="180" />
+  <img src="frontends/app/public/logo.png" alt="Animastor" width="128" style="border-radius: 18px;" />
 </p>
 
-<h1 align="center">Animastor</h1>
+<h1 align="center" style="color: #C9A15A; font-weight: 600; letter-spacing: 0.06em;">Animastor</h1>
 
 <p align="center">
   <strong>AI-powered animated storytelling platform</strong><br/>
