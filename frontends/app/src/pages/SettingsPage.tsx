@@ -439,11 +439,11 @@ function AIProviderSection() {
                 onInput={(e) => setModel((e.target as HTMLInputElement).value)}
               />
 
-              <div class="settings__group">
-                <button class="btn" onClick={onSave} disabled={busy || !endpoint}>
+              <div class="settings__actions">
+                <button class="btn btn--block" onClick={onSave} disabled={busy || !endpoint}>
                   {busy ? t('play_loading') : t('ai_provider_save')}
                 </button>
-                <button class="btn btn--outlined" onClick={onTest} disabled={testing || busy}>
+                <button class="btn btn--outlined btn--block" onClick={onTest} disabled={testing || busy}>
                   {testing ? t('play_loading') : t('ai_provider_test')}
                 </button>
                 {saved && (

@@ -1115,6 +1115,14 @@ button { font: inherit; color: inherit; }
   overflow: hidden;
   border: 1px solid var(--outline-2);
 }
+/* Stacked full-width action buttons (fragment_ai_provider_settings.xml):
+   Save is 16dp below the last field, Test/Delete are 8dp apart. */
+.settings__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem; /* 8dp between buttons */
+  margin-top: 1rem; /* 16dp below the model field */
+}
 .settings__row {
   display: flex;
   align-items: center;
@@ -1217,7 +1225,7 @@ button { font: inherit; color: inherit; }
 .worker__row {
   background: var(--surface-2); border: 1px solid var(--outline-2);
   border-radius: var(--radius-sm); padding: 0.75rem 1rem;
-  display: flex; flex-direction: column; gap: 0.4rem;
+  display: flex; flex-direction: column; gap: 0.5rem; /* 8dp — Android item margins */
 }
 .worker__row-main { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
 .worker__name { font-size: 0.9375rem; font-weight: 600; color: var(--text); }
@@ -1238,6 +1246,16 @@ button { font: inherit; color: inherit; }
 .worker__env { font-size: 0.7rem; white-space: pre-wrap; word-break: break-all; }
 .worker__trouble { margin-top: 0.4rem; font-size: 0.75rem; color: var(--text-2); }
 .worker__trouble summary { cursor: pointer; font-weight: 600; }
+/* Android item_private_worker.xml — Rotate/Revoke share the row 50/50
+   (layout_weight=1 each, 8dp gap), equal 42dp height. align-items: stretch
+   keeps both buttons the same height even when one label wraps. */
+.worker__actions {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem; /* 8dp */
+}
+.worker__actions .btn { flex: 1 1 0; min-width: 0; }
+.worker__actions .btn--error { width: auto; }
 
 
 /* Spinner → <select> (Widget.Animastor: match_parent/weight=1 width, 40dp height) */

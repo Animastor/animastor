@@ -109,11 +109,9 @@ export function PrivateWorkersSection() {
           <h3 class="card__title">{t('worker_mgmt_title')}</h3>
           <p class="card__hint card__hint--wrap">{t('worker_mgmt_desc')}</p>
 
-          <div class="settings__group">
-            <button class="btn" onClick={() => setShowCreate(true)} disabled={busy}>
-              {t('worker_add')}
-            </button>
-          </div>
+          <button class="btn btn--block" onClick={() => setShowCreate(true)} disabled={busy}>
+            {t('worker_add')}
+          </button>
 
           {!workers ? (
             <p class="card__hint">{t('play_loading')}</p>
@@ -143,7 +141,7 @@ export function PrivateWorkersSection() {
                       </ul>
                     </details>
                   )}
-                  <div class="settings__group">
+                  <div class="worker__actions">
                     {w.status !== 'REVOKED' && (
                       <>
                         <button class="btn btn--outlined" disabled={busy} onClick={() => void onRotate(w)}>
