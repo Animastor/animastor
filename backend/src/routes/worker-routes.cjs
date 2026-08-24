@@ -1,13 +1,18 @@
 // ======================================================
 // ANIMASTOR BACKEND — PRIVATE WORKER ROUTES (Experimental Beta)
 // ======================================================
-// Registration & lifecycle for private workers of the CALLER'S workspace:
+// Registration & lifecycle for workers of the CALLER'S workspace:
 //
-//   POST   /api/v1/workers                       — create worker + issue credential (one-time)
-//   GET    /api/v1/workers                       — list (never returns secrets)
-//   GET    /api/v1/workers/:workerId             — one worker detail (never returns secrets)
-//   POST   /api/v1/workers/:workerId/rotate      — new credential (old dies; one-time)
-//   DELETE /api/v1/workers/:workerId             — revoke (immediate; soft delete)
+//   POST   /api/v1/worker/verify             — credential check (worker CLI first-run)
+//   POST   /api/v1/workers                   — create worker + issue credential (one-time)
+//   GET    /api/v1/workers                   — list (never returns secrets)
+//   GET    /api/v1/workers/:workerId         — one worker detail (never returns secrets)
+//   POST   /api/v1/workers/:workerId/rotate  — new credential (old dies; one-time)
+//   DELETE /api/v1/workers/:workerId         — revoke (immediate; soft delete)
+//
+// Modes (PW-4 fail-closed model): tenants may create 'private' (default) or
+// 'share' (explicit confirm_share=true — the worker is volunteered to the
+// community pool). 'system' is Animastor-operated and admin-only.
 //
 // Identity rules (Phase 1 invariants):
 //   - requireAuth: REGISTERED USERS ONLY. Guests may NOT create workers — a
@@ -34,6 +39,8 @@
 
 const workerRepo = require('../storage/postgres/repositories/worker-repo');
 const workerAuth = require('../services/worker-auth');
+const workspaceRepo = require('../storage/postgres/repositories/workspace-repo');
+const { requireWorkerAuth } = require('../middleware/worker-auth-middleware');
 const config = require('../config/runtime-config');
 
 const MAX_NAME_LEN = 120;
@@ -105,6 +112,32 @@ async function publicWorker(redis, row) {
 
 module.exports = function(app, redis) {
 
+    // ── POST verify credential (worker CLI first-run confirmation) ────────
+    // FAIL CLOSED (requireWorkerAuth): missing/invalid/revoked credential →
+    // 401. The registry is the source of truth: the CLI does not choose its
+    // mode — it learns identity + mode from this response. Resolved against
+    // PG (authoritative), never the mirror.
+    app.post('/api/v1/worker/verify', requireWorkerAuth(redis), async (req, res) => {
+        const w = req.authenticatedWorker;
+        let workspaceName = null;
+        if (w.workspace_id) {
+            try {
+                const ws = await workspaceRepo.findById(w.workspace_id);
+                workspaceName = ws ? ws.name : null;
+            } catch (_) { /* non-fatal — name is cosmetic */ }
+        }
+        try { await workerRepo.touchLastSeen(w.id); } catch (_) { /* non-fatal */ }
+        res.json({
+            verified: true,
+            worker_id: w.id,
+            name: w.name,
+            worker_type: w.worker_type,
+            mode: w.mode,
+            workspace_id: w.workspace_id || null,
+            workspace_name: workspaceName,
+        });
+    });
+
     // ── POST create worker (credential shown ONCE) ──────────────────────
     app.post('/api/v1/workers', async (req, res) => {
         const workspaceId = userWorkspaceGuard(req, res);
@@ -121,6 +154,22 @@ module.exports = function(app, redis) {
                 error: `worker_type must be one of: ${workerRepo.WORKER_TYPES.join(', ')}`,
             });
         }
+        // Mode: 'private' (default) or 'share' with explicit confirmation.
+        // 'system' is Animastor-operated — never creatable through this route.
+        let mode = 'private';
+        if (body.mode !== undefined && body.mode !== 'private') {
+            if (body.mode === 'share') {
+                if (body.confirm_share !== true) {
+                    return res.status(400).json({
+                        error: 'share mode requires confirm_share=true — a share worker may be used by other Animastor users',
+                        code: 'share_confirmation_required',
+                    });
+                }
+                mode = 'share';
+            } else {
+                return res.status(400).json({ error: "mode must be 'private' or 'share'" });
+            }
+        }
         // workspace_id from the body is deliberately IGNORED — the worker is
         // always created in the caller's own workspace.
 
@@ -129,6 +178,7 @@ module.exports = function(app, redis) {
                 workspaceId,
                 name,
                 workerType,
+                mode,
                 createdBy: req.user.userId,
             });
             await workerAuth.mirrorPut(redis, { ...worker, token_hash: workerRepo.parseToken(token).secretHash });

@@ -1,26 +1,29 @@
 // ======================================================
-// Worker Health - v2.0.0 (visibility isolation)
+// Worker Health - v3.0.0 (fail-closed visibility)
 // ======================================================
 // Two independent characteristics per worker:
 //   1. liveness     — ONLINE/OFFLINE (fresh heartbeat key);
-//   2. access scope — SYSTEM / PRIVATE / SHARE (heartbeat payload).
+//   2. access scope — SYSTEM / SHARE / PRIVATE (heartbeat payload).
 //
 // RULE: a heartbeat NEVER means "available to the current caller" by itself.
 // Availability is always liveness ∧ scope.
 //
 // Heartbeat keys `animastor:worker:heartbeat:<type>:<worker_id>` carry a JSON
-// payload authored by the GPU hub:
+// payload authored by the GPU hub (PW-4: only after credential auth):
 //   { type, worker_id, ts, current_job_id,
-//     workspace_id: <uuid>|null, mode: 'private'|'share'|null, ... }
+//     workspace_id: <uuid>|null, mode: 'private'|'share'|'system', ... }
 //
-// Scope classification:
-//   workspace_id null/absent          → SYSTEM worker (operator pool) —
-//                                       part of the global capacity;
-//   mode 'share'                      → SHARE worker (future) — also global;
-//   workspace_id set, mode 'private'  → PRIVATE worker — visible/countable
-//                                       ONLY for its owning workspace.
-// Legacy heartbeats (the uncredentialed system lane) carry no scope fields
-// and classify as SYSTEM — exactly the operator pool they always were.
+// Scope classification — FAIL CLOSED:
+//   mode 'system'                     → SYSTEM pool (Animastor-operated);
+//   mode 'share'                      → SHARE pool (community capacity);
+//                                       both count as global capacity;
+//   mode 'private' + workspace_id set → PRIVATE worker — visible/countable
+//                                       ONLY for its owning workspace;
+//   anything else (mode missing/unknown, private without workspace)
+//                                     → UNAUTHORIZED — counted NOWHERE.
+// A missing/invalid credential never becomes SYSTEM or SHARE: the hub no
+// longer writes scope-less heartbeats, and this module refuses to count
+// them as defense-in-depth.
 
 const config = require('../config/runtime-config');
 
@@ -87,14 +90,18 @@ async function scanFreshHeartbeats(redis, type) {
     return entries;
 }
 
-/** SYSTEM scope: no owning workspace (legacy/operator) or an explicit share. */
+/**
+ * Global capacity scope: Animastor-operated SYSTEM workers and volunteered
+ * SHARE workers. FAIL CLOSED: a heartbeat without an explicit mode is NEVER
+ * global capacity — it is UNAUTHORIZED and counted nowhere.
+ */
 function isSystemScope(entry) {
-    return !entry.workspace_id || entry.mode === 'share';
+    return entry.mode === 'system' || entry.mode === 'share';
 }
 
-/** PRIVATE scope of exactly one workspace (share is never private). */
+/** PRIVATE scope of exactly one workspace (share/system are never private). */
 function isPrivateScopeOf(entry, workspaceId) {
-    return !!workspaceId && entry.workspace_id === workspaceId && entry.mode !== 'share';
+    return !!workspaceId && entry.mode === 'private' && entry.workspace_id === workspaceId;
 }
 
 function countWhere(entries, pred, busyOnly = false) {

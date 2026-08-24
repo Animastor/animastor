@@ -229,9 +229,10 @@ require('./routes/config-routes.cjs')(app, redis, routeDeps);
 // Workspace AI provider settings (Experimental Beta — Milestone 1)
 require('./routes/settings-ai-routes.cjs')(app);
 
-// Admin foundation: system AI control (kill switch + system provider).
+// Admin foundation: system AI control (kill switch + system provider) +
+// SYSTEM worker registry (Animastor-operated pool, PW-4 fail-closed model).
 // Guarded by requireAdmin; served on admin.animastor.in behind Basic Auth.
-require('./routes/admin-routes.cjs')(app);
+require('./routes/admin-routes.cjs')(app, redis);
 
 // Private worker registration & lifecycle (Experimental Beta — Private Worker
 // Phase 1). Users only; workspace always resolved server-side.

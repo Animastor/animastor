@@ -172,12 +172,19 @@ export COMFY_INPUT_DIR="${COMFY_INPUT_DIR:-$HOME/ComfyUI/input}"
 export WORKER_ID="${WORKER_ID:-gpu-$(hostname)}"
 
 if [ -z "$ANIMASTOR_WORKER_TOKEN" ]; then
-  echo "⚠️ ANIMASTOR_WORKER_TOKEN is not set."
-  echo "   The worker will run in LEGACY SYSTEM-POOL mode (no workspace binding)."
-  echo "   For a Private Worker, set ANIMASTOR_WORKER_TOKEN in ./.env or the"
-  echo "   environment (Settings → Private Workers shows it once at creation)."
+  echo "❌ Worker authentication failed — check ANIMASTOR_WORKER_TOKEN"
+  echo ""
+  echo "   ANIMASTOR_WORKER_TOKEN is not set. The worker cannot start:"
+  echo "   a missing credential must never silently turn this GPU into"
+  echo "   shared/system capacity (fail-closed model)."
+  echo ""
+  echo "   1. Open Animastor → Settings → Workers and create a worker"
+  echo "      (Private = only your workspace; Share = volunteer to the community)."
+  echo "   2. Copy the one-time credential (wrk.…)."
+  echo "   3. Set ANIMASTOR_WORKER_TOKEN=wrk.… in ./.env (or the environment)."
+  exit 1
 else
-  echo "ANIMASTOR_WORKER_TOKEN: set (private worker mode)"
+  echo "ANIMASTOR_WORKER_TOKEN: set (credential will be verified at startup)"
 fi
 
 # ======================================================

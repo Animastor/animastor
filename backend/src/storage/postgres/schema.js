@@ -262,11 +262,13 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status ON generation_tasks(status);
 -- rebuilt by migration PW-1 below, a real migration not a free ALTER.
 CREATE TABLE IF NOT EXISTS workers (
     worker_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id    UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    -- NULL only for mode='system' (Animastor-operated pool), enforced by
+    -- the workers_scope_check constraint below (FC: fail-closed registry).
+    workspace_id    UUID REFERENCES workspaces(id) ON DELETE CASCADE,
     name            TEXT NOT NULL,
     worker_type     TEXT NOT NULL CHECK(worker_type IN ('audio','image','video')),
     capabilities    JSONB,
-    mode            TEXT NOT NULL DEFAULT 'private' CHECK(mode IN ('private','share')),
+    mode            TEXT NOT NULL DEFAULT 'private' CHECK(mode IN ('private','share','system')),
     status          TEXT NOT NULL DEFAULT 'offline' CHECK(status IN ('online','offline','busy','error')),
     token_hash      TEXT NOT NULL UNIQUE,
     token_prefix    TEXT,
@@ -275,7 +277,10 @@ CREATE TABLE IF NOT EXISTS workers (
     last_seen       BIGINT,
     version         TEXT,
     metadata        JSONB,
-    created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
+    created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
+    -- FAIL CLOSED ownership anchor: only Animastor-operated workers may be
+    -- workspace-less — private/share workers ALWAYS belong to a workspace.
+    CONSTRAINT workers_scope_check CHECK (mode = 'system' OR workspace_id IS NOT NULL)
 );
 
 -- (index idx_workers_workspace is created by migration PW-1 below — it must
@@ -1271,11 +1276,11 @@ async function runMigrations() {
                 await query(`DROP TABLE workers`);
                 await query(`CREATE TABLE workers (
                     worker_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                    workspace_id    UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                    workspace_id    UUID REFERENCES workspaces(id) ON DELETE CASCADE,
                     name            TEXT NOT NULL,
                     worker_type     TEXT NOT NULL CHECK(worker_type IN ('audio','image','video')),
                     capabilities    JSONB,
-                    mode            TEXT NOT NULL DEFAULT 'private' CHECK(mode IN ('private','share')),
+                    mode            TEXT NOT NULL DEFAULT 'private' CHECK(mode IN ('private','share','system')),
                     status          TEXT NOT NULL DEFAULT 'offline' CHECK(status IN ('online','offline','busy','error')),
                     token_hash      TEXT NOT NULL UNIQUE,
                     token_prefix    TEXT,
@@ -1284,7 +1289,8 @@ async function runMigrations() {
                     last_seen       BIGINT,
                     version         TEXT,
                     metadata        JSONB,
-                    created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
+                    created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
+                    CONSTRAINT workers_scope_check CHECK (mode = 'system' OR workspace_id IS NOT NULL)
                 )`);
                 await query(`CREATE INDEX IF NOT EXISTS idx_workers_workspace ON workers(workspace_id)`);
                 console.log('[PG] PW-1: rebuilt dormant workers table for private worker identity');
@@ -1296,6 +1302,30 @@ async function runMigrations() {
     }
 
     console.log('[PG] Private worker registry initialized');
+
+    // ======================================================
+    // PW-4: Fail-closed worker registry (three-mode model)
+    // ======================================================
+    // Extends the registry to the final identity model: PRIVATE (a user's
+    // own workspace), SHARE (owner volunteers the worker to the community)
+    // and SYSTEM (Animastor-operated pool — promo/trials/commercial lanes).
+    // SYSTEM workers are workspace-less; every other mode MUST have an
+    // owning workspace (workers_scope_check). Idempotent for fresh DBs
+    // (canonical CREATE TABLE already carries the final shape).
+    try {
+        await query(`ALTER TABLE workers DROP CONSTRAINT IF EXISTS workers_mode_check`);
+        await query(`ALTER TABLE workers ADD CONSTRAINT workers_mode_check
+            CHECK (mode IN ('private','share','system'))`);
+        await query(`ALTER TABLE workers ALTER COLUMN workspace_id DROP NOT NULL`);
+        await query(`ALTER TABLE workers DROP CONSTRAINT IF EXISTS workers_scope_check`);
+        await query(`ALTER TABLE workers ADD CONSTRAINT workers_scope_check
+            CHECK (mode = 'system' OR workspace_id IS NOT NULL)`);
+    } catch (err) {
+        console.error('[PG] PW-4 workers fail-closed migration failed:', err.message);
+        throw err;
+    }
+
+    console.log('[PG] Worker registry fail-closed model initialized (private/share/system)');
 
     // ======================================================
     // PW-2: Workspace-aware job ownership (Experimental Beta — Phase 2)

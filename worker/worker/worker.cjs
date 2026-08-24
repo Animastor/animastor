@@ -1,5 +1,5 @@
 // ======================================================
-// GPU Worker - v1.0.0
+// GPU Worker - v2.0.0 (fail-closed authorization, PW-4)
 // ======================================================
 // CJS (CommonJS) — Node 20+ with global fetch is assumed.
 
@@ -17,12 +17,18 @@ const HUB_URL = process.env.HUB_URL || "https://animastor.in/gpu";
 const COMFY_PORT = process.env.COMFY_PORT || 8188;
 const WORKER_TYPE = process.env.WORKER_TYPE || "image";
 
-// PW-2 (Experimental Beta — Private Worker): private worker credential
-// (`wrk.<worker_id>.<secret>`, issued once at registration). When set, every
-// hub call carries `Authorization: Bearer <token>` and the hub derives
-// identity/workspace from it — WORKER_ID then becomes a label only. Unset =
-// legacy system-pool worker (backward compatible).
+// PW-4 (FAIL CLOSED): the worker credential (`wrk.<worker_id>.<secret>`,
+// issued once at registration in Animastor) is REQUIRED. Every hub call
+// carries `Authorization: Bearer <token>` and the hub derives identity,
+// workspace and MODE from the registry — the worker never chooses its own
+// mode. No credential → the worker refuses to start: a missing credential
+// must never silently become a system/share worker.
 const ANIMASTOR_WORKER_TOKEN = process.env.ANIMASTOR_WORKER_TOKEN || null;
+
+// Backend API base for the startup credential verification. Derived from
+// HUB_URL by default (…/gpu → …/api/v1); override with ANIMASTOR_API_URL.
+const ANIMASTOR_API_URL = process.env.ANIMASTOR_API_URL
+  || HUB_URL.replace(/\/gpu\/?$/, "") + "/api/v1";
 
 const NOTEBOOK_PATH = process.env.NOTEBOOK_PATH || "";
 const WORKER_ID = process.env.WORKER_ID || "gpu-" + os.hostname();
@@ -71,12 +77,63 @@ function comfyUrl(p) {
   return `http://127.0.0.1:${COMFY_PORT}${NOTEBOOK_PATH}${p}`;
 }
 
-// PW-2: hub request headers — Bearer credential when a private worker token
-// is configured, plain JSON otherwise (system-pool backward compatibility).
+// PW-4: hub request headers — always Bearer-authenticated (the startup gate
+// guarantees a credential is present; defense-in-depth keeps it unconditional).
 function hubHeaders() {
   const headers = { "Content-Type": "application/json" };
   if (ANIMASTOR_WORKER_TOKEN) headers["Authorization"] = `Bearer ${ANIMASTOR_WORKER_TOKEN}`;
   return headers;
+}
+
+// FAIL CLOSED: an auth rejection from the hub/backend is terminal. Retrying
+// an invalid credential forever would only hide the misconfiguration — the
+// operator must fix ANIMASTOR_WORKER_TOKEN.
+function authFailed(source, status) {
+  log("error", "Worker authentication failed — check ANIMASTOR_WORKER_TOKEN");
+  log("error", `${source} rejected the credential (HTTP ${status}). The token may be wrong, rotated or revoked.`);
+  log("error", "Create/rotate a worker in Animastor (Settings → Workers) and set the new token.");
+  process.exit(1);
+}
+
+// ======================================================
+// STARTUP CREDENTIAL VERIFICATION
+// ======================================================
+// The registry is the source of truth: the worker learns its identity and
+// mode from the backend (POST /api/v1/worker/verify). It never decides for
+// itself whether it is private/share/system — it only confirms.
+
+async function verifyCredential() {
+  let res;
+  try {
+    res = await fetchTimeout(`${ANIMASTOR_API_URL}/worker/verify`, {
+      method: "POST",
+      headers: hubHeaders(),
+      body: JSON.stringify({})
+    });
+  } catch (err) {
+    // Network failure — the backend may be temporarily down. The hub still
+    // enforces the credential on every call, so warn and continue.
+    log("warn", `Credential verification unavailable (${err.message}) — continuing, the hub will enforce auth`);
+    return;
+  }
+  if (res.status === 401 || res.status === 403) {
+    authFailed("Animastor backend", res.status);
+    return;
+  }
+  if (!res.ok) {
+    log("warn", `Credential verification returned HTTP ${res.status} — continuing, the hub will enforce auth`);
+    return;
+  }
+  try {
+    const data = await res.json();
+    log("info", "✓ Credential accepted");
+    if (data.workspace_name) log("info", `✓ Workspace: ${data.workspace_name}`);
+    log("info", `✓ Mode: ${String(data.mode || "").toUpperCase()}`);
+    log("info", `✓ Worker type (registry): ${data.worker_type}`);
+    if (data.worker_type && data.worker_type !== WORKER_TYPE) {
+      log("warn", `WORKER_TYPE=${WORKER_TYPE} differs from the registry type ${data.worker_type} — the registry wins at the hub`);
+    }
+  } catch (_) { /* cosmetic only */ }
 }
 
 // ======================================================
@@ -163,6 +220,10 @@ async function sendBeacon() {
         protocol_version: PROTOCOL_VERSION
       })
     });
+    if (res.status === 401 || res.status === 403) {
+      authFailed("GPU hub /beacon", res.status);
+      return;
+    }
     if (!res.ok) {
       throw new Error(`Hub rejected beacon: HTTP ${res.status}`);
     }
@@ -182,6 +243,10 @@ async function getTask() {
       { headers: hubHeaders() }
     );
 
+    if (res.status === 401 || res.status === 403) {
+      authFailed("GPU hub /task/next", res.status);
+      return null;
+    }
     if (!res.ok) return null;
 
     const data = await res.json();
@@ -559,13 +624,29 @@ async function workerLoop() {
 // ======================================================
 
 async function main() {
+  // PW-4 FAIL CLOSED startup gate: without a credential the worker refuses
+  // to run. There is no "system pool (no credential)" mode anymore — a
+  // missing token must never silently turn this GPU into shared capacity.
+  if (!ANIMASTOR_WORKER_TOKEN) {
+    log("error", "Worker authentication failed — check ANIMASTOR_WORKER_TOKEN");
+    log("error", "No worker credential configured. This worker cannot start:");
+    log("error", "  1. Open Animastor → Settings → Workers and create a worker");
+    log("error", "     (choose Private for your own workspace, or Share to volunteer it).");
+    log("error", "  2. Copy the one-time credential (wrk.…).");
+    log("error", "  3. Set ANIMASTOR_WORKER_TOKEN=wrk.… in ./.env (or the environment).");
+    process.exit(1);
+  }
+
   log("info", `Worker ${WORKER_TYPE} started`);
-  log("info", `Worker ID: ${WORKER_ID}`);
+  log("info", `Worker ID: ${WORKER_ID} (label only — identity comes from the credential)`);
   log("info", `Worker version: ${WORKER_VERSION || 'unknown'}`);
   log("info", `Worker image tag: ${WORKER_IMAGE_TAG || 'unknown'}`);
   log("info", `Hub URL: ${HUB_URL}`);
   log("info", `Protocol version: ${PROTOCOL_VERSION}`);
-  log("info", `Mode: ${ANIMASTOR_WORKER_TOKEN ? 'private worker (Bearer credential)' : 'system pool (no credential)'}`);
+
+  // Confirm identity + mode against the registry before doing any work.
+  await verifyCredential();
+
   await waitForComfyUI();
   await workerLoop();
 }

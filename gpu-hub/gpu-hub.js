@@ -1,22 +1,25 @@
 // ======================================================
-// GPU HUB - v0.1.0 (Experimental Beta — Private Worker Phase 2)
+// GPU HUB - v0.2.0 (Fail-closed worker authorization — PW-4)
 // ======================================================
-// Workspace-aware job ownership:
+// Workspace-aware job ownership, FAIL CLOSED:
 //   - worker identity comes ONLY from a Bearer credential resolved via the
 //     backend-maintained Redis mirror `animastor:worker-auth` (hub has no pg);
+//     NO CREDENTIAL → 401 on every worker-facing endpoint. There is no
+//     uncredentialed lane: a missing/invalid credential never becomes
+//     SYSTEM or SHARE — it is UNAUTHORIZED and gets nothing.
+//   - three registry modes: private (serves only its workspace queue),
+//     share (community pool) and system (Animastor-operated pool); share and
+//     system pop the workspace-less system pool, private pops its own queue;
 //   - the backend resolves `book → workspace` at dispatch and passes
 //     workspace_id in /task (key-gated) → hub enqueues to
-//     `queue:{type}:ws:{workspace}`; the system pool (`queue:{type}`) is kept
-//     for workspaces without a private worker of the type;
-//   - /task/next pops ONLY the token-derived workspace+type key — a private
-//     worker can never see another workspace's queue or the system pool;
+//     `queue:{type}:ws:{workspace}`; the system pool (`queue:{type}`) serves
+//     share/system workers and workspaces without a private worker;
 //   - the claim binds the running record to the authenticated worker +
 //     workspace; /task/result and /task/error are claimer-only;
 //   - poison-write cross-check on pop; `processing` orphan sweep requeues
 //     crashed claims back to the correct queue (capped, then backend error).
 // The hub stays a dumb transport: ownership is DATA (workspace_id authored by
-// the backend), never hub policy and never client-supplied. Requests without
-// a credential stay in the legacy system-pool lane (backward compatibility).
+// the backend), never hub policy and never client-supplied.
 
 const express = require("express")
 const cors = require("cors")
@@ -89,7 +92,11 @@ function extractBearerToken(req) {
 /**
  * Resolve a worker credential via the Redis auth mirror. FAIL CLOSED:
  * malformed token, missing mirror entry, corrupt JSON, worker_id mismatch or
- * missing workspace all yield null — never an identity.
+ * missing ownership all yield null — never an identity.
+ *
+ * Ownership model (PW-4): private/share identities MUST carry a workspace;
+ * only mode='system' (Animastor-operated pool) is workspace-less. A missing
+ * credential is NEVER system/share — it is UNAUTHORIZED (caller answers 401).
  * @returns {Promise<{worker_id,workspace_id,worker_type,mode,name}|null>}
  */
 async function authenticateWorkerMirror(redis, token) {
@@ -102,11 +109,33 @@ async function authenticateWorkerMirror(redis, token) {
     if (!identity || typeof identity !== 'object') return null;
     // Cross-check the mirror value against the token's self-locator.
     if (identity.worker_id !== parsed.workerId) return null;
-    if (!identity.workspace_id || !identity.worker_type) return null;
+    if (!identity.worker_type) return null;
+    if (identity.mode !== 'system' && !identity.workspace_id) return null;
     return identity;
   } catch (_) {
     return null;
   }
+}
+
+/**
+ * FAIL-CLOSED worker gate for the worker-facing endpoints. No Bearer
+ * credential → 401 (there is no uncredentialed lane); an invalid/revoked
+ * one → 401 as well. Returns the registry identity or null after answering.
+ * @returns {Promise<object|null>}
+ */
+async function requireWorkerCredential(redis, req, res) {
+  const token = extractBearerToken(req);
+  if (!token) {
+    return (res.status(401).json({
+      error: 'worker_authentication_failed',
+      message: 'Worker authentication failed — check ANIMASTOR_WORKER_TOKEN',
+    }), null);
+  }
+  const auth = await authenticateWorkerMirror(redis, token);
+  if (!auth) {
+    return (res.status(401).json({ error: 'invalid_worker_credential' }), null);
+  }
+  return auth;
 }
 
 const WORKSPACE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -125,6 +154,9 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     // (backend/src/config/runtime-config.js, формула GPU_TIMEOUT_MS * 3).
     GPU_TIMEOUT_MS = 600000,
     GPU_HUB_API_KEY = null,
+    // FAIL CLOSED (PW-4): an unset API key DENIES the backend-facing endpoints.
+    // Explicit dev-only opt-out for local setups without a key.
+    GPU_HUB_ALLOW_OPEN = null,
   } = config;
 
   const doFetch = fetchImpl || ((url, options) => fetch(url, options));
@@ -138,7 +170,13 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   // ======================================================
 
   function requireApiKey(req, res, next) {
-    if (!GPU_HUB_API_KEY) return next(); // no key configured = open access
+    // PW-4 FAIL CLOSED: no key configured → deny (the old "unset = open"
+    // behavior left /task and /queue/clear exposed). GPU_HUB_ALLOW_OPEN=1
+    // is the explicit dev-only opt-out.
+    if (!GPU_HUB_API_KEY) {
+      if (String(GPU_HUB_ALLOW_OPEN) === '1') return next();
+      return res.status(503).json({ error: 'hub_api_key_not_configured' });
+    }
     // T9: Header-only — не принимаем ключ в query string
     const provided = req.headers['x-api-key'];
     if (provided !== GPU_HUB_API_KEY) {
@@ -488,20 +526,19 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   // ======================================================
   // BEACON
   // ======================================================
-  // PW-2: with a Bearer credential the registry identity is server-derived
-  // (worker_id/worker_type from the token; body fields are labels only).
-  // Without a credential the legacy system-pool beacon is kept as-is.
+  // PW-4 FAIL CLOSED: identity comes ONLY from a valid Bearer credential —
+  // there is no uncredentialed lane. A missing/invalid credential never
+  // becomes SYSTEM or SHARE; it is simply rejected (401).
 
   app.post("/beacon", async (req, res) => {
 
-    const auth = await authenticateWorkerMirror(redis, extractBearerToken(req));
-    if (extractBearerToken(req) && !auth) {
-      return res.status(401).json({ error: 'invalid_worker_credential' });
-    }
+    const auth = await requireWorkerCredential(redis, req, res);
+    if (!auth) return;
 
-    const { id, type, gpu, vram, version, image_tag, protocol_version } = req.body
-    const workerId = auth ? auth.worker_id : id;
-    const workerType = auth ? auth.worker_type : type;
+    const { gpu, vram, version, image_tag, protocol_version } = req.body
+    // Registry identity is server-derived; body id/type are labels only.
+    const workerId = auth.worker_id;
+    const workerType = auth.worker_type;
 
     if (!workerId || !workerType) {
       return res.status(400).json({ error: "worker_identity_required" })
@@ -522,7 +559,7 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
       version: version || null,
       image_tag: image_tag || null,
       protocol_version: protocol_version || null,
-      workspace_id: auth ? auth.workspace_id : null,
+      workspace_id: auth.workspace_id || null,
       last_seen: Date.now()
     };
 
@@ -530,18 +567,17 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     await setGpuInRedis(workerId, data);
 
     // Also write heartbeat for backend worker count panel.
-    // VISIBILITY: the payload carries the token-derived scope (workspace_id +
-    // mode) so the backend can separate SYSTEM capacity from a workspace's
-    // PRIVATE workers. Legacy (uncredentialed) beacons carry no scope → they
-    // count as the system/operator pool, exactly as before.
+    // VISIBILITY: the payload carries the registry-derived scope
+    // (workspace_id + mode ∈ private|share|system) so the backend separates
+    // SYSTEM/SHARE capacity from a workspace's PRIVATE workers.
     try {
       const key = `animastor:worker:heartbeat:${workerType}:${workerId}`;
       const payload = JSON.stringify({
         type: workerType,
         worker_id: workerId,
         ts: Date.now(),
-        workspace_id: auth ? auth.workspace_id : null,
-        mode: auth ? (auth.mode || null) : null,
+        workspace_id: auth.workspace_id || null,
+        mode: auth.mode || null,
         version: version || null,
         image_tag: image_tag || null,
         protocol_version: protocol_version || null
@@ -657,29 +693,29 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   // ======================================================
   // TASK NEXT
   // ======================================================
-  // PW-2: identity comes ONLY from the Bearer credential. A credentialed
-  // worker pops ONLY its own workspace+type queue; an uncredentialed request
-  // (legacy system worker) pops ONLY the system pool. The `worker`/`type`
-  // query params are never identity — they are validated against the token.
+  // PW-4 FAIL CLOSED: identity comes ONLY from the Bearer credential.
+  //   private → pops ONLY its own workspace+type queue;
+  //   share   → pops the community/system pool (workspace-less jobs);
+  //   system  → pops the Animastor-operated pool (workspace-less jobs).
+  // No credential → 401. The `worker`/`type` query params are never
+  // identity — they are validated against the registry record.
 
   app.get("/task/next", async (req, res) => {
 
-    const auth = await authenticateWorkerMirror(redis, extractBearerToken(req));
-    if (extractBearerToken(req) && !auth) {
-      return res.status(401).json({ error: 'invalid_worker_credential' });
-    }
+    const auth = await requireWorkerCredential(redis, req, res);
+    if (!auth) return;
 
-    const { worker, type } = req.query
+    const { type } = req.query
 
-    // Credentialed lane: identity is token-derived; query params must agree.
-    const workerId = auth ? auth.worker_id : worker;
-    const workerType = auth ? auth.worker_type : (type || "image");
+    // Identity is token-derived.
+    const workerId = auth.worker_id;
+    const workerType = auth.worker_type;
 
     if (!workerId) {
       return res.status(400).json({ error: "worker required" })
     }
-    if (auth && type && auth.worker_type !== type) {
-      // A private worker may only ever pop its registered type.
+    if (type && auth.worker_type !== type) {
+      // A worker may only ever pop its registered type.
       return res.status(409).json({
         error: "worker_type_mismatch",
         registered: auth.worker_type,
@@ -709,10 +745,12 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     gpu.last_seen = Date.now();
     await setGpuInRedis(workerId, gpu);
 
-    // PW-2: token-scoped pop. Private worker → its workspace queue ONLY;
-    // system lane → system pool ONLY. Cross-workspace and system-pool access
-    // are structurally impossible (the key is never derivable from the client).
-    const queueKey = queueKeyFor(workerType, auth ? auth.workspace_id : null)
+    // PW-4: mode-scoped pop. Private worker → its workspace queue ONLY;
+    // share/system → the system pool ONLY. Cross-workspace and private-pool
+    // access are structurally impossible (the key is never derivable from
+    // the client).
+    const popWorkspaceId = auth.mode === 'private' ? auth.workspace_id : null;
+    const queueKey = queueKeyFor(workerType, popWorkspaceId)
 
     const taskRaw = await redis.rpoplpush(
       queueKey,
@@ -724,9 +762,10 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     const task = JSON.parse(taskRaw)
 
     // PW-2 poison-write cross-check: the popped item's workspace must match
-    // the token's workspace (system lane: item must have no workspace). A
-    // mismatch means a poison write — dead-letter it, never hand it out.
-    const expectedWs = auth ? auth.workspace_id : null;
+    // the lane this worker may serve (private → its workspace; share/system
+    // → workspace-less jobs only). A mismatch means a poison write —
+    // dead-letter it, never hand it out.
+    const expectedWs = auth.mode === 'private' ? auth.workspace_id : null;
     if ((task.workspace_id || null) !== expectedWs) {
       console.error(`🧪 Poison write detected on ${queueKey}: job=${task.job_id} task_ws=${task.workspace_id || 'null'} expected=${expectedWs || 'null'}`);
       await redis.lrem("animastor:processing", 1, taskRaw).catch(() => {});
@@ -740,10 +779,10 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
       JSON.stringify({
         worker: workerId,
         // PW-2: claim binds the job to the authenticated worker + workspace.
-        workspace_id: auth ? auth.workspace_id : null,
+        workspace_id: task.workspace_id || null,
         // VISIBILITY: kept so heartbeat refreshes (sweep/result/error) can
         // re-stamp the scope without re-authenticating.
-        worker_mode: auth ? (auth.mode || null) : null,
+        worker_mode: auth.mode || null,
         job_type: task.job_type,
         params: task.params,
         assets: task.assets || null,
@@ -763,7 +802,7 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
       })
     )
 
-    console.log(`🚀 ${task.job_id} → ${workerId} (${task.job_type}) build:${task.build_id || "none"} timeout_ms:${task.timeout_ms || "(default)"} ws:${auth ? auth.workspace_id : "(system)"}`)
+    console.log(`🚀 ${task.job_id} → ${workerId} (${task.job_type}) build:${task.build_id || "none"} timeout_ms:${task.timeout_ms || "(default)"} mode:${auth.mode} ws:${task.workspace_id || "(system pool)"}`)
 
     // Mark worker as busy in heartbeat (scope fields per VISIBILITY note).
     try {
@@ -774,8 +813,8 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
         ts: Date.now(),
         current_job_id: task.job_id,
         current_dispatch_id: task.dispatch_id,
-        workspace_id: auth ? auth.workspace_id : null,
-        mode: auth ? (auth.mode || null) : null,
+        workspace_id: auth.workspace_id || null,
+        mode: auth.mode || null,
         version: gpu.version || null,
         image_tag: gpu.image_tag || null,
         protocol_version: gpu.protocol_version || null
@@ -789,16 +828,15 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   // ======================================================
   // RESULT (WITH RETRY)
   // ======================================================
-  // PW-2: claimer-only. The submitter must be the worker that claimed the job
-  // (worker + dispatch + workspace all match the running record). A worker can
-  // never complete another worker's job or another workspace's job.
+  // PW-4 FAIL CLOSED: claimer-only, credential required. The submitter must
+  // be the worker that claimed the job (worker + workspace match the running
+  // record). A worker can never complete another worker's job or another
+  // workspace's job; share/system workers complete workspace-less jobs only.
 
   app.post("/task/result", async (req, res) => {
 
-    const auth = await authenticateWorkerMirror(redis, extractBearerToken(req));
-    if (extractBearerToken(req) && !auth) {
-      return res.status(401).json({ error: 'invalid_worker_credential' });
-    }
+    const auth = await requireWorkerCredential(redis, req, res);
+    if (!auth) return;
 
     const { job_id, build_id, result_base64, dispatch_id, protocol_version } = req.body
 
@@ -820,17 +858,12 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
       return res.status(409).json({ error: "stale_or_unknown_dispatch" })
     }
 
-    // PW-2 claimer check: credentialed submitter must BE the claimer and own
-    // the workspace; uncredentialed (system lane) may only complete jobs with
-    // no workspace. Symmetric fail-closed in both directions.
-    if (auth) {
-      if (runningInfo.worker !== auth.worker_id ||
-          (runningInfo.workspace_id || null) !== auth.workspace_id) {
-        console.error(`🚫 Result rejected (not claimer): job=${job_id} submitter=${auth.worker_id} claimer=${runningInfo.worker} ws=${auth.workspace_id} vs ${runningInfo.workspace_id || 'null'}`);
-        return res.status(403).json({ error: "not_task_claimer" })
-      }
-    } else if (runningInfo.workspace_id) {
-      console.error(`🚫 Result rejected (workspace job via system lane): job=${job_id} ws=${runningInfo.workspace_id}`);
+    // PW-4 claimer check: the submitter must BE the claimer and the job's
+    // workspace must match the claimer's lane (private → its workspace;
+    // share/system → workspace-less jobs only).
+    if (runningInfo.worker !== auth.worker_id ||
+        (runningInfo.workspace_id || null) !== (auth.workspace_id || null)) {
+      console.error(`🚫 Result rejected (not claimer): job=${job_id} submitter=${auth.worker_id} claimer=${runningInfo.worker} ws=${auth.workspace_id || 'null'} vs ${runningInfo.workspace_id || 'null'}`);
       return res.status(403).json({ error: "not_task_claimer" })
     }
 
@@ -931,14 +964,13 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   // ======================================================
   // ERROR
   // ======================================================
-  // PW-2: claimer-only, symmetric with /task/result.
+  // PW-4 FAIL CLOSED: claimer-only, credential required, symmetric with
+  // /task/result.
 
   app.post("/task/error", async (req, res) => {
 
-    const auth = await authenticateWorkerMirror(redis, extractBearerToken(req));
-    if (extractBearerToken(req) && !auth) {
-      return res.status(401).json({ error: 'invalid_worker_credential' });
-    }
+    const auth = await requireWorkerCredential(redis, req, res);
+    if (!auth) return;
 
     const { job_id, build_id, dispatch_id, protocol_version, reason } = req.body
     if (!job_id || !build_id || !dispatch_id || protocol_version !== PROTOCOL_VERSION) {
@@ -959,15 +991,10 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
       return res.status(409).json({ error: "stale_or_unknown_dispatch" })
     }
 
-    // PW-2 claimer check (symmetric with /task/result).
-    if (auth) {
-      if (runningInfo.worker !== auth.worker_id ||
-          (runningInfo.workspace_id || null) !== auth.workspace_id) {
-        console.error(`🚫 Error rejected (not claimer): job=${job_id} submitter=${auth.worker_id} claimer=${runningInfo.worker}`);
-        return res.status(403).json({ error: "not_task_claimer" })
-      }
-    } else if (runningInfo.workspace_id) {
-      console.error(`🚫 Error rejected (workspace job via system lane): job=${job_id} ws=${runningInfo.workspace_id}`);
+    // PW-4 claimer check (symmetric with /task/result).
+    if (runningInfo.worker !== auth.worker_id ||
+        (runningInfo.workspace_id || null) !== (auth.workspace_id || null)) {
+      console.error(`🚫 Error rejected (not claimer): job=${job_id} submitter=${auth.worker_id} claimer=${runningInfo.worker}`);
       return res.status(403).json({ error: "not_task_claimer" })
     }
 
@@ -1237,6 +1264,7 @@ if (require.main === module) {
       BACKEND_URL: process.env.BACKEND_URL || "http://animastor-backend:3000",
       GPU_TIMEOUT_MS: Number(process.env.GPU_TIMEOUT_MS ?? process.env.GPU_TIMEOUT ?? 600000),
       GPU_HUB_API_KEY: process.env.GPU_HUB_API_KEY || null,
+      GPU_HUB_ALLOW_OPEN: process.env.GPU_HUB_ALLOW_OPEN || null,
     },
   });
 
@@ -1270,5 +1298,6 @@ module.exports = {
   parseWorkerToken,
   extractBearerToken,
   authenticateWorkerMirror,
+  requireWorkerCredential,
   buildHubApp,
 };

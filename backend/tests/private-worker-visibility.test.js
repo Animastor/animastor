@@ -10,19 +10,21 @@
 //   2. access scope — SYSTEM / PRIVATE / SHARE (hub-authored heartbeat payload:
 //      workspace_id + mode).
 //
-//   worker-health classification
-//     legacy heartbeat (no scope fields) → SYSTEM (operator pool)        ok
+//   worker-health classification (PW-4 fail-closed)
+//     heartbeat without mode → UNAUTHORIZED, counted NOWHERE             ok
+//     system-mode heartbeat → global capacity                            ok
+//     private heartbeat w/o workspace → UNAUTHORIZED, counted NOWHERE    ok
 //     private heartbeat → NEVER in global count                          ok
 //     private heartbeat → counted ONLY for its owning workspace          ok
 //     foreign workspace private heartbeat → invisible everywhere else    ok
-//     share-mode heartbeat → global pool (future share seam)             ok
+//     share-mode heartbeat → global pool (community capacity)            ok
 //     busy counts follow the same scope split                            ok
 //     stale/corrupt heartbeats ignored                                   ok
 //     isAvailable: system serves everyone, private only the owner        ok
 //
-//   gpu-hub authored scope
+//   gpu-hub authored scope (PW-4 fail-closed)
 //     credentialed beacon → heartbeat carries workspace_id + mode        ok
-//     legacy beacon → heartbeat carries NO scope (system pool)           ok
+//     beacon WITHOUT credential → 401, no heartbeat, no registration     ok
 //     claim binds worker_mode; busy heartbeat keeps scope                ok
 //
 //   /worker/counts acceptance (User A vs User B)
@@ -80,16 +82,32 @@ describe('Worker visibility — worker-health scope classification', () => {
         redis = createMockRedis();
     });
 
-    it('counts a legacy heartbeat (no scope fields) as SYSTEM capacity', async () => {
-        // The old payload shape — no workspace_id/mode keys at all.
+    it('PW-4 FAIL CLOSED: a heartbeat without mode is UNAUTHORIZED — counted nowhere', async () => {
+        // The old legacy payload shape — no workspace_id/mode keys at all.
+        // Defense-in-depth: even if such a heartbeat ever appears again, it
+        // must never become SYSTEM or SHARE capacity.
         await redis.set(
             config.WORKER_HEARTBEAT_KEY('audio', 'gpu-legacy-1'),
             JSON.stringify({ type: 'audio', worker_id: 'gpu-legacy-1', ts: Date.now() }),
             'EX', config.WORKER_HEARTBEAT_TTL
         );
+        expect(await workerHealth.getAliveCount(redis, 'audio')).to.equal(0);
+        expect(await workerHealth.getPrivateAliveCount(redis, 'audio', WS_A)).to.equal(0);
+        expect(await workerHealth.isAvailable(redis, 'audio')).to.equal(false);
+        expect(await workerHealth.isAvailable(redis, 'audio', WS_A)).to.equal(false);
+    });
+
+    it('counts a system-mode heartbeat as global capacity', async () => {
+        await writeHeartbeat(redis, 'audio', 'sys-op-1', { mode: 'system' });
         expect(await workerHealth.getAliveCount(redis, 'audio')).to.equal(1);
         expect(await workerHealth.getPrivateAliveCount(redis, 'audio', WS_A)).to.equal(0);
         expect(await workerHealth.isAvailable(redis, 'audio')).to.equal(true);
+    });
+
+    it('a private heartbeat without workspace_id is UNAUTHORIZED — counted nowhere', async () => {
+        await writeHeartbeat(redis, 'audio', 'broken-priv', { mode: 'private' });
+        expect(await workerHealth.getAliveCount(redis, 'audio')).to.equal(0);
+        expect(await workerHealth.getPrivateAliveCount(redis, 'audio', WS_A)).to.equal(0);
     });
 
     it('NEVER counts a private heartbeat in the global count', async () => {
@@ -116,7 +134,7 @@ describe('Worker visibility — worker-health scope classification', () => {
     });
 
     it('busy counts follow the same scope split', async () => {
-        await writeHeartbeat(redis, 'audio', 'sys-1', { currentJobId: 'job-1' });
+        await writeHeartbeat(redis, 'audio', 'sys-1', { mode: 'system', currentJobId: 'job-1' });
         await writeHeartbeat(redis, 'audio', 'priv-a', { workspaceId: WS_A, mode: 'private', currentJobId: 'job-2' });
         await writeHeartbeat(redis, 'audio', 'priv-a-idle', { workspaceId: WS_A, mode: 'private' });
 
@@ -126,7 +144,7 @@ describe('Worker visibility — worker-health scope classification', () => {
     });
 
     it('getAvailability returns system + own-private buckets in one pass', async () => {
-        await writeHeartbeat(redis, 'audio', 'sys-1', {});
+        await writeHeartbeat(redis, 'audio', 'sys-1', { mode: 'system' });
         await writeHeartbeat(redis, 'audio', 'priv-a', { workspaceId: WS_A, mode: 'private' });
         await writeHeartbeat(redis, 'video', 'priv-a-v', { workspaceId: WS_A, mode: 'private' });
 
@@ -166,7 +184,7 @@ describe('Worker visibility — worker-health scope classification', () => {
         expect(await workerHealth.isAvailable(redis, 'video', WS_A)).to.equal(true);
 
         // A system worker becomes available to everyone (owner included).
-        await writeHeartbeat(redis, 'video', 'sys-1', {});
+        await writeHeartbeat(redis, 'video', 'sys-1', { mode: 'system' });
         expect(await workerHealth.isAvailable(redis, 'video')).to.equal(true);
         expect(await workerHealth.isAvailable(redis, 'video', WS_B)).to.equal(true);
         expect(await workerHealth.isAvailable(redis, 'video', WS_A)).to.equal(true);
@@ -242,19 +260,20 @@ describe('Worker visibility — gpu-hub authored heartbeat scope', () => {
         expect(hb.mode).to.equal('private');
     });
 
-    it('legacy beacon (no credential) writes a heartbeat WITHOUT scope (system pool)', async () => {
+    it('PW-4 FAIL CLOSED: beacon without credential → 401, no heartbeat, no registration', async () => {
         const res = await fetch(`${h.base}/beacon`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id: 'gpu-legacy-1', type: 'audio', protocol_version: PROTOCOL_VERSION }),
         });
-        expect(res.status).to.equal(200);
+        expect(res.status).to.equal(401);
+        expect((await res.json()).error).to.equal('worker_authentication_failed');
 
-        const hb = JSON.parse(await h.redis.get(config.WORKER_HEARTBEAT_KEY('audio', 'gpu-legacy-1')));
-        expect(hb.workspace_id).to.equal(null);
-        expect(hb.mode).to.equal(null);
-        // And worker-health classifies it as global system capacity.
-        expect(await workerHealth.getAliveCount(h.redis, 'audio')).to.equal(1);
+        // Nothing was written — the uncredentialed worker is UNAUTHORIZED,
+        // never SYSTEM.
+        expect(await h.redis.get(config.WORKER_HEARTBEAT_KEY('audio', 'gpu-legacy-1'))).to.equal(null);
+        expect(await h.redis.hget('animastor:gpu-hub:workers', 'gpu-legacy-1')).to.equal(null);
+        expect(await workerHealth.getAliveCount(h.redis, 'audio')).to.equal(0);
     });
 
     it('claim keeps scope: running record carries worker_mode, busy heartbeat keeps scope', async () => {
@@ -311,6 +330,7 @@ describe('Worker visibility — /worker/counts acceptance (A vs B)', () => {
     let server, base, redis, hubServer, hubBase;
     let alice, bob;
     let aliceWorker, aliceToken;
+    let systemWorker, systemToken;
 
     function cookieOf(res) {
         const set = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [];
@@ -333,6 +353,7 @@ describe('Worker visibility — /worker/counts acceptance (A vs B)', () => {
         await query(`DELETE FROM workers WHERE workspace_id IN (
             SELECT id FROM workspaces WHERE owner_user_id IN (
                 SELECT user_id FROM users WHERE username LIKE 'pwvis%'))`);
+        await query(`DELETE FROM workers WHERE mode = 'system' AND name LIKE 'pwvis-sys%'`);
         await query(`DELETE FROM workspace_members WHERE workspace_id IN (
             SELECT id FROM workspaces WHERE owner_user_id IN (
                 SELECT user_id FROM users WHERE username LIKE 'pwvis%'))`);
@@ -395,6 +416,19 @@ describe('Worker visibility — /worker/counts acceptance (A vs B)', () => {
         alice = await register(`pwvis_alice_${Date.now()}`);
         bob = await register(`pwvis_bob_${Date.now() + 1}`);
 
+        // PW-4: the global pool is served by a SYSTEM worker with a registry
+        // credential (admin-issued) — never by an uncredentialed beacon.
+        const sysCreated = await workerRepo.createSystemWorker({
+            name: `pwvis-sys-${Date.now()}`,
+            workerType: 'audio',
+        });
+        systemWorker = sysCreated.worker;
+        systemToken = sysCreated.token;
+        await workerAuth.mirrorPut(redis, {
+            ...systemWorker,
+            token_hash: workerRepo.parseToken(systemToken).secretHash,
+        });
+
         // User A creates a Private Audio Worker (management API).
         const cw = await fetch(`${base}/api/v1/workers`, {
             method: 'POST',
@@ -426,11 +460,11 @@ describe('Worker visibility — /worker/counts acceptance (A vs B)', () => {
         }
     });
 
-    it('a system worker online counts for everyone (global pool)', async () => {
+    it('a SYSTEM-credentialed worker online counts for everyone (global pool)', async () => {
         const beacon = await fetch(`${hubBase}/beacon`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: 'gpu-system-1', type: 'audio', protocol_version: PROTOCOL_VERSION }),
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${systemToken}` },
+            body: JSON.stringify({ protocol_version: PROTOCOL_VERSION, gpu: 'A100', vram: '40' }),
         });
         expect(beacon.status).to.equal(200);
 
@@ -440,6 +474,18 @@ describe('Worker visibility — /worker/counts acceptance (A vs B)', () => {
         for (const c of [a, b, anon]) {
             expect(c.audio).to.equal(1);
         }
+    });
+
+    it('PW-4: an UNcredentialed beacon is rejected and never becomes capacity', async () => {
+        const beacon = await fetch(`${hubBase}/beacon`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: 'rogue-gpu', type: 'audio', protocol_version: PROTOCOL_VERSION }),
+        });
+        expect(beacon.status).to.equal(401);
+        // Global capacity unchanged — the rogue worker counted nowhere.
+        const anon = await getCounts(null);
+        expect(anon.audio).to.equal(1);
     });
 
     it('User A private worker ONLINE — visible to A only, never in global count', async () => {
@@ -568,8 +614,8 @@ describe('Worker visibility — workspace-aware mode detection', () => {
     });
 
     it('a system worker serves every book regardless of workspace', async () => {
-        await writeHeartbeat(redis, 'image', 'sys-img', {});
-        await writeHeartbeat(redis, 'video', 'sys-vid', {});
+        await writeHeartbeat(redis, 'image', 'sys-img', { mode: 'system' });
+        await writeHeartbeat(redis, 'video', 'sys-vid', { mode: 'system' });
         expect(await detectAvailableMode(redis, BOOK_A)).to.equal('full');
         expect(await detectAvailableMode(redis, BOOK_B)).to.equal('full');
     });

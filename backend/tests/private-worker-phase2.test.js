@@ -75,13 +75,13 @@ function makeToken(workerId) {
     return { token, hash };
 }
 
-async function seedWorker(redis, { workerId, workspaceId, workerType }) {
+async function seedWorker(redis, { workerId, workspaceId, workerType, mode = 'private' }) {
     const { token, hash } = makeToken(workerId);
     await redis.hset(WORKER_AUTH_MIRROR_KEY, hash, JSON.stringify({
         worker_id: workerId,
-        workspace_id: workspaceId,
+        workspace_id: mode === 'system' ? null : workspaceId,
         worker_type: workerType,
-        mode: 'private',
+        mode,
         name: 'test-worker',
     }));
     return token;
@@ -219,12 +219,15 @@ describe('Private worker Phase 2 — GPU hub ownership boundary', () => {
             expect(b.status).to.equal(401);
         });
 
-        it('keeps the legacy system lane open for requests WITHOUT a credential', async () => {
+        it('PW-4 FAIL CLOSED: rejects requests WITHOUT a credential — there is no legacy lane', async () => {
             const b = await beacon(h.base, null, { id: 'system-1', type: 'audio' });
-            expect(b.status).to.equal(200);
+            expect(b.status).to.equal(401);
+            expect((await b.json()).error).to.equal('worker_authentication_failed');
             const n = await nextTask(h.base, null, { worker: 'system-1', type: 'audio' });
-            expect(n.status).to.equal(200);
-            expect((await n.json()).task).to.equal(null);
+            expect(n.status).to.equal(401);
+            // No registration, no heartbeat — the uncredentialed worker
+            // became NOTHING, never SYSTEM.
+            expect(await h.redis.hget('animastor:gpu-hub:workers', 'system-1')).to.equal(null);
         });
 
         it('derives beacon identity from the token — body id/type are ignored', async () => {
@@ -301,14 +304,31 @@ describe('Private worker Phase 2 — GPU hub ownership boundary', () => {
             expect((await res.json()).error).to.equal('worker_type_mismatch');
         });
 
-        it('an uncredentialed worker pops ONLY the system pool', async () => {
-            await beacon(h.base, null, { id: 'system-1', type: 'audio' });
+        it('a SYSTEM-credentialed worker pops ONLY the system pool (never workspace queues)', async () => {
+            const SYS_W = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+            const sysToken = await seedWorker(h.redis, { workerId: SYS_W, workerType: 'audio', mode: 'system' });
+            await beacon(h.base, sysToken, {});
             await postTask(h.base, 'hub-key', makeTask({ workspace_id: WS_A }));
             await postTask(h.base, 'hub-key', makeTask({ job_id: 'bookA_ch1_sc2_0001:audio', dispatch_id: 'd-sys' }));
 
-            const res = await nextTask(h.base, null, { worker: 'system-1', type: 'audio' });
+            const res = await nextTask(h.base, sysToken, { type: 'audio' });
             const body = await res.json();
             expect(body.task.job_id).to.equal('bookA_ch1_sc2_0001:audio');
+            expect(body.task.workspace_id).to.equal(null);
+            expect(await h.redis.llen(`animastor:queue:audio:ws:${WS_A}`)).to.equal(1);
+        });
+
+        it('a SHARE-credentialed worker serves the community/system pool too', async () => {
+            const SHARE_W = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+            const shareToken = await seedWorker(h.redis, { workerId: SHARE_W, workspaceId: WS_B, workerType: 'audio', mode: 'share' });
+            await beacon(h.base, shareToken, {});
+            await postTask(h.base, 'hub-key', makeTask({ workspace_id: WS_A }));
+            await postTask(h.base, 'hub-key', makeTask({ job_id: 'bookA_ch1_sc3_0001:audio', dispatch_id: 'd-sys2' }));
+
+            const res = await nextTask(h.base, shareToken, { type: 'audio' });
+            const body = await res.json();
+            // Share worker gets the workspace-less pool job, never WS_A's private one.
+            expect(body.task.job_id).to.equal('bookA_ch1_sc3_0001:audio');
             expect(body.task.workspace_id).to.equal(null);
             expect(await h.redis.llen(`animastor:queue:audio:ws:${WS_A}`)).to.equal(1);
         });
@@ -373,13 +393,15 @@ describe('Private worker Phase 2 — GPU hub ownership boundary', () => {
             expect(res.status).to.equal(403);
         });
 
-        it('an uncredentialed submitter cannot complete a workspace job (403)', async () => {
+        it('PW-4 FAIL CLOSED: an uncredentialed submitter is rejected (401, never a claimer)', async () => {
             const res = await fetch(`${h.base}/task/result`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(resultBody()),
             });
-            expect(res.status).to.equal(403);
+            expect(res.status).to.equal(401);
+            expect((await res.json()).error).to.equal('worker_authentication_failed');
+            expect(await h.redis.hget('animastor:running', claimedJob.job_id)).to.not.equal(null);
         });
 
         it('a wrong dispatch_id is rejected (409) even from the claimer', async () => {
@@ -433,16 +455,19 @@ describe('Private worker Phase 2 — GPU hub ownership boundary', () => {
             expect(await h.redis.hget('animastor:running', claimedJob.job_id)).to.equal(null);
         });
 
-        it('system-lane claim can be completed without a credential (backward compat)', async () => {
-            await beacon(h.base, null, { id: 'system-1', type: 'audio' });
+        it('a SYSTEM-credentialed worker can claim and complete a system-pool job', async () => {
+            const SYS_W = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+            const sysToken = await seedWorker(h.redis, { workerId: SYS_W, workerType: 'audio', mode: 'system' });
+            await beacon(h.base, sysToken, {});
             await postTask(h.base, 'hub-key', makeTask({ job_id: 'bookA_ch1_sc9_0001:audio', dispatch_id: 'd-sys9' }));
-            const res = await nextTask(h.base, null, { worker: 'system-1', type: 'audio' });
+            const res = await nextTask(h.base, sysToken, { type: 'audio' });
             const sysJob = (await res.json()).task;
             expect(sysJob).to.exist;
+            expect(sysJob.workspace_id).to.equal(null);
 
             const done = await fetch(`${h.base}/task/result`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: authHeaders(sysToken),
                 body: JSON.stringify({
                     job_id: sysJob.job_id,
                     build_id: sysJob.build_id,
