@@ -8,6 +8,7 @@
   <title>Animastor — Animated storytelling from text</title>
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
   <script>
     (function () {
       try {
@@ -30,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
+<body class="landing">
 
   <header class="header">
     <div class="site header__inner">
@@ -54,8 +55,12 @@
   <main class="site">
 
     <section class="hero">
+      <div class="hero__logo">
+        <img class="hero__logo-img" src="/logo.png" alt="Animastor logo">
+        <span class="hero__brand-name">Animastor</span>
+      </div>
       <span class="beta-badge">Experimental Beta — currently in development</span>
-      <h1 class="hero__title">Animastor</h1>
+      <h1 class="sr-only">Animastor</h1>
       <p class="hero__tagline">Turn written stories into animated visual books — with audio, scenes, and a player.</p>
       <div class="hero__actions">
         <a class="btn" href="https://app.animastor.in/">Open App</a>

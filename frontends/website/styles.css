@@ -186,6 +186,54 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
   display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap;
 }
 
+/* ── Screen-reader-only utility ── */
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
+
+/* ── Landing page: central hero branding ── */
+body.landing .hero__logo {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 1rem; margin-bottom: 2rem;
+}
+body.landing .hero__logo-img {
+  width: 8rem; height: 8rem;
+  border-radius: var(--radius-md);
+  object-fit: cover;
+  box-shadow: var(--elev-2);
+}
+body.landing .hero__brand-name {
+  color: var(--accent);
+  font-size: 1.75rem; font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+/* ── Landing page: hide compact header branding (kept in HTML for reuse) ── */
+body.landing .header__brand { display: none; }
+body.landing .header__nav {
+  flex: 1 1 auto;
+  justify-content: flex-end;
+}
+
+/* ── Landing page responsive: header ── */
+@media (max-width: 720px) {
+  body.landing .header__nav {
+    gap: 0.15rem;
+  }
+}
+
+/* ── Landing page responsive: hero logo ── */
+@media (max-width: 480px) {
+  body.landing .hero__logo-img {
+    width: 6rem; height: 6rem;
+  }
+  body.landing .hero__brand-name {
+    font-size: 1.375rem;
+  }
+}
+
 /* ── Beta badge / notice ── */
 
 .beta-badge {
@@ -268,6 +316,11 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
     font-size: 0.75rem;
     padding: 0 0.7rem;
     height: 2rem;
+  }
+
+  /* Landing: brand hidden — toggle stays on row 1, nav on row 2 */
+  body.landing .header__nav {
+    border-top: 1px solid var(--outline-2);
   }
 }
 
