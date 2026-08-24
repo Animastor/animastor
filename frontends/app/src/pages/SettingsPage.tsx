@@ -603,6 +603,10 @@ interface ConnectorGrouped { audio?: ConnectorSummary[]; image?: ConnectorSummar
 interface WorkerCounts {
   audio?: number; image?: number; video?: number; vbook?: number;
   active_audio?: number; active_image?: number; active_video?: number; active_vbook?: number;
+  // Caller's OWN private workers (visibility isolation) — reported separately
+  // from the global system/shared pool numbers above.
+  private_audio?: number; private_image?: number; private_video?: number;
+  private_active_audio?: number; private_active_image?: number; private_active_video?: number;
 }
 
 const WORKER_TYPES: { type: WorkerType; label: StrKey }[] = [
@@ -615,6 +619,13 @@ const COUNT_ROWS: { key: WorkerType | 'vbook'; activeKey: 'active_audio' | 'acti
   { key: 'image', activeKey: 'active_image', label: 'layer_image' },
   { key: 'video', activeKey: 'active_video', label: 'layer_video' },
   { key: 'vbook', activeKey: 'active_vbook', label: 'worker_vbook' },
+];
+// The caller's own private workers — a separate block, never mixed into the
+// system/shared rows above (backend contract: private_* fields).
+const PRIVATE_COUNT_ROWS: { key: 'private_audio' | 'private_image' | 'private_video'; activeKey: 'private_active_audio' | 'private_active_image' | 'private_active_video'; label: StrKey }[] = [
+  { key: 'private_audio', activeKey: 'private_active_audio', label: 'layer_audio' },
+  { key: 'private_image', activeKey: 'private_active_image', label: 'layer_image' },
+  { key: 'private_video', activeKey: 'private_active_video', label: 'layer_video' },
 ];
 
 function WorkerSection() {
@@ -732,12 +743,20 @@ function WorkerSection() {
         <div class="card card--counts">
           <h3 class="card__title">{t('worker_settings_workers_title')}</h3>
           {counts ? (
-            COUNT_ROWS.map(({ key, activeKey, label }) => (
-              <div class="card__row card__row--between" key={key}>
-                <span>{t(label)}</span>
-                <span class="card__value">{tf('worker_counts_fmt', counts[key] ?? 0, counts[activeKey] ?? 0)}</span>
-              </div>
-            ))
+            <>
+              {COUNT_ROWS.map(({ key, activeKey, label }) => (
+                <div class="card__row card__row--between" key={key}>
+                  <span>{t(label)}</span>
+                  <span class="card__value">{tf('worker_counts_fmt', counts[key] ?? 0, counts[activeKey] ?? 0)}</span>
+                </div>
+              ))}
+              {PRIVATE_COUNT_ROWS.filter(({ key }) => (counts[key] ?? 0) > 0).map(({ key, activeKey, label }) => (
+                <div class="card__row card__row--between" key={key}>
+                  <span>{t('worker_counts_my_private')} · {t(label)}</span>
+                  <span class="card__value">{tf('worker_counts_fmt', counts[key] ?? 0, counts[activeKey] ?? 0)}</span>
+                </div>
+              ))}
+            </>
           ) : error ? (
             <p class="card__hint">—</p>
           ) : (

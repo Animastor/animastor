@@ -549,6 +549,9 @@ module.exports = function(app, redis, deps) {
     // liveness now flows through the token-authenticated hub path; the
     // read-only status/counts endpoints below remain.
 
+    // VISIBILITY: global operational view — SYSTEM/shared pool only. Private
+    // workers of any workspace never appear in these numbers (worker-health
+    // classifies heartbeats by the hub-authored scope fields).
     app.get('/api/v1/worker/status', async (req, res) => {
         try {
             const workerHealth = require('../runtime/worker-health');
@@ -562,14 +565,18 @@ module.exports = function(app, redis, deps) {
     app.get('/api/v1/worker/counts', async (req, res) => {
         try {
             const workerHealth = require('../runtime/worker-health');
-            const status = await workerHealth.getStatus(redis);
 
-            const [busyAudio, busyImage, busyVideo, activeCount] = await Promise.all([
-                workerHealth.getBusyCount(redis, 'audio'),
-                workerHealth.getBusyCount(redis, 'image'),
-                workerHealth.getBusyCount(redis, 'video'),
-                redis.scard('animastor:active-scenes').catch(() => 0),
-            ]);
+            // VISIBILITY: availability = liveness ∧ scope. The global fields
+            // carry the SYSTEM/shared pool ONLY; the caller's OWN private
+            // workers are reported separately (private_*) and are never mixed
+            // into the global numbers. Guests/anonymous get zeros — workers
+            // can only be created by registered users.
+            const workspaceId = (req.user && req.workspace && req.workspace.id)
+                ? req.workspace.id
+                : null;
+            const avail = await workerHealth.getAvailability(redis, workspaceId);
+
+            const activeCount = await redis.scard('animastor:active-scenes').catch(() => 0);
 
             // Only pulse when worker reports actual busy status via heartbeat (current_job_id).
             // Dispatch-lease keys are NOT a proxy for active work — they exist from dispatch
@@ -577,9 +584,9 @@ module.exports = function(app, redis, deps) {
             // Using leases would cause false toggle pulse whenever a heartbeat expires
             // during a long-running GPU job (heartbeat TTL=30s, image gen can be 15 min).
             // GPU hub refreshes heartbeat every 10s for running tasks, keeping busy accurate.
-            const activeAudio = status.audio > 0 ? busyAudio : 0;
-            const activeImage = status.image > 0 ? busyImage : 0;
-            const activeVideo = status.video > 0 ? busyVideo : 0;
+            const activeAudio = avail.system.audio > 0 ? avail.system_busy.audio : 0;
+            const activeImage = avail.system.image > 0 ? avail.system_busy.image : 0;
+            const activeVideo = avail.system.video > 0 ? avail.system_busy.video : 0;
 
             // VBook agent: check if the AI API is alive (key set + responds).
             // vbook = number of available AI agents (1 if alive, 0 if not).
@@ -607,18 +614,33 @@ module.exports = function(app, redis, deps) {
             }
 
             res.json({
-                audio: status.audio || 0,
-                image: status.image || 0,
-                video: status.video || 0,
+                // SYSTEM/shared pool — what every caller may use. A foreign
+                // workspace's private worker is never part of these numbers.
+                audio: avail.system.audio || 0,
+                image: avail.system.image || 0,
+                video: avail.system.video || 0,
                 vbook: vbookCount,
                 active_audio: activeAudio,
                 active_image: activeImage,
                 active_video: activeVideo,
                 active_vbook: activeVBook,
                 active_scenes: activeCount || 0,
+                // The caller's OWN private workers (registered users only).
+                private_audio: avail.private.audio || 0,
+                private_image: avail.private.image || 0,
+                private_video: avail.private.video || 0,
+                private_active_audio: avail.private_busy.audio || 0,
+                private_active_image: avail.private_busy.image || 0,
+                private_active_video: avail.private_busy.video || 0,
             });
         } catch (err) {
-            res.json({ audio: 0, image: 0, video: 0, active_audio: 0, active_image: 0, active_video: 0, vbook: 0, active_vbook: 0 });
+            res.json({
+                audio: 0, image: 0, video: 0,
+                active_audio: 0, active_image: 0, active_video: 0,
+                vbook: 0, active_vbook: 0,
+                private_audio: 0, private_image: 0, private_video: 0,
+                private_active_audio: 0, private_active_image: 0, private_active_video: 0,
+            });
         }
     });
 

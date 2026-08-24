@@ -491,6 +491,15 @@ export interface WorkerCounts {
   active_video: number;
   active_vbook: number;
   active_scenes: number;
+  // The caller's OWN private workers (visibility isolation — Experimental
+  // Beta). Never mixed into the global audio/image/video numbers: those carry
+  // the system/shared pool only. Absent/0 for guests and anonymous callers.
+  private_audio?: number;
+  private_image?: number;
+  private_video?: number;
+  private_active_audio?: number;
+  private_active_image?: number;
+  private_active_video?: number;
 }
 
 // GET /book/{id}/progress-panel — ProgressPanelResponse/ProgressTask

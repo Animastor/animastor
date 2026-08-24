@@ -119,6 +119,7 @@ const dict = {
     // Worker counts (web-дополнение)
     worker_settings_workers_title: 'Workers',
     worker_counts_fmt: '{0} доступно · {1} активно',
+    worker_counts_my_private: 'Мой приватный',
     worker_vbook: 'VBook',
     // Private Worker Management (Experimental Beta — Phase 3)
     worker_mgmt_title: 'Приватные воркеры',
@@ -640,6 +641,7 @@ const dict = {
     // Worker counts (web-only addition)
     worker_settings_workers_title: 'Workers',
     worker_counts_fmt: '{0} available · {1} active',
+    worker_counts_my_private: 'My private',
     worker_vbook: 'VBook',
     // Private Worker Management (Experimental Beta — Phase 3)
     worker_mgmt_title: 'Private Workers',

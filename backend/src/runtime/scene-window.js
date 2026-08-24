@@ -368,7 +368,15 @@ async function isWindowComplete(redis, bookId) {
     const scenes = book.collectScenes(bookData);
 
     const workerHealth = require('./worker-health');
-    const hasVideo = await workerHealth.isAvailable(redis, 'video');
+    // VISIBILITY: workspace-aware availability — a foreign workspace's private
+    // video worker must not make this book's window wait for video that will
+    // never be served for it (and the owner's private worker DOES count).
+    let bookWorkspaceId = null;
+    try {
+        const gpuDispatcher = require('./gpu-dispatcher');
+        bookWorkspaceId = await gpuDispatcher.resolveWorkspaceForBook(bookId);
+    } catch (_) { /* system pool availability only */ }
+    const hasVideo = await workerHealth.isAvailable(redis, 'video', bookWorkspaceId);
 
     // Read layer config so we know which layers are actually enabled.
     // If a layer is disabled, we don't require it to be 'ready'.

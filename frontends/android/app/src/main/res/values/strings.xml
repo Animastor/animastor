@@ -487,6 +487,7 @@
     <string name="worker_settings_default">Default</string>
     <string name="worker_settings_workers_title">Workers</string>
     <string name="worker_counts_fmt">%1$d available · %2$d active</string>
+    <string name="worker_counts_my_private">My private</string>
 
     <!-- Unified worker settings screen title (web parity: worker_settings_title) -->
     <string name="worker_settings_title">Generation Settings</string>

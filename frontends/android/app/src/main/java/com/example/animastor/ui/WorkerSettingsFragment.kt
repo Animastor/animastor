@@ -11,6 +11,7 @@ import com.example.animastor.databinding.FragmentWorkerSettingsBinding
 import com.example.animastor.network.RetrofitClient
 import com.example.animastor.repository.LayerConfigUpdate
 import com.example.animastor.repository.UpdateProfileRequest
+import com.example.animastor.repository.WorkerCounts
 import kotlinx.coroutines.launch
 
 /**
@@ -116,12 +117,60 @@ class WorkerSettingsFragment : Fragment(R.layout.fragment_worker_settings) {
                 b.workerImageCount.text = getString(R.string.worker_counts_fmt, counts.image, counts.active_image)
                 b.workerVideoCount.text = getString(R.string.worker_counts_fmt, counts.video, counts.active_video)
                 b.workerVbookCount.text = getString(R.string.worker_counts_fmt, counts.vbook, counts.active_vbook)
+                appendPrivateCountRows(b, counts)
             } catch (_: Exception) {
                 b.workerAudioCount.text = "\u2014"
                 b.workerImageCount.text = "\u2014"
                 b.workerVideoCount.text = "\u2014"
                 b.workerVbookCount.text = "\u2014"
             }
+        }
+    }
+
+    /**
+     * Appends the caller's OWN private worker rows (private_* fields) to the
+     * Workers panel — kept separate from the system/shared rows above them
+     * (visibility isolation: a private worker never inflates the global
+     * numbers). Hidden entirely when the caller has no private workers.
+     */
+    private fun appendPrivateCountRows(b: FragmentWorkerSettingsBinding, counts: WorkerCounts) {
+        val rows = listOf(
+            Triple(R.string.layer_audio, counts.private_audio, counts.private_active_audio),
+            Triple(R.string.layer_image, counts.private_image, counts.private_active_image),
+            Triple(R.string.layer_video, counts.private_video, counts.private_active_video),
+        ).filter { it.second > 0 }
+        if (rows.isEmpty()) return
+
+        val ctx = b.workerCountsContainer.context
+        val dp = { v: Int -> (v * ctx.resources.displayMetrics.density).toInt() }
+        for ((labelRes, total, active) in rows) {
+            val row = android.widget.LinearLayout(ctx).apply {
+                orientation = android.widget.LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = dp(12) }
+            }
+            val label = android.widget.TextView(ctx).apply {
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                )
+                text = getString(R.string.worker_counts_my_private) + " \u00b7 " + getString(labelRes)
+                textSize = 14f
+            }
+            val value = android.widget.TextView(ctx).apply {
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { marginStart = dp(12) }
+                text = getString(R.string.worker_counts_fmt, total, active)
+                textSize = 14f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            }
+            row.addView(label)
+            row.addView(value)
+            b.workerCountsContainer.addView(row)
         }
     }
 

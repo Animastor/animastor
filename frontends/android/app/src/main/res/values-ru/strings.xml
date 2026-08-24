@@ -465,6 +465,7 @@
     <string name="worker_settings_default">По умолчанию</string>
     <string name="worker_settings_workers_title">Workers</string>
     <string name="worker_counts_fmt">%1$d доступно · %2$d активно</string>
+    <string name="worker_counts_my_private">Мой приватный</string>
 
     <!-- Unified worker settings screen title (web parity: worker_settings_title) -->
     <string name="worker_settings_title">Настройки генерации контента</string>

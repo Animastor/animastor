@@ -135,8 +135,17 @@ module.exports = function(redis) {
 
     async function detectAvailableMode(redis, bookId) {
         const workerHealth = require('../runtime/worker-health');
-        const hasImage = await workerHealth.isAvailable(redis, 'image');
-        const hasVideo = await workerHealth.isAvailable(redis, 'video');
+        // VISIBILITY: availability is workspace-aware. The book's own workspace
+        // private workers count for it; a FOREIGN workspace's private worker
+        // must NOT make this book look servicable (ONLINE ≠ available to all).
+        // Resolution failure degrades to system-pool availability only.
+        let workspaceId = null;
+        try {
+            const gpuDispatcher = require('../runtime/gpu-dispatcher');
+            workspaceId = await gpuDispatcher.resolveWorkspaceForBook(bookId);
+        } catch (_) { /* system pool availability only */ }
+        const hasImage = await workerHealth.isAvailable(redis, 'image', workspaceId);
+        const hasVideo = await workerHealth.isAvailable(redis, 'video', workspaceId);
 
         let mode;
         if (hasImage && hasVideo) mode = 'full';

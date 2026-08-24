@@ -319,6 +319,11 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
               ts: Date.now(),
               current_job_id: job_id,
               current_dispatch_id: data.dispatch_id || null,
+              // VISIBILITY: scope fields — the backend counts a heartbeat as
+              // globally available ONLY when it carries no workspace (system
+              // pool). A private worker's heartbeat stays workspace-scoped.
+              workspace_id: data.workspace_id || null,
+              mode: data.worker_mode || null,
               version: data.worker_version || null,
               image_tag: data.worker_image_tag || null,
               protocol_version: data.worker_protocol_version || null
@@ -524,13 +529,19 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     // Primary registry: Redis (survives restart, cluster-aware)
     await setGpuInRedis(workerId, data);
 
-    // Also write heartbeat for backend worker count panel
+    // Also write heartbeat for backend worker count panel.
+    // VISIBILITY: the payload carries the token-derived scope (workspace_id +
+    // mode) so the backend can separate SYSTEM capacity from a workspace's
+    // PRIVATE workers. Legacy (uncredentialed) beacons carry no scope → they
+    // count as the system/operator pool, exactly as before.
     try {
       const key = `animastor:worker:heartbeat:${workerType}:${workerId}`;
       const payload = JSON.stringify({
         type: workerType,
         worker_id: workerId,
         ts: Date.now(),
+        workspace_id: auth ? auth.workspace_id : null,
+        mode: auth ? (auth.mode || null) : null,
         version: version || null,
         image_tag: image_tag || null,
         protocol_version: protocol_version || null
@@ -730,6 +741,9 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
         worker: workerId,
         // PW-2: claim binds the job to the authenticated worker + workspace.
         workspace_id: auth ? auth.workspace_id : null,
+        // VISIBILITY: kept so heartbeat refreshes (sweep/result/error) can
+        // re-stamp the scope without re-authenticating.
+        worker_mode: auth ? (auth.mode || null) : null,
         job_type: task.job_type,
         params: task.params,
         assets: task.assets || null,
@@ -751,7 +765,7 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
 
     console.log(`🚀 ${task.job_id} → ${workerId} (${task.job_type}) build:${task.build_id || "none"} timeout_ms:${task.timeout_ms || "(default)"} ws:${auth ? auth.workspace_id : "(system)"}`)
 
-    // Mark worker as busy in heartbeat
+    // Mark worker as busy in heartbeat (scope fields per VISIBILITY note).
     try {
       const hbKey = `animastor:worker:heartbeat:${task.job_type}:${workerId}`;
       const hbPayload = JSON.stringify({
@@ -760,6 +774,8 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
         ts: Date.now(),
         current_job_id: task.job_id,
         current_dispatch_id: task.dispatch_id,
+        workspace_id: auth ? auth.workspace_id : null,
+        mode: auth ? (auth.mode || null) : null,
         version: gpu.version || null,
         image_tag: gpu.image_tag || null,
         protocol_version: gpu.protocol_version || null
@@ -850,7 +866,7 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
       await redis.lrem("animastor:processing", 1, runningInfo.task_raw).catch(() => {})
     }
 
-    // Clear busy flag from worker heartbeat
+    // Clear busy flag from worker heartbeat (scope fields per VISIBILITY note).
     if (runningInfo.worker && runningInfo.job_type) {
       try {
         const hbKey = `animastor:worker:heartbeat:${runningInfo.job_type}:${runningInfo.worker}`;
@@ -860,6 +876,8 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
           ts: Date.now(),
           current_job_id: null,
           current_dispatch_id: null,
+          workspace_id: runningInfo.workspace_id || null,
+          mode: runningInfo.worker_mode || null,
           version: runningInfo.worker_version || null,
           image_tag: runningInfo.worker_image_tag || null,
           protocol_version: runningInfo.worker_protocol_version || null
@@ -962,7 +980,7 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     // Освобождаем dedup очереди для будущего re-dispatch.
     await redis.del(jobDedupKey(job_id, dispatch_id)).catch(() => {})
 
-    // Clear busy flag from worker heartbeat
+    // Clear busy flag from worker heartbeat (scope fields per VISIBILITY note).
     if (runningInfo.worker && runningInfo.job_type) {
       try {
         const hbKey = `animastor:worker:heartbeat:${runningInfo.job_type}:${runningInfo.worker}`;
@@ -972,6 +990,8 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
           ts: Date.now(),
           current_job_id: null,
           current_dispatch_id: null,
+          workspace_id: runningInfo.workspace_id || null,
+          mode: runningInfo.worker_mode || null,
           version: runningInfo.worker_version || null,
           image_tag: runningInfo.worker_image_tag || null,
           protocol_version: runningInfo.worker_protocol_version || null

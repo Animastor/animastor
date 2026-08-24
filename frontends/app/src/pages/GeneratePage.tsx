@@ -171,8 +171,11 @@ export function GeneratePage(props: { path?: string }) {
   type IconState = 'error' | 'active' | 'normal' | 'off';
   function sectionState(type: WorkerType): { total: number; active: number; iconState: IconState; enabled: boolean } {
     const c = counts;
-    const total = c ? (type === 'vbook' ? c.vbook : c[type]) : 0;
-    const active = c ? (type === 'vbook' ? c.active_vbook : c[`active_${type}`]) : 0;
+    // What THIS user can use: system/shared pool + their own private workers
+    // (the backend reports them separately; foreign private workers are in
+    // neither bucket — visibility isolation).
+    const total = c ? (type === 'vbook' ? c.vbook : c[type] + (c[`private_${type}`] ?? 0)) : 0;
+    const active = c ? (type === 'vbook' ? c.active_vbook : c[`active_${type}`] + (c[`private_active_${type}`] ?? 0)) : 0;
     const enabled = type === 'vbook' ? vbookEnabled.value
       : type === 'audio' ? audioEnabled.value
       : type === 'image' ? imageEnabled.value
