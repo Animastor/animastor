@@ -3,6 +3,7 @@
 // used for auth. The store only mirrors /auth/me.
 import { signal } from '@preact/signals';
 import { getJson, postJson } from '../api/client';
+import { stashBookSessionForUser, restoreStashedBookSessionForUser } from './generateStore';
 
 export interface AuthUser { id: string; username: string; display_name?: string | null; role?: string; }
 export interface AuthWorkspace { id: string; name: string; type: string; }
@@ -31,6 +32,9 @@ export async function login(username: string, password: string): Promise<AuthMe>
   try {
     const me = await postJson<AuthMe>('/auth/login', { username, password });
     authMe.value = me;
+    // Current book session re-attach: if this user had a book open when they
+    // last logged out, bring it back now (validated by restoreBookSession()).
+    if (me?.user?.id) restoreStashedBookSessionForUser(me.user.id);
     return me;
   } catch (e) {
     authError.value = e instanceof Error ? e.message : 'login failed';
@@ -57,12 +61,18 @@ export async function register(username: string, password: string, email?: strin
 
 export async function logout(): Promise<void> {
   authError.value = null;
+  // Capture the identity BEFORE clearing it: the open book session is stashed
+  // under the user's own key so the same user gets their book back on the
+  // next login (the book itself stays owned by them in the DB).
+  const userId = authMe.value.user?.id ?? null;
   try {
     await postJson<unknown>('/auth/logout', {});
   } catch { /* logout is idempotent server-side; cookie clear best-effort */ }
+  // Current book session isolation: the live session (localStorage
+  // 'animastor:currentBook' + open-book signals) must NOT survive into the
+  // anonymous/guest context — otherwise a browser refresh would re-open the
+  // previous user's book. Ownership is unchanged; the session is merely
+  // stashed per-user by stashBookSessionForUser().
+  stashBookSessionForUser(userId);
   authMe.value = { authenticated: false, user: null, workspace: null };
-  // NOTE: localStorage 'animastor:currentBook' is intentionally NOT cleared
-  // here — it preserves the user's last-opened book so restoreBookSession()
-  // can reopen it on next login. The backend enforces workspace ownership:
-  // anonymous visitors cannot access workspace-owned books.
 }

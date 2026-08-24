@@ -138,6 +138,40 @@ function clearBookSession(): void {
   try { localStorage.removeItem(BOOK_STORE_KEY); } catch { /* ignore */ }
 }
 
+// ── Per-user session stash (logout/login isolation) ──
+// The live session belongs to whoever is currently viewing. Logging out must
+// never leak the previous authenticated user's open book into the anonymous /
+// guest context, so the session is stashed under a user-scoped key and the
+// live key is cleared. The stash lets the SAME user get their book back on
+// next login (book ownership in the DB is untouched).
+function userStashKey(userId: string): string {
+  return `${BOOK_STORE_KEY}:user:${userId}`;
+}
+
+/** Logout: stash the current book session for `userId` and clear the live
+ *  session + open-book signals. No-op stash when nothing is open. */
+export function stashBookSessionForUser(userId: string | null | undefined): void {
+  const raw = (() => { try { return localStorage.getItem(BOOK_STORE_KEY); } catch { return null; } })();
+  if (userId) {
+    try {
+      if (raw) localStorage.setItem(userStashKey(userId), raw);
+      else localStorage.removeItem(userStashKey(userId));
+    } catch { /* storage unavailable */ }
+  }
+  loadBook('', '');
+}
+
+/** Login: re-attach the book session this user had open before their last
+ *  logout, unless a live session already exists (never clobber a newer one). */
+export function restoreStashedBookSessionForUser(userId: string | null | undefined): void {
+  if (!userId) return;
+  try {
+    if (localStorage.getItem(BOOK_STORE_KEY)) return;
+    const raw = localStorage.getItem(userStashKey(userId));
+    if (raw) localStorage.setItem(BOOK_STORE_KEY, raw);
+  } catch { /* storage unavailable */ }
+}
+
 export function loadBook(id: string, build: string = ''): void {
   bookId.value = id;
   buildId.value = build;
