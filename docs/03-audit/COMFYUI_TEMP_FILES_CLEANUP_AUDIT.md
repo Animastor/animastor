@@ -6,6 +6,18 @@
 >
 > **Read-only**: ничего не исправлялось. Основан на чтении исходного кода.
 > Дата: 2026-08-24. Ветка: `master` (`90b9d22`).
+>
+> ## Статус реализации
+>
+> Аудит реализован в двух коммитах:
+> - **`b860162`** — per-job точечный cleanup (`cleanupJobArtifacts`, try/finally):
+>   input+output удаляются после успешной доставки результата.
+> - **`e874761`** — crash-safe recovery через worker-local journal
+>   (`worker-cleanup-journal.cjs`): lifecycle CREATED→GENERATED→DELIVERED→CLEANED
+>   сохраняется на persistent-диске worker'а; при restart `recoverCleanupJournal()`
+>   дочищает файлы job, результат которой уже доставлен в hub (delivered), и
+>   убирает input-файлы недоставленных job (output сохраняется). Детали — в
+>   `COMFYUI_CLEANUP_RECOVERY_AUDIT.md` и самом коде.
 
 ---
 

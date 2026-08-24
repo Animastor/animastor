@@ -8,6 +8,24 @@
 > Дата: 2026-08-24. Ветка: `master` (`b860162`).
 > Связанный документ: `COMFYUI_TEMP_FILES_CLEANUP_AUDIT.md` (первый аудит),
 > реализация точечного cleanup — коммит `b860162`.
+>
+> ## Статус реализации
+>
+> Рекомендация из этого аудита **внедрена** в коммите **`e874761`**:
+> - `worker/worker/worker-cleanup-journal.cjs` — worker-local persistent journal
+>   (одна запись на job, только конкретные absolute paths, атомарные записи
+>   tmp→fsync→rename). API: `createJob` / `addInputFile` / `setOutputAndGenerated`
+>   / `setDelivered` / `removeJob` / `recoverCleanupJournal`.
+> - `worker.cjs`: journal создаётся ДО первого input-файла; каждый input-путь
+>   фиксируется; output+`generated` — после `waitResult`; `delivered` — только
+>   после HTTP 200 от hub `/task/result`; journal удаляется только при полном
+>   успехе cleanup (частичный cleanup держит запись для следующего recovery).
+> - Startup: `recoverCleanupJournal()` вызывается после `waitForComfyUI()`,
+>   до `workerLoop()`. delivered → input+output; created/generated → только
+>   input (output без proof DELIVERED не трогается).
+> - Backend orchestration / Redis / PG не менялись. Idempotent: ENOENT = success.
+> - Тесты: `backend/tests/worker-cleanup-journal.test.js` (16 сценариев) + базовые
+>   cleanup-тесты `worker-cleanup.test.js`.
 
 ---
 

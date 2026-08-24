@@ -40,6 +40,31 @@ All notable changes to Animastor are documented here.
     `confirm_share=true`; `mode='system'` is rejected (admin-only path).
   - 18 new tests + 4 rewritten legacy-lane tests (134/134 pass).
 
+- **Worker: точечный cleanup временных файлов ComfyUI** (`b860162`) — после
+  каждой job worker удаляет только свои temp-файлы: все input reference images
+  (image single + video multi-image) и один output (png/mp3/mp4). Output
+  удаляется только после успешного `downloadResult()` + `sendResult()`
+  (HTTP 200); при ошибке доставки output сохраняется. `safeUnlink`
+  идемпотентен (ENOENT = success), ошибка удаления одного файла не останавливает
+  остальные. Модуль `worker/worker/worker-cleanup.cjs`. Тесты:
+  `backend/tests/worker-cleanup.test.js`.
+
+- **Worker: crash-safe recovery cleanup** (`e874761`) — worker-local persistent
+  journal `worker/worker/worker-cleanup-journal.cjs` фиксирует lifecycle
+  CREATED→GENERATED→DELIVERED→CLEANED (атомарные записи tmp→fsync→rename).
+  Если worker упал после доставки результата в hub, но до cleanup, при restart
+  `recoverCleanupJournal()` (до `workerLoop()`) дочищает файлы: delivered →
+  input+output; created/generated → только input (output без proof DELIVERED
+  сохраняется). Частичный cleanup держит запись; повреждённый journal
+  пропускается, orphan-файлы без journal не трогаются. Настраивается через
+  `WORKER_JOURNAL_DIR`. Backend/Redis/PG не менялись. Тесты:
+  `backend/tests/worker-cleanup-journal.test.js` (16 сценариев).
+
+- **docs**: аудиты `docs/03-audit/COMFYUI_TEMP_FILES_CLEANUP_AUDIT.md` и
+  `docs/03-audit/COMFYUI_CLEANUP_RECOVERY_AUDIT.md` — полная разведка lifecycle
+  временных файлов ComfyUI и recovery через orchestration state (коммиты
+  `7840a55`, `cca01a2`).
+
 - **Security hardening (urgent)** — `GPU_HUB_API_KEY` is now set in prod
   `.env`. `/gpu/task` and `/gpu/queue/clear` are no longer exposed to the
   internet without authentication.
