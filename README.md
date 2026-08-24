@@ -2,7 +2,7 @@
   <img src="frontends/app/public/logo.png" alt="Animastor" width="128" />
 </p>
 
-# Animastor
+<h1 align="center">Animastor</h1>
 
 <p align="center">
   <strong>AI-powered animated storytelling platform</strong><br/>
