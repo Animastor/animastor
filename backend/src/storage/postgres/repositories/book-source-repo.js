@@ -9,13 +9,18 @@ const { query } = require('../database');
 
 /**
  * Register a new source file → book_id mapping.
+ *
+ * One row per (file_hash, book_id): the same TXT may legitimately map to
+ * several books — dedup is identity-scoped, so every identity that imports
+ * the file gets its OWN book row. Never re-points an existing row at a
+ * different book (the old UNIQUE(file_hash) + ON CONFLICT DO UPDATE did
+ * exactly that and silently stole the dedup reference from the owner).
  */
 async function registerSource(fileHash, fileName, fileSize, bookId, sourceType) {
     const result = await query(
         `INSERT INTO book_source (file_hash, file_name, file_size, book_id, source_type)
          VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (file_hash) DO UPDATE SET
-           book_id = EXCLUDED.book_id,
+         ON CONFLICT (file_hash, book_id) DO UPDATE SET
            file_name = EXCLUDED.file_name,
            file_size = EXCLUDED.file_size
          RETURNING *`,
@@ -37,6 +42,29 @@ async function findByHash(fileHash) {
 }
 
 /**
+ * Find books for a file hash that are OWNED by the given workspace (or have
+ * no owner row yet — self-heal candidates). Books owned by a different
+ * workspace are never returned.
+ *
+ * This is the identity-scoped dedup query: current identity + TXT → owned
+ * book. `workspaceId` is the caller's workspace (user personal, guest
+ * temporary, or the seeded pre-auth default).
+ */
+async function findOwnedByHash(fileHash, workspaceId) {
+    if (!fileHash) return [];
+    const result = await query(
+        `SELECT bs.*, b.workspace_id AS owner_workspace_id
+           FROM book_source bs
+           LEFT JOIN books b ON b.book_id = bs.book_id
+          WHERE bs.file_hash = $1
+            AND (b.workspace_id IS NULL OR b.workspace_id = $2)
+          ORDER BY bs.created_at DESC, bs.id DESC`,
+        [fileHash, workspaceId || null]
+    );
+    return result.rows;
+}
+
+/**
  * Find a source record by book_id.
  */
 async function findByBookId(bookId) {
@@ -46,20 +74,6 @@ async function findByBookId(bookId) {
         [bookId]
     );
     return result.rows[0] || null;
-}
-
-/**
- * Quick check by filesize only (fast pre-filter before SHA256).
- * Does NOT check file_name because Android file picker generates random temp filenames.
- * Returns up to 5 most recent candidates — caller must verify SHA256.
- */
-async function findCandidateBySize(fileSize) {
-    if (!fileSize) return null;
-    const result = await query(
-        `SELECT * FROM book_source WHERE file_size = $1 ORDER BY created_at DESC LIMIT 5`,
-        [fileSize]
-    );
-    return result.rows;  // return all candidates — caller must verify SHA256
 }
 
 /**
@@ -108,8 +122,8 @@ async function deleteByBookId(bookId) {
 module.exports = {
     registerSource,
     findByHash,
+    findOwnedByHash,
     findByBookId,
-    findCandidateBySize,
     listRecent,
     deleteByBookId,
 };

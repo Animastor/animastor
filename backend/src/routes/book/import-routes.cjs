@@ -10,11 +10,14 @@ const { publishProgress } = require('../../services/progress-pubsub.cjs');
 
 // ======================================================
 // FALLBACK DEDUP: scan books dir for lazy books matching file hash
-// Used when book_source PG record was already deleted (e.g. by old bug).
+// Covers books whose book_source row was lost (the old UNIQUE(file_hash)
+// index let a later import re-point the single row at another book).
+// Ownership filtering happens in the caller — this is a pure hash scan.
 // ======================================================
-function findLazyBookByHash(fileHash, booksDir, fileSize) {
+function findLazyBooksByHash(fileHash, booksDir, fileSize) {
+    const found = [];
     try {
-        if (!fs.existsSync(booksDir)) return null;
+        if (!fs.existsSync(booksDir)) return found;
         const entries = fs.readdirSync(booksDir, { withFileTypes: true });
         for (const entry of entries) {
             if (!entry.isDirectory()) continue;
@@ -31,7 +34,7 @@ function findLazyBookByHash(fileHash, booksDir, fileSize) {
                 const sourceBuf = fs.readFileSync(sourcePath);
                 const sourceHash = crypto.createHash('sha256').update(sourceBuf).digest('hex');
                 if (sourceHash === fileHash) {
-                    return entry.name;
+                    found.push(entry.name);
                 }
             } catch (_) {
                 // skip unreadable books
@@ -40,7 +43,7 @@ function findLazyBookByHash(fileHash, booksDir, fileSize) {
     } catch (_) {
         // books dir may not exist
     }
-    return null;
+    return found;
 }
 
 module.exports = function(app, redis, deps) {
@@ -72,11 +75,112 @@ module.exports = function(app, redis, deps) {
     };
 
     // Cross-tenant guards for authenticated imports (see middleware/auth-context):
-    //  - dedup: re-importing the same file returns the existing book (hash-based).
-    //    Cross-workspace dedup is allowed; the book is re-assigned to the caller's workspace.
+    //  - dedup is IDENTITY-SCOPED: current identity + TXT → existing OWNED
+    //    book. A hash match owned by another workspace is never returned —
+    //    the caller gets a fresh book of their own instead.
     //  - importBookAllowed: a bundle re-import must never touch a book owned
     //    by a foreign workspace (bundle book_id is client-controlled).
     const { importBookAllowed, hasIdentity } = require('../../middleware/auth-context');
+    const bookRepo = require('../../storage/postgres/repositories/book-repo');
+
+    // ── Identity-scoped TXT dedup ─────────────────────────────────────────
+    // Candidates come from two indexes:
+    //   1. PG book_source rows for the hash (one row per (hash, book_id));
+    //   2. disk-scan self-heal — covers books whose book_source row was lost
+    //      (the old UNIQUE(file_hash) index let a later import re-point the
+    //      single row at another identity's book).
+    // Every candidate is ownership-checked against the caller's workspace;
+    // unowned candidates are claimed (self-heal). The most-progressed owned
+    // book wins (ACTIVE > BOOTSTRAPPED > RAW_IMPORTED), then the newest — so
+    // a partially-ready book is reused instead of a fresh empty draft.
+    const STATE_PROGRESS = { ACTIVE: 3, BOOTSTRAPPED: 2, RAW_IMPORTED: 1 };
+
+    async function resolveOwnedTxtDedup(req, { fileHash, sourceSize, title, originalFilename, tag }) {
+        // Expired guest workspace: its books are past TTL — start fresh.
+        if (req.guest && req.workspace && req.workspace.status === 'expired') return null;
+
+        let wsId = hasIdentity(req) ? (req.workspace?.id || null) : null;
+        if (!wsId) {
+            // Pre-auth: books created without identity attach to the seeded
+            // default workspace — dedup is scoped to that same workspace.
+            try { wsId = (await workspaceOwnership.defaultWorkspace())?.id || null; } catch (_) { wsId = null; }
+        }
+        if (!wsId) return null; // no workspace to scope against — create fresh
+
+        const candidates = new Set(); // owned (or claimable) book ids
+
+        // 1. PG index: rows for this hash owned by the caller (or unowned).
+        try {
+            const rows = await bookSourceRepo.findOwnedByHash(fileHash, wsId);
+            for (const r of rows) candidates.add(r.book_id);
+        } catch (pgErr) {
+            console.warn(`[${tag}] PG dedup lookup failed (non-fatal): ${pgErr.message}`);
+        }
+
+        // 2. Disk self-heal: hash-matching books whose ownership allows reuse.
+        try {
+            for (const diskId of findLazyBooksByHash(fileHash, lazyBook.getBooksDir(), sourceSize)) {
+                if (candidates.has(diskId)) continue;
+                let ownerWs = null;
+                try {
+                    ownerWs = await bookRepo.getWorkspaceId(diskId);
+                } catch (_) {
+                    continue; // ownership unverifiable — fail closed, never reuse
+                }
+                if (ownerWs && ownerWs !== wsId) continue; // another identity's book
+                candidates.add(diskId);
+            }
+        } catch (diskErr) {
+            console.warn(`[${tag}] Disk dedup scan failed (non-fatal): ${diskErr.message}`);
+        }
+
+        // Pick the most-progressed owned book that is actually on disk.
+        let best = null;
+        for (const bookId of candidates) {
+            const status = lazyBook.getBookStatus(bookId);
+            if (!status || !status.state) {
+                try { await bookSourceRepo.deleteByBookId(bookId); } catch (_) {}
+                log(`[${tag}] DEDUP: book ${bookId} not on disk — cleaned up reference`);
+                continue;
+            }
+            const score = STATE_PROGRESS[status.state] || 0;
+            if (!best || score > best.score ||
+                (score === best.score && (status.updatedAt || 0) > (best.updatedAt || 0))) {
+                best = { bookId, score, updatedAt: status.updatedAt || 0, state: status.state };
+            }
+        }
+        if (!best) return null;
+
+        // Claim unowned candidates + restore the PG index row when missing.
+        await attachBookWorkspace(best.bookId, title, wsId);
+        try {
+            // Re-verify ownership after the claim: a concurrent import may have
+            // attached the same unowned book to another workspace first.
+            const ownerAfter = await bookRepo.getWorkspaceId(best.bookId);
+            if (ownerAfter && ownerAfter !== wsId) {
+                log(`[${tag}] DEDUP: book ${best.bookId} claimed by another workspace — fresh import`);
+                return null;
+            }
+        } catch (_) { /* PG down: attach already best-effort above */ }
+        try {
+            const indexed = await bookSourceRepo.findByBookId(best.bookId);
+            if (!indexed || indexed.file_hash !== fileHash) {
+                await bookSourceRepo.registerSource(fileHash, originalFilename, sourceSize, best.bookId, 'txt');
+                log(`[${tag}] DEDUP: re-registered book_source for ${best.bookId}`);
+            }
+        } catch (regErr) {
+            console.warn(`[${tag}] DEDUP: failed to re-register book_source (non-fatal): ${regErr.message}`);
+        }
+
+        let buildId = null;
+        try {
+            const em = JSON.parse(fs.readFileSync(lazyBook.getManifestPath(lazyBook.getBookDir(best.bookId)), 'utf8'));
+            buildId = em.build_id || null;
+        } catch (_) {}
+
+        log(`[${tag}] DEDUP: identity-scoped reuse of owned book ${best.bookId} (state=${best.state})`);
+        return { bookId: best.bookId, buildId, state: best.state };
+    }
 
     // In-flight TXT trigger guard
     const inFlightTriggers = new Set();
@@ -211,6 +315,9 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
             });
         } else {
             // ── TXT path — same logic as /import-txt ──
+            if (req.guest && req.workspace && req.workspace.status === 'expired') {
+                return res.status(410).json({ error: 'Guest workspace expired', code: 'workspace_expired' });
+            }
             const decoded = txtImporter.decodeTxtBuffer(buf);
             if (decoded.error) return res.status(400).json({ error: decoded.error });
 
@@ -225,63 +332,28 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
             const sourceSize = Buffer.byteLength(sourceText, 'utf8');
 
             let existingBookId = null;
-            // ── Phase 1: PG book_source lookup ──
-            try {
-                const candidates = await bookSourceRepo.findCandidateBySize(sourceSize);
-                if (candidates && candidates.length > 0) {
-                    const existing = await bookSourceRepo.findByHash(fileHash);
-                    if (existing) {
-                        const existingStatus = lazyBook.getBookStatus(existing.book_id);
-                        if (existingStatus && existingStatus.state) {
-                            // Always return existing book on dedup — even if completed.
-                            // User re-importing the same file expects to get the same book back,
-                            // not a brand new import. Cross-workspace dedup is allowed: the
-                            // book is re-assigned to the caller's workspace via
-                            // attachBookWorkspace below. This handles the common case where a
-                            // guest imported a file, then registered/logged in and re-imports.
-                            existingBookId = existing.book_id;
-                        } else {
-                            await bookSourceRepo.deleteByBookId(existing.book_id);
-                            log(`[UNIFIED-IMPORT] DEDUP: book ${existing.book_id} not on disk — cleaning up reference`);
-                        }
-                    }
-                }
-            } catch (pgErr) {
-                console.warn(`[UNIFIED-IMPORT] PG dedup check failed (non-fatal): ${pgErr.message}`);
-            }
-
-            // ── Phase 2: Fallback — scan books on disk (covers deleted book_source records) ──
-            // Pre-auth only: any identity (user OR guest) must never pick up an
-            // unknown-owner directory through a raw disk scan (cross-tenant).
-            if (!existingBookId && !hasIdentity(req)) {
-                const diskFound = findLazyBookByHash(fileHash, lazyBook.getBooksDir(), sourceSize);
-                if (diskFound) {
-                    const existingStatus = lazyBook.getBookStatus(diskFound);
-                    if (existingStatus && existingStatus.state) {
-                        existingBookId = diskFound;
-                        log(`[UNIFIED-IMPORT] DEDUP (disk fallback): found ${existingBookId} for hash ${fileHash}`);
-                        // Re-register PG record so next import uses fast path
-                        try {
-                            await bookSourceRepo.registerSource(fileHash, req.file.originalname, sourceSize, existingBookId, 'txt');
-                            log(`[UNIFIED-IMPORT] Re-registered book_source for ${existingBookId}`);
-                        } catch (regErr) {
-                            console.warn(`[UNIFIED-IMPORT] Failed to re-register book_source (non-fatal): ${regErr.message}`);
-                        }
-                    }
-                }
+            let existingBuildId = null;
+            let existingState = null;
+            // ── Identity-scoped dedup: current identity + TXT → OWNED book ──
+            // Never returns a hash match owned by another workspace; the
+            // caller gets a fresh book of their own instead.
+            const dedupHit = await resolveOwnedTxtDedup(req, {
+                fileHash, sourceSize, title,
+                originalFilename: req.file.originalname,
+                tag: 'UNIFIED-IMPORT',
+            });
+            if (dedupHit) {
+                existingBookId = dedupHit.bookId;
+                existingBuildId = dedupHit.buildId;
+                existingState = dedupHit.state;
             }
 
             if (existingBookId) {
                 log(`[UNIFIED-IMPORT] DEDUP: returning existing book ${existingBookId} for hash ${fileHash}`);
-                let existingBuildId = null;
-                try {
-                    const em = JSON.parse(fs.readFileSync(lazyBook.getManifestPath(lazyBook.getBookDir(existingBookId)), 'utf8'));
-                    existingBuildId = em.build_id || null;
-                } catch (_) {}
-                await attachBookWorkspace(existingBookId, title, req.workspace?.id);
                 return res.json({
                     format: 'txt',
-                    book_id: existingBookId, build_id: existingBuildId, title, state: lazyBook.BookState.RAW_IMPORTED, dedup: true,
+                    book_id: existingBookId, build_id: existingBuildId, title,
+                    state: existingState || lazyBook.BookState.RAW_IMPORTED, dedup: true,
                 });
             }
 
@@ -503,6 +575,9 @@ function detectFileFormat(buf) {
     app.post('/api/v1/book/import-txt', multer().single('file'), async (req, res) => {
         try {
             if (!req.file) return res.status(400).json({ error: 'file missing' });
+            if (req.guest && req.workspace && req.workspace.status === 'expired') {
+                return res.status(410).json({ error: 'Guest workspace expired', code: 'workspace_expired' });
+            }
 
             const decoded = txtImporter.decodeTxtBuffer(req.file.buffer);
             if (decoded.error) return res.status(400).json({ error: decoded.error });
@@ -518,60 +593,27 @@ function detectFileFormat(buf) {
             const sourceSize = Buffer.byteLength(sourceText, 'utf8');
 
             let existingBookId = null;
-            // ── Phase 1: PG book_source lookup ──
-            try {
-                const candidates = await bookSourceRepo.findCandidateBySize(sourceSize);
-                if (candidates && candidates.length > 0) {
-                    const existing = await bookSourceRepo.findByHash(fileHash);
-                    if (existing) {
-                        const existingStatus = lazyBook.getBookStatus(existing.book_id);
-                        if (existingStatus && existingStatus.state) {
-                            // Always return existing book on dedup — even if completed.
-                            // User re-importing the same file expects to get the same book back,
-                            // not a brand new import. Cross-workspace dedup is allowed
-                            // (same rationale as UNIFIED-IMPORT).
-                            existingBookId = existing.book_id;
-                        } else {
-                            await bookSourceRepo.deleteByBookId(existing.book_id);
-                            log(`[IMPORT-TXT] DEDUP: book ${existing.book_id} not on disk — cleaning up reference`);
-                        }
-                    }
-                }
-            } catch (pgErr) {
-                console.warn(`[IMPORT-TXT] PG dedup check failed (non-fatal): ${pgErr.message}`);
-            }
-
-            // ── Phase 2: Fallback — scan books on disk (covers deleted book_source records) ──
-            // Pre-auth only: any identity (user OR guest) must never pick up an
-            // unknown-owner directory through a raw disk scan (cross-tenant).
-            if (!existingBookId && !hasIdentity(req)) {
-                const diskFound = findLazyBookByHash(fileHash, lazyBook.getBooksDir(), sourceSize);
-                if (diskFound) {
-                    const existingStatus = lazyBook.getBookStatus(diskFound);
-                    if (existingStatus && existingStatus.state) {
-                        existingBookId = diskFound;
-                        log(`[IMPORT-TXT] DEDUP (disk fallback): found ${existingBookId} for hash ${fileHash}`);
-                        // Re-register PG record so next import uses fast path
-                        try {
-                            await bookSourceRepo.registerSource(fileHash, req.file.originalname, sourceSize, existingBookId, 'txt');
-                            log(`[IMPORT-TXT] Re-registered book_source for ${existingBookId}`);
-                        } catch (regErr) {
-                            console.warn(`[IMPORT-TXT] Failed to re-register book_source (non-fatal): ${regErr.message}`);
-                        }
-                    }
-                }
+            let existingBuildId = null;
+            let existingState = null;
+            // ── Identity-scoped dedup: current identity + TXT → OWNED book ──
+            // Never returns a hash match owned by another workspace; the
+            // caller gets a fresh book of their own instead.
+            const dedupHit = await resolveOwnedTxtDedup(req, {
+                fileHash, sourceSize, title,
+                originalFilename: req.file.originalname,
+                tag: 'IMPORT-TXT',
+            });
+            if (dedupHit) {
+                existingBookId = dedupHit.bookId;
+                existingBuildId = dedupHit.buildId;
+                existingState = dedupHit.state;
             }
 
             if (existingBookId) {
                 log(`[IMPORT-TXT] DEDUP: returning existing book ${existingBookId} for hash ${fileHash}`);
-                let existingBuildId = null;
-                try {
-                    const em = JSON.parse(fs.readFileSync(lazyBook.getManifestPath(lazyBook.getBookDir(existingBookId)), 'utf8'));
-                    existingBuildId = em.build_id || null;
-                } catch (_) {}
-                await attachBookWorkspace(existingBookId, title, req.workspace?.id);
                 return res.json({
-                    book_id: existingBookId, build_id: existingBuildId, title, state: lazyBook.BookState.RAW_IMPORTED, dedup: true,
+                    book_id: existingBookId, build_id: existingBuildId, title,
+                    state: existingState || lazyBook.BookState.RAW_IMPORTED, dedup: true,
                 });
             }
 

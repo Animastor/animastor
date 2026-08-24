@@ -895,7 +895,7 @@ async function runMigrations() {
             book_id         TEXT NOT NULL,
             source_type     TEXT NOT NULL DEFAULT 'txt' CHECK(source_type IN ('txt','ai_text')),
             created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
-            UNIQUE(file_hash)
+            UNIQUE(file_hash, book_id)
         )`);
         await query(`CREATE INDEX IF NOT EXISTS idx_book_source_hash ON book_source(file_hash)`);
         await query(`CREATE INDEX IF NOT EXISTS idx_book_source_book ON book_source(book_id)`);
@@ -904,6 +904,20 @@ async function runMigrations() {
         if (!err.message.includes('already exists')) {
             console.error('[PG] Failed to create book_source:', err.message);
         }
+    }
+
+    // ── book_source: per-identity dedup migration ─────────────────────────
+    // The original UNIQUE(file_hash) allowed only ONE book per source hash
+    // across the whole database. Re-importing the same TXT by a different
+    // identity re-pointed that single row (ON CONFLICT DO UPDATE), silently
+    // stealing the dedup reference from the original owner. Dedup is now
+    // identity-scoped (current identity + TXT → owned book), so the index
+    // must allow one row per (file_hash, book_id).
+    try {
+        await query(`ALTER TABLE book_source DROP CONSTRAINT IF EXISTS book_source_file_hash_key`);
+        await query(`CREATE UNIQUE INDEX IF NOT EXISTS book_source_hash_book_key ON book_source(file_hash, book_id)`);
+    } catch (err) {
+        console.error('[PG] Failed to migrate book_source uniqueness:', err.message);
     }
 
     // ======================================================
