@@ -102,6 +102,9 @@ certs/
 *.jks
 *.keystore
 
+# ========== Source assets (duplicates live in frontends/) ==========
+app_pictures/
+
 # ========== Release artifacts ==========
 frontends/website/downloads/*.apk
 
