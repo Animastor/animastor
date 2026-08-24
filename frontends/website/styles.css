@@ -367,10 +367,7 @@ body.landing .header__nav {
     height: 2rem;
   }
 
-  /* Landing: brand hidden — toggle stays on row 1, nav on row 2 */
-  body.landing .header__nav {
-    border-top: 1px solid var(--outline-2);
-  }
+  /* Landing: brand hidden — single-row (see single-row header block below) */
 }
 
 /* ── Getting started steps ── */
