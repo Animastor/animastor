@@ -440,7 +440,7 @@ Minimum viable external setup a Beta user must bring:
 | **PostgreSQL** | PROVIDED by operator | `docker-compose.yml` ships postgres:16. |
 | **Redis** | PROVIDED by operator | `docker-compose.yml` ships redis:7. Used for queues, heartbeats, progress pub/sub. |
 | **Operator OpenRouter key (global)** | OPTIONAL | Only needed if the operator wants a "system pool" AI fallback. Per-user is the Beta model. |
-| **Operator system-pool worker** | OPTIONAL | If the operator runs one or more workers WITHOUT an `ANIMASTOR_WORKER_TOKEN`, jobs from workspaces without a private worker land in the system pool. Useful as a Beta safety net if a user's GPU is down. |
+| **Operator system-pool worker** | OPTIONAL (PW-4) | The operator can run SYSTEM-credentialed workers (`mode='system'`) via the admin API (`POST /api/v1/admin/workers/system`). These serve the system pool and handle jobs from workspaces without a private worker. Uncredentialed workers are not permitted (fail-closed). |
 
 ---
 
@@ -451,9 +451,10 @@ Acceptable for first Beta; documented, not blockers.
 1. **Operator can run the backend on a single-node `docker-compose`** with host
    volumes for `/data/books` and `/data/output`. Local-FS storage works for
    single-instance Beta. (P3 for scale.)
-2. **Operator can provide a system-pool worker** (no `ANIMASTOR_WORKER_TOKEN`) so
-   Beta users whose GPU is misconfigured still get visual results — they then
-   migrate to their own private worker when ready.
+2. **Operator can run SYSTEM-credentialed workers** (via `POST
+   /api/v1/admin/workers/system`) so Beta users whose GPU is misconfigured
+   still get visual results — they then migrate to their own private worker
+   when ready. Uncredentialed workers are not permitted (fail-closed).
 3. **Operator can set `OPENROUTER_API_KEY`** as a deployment-wide fallback so a
    Beta user who hasn't yet set their own OpenRouter key can still chat and parse.
    Once the user sets their workspace provider, the workspace provider wins.

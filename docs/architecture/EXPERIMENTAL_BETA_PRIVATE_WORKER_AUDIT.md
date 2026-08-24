@@ -14,6 +14,12 @@
 > the **live containers** (`docker exec printenv` on `animastor-backend`,
 > `gpu-hub`, `animastor-redis`). Code and live state were treated as ground
 > truth; the recon document was treated as an unverified hypothesis.
+>
+> **PW-4 update (2026-08-24):** All four Critical findings (§3) and the core
+> fail-closed doctrine have been fully implemented as `PW-4 — Fail-closed
+> worker authorization`. The findings in this audit that stated "no workspace
+> dimension", "no worker identity", "unauthenticated GPU surface" are now
+> resolved. See `docs/CHANGELOG.md` for the full change list.
 
 ---
 

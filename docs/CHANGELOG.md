@@ -4,6 +4,48 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-08-24
+
+### Added
+
+- **Fail-closed worker authorization (PW-4)** — three-mode identity model
+  enforced at every boundary:
+  - **PRIVATE** — owned by a workspace, serves only that workspace.
+  - **SHARE** — owned by a workspace, volunteered to the community pool.
+  - **SYSTEM** — Animastor-operated pool (promo/trials/commercial lanes).
+  - Critical rule: a missing or invalid credential **never** becomes SYSTEM or
+    SHARE; such a worker is `UNAUTHORIZED`/`OFFLINE`, excluded from counters
+    and dispatch.
+  - Schema: `workers.mode` CHECK extended to `('private','share','system')`.
+    `workers.workspace_id` is now nullable — `NULL` only for `mode='system'`
+    (Animastor-operated), enforced by `workers_scope_check` constraint.
+  - Hub (`gpu-hub.js` v0.2.0): all four worker-facing endpoints (`/beacon`,
+    `/task/next`, `/task/result`, `/task/error`) return `401
+    worker_authentication_failed` when no Bearer credential is presented.
+    The legacy uncredentialed lane is removed.
+  - `requireApiKey` now denies with `503` when `GPU_HUB_API_KEY` is unset;
+    `GPU_HUB_ALLOW_OPEN=1` is the explicit dev-only opt-out.
+  - Backend (`worker-health.js` v3.0.0): heartbeat without `mode` is
+    `UNAUTHORIZED` — excluded from all counts.
+  - `POST /api/v1/worker/verify` — fail-closed credential check returning
+    `worker_id`, `name`, `worker_type`, `mode`, `workspace_id`,
+    `workspace_name`. Used by the worker CLI for first-run identity
+    confirmation.
+  - `POST /api/v1/admin/workers/system` — admin-only SYSTEM worker creation
+    (one-time token). `GET`/rotate/revoke follow the same pattern.
+  - Worker client (`worker.cjs` v2.0.0): refuses to start without
+    `ANIMASTOR_WORKER_TOKEN`; calls `/api/v1/worker/verify` on startup to
+    confirm identity and display mode. `401` from hub → terminal exit.
+  - Tenant seams: `POST /api/v1/workers` accepts `mode='share'` with
+    `confirm_share=true`; `mode='system'` is rejected (admin-only path).
+  - 18 new tests + 4 rewritten legacy-lane tests (134/134 pass).
+
+- **Security hardening (urgent)** — `GPU_HUB_API_KEY` is now set in prod
+  `.env`. `/gpu/task` and `/gpu/queue/clear` are no longer exposed to the
+  internet without authentication.
+
+---
+
 ## [Unreleased] — 2026-08-17
 
 ### Added

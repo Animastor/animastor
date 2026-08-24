@@ -5,10 +5,28 @@ A private worker processes only **your workspace's** jobs.
 
 > Scope: Experimental Beta. This document covers the existing private
 > (workspace-owned) worker only. There is no Share Worker / GPU marketplace.
+>
+> **PW-4 (fail-closed):** A worker without a valid credential is `UNAUTHORIZED`
+> and is never counted, dispatched, or registered. The legacy no-credential
+> lane has been removed. `ANIMASTOR_WORKER_TOKEN` is now **mandatory** —
+> `worker.cjs` and `start-worker.sh` refuse to start without it.
 
 ---
 
 ## 1. Prerequisites
+
+| Requirement | Details |
+|---|---|
+| **Node.js 20+** | `worker.cjs` uses the global `fetch` API. No npm dependencies are required — the file is self-contained (Node builtins only). |
+| **ComfyUI running locally** | The worker talks to the ComfyUI HTTP API at `http://127.0.0.1:8188` by default. Override the port with `COMFY_PORT`. The worker does **not** install or start ComfyUI. |
+| **Models matching the platform workflows** | See [Model requirements](#model-requirements) below. |
+| **Network access to the GPU Hub** | The worker must reach `HUB_URL` (your Animastor origin + `/gpu`). |
+| **GPU** | A CUDA GPU capable of running the models below. We do not publish a hard minimum; the verified reference setup (NVIDIA L40S 46 GB, ComfyUI v0.27.0, PyTorch 2.6.0+cu124) is documented in `worker/new/SYSTEM.md`. |
+
+### Model requirements
+
+The exact model files are referenced by the shipped workflows in
+`backend/ai/workflows/*.json`. As of this writing they reference:
 
 | Requirement | Details |
 |---|---|
@@ -89,7 +107,7 @@ automatically.
 | Variable | Required | Notes |
 |---|---|---|
 | `HUB_URL` | yes | Your Animastor origin + `/gpu`. |
-| `ANIMASTOR_WORKER_TOKEN` | yes (private mode) | The one-time credential from the UI. **Without it the worker runs in the legacy system-pool mode.** Never put it in a URL. |
+| `ANIMASTOR_WORKER_TOKEN` | **yes** | The one-time credential from the UI. Without it `worker.cjs` **refuses to start** (fail-closed). Never put it in a URL. |
 | `WORKER_TYPE` | yes | `image`, `audio` or `video` — must match the type chosen in the UI. |
 | `WORKER_ID` | no | A label. With a token, identity is derived from the token. |
 | `COMFY_PORT` | no | Default `8188`. |
@@ -117,7 +135,8 @@ node worker.cjs
 
 Alternatively use `worker/start-worker.sh [image|audio|video]` (GPU-box helper:
 checks GPU/Node, detects the ComfyUI port, loads `./.env`, restarts the worker).
-If `ANIMASTOR_WORKER_TOKEN` is missing it warns and falls back to system-pool mode.
+If `ANIMASTOR_WORKER_TOKEN` is missing the script exits immediately with a setup
+message — fail-closed, no fallback.
 
 ---
 
@@ -156,3 +175,6 @@ credential, never by the status pill.
 - At rest only a SHA-256 hash is stored (`workers.token_hash`).
 - Workspace isolation is enforced by the hub queue layout and backend dispatch;
   a private worker can only ever see its own workspace queue.
+- **Fail-closed:** a missing or invalid credential is `UNAUTHORIZED` — the
+  worker is never counted in global capacity, never receives tasks, and never
+  reaches the system pool. The legacy no-credential lane is removed.
