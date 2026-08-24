@@ -8,6 +8,7 @@ const os = require("os");
 const fs = require("fs");
 const fsp = require("fs").promises;
 const path = require("path");
+const { cleanupJobArtifacts } = require("./worker-cleanup.cjs");
 
 // ======================================================
 // CONFIG
@@ -578,13 +579,23 @@ async function workerLoop() {
       continue;
     }
 
+    // ── Per-job artifact tracking (cleanup after job) ──
+    // Точечная уборка: удаляются ТОЛЬКО файлы этой job. Output удаляется
+    // только после успешной доставки результата (downloadResult + sendResult),
+    // чтобы при ошибке sendResult() единственный результат не потерялся.
+    const createdInputFiles = [];
+    let outputPath = null;
+    let outputDelivered = false;
+
     try {
       if (task.assets?.images) {
         const [jobBase] = task.job_id.split(/:(iu_image|image|audio|video)$/);
         const scenePrefix = jobBase.replace(/_g\d+$/, '');
         for (const [unitId, base64] of Object.entries(task.assets.images)) {
           const filename = `${scenePrefix}_${unitId}.png`;
-          const { path: filePath, expectedSize } = await saveBase64ImageSafe(base64, filename);
+          const filePath = path.join(COMFY_INPUT_DIR, filename);
+          createdInputFiles.push(filePath);
+          const { expectedSize } = await saveBase64ImageSafe(base64, filename);
           log("info", `Multi-image saved: ${filename}`);
           await waitForFileReady(filePath, expectedSize);
           log("info", `Multi-image ready: ${filename}`);
@@ -592,7 +603,9 @@ async function workerLoop() {
       } else if (task.assets?.image) {
         const [baseId] = task.job_id.split(/:(iu_image|image|audio|video)$/);
         const filename = `${baseId}.png`;
-        const { path: filePath, expectedSize } = await saveBase64ImageSafe(task.assets.image, filename);
+        const filePath = path.join(COMFY_INPUT_DIR, filename);
+        createdInputFiles.push(filePath);
+        const { expectedSize } = await saveBase64ImageSafe(task.assets.image, filename);
         log("info", `Image saved: ${filename}`);
         await waitForFileReady(filePath, expectedSize);
         log("info", `Image ready: ${filename}`);
@@ -602,9 +615,18 @@ async function workerLoop() {
       // timeout_ms приходит с задачей (backend → gpu-hub → worker): per-job
       // таймаут для данного типа генерации. Если нет — per-type fallback.
       const result = await waitResult(prompt_id, task.params, task.timeout_ms);
+
+      // Точечный output этой job: COMFY_OUTPUT_DIR + subfolder + filename.
+      // Это именно тот файл, который waitResult выбрал как результат (в т.ч.
+      // для video — реально выбранный mp4 из history/fallback/fs-scan).
+      if (result.meta && result.meta.filename) {
+        outputPath = path.resolve(COMFY_OUTPUT_DIR, result.meta.subfolder || "", result.meta.filename);
+      }
+
       const base64 = await downloadResult(result);
       log("debug", `result for ${task.job_id}: type=${result.type} size=${Math.round(base64.length / 1024)}KB`);
       await sendResult(task, base64);
+      outputDelivered = true;
       log("info", `Done ${task.job_id}`);
 
     } catch (err) {
@@ -614,6 +636,29 @@ async function workerLoop() {
         await sendTaskError(task, err && err.message || err || "worker_error");
       } catch (sendErr) {
         log("error", "Failed to send error to hub", sendErr.message);
+      }
+    } finally {
+      // Cleanup after job: только собственные временные файлы этой job.
+      // Output — ТОЛЬКО после успешной доставки результата; при ошибке
+      // downloadResult()/sendResult() output сохраняется.
+      try {
+        const toCleanOutput = outputDelivered ? outputPath : null;
+        const cleanupResult = await cleanupJobArtifacts({
+          inputFiles: createdInputFiles,
+          outputFile: toCleanOutput,
+        });
+
+        if (cleanupResult.cleaned > 0 || cleanupResult.failed.length > 0) {
+          log("info",
+            `Cleanup ${task.job_id}: removed ${cleanupResult.cleaned} artifact(s) ` +
+            `(${createdInputFiles.length} input, ${toCleanOutput ? "1 output" : "0 output"})`);
+        }
+        for (const f of cleanupResult.failed) {
+          log("warn", `Cleanup ${task.job_id}: failed to remove ${f.path}: ${f.reason}`);
+        }
+      } catch (cleanupErr) {
+        // Cleanup никогда не должен маскировать исходную ошибку job.
+        log("warn", `Cleanup ${task.job_id}: error: ${cleanupErr.message}`);
       }
     }
   }
