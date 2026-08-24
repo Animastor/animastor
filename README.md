@@ -92,7 +92,7 @@ For the full architecture deep-dive, see [docs/01-overview/ARCHITECTURE.md](docs
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/your-org/animastor.git
+git clone https://github.com/Animastor/animastor.git
 cd animastor
 cp .env.example .env
 # Edit .env — set POSTGRES_PASSWORD, WORKSPACE_SECRET_KEY, and AI_API_BASE_URL
@@ -133,7 +133,7 @@ Comprehensive documentation lives in the [`docs/`](docs/) directory:
 
 Additional documentation:
 
-- [Orchestration](docs/02-orchestration/ORCHESTRATOR_LIFECYCLE.md) — Orchestrator lifecycle and state management
+- [Orchestration](docs/02-orchestration/ORCHESTRATION.md) — Orchestrator lifecycle and state management
 - [Workflows & Connectors](docs/06-workflows/WORKFLOWS.md) — Declarative ComfyUI pipeline system
 - [AI Agents](docs/07-agents-and-generators/AGENTS.md) — 6-step AI analysis pipeline
 - [Architectural Audit](docs/03-audit/ARCHITECTURAL_AUDIT.md) — Comprehensive codebase audit
