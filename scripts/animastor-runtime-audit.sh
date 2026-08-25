@@ -414,9 +414,26 @@ WF_DIRS=()
 [ -d "./backend/ai/workflows" ] && WF_DIRS+=("./backend/ai/workflows")
 [ -d "/home/animastor/animastor/backend/ai/workflows" ] && WF_DIRS+=("/home/animastor/animastor/backend/ai/workflows")
 
+# Remote workflow delivery is the supported architecture: the worker
+# (worker/worker/worker.cjs runWorkflow) receives the workflow as
+# task.params and POSTs it to ComfyUI's /prompt endpoint. The JSON
+# templates live on the Animastor VPS (backend/ai/workflows), not on
+# the GPU instance. An empty ComfyUI/user/default/workflows/ is
+# therefore the EXPECTED state, not an error.
 if [ ${#WF_DIRS[@]} -eq 0 ]; then
   say "(no workflow directories found)"
+  say ""
+  say "  NOTE: this is the expected state on a remote-delivery install."
+  say "  Animastor ships workflow JSON from the VPS via gpu-hub; the"
+  say "  worker forwards task.params to ComfyUI's /prompt endpoint."
+  say "  See docs/runtime-audits/README.md (\"Workflow delivery"
+  say "  architecture\") for the verified delivery chain."
 else
+  if [ -n "$COMFY_DIR" ] && [ ! -d "$COMFY_DIR/user/default/workflows" ]; then
+    say "(no ~/ComfyUI/user/default/workflows/ on this GPU instance)"
+    say "  -> expected: workflows are delivered remotely by the hub"
+    say "     (see docs/runtime-audits/README.md)."
+  fi
   for wfd in "${WF_DIRS[@]}"; do
     say ""
     say "directory: $wfd"
