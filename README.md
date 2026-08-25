@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
-  <a href="#quick-start"><img src="https://img.shields.io/badge/docker-compose-ready-2496ED?logo=docker&logoColor=white" alt="Docker" /></a>
+  <a href="#quick-start"><img src="https://img.shields.io/badge/Docker_Compose-Ready-2496ED?style=flat&logo=docker&logoColor=white" alt="Docker" /></a>
   <img src="https://img.shields.io/badge/platform-Node.js%20%7C%20Android%20%7C%20Web-339933?logo=node.js&logoColor=white" alt="Platform" />
 </p>
 
