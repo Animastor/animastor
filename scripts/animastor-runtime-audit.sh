@@ -253,14 +253,18 @@ else
 
   if [ -d "$COMFY_DIR/.git" ]; then
     say ""
-    say "git status:"
-    (
-      cd "$COMFY_DIR" || exit
-      git remote -v 2>/dev/null | sed 's/^/    remote: /'
-      git rev-parse HEAD 2>/dev/null | sed 's/^/    commit: /'
-      git describe --tags --exact-match 2>/dev/null | sed 's/^/    tag   : /' || echo "    tag   : (no exact tag)"
-      git describe --tags 2>/dev/null | sed 's/^/    desc  : /'
-    )
+    if has git; then
+      say "git status:"
+      (
+        cd "$COMFY_DIR" || exit
+        git remote -v 2>/dev/null | sed 's/^/    remote: /'
+        git rev-parse HEAD 2>/dev/null | sed 's/^/    commit: /'
+        git describe --tags --exact-match 2>/dev/null | sed 's/^/    tag   : /' || echo "    tag   : (no exact tag)"
+        git describe --tags 2>/dev/null | sed 's/^/    desc  : /'
+      )
+    else
+      say "git: (skipped: git command not available)"
+    fi
   else
     say ""
     say "git: not a git repository (plain directory)"
@@ -338,8 +342,14 @@ else
         parent="$(dirname "$rel")"
         name="$(basename "$rel")"
         if [ "$size" -le "$HASH_LIMIT_BYTES" ]; then
-          h=$(sha256sum "$path" 2>/dev/null | awk '{print $1}' | cut -c1-12)
-          printf '    %-12s  %s  %s  [%s]\n' "$(human_size "$size")" "$parent" "$name" "$h"
+          if has sha256sum; then
+            h=$(sha256sum "$path" 2>/dev/null | awk '{print $1}' | cut -c1-12)
+            [ -z "$h" ] && h="(hash failed)"
+            printf '    %-12s  %s  %s  [%s]\n' "$(human_size "$size")" "$parent" "$name" "$h"
+          else
+            printf '    %-12s  %s  %s  [hash skipped: sha256sum not available]\n' \
+                   "$(human_size "$size")" "$parent" "$name"
+          fi
         else
           printf '    %-12s  %s  %s  [hash skipped: >%s bytes]\n' \
                  "$(human_size "$size")" "$parent" "$name" "$(human_size "$HASH_LIMIT_BYTES")"
@@ -369,9 +379,13 @@ else
     tag=""
     if [ -d "$d/.git" ]; then
       has_git="yes"
-      remote=$(git -C "$d" remote get-url origin 2>/dev/null || echo "")
-      commit=$(git -C "$d" rev-parse --short HEAD 2>/dev/null || echo "")
-      tag=$(git -C "$d" describe --tags --exact-match 2>/dev/null || echo "")
+      if has git; then
+        remote=$(git -C "$d" remote get-url origin 2>/dev/null || echo "")
+        commit=$(git -C "$d" rev-parse --short HEAD 2>/dev/null || echo "")
+        tag=$(git -C "$d" describe --tags --exact-match 2>/dev/null || echo "")
+      else
+        remote="(git unavailable)"
+      fi
     fi
     has_req="no"
     [ -f "$d/requirements.txt" ] && has_req="yes"
@@ -554,18 +568,22 @@ else
   # If the worker dir is itself a git repo, show commit.
   if [ -d "$WORKER_DIR/../.git" ] || [ -d "$WORKER_DIR/.git" ]; then
     say ""
-    say "git:"
-    for gitdir in "$WORKER_DIR/.git" "$WORKER_DIR/../.git"; do
-      [ -d "$gitdir" ] || continue
-      wd="$(dirname "$gitdir")"
-      (
-        cd "$wd" || exit
-        git rev-parse --short HEAD 2>/dev/null | sed 's/^/    commit: /'
-        git describe --tags --exact-match 2>/dev/null | sed 's/^/    tag   : /' || true
-        git log -1 --pretty=format:'    date  : %ad%n' --date=short 2>/dev/null | sed 's/^/    /'
-      )
-      break
-    done
+    if has git; then
+      say "git:"
+      for gitdir in "$WORKER_DIR/.git" "$WORKER_DIR/../.git"; do
+        [ -d "$gitdir" ] || continue
+        wd="$(dirname "$gitdir")"
+        (
+          cd "$wd" || exit
+          git rev-parse --short HEAD 2>/dev/null | sed 's/^/    commit: /'
+          git describe --tags --exact-match 2>/dev/null | sed 's/^/    tag   : /' || true
+          git log -1 --pretty=format:'    date  : %ad%n' --date=short 2>/dev/null | sed 's/^/    /'
+        )
+        break
+      done
+    else
+      say "git: (skipped: git command not available)"
+    fi
   else
     say ""
     say "git: (worker dir is not a git repo)"
