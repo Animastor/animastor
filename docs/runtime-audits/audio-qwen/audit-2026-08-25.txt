@@ -1,0 +1,332 @@
+============================================================
+ANIMASTOR RUNTIME AUDIT
+============================================================
+hostname : n-9909499d-a3a8-4673-be43-67548f8fb4d6-0
+date     : 2026-08-25T19:00:23Z
+user     : root
+cwd      : /home/jovyan
+script   : /home/jovyan/bash
+------------------------------------------------------------
+============================================================
+[1] SYSTEM
+============================================================
+/etc/os-release:
+    PRETTY_NAME="Ubuntu 22.04.5 LTS"
+    NAME="Ubuntu"
+    VERSION_ID="22.04"
+    VERSION="22.04.5 LTS (Jammy Jellyfish)"
+    VERSION_CODENAME=jammy
+    ID=ubuntu
+    ID_LIKE=debian
+    HOME_URL="https://www.ubuntu.com/"
+    SUPPORT_URL="https://help.ubuntu.com/"
+    BUG_REPORT_URL="https://bugs.launchpad.net/ubuntu/"
+    PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
+    UBUNTU_CODENAME=jammy
+
+kernel: Linux 5.15.0-94-generic x86_64
+
+CPU:
+    Architecture:                       x86_64
+    CPU op-mode(s):                     32-bit, 64-bit
+    Address sizes:                      52 bits physical, 57 bits virtual
+    Byte Order:                         Little Endian
+    CPU(s):                             256
+    On-line CPU(s) list:                0-255
+    Vendor ID:                          AuthenticAMD
+    Model name:                         AMD EPYC 9555 64-Core Processor
+    CPU family:                         26
+    Model:                              2
+    Thread(s) per core:                 2
+    Core(s) per socket:                 64
+    Socket(s):                          2
+    Stepping:                           1
+    BogoMIPS:                           6390.54
+    Flags:                              fpu vme de pse mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt 3dnowprefetch osvw ibs skinit wdt tce topoext perfctr_core perfctr_nb bpext perfctr_llc mwaitx cpb cat_l3 cdp_l3 invpcid_single hw_pstate ssbd mba ibrs ibpb stibp vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid cqm rdt_a perfctr_core avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local avx_vnni avx512_bf16 clzero irperf xsaveerptr rdpru wbnoinvd amd_ppin cppc arat npt lbrv svm_lock nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold avic v_vmsave_vmload vgif v_spec_ctrl avx512vbmi umip pku ospke avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq la57 rdpid bus_lock_detect movdiri movdir64b overflow_recov succor smca fsrm avx512_vp2intersect flush_l1d
+    Virtualization:                     AMD-V
+    L1d cache:                          6 MiB (128 instances)
+    L1i cache:                          4 MiB (128 instances)
+    L2 cache:                          128 MiB (128 instances)
+    L3 cache:                          512 MiB (16 instances)
+    NUMA node(s):                      2
+    NUMA node0 CPU(s):                 0-63,128-191
+    NUMA node1 CPU(s):                 64-127,192-255
+    Stepping:                           1
+    Virtualization:                    AMD-V
+
+memory:
+                   total        used        free      shared  buff/cache   available
+    Mem:           1.1Ti        31Gi       627Gi       837Mi       475Gi       1.1Ti
+    Swap:             0B          0B       0B          0B
+
+disk space:
+    Filesystem      Size  Used Avail Use% Mounted on
+    overlay         730G  438G  255G  64% /
+    tmpfs            64M     0   64M   0% /dev
+    tmpfs            567G     0  567G       0% /sys/fs/cgroup
+    /dev/md1        730G  438G  255G  64% /etc/hosts
+    tmpfs            205G     0  205G       0% /dev/shm
+    /dev/rbd3        28G   11G   17G  39% /home/jovyan
+    tmpfs            567G     12K  567G   1% /proc/driver/nvidia
+    tmpfs            114G     81M  114G   1% /usr/lib/firmware/nvidia/550.127.08/gsp_ga10x.bin
+    tmpfs            64M     0     64M   /dev/nvidia1
+    tmpfs            567G     0     567G   /proc/acpi
+    tmpfs            567G     0     567G   /sys/firmware
+    tmpfs            567G     0     567G   /sys/devices/virtual/powercap
+============================================================
+[2] NVIDIA / CUDA
+============================================================
+nvidia-smi:
+    Tue Aug 25 19:00:24 2026
+    NVIDIA-SMI 550.127.08
+    Driver Version: 550.127.08
+    CUDA Version: 12.4
+    GPU: NVIDIA L40S
+    Memory: 46068 MiB
+
+nvidia-smi --query-gpu:
+    index, name, driver_version, memory.total [MiB], memory.free [MiB]
+    0, NVIDIA L40S, 550.127.08, 46068 MiB, 45159 MiB
+
+CUDA version (from nvidia-smi):
+    driver: 550.127.08
+    nvcc: not on PATH
+============================================================
+[3] PYTHON / RUNTIME
+============================================================
+python: Python 3.10.12
+path  : /home/jovyan/python3
+venv  : (no VIRTUAL_ENV active)
+pip   : pip 25.3 from /usr/local/lib/python3.10/dist-packages/pip (python 3.10)
+
+torch:
+        version     : 2.10.0+cu128
+        cuda built  : 12.8
+        cudnn       : 91002
+        available   : True
+        device count: 1
+============================================================
+[4] COMFYUI
+============================================================
+ComfyUI dir : /home/jovyan/ComfyUI
+main.py     : present
+size on disk: 8.8G
+
+git status:
+    remote: origin      https://github.com/rajsingh1-dev/ComfyUI.git (fetch)
+    remote: origin      https://github.com/rajsingh1-dev/ComfyUI.git (push)
+    commit: c4cfee7ad16cfeb082e12f43cf4751b4a67a4e11
+
+requirements.txt (first 20 lines):
+    comfyui-frontend-package==1.37.11
+    comfyui-workflow-templates==0.8.27
+    comfyui-embedded-docs==0.4.0
+    torch
+    torchsde
+    torchvision
+    torchaudio
+    numpy>=1.25.0
+    einops
+    transformers>=4.50.3
+    tokenizers>=0.13.3
+    sentencepiece
+    safetensors>=0.4.2
+    aiohttp>=3.11.8
+    yarl>=1.18.0
+    pyyaml
+    Pillow
+    scipy
+    tqdm
+    psutil
+
+user/:
+    /home/jovyan/ComfyUI/user
+    /home/jovyan/ComfyUI/user/default
+    /home/jovyan/ComfyUI/user/__manager
+    /home/jovyan/ComfyUI/user/__manager/startup-scripts
+    /home/jovyan/ComfyUI/user/__manager/snapshots
+    /home/jovyan/ComfyUI/user/__manager/cache
+
+config files:
+============================================================
+[5] MODELS (under ComfyUI/models)
+============================================================
+tree (depth 2):
+    /home/jovyan/ComfyUI/models/audio_encoders
+    /home/jovyan/ComfyUI/models/audio_encoders/put_audio_encoder_models_here
+    /home/jovyan/ComfyUI/models/checkpoints
+    /home/jovyan/ComfyUI/models/checkpoints/put_checkpoints_here
+    /home/jovyan/ComfyUI/models/clip
+    /home/jovyan/ComfyUI/models/clip/put_clip_or_text_encoder_models_here
+    /home/jovyan/ComfyUI/models/clip_vision
+    /home/jovyan/ComfyUI/models/clip_vision/put_clip_vision_models_here
+    /home/jovyan/ComfyUI/models/configs
+    /home/jovyan/ComfyUI/models/configs/anything_v3.yaml
+    /home/jovyan/ComfyUI/models/configs/v1-inference_clip_skip_2_fp16.yaml
+    /home/jovyan/ComfyUI/models/configs/v1-inference_clip_skip_2.yaml
+    /home/jovyan/ComfyUI/models/configs/v1-inference_fp16.yaml
+    /home/jovyan/ComfyUI/models/configs/v1-inference.yaml
+    /home/jovyan/ComfyUI/models/configs/v1-inpainting-inference.yaml
+    /home/jovyan/ComfyUI/models/configs/v2-inference_fp32.yaml
+    /home/jovyan/ComfyUI/models/configs/v2-inference-v_fp32.yaml
+    /home/jovyan/ComfyUI/models/configs/v2-inference-v.yaml
+    /home/jovyan/ComfyUI/models/configs/v2-inference.yaml
+    /home/jovyan/ComfyUI/models/configs/v2-inpainting-inference.yaml
+    /home/jovyan/ComfyUI/models/configs/v2-inpainting-inference.yaml
+    /home/jovyan/ComfyUI/models/controlnet
+    /home/jovyan/ComfyUI/models/controlnet/put_controlnets_and_t2i_here
+    /home/jovyan/ComfyUI/models/diffusers
+    /home/jovyan/ComfyUI/models/diffusers/put_diffusers_models_here
+    /home/jovyan/ComfyUI/models/diffusion_models
+    /home/jovyan/ComfyUI/models/diffusion_models/put_diffusion_model_files_here
+    /home/jovyan/ComfyUI/models/embeddings
+    /home/jovyan/ComfyUI/models/embeddings/put_embeddings_or_textual_inversion_concepts_here
+    /home/jovyan/ComfyUI/models/gligen
+    /home/jovyan/ComfyUI/models/gligen/put_gligen_models_here
+    /home/jovyan/ComfyUI/models/hypernetworks
+    /home/jovyan/ComfyUI/models/hypernetworks/put_hypernetworks_models_here
+    /home/jovyan/ComfyUI/models/latent_upscale_models
+    /home/jovyan/ComfyUI/models/latent_upscale_models/put_latent_upscale_models_here
+    /home/jovyan/ComfyUI/models/loras
+    /home/jovyan/ComfyUI/models/loras/put_loras_here
+    /home/jovyan/ComfyUI/models/model_patches
+    /home/jovyan/ComfyUI/models/model_patches/put_model_patches_here
+    /home/jovyan/ComfyUI/models/photomaker
+    /home/jovyan/ComfyUI/models/photomaker/put_photomaker_models_here
+    /home/jovyan/ComfyUI/models/style_models
+    /home/jovyan/ComfyUI/models/style_models/put_t2i_style_model_here
+    /home/jovyan/ComfyUI/models/text_encoders
+    /home/jovyan/ComfyUI/models/text_encoders/put_text_encoder_files_here
+    /home/jovyan/ComfyUI/models/TTS
+    /home/jovyan/ComfyUI/models/TTS/Qwen
+    /home/jovyan/ComfyUI/models/unet
+    /home/jovyan/ComfyUI/models/unet/put_unet_files_here
+    /home/jovyan/ComfyUI/models/upscale_models
+    /home/jovyan/ComfyUI/models/upscale_models/put_esrgan_and_other_upscale_models_here
+    /home/jovyan/ComfyUI/models/vae
+    /home/jovyan/ComfyUI/models/vae_approx
+    /home/jovyan/ComfyUI/models/vae_approx/put_taesd_encoder_pth_and_taesd_decoder_pth_here
+    /home/jovyan/ComfyUI/models/vae/put_vae_here
+
+model files (path, size, sha256[:12] when small enough):
+    3.59 GiB      TTS/Qwen/Qwen3-TTS-12Hz-1.7B-Base  model.safetensors  [hash skipped: >256.00 MiB bytes]
+    650.69 MiB    TTS/Qwen/Qwen3-TTS-12Hz-1.7B-Base/speech_tokenizer  model.safetensors  [hash skipped: >256.00 MiB bytes]
+    3.57 GiB      TTS/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign  model.safetensors  [hash skipped: >256.00 MiB bytes]
+    650.69 MiB    TTS/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/speech_tokenizer  model.safetensors  [hash skipped: >256.00 MiB bytes]
+
+totals by subdir:
+    4.0K        /home/jovyan/ComfyUI/models/audio_encoders
+    4.0K        /home/jovyan/ComfyUI/models/checkpoints
+    4.0K        /home/jovyan/ComfyUI/models/clip
+    4.0K        /home/jovyan/ComfyUI/models/clip_vision
+    4.0K        /home/jovyan/ComfyUI/models/controlnet
+    4.0K        /home/jovyan/ComfyUI/models/diffusers
+    4.0K        /home/jovyan/ComfyUI/models/embeddings
+    4.0K        /home/jovyan/ComfyUI/models/gligen
+    4.0K        /home/jovyan/ComfyUI/models/hypernetworks
+    4.0K        /home/jovyan/ComfyUI/models/latent_upscale_models
+    4.0K        /home/jovyan/ComfyUI/models/loras
+    4.0K        /home/jovyan/ComfyUI/models/model_patches
+    4.0K        /home/jovyan/ComfyUI/models/photomaker
+    4.0K        /home/jovyan/ComfyUI/models/style_models
+    4.0K        /home/jovyan/ComfyUI/models/text_encoders
+    4.0K        /home/jovyan/ComfyUI/models/unet
+    4.0K        /home/jovyan/ComfyUI/models/upscale_models
+    4.0K        /home/jovyan/ComfyUI/models/vae
+    4.0K        /home/jovyan/ComfyUI/models/vae_approx
+    52K        /home/jovyan/ComfyUI/models/configs
+    8.5G       /home/jovyan/ComfyUI/models/TTS
+============================================================
+[6] CUSTOM NODES
+============================================================
+  comfyui-manager                           size=138M    git=yes  req=yes  init=yes
+      remote : https://github.com/ltdrdata/ComfyUI-Manager
+      commit : df1eaff8
+  __pycache__                               size=8.0K    git=no   req=no   init=no
+  qwen3-tts                                 size=1.3M    git=yes  req=yes  init=yes
+      remote : https://github.com/wanaigc/ComfyUI-Qwen3-TTS
+      commit : 2ee1131
+
+  (directories without .git are plain installs — cannot be re-cloned by URL)
+============================================================
+[7] WORKFLOWS
+============================================================
+(no workflow directories found)
+============================================================
+[8] WORKER
+============================================================
+worker dir: /home/jovyan/animastor/worker
+  worker.cjs                        27.87 KiB
+  worker-cleanup.cjs                2.31 KiB
+  worker-cleanup-journal.cjs        8.68 KiB
+  package.json                      294 B
+  .env.example                      (missing)
+
+other worker-related files (top-level only):
+
+git: (worker dir is not a git repo)
+
+worker.cjs header (first 25 lines):
+    // ======================================================
+    // GPU Worker - v2.0.0 (fail-closed authorization, PW-4)
+    // ======================================================
+    // CJS (CommonJS) — Node 20+ with global fetch is assumed.
+
+    const { execSync } = require("child_process");
+    const os = require("os");
+    const fs = require("fs");
+    const fsp = require("fs").promises;
+    const path = require("path");
+    const { cleanupJobArtifacts } = require("./worker-cleanup.cjs");
+    const journal = require("./worker-cleanup-journal.cjs");
+
+    // ======================================================
+    // CONFIG
+    // ======================================================
+
+    const HUB_URL = process.env.HUB_URL || "https://animastor.in/gpu";
+    const COMFY_PORT = process.env.COMFY_PORT || 8188;
+    const WORKER_TYPE = process.env.WORKER_TYPE || "image";
+
+    // PW-4 (FAIL CLOSED): the worker credential (`wrk.<worker_id>.<secret>`,
+    // issued once at registration in Animastor) is REQUIRED. Every hub call
+    // carries `Authorization: Bearer <token>` and the hub derives identity,
+    // workspace and MODE from the registry — the worker never chooses its own
+============================================================
+[9] ENVIRONMENT (variable names only, secrets redacted)
+============================================================
+
+/home/jovyan/animastor/worker/.env:
+    HUB_URL=<set>
+    ANIMASTOR_WORKER_TOKEN=<REDACTED>
+    WORKER_TYPE=<set>
+    WORKER_ID=<set>
+============================================================
+[10] STORAGE
+============================================================
+ComfyUI total      : 8.8G
+  models/         : 8.5G
+  custom_nodes/   : 140M
+  user/            : 18M
+  output/         : 51M
+worker dir total  : 9.4M
+~/animastor total  : 23M
+
+filesystem (df -h /):
+    Filesystem      Size  Used Avail Use% Mounted on
+    overlay         730G  438G  255G  64% /
+============================================================
+[11] NOTES
+============================================================
+  - This script is read-only. It does not install, upgrade, or remove
+    anything.
+  - Secret-looking values (ANIMASTOR_WORKER_TOKEN, POSTGRES_PASSWORD,
+    HF_TOKEN, WORKSPACE_SECRET_KEY, GPU_HUB_API_KEY, OPENROUTER_API_KEY)
+    are replaced with [REDACTED] wherever a .env file is parsed.
+  - SHA-256 is computed only for model files smaller than 256 MiB by
+    default. Set HASH_LIMIT_BYTES to override.
+  - Workflows are parsed to extract class_type + filename references;
+    full JSON is never printed.
+============================================================
+AUDIT COMPLETE — 2026-08-25T19:00:25Z
+============================================================
