@@ -1,0 +1,125 @@
+
+ANIMASTOR RUNTIME AUDIT
+============================================================
+host: n-94d62b6a-eb18-45fe-b441-916615252650-0
+date: 2026-08-26T11:55:18Z
+user: root
+cwd: /home/jovyan/animastor
+script: /home/jovyan/animastor/animastor-runtime-audit.sh
+
+[1] SYSTEM
+Ubuntu 22.04.5 LTS (Jammy Jellyfish)
+kernel: Linux 5.15.0-94-generic x86_64
+CPU: AMD EPYC 9555 64-Core Processor, 256 logical CPUs
+RAM: 1.0 TiB total, 555 GiB free, 909 GiB available
+Swap: 0 B
+Root filesystem: 730G total, 285G used, 408G available (42%)
+/home/jovyan: 46G total, 41G used, 5.1G available (90%)
+
+[2] NVIDIA / CUDA
+GPU: NVIDIA L40S
+VRAM: 46068 MiB total, 45159 MiB free at audit time
+Driver: 550.127.08
+CUDA reported by driver: 12.4
+nvcc: not on PATH
+
+[3] PYTHON / RUNTIME
+Python: 3.10.12 (/usr/bin/python3.10)
+VIRTUAL_ENV: not active
+pip: 25.3 from /opt/venv/lib/python3.10/site-packages/pip
+PyTorch: 2.6.0+cu124
+Torch CUDA build: 12.4
+cuDNN: 90100
+CUDA available: True
+CUDA devices: 1
+
+[4] COMFYUI
+Directory: /home/jovyan/ComfyUI
+main.py: present
+Size on disk: 32G
+Remote: https://github.com/comfyanonymous/ComfyUI.git
+Commit: bb131be9e83d2f773c90f1d6f1e4b248a498c8c5
+Tag: v0.27.0
+
+[5] MODELS
+ComfyUI/models total: approximately 31G
+
+LTX-2.3 related model assets:
+- latent_upscale_models/ltx-2.3-spatial-upscaler-x2-1.0.safetensors — 949.62 MiB
+- loras/ltx-2-19b-ic-lora-detailer.safetensors — 2.44 GiB
+- text_encoders/gemma-3-12b-it-qat-UD-Q4_K_XL.gguf — 6.92 GiB
+- text_encoders/ltx-2.3_text_projection_bf16.safetensors — 2.15 GiB
+- unet/LTX-2.3-distilled-Q4_K_M.gguf — 16.54 GiB
+- vae/ltx-2.3-22b-dev_audio_vae.safetensors — 347.95 MiB
+- vae/ltx-2.3-22b-dev_video_vae.safetensors — 1.35 GiB
+- vae/taeltx2_3.safetensors — 22.44 MiB
+
+[6] CUSTOM NODES
+Installed/initialized:
+- comfyui-easy-use
+- ComfyUI-GGUF
+- comfyui-kjnodes
+- ComfyUI-Manager (commit bbafbb12)
+- ComfyUI-MelBandRoFormer
+- ComfyUI-PromptRelay (commit ca5d4e3)
+- comfyui-videohelpersuite
+- gguf
+- rgthree-comfy (commit 683836c)
+
+[7] WORKFLOWS
+Directory: /home/jovyan/ComfyUI/user/default/workflows
+
+LTX-2.3 workflows:
+- LTX23-3Frames-Guided.json
+- LTX-2.3_-_I2V_Short-Story_PromptRelay-Timeline_multi-image_multi-sequence_ANM-1.json
+- LTX-2.3_-_I2V_Short-Story_PromptRelay-Timeline_multi-image_multi-sequence_ANM.json
+- LTX2.3_KJ_i2V_GGUF_Elena.json
+- LTX2.3_KJ_i2V_GGUF_MiM.json
+- LTX2.3_KJ_i2V_WORK_GGUF.json
+- LTX2.3 MULTI-I2V GGUF 12GB 1PIC Elena.json
+- LTX2.3 MULTI-I2V GGUF 12GB 1PIC.json
+- LTX2.3 MULTI-I2V GGUF 12GB 2PIC.json
+- LTX2.3 MULTI-I2V GGUF 12GB 3PIC.json
+- LTX2.3 MULTI-I2V GGUF 12GB 4PIC.json
+- LTX2.3 MULTI-I2V GGUF 12GB 4PIC OK.json
+- LTX2.3 MULTI-I2V GGUF 12GB.json
+- Rabbit.json
+
+Workflow references include additional model files not present in the audited models tree:
+- gemma-3-12b-it-qat-q4_0-unquantized_readout_proj/model/model.safetensors
+- ltx-av-step-1751000_vocoder_24K.safetensors
+
+[8] WORKER
+Worker directory: /home/jovyan/animastor/worker
+worker.cjs: 27.87 KiB
+worker-cleanup.cjs: 2.31 KiB
+worker-cleanup-journal.cjs: 8.68 KiB
+package.json: 294 B
+Worker header: GPU Worker v2.0.0 (fail-closed authorization, PW-4)
+Default HUB_URL: https://animastor.in/gpu
+Default COMFY_PORT: 8188
+Worker directory is not a git repository.
+
+[9] ENVIRONMENT
+/home/jovyan/animastor/worker/.env contains configured HUB_URL, ANIMASTOR_WORKER_TOKEN, WORKER_TYPE and WORKER_ID; secrets redacted.
+
+[10] STORAGE
+ComfyUI total: 32G
+models: 31G
+custom_nodes: 214M
+user: 18M
+workflows: 952K
+output: 8.0K
+worker: 9.4M
+~/animastor: 60M
+Root filesystem available: 408G
+/home/jovyan available: 5.1G
+
+[11] NOTES
+This audit is read-only and records the runtime state immediately after launching the video instance.
+The runtime has a single NVIDIA L40S with CUDA available and PyTorch built for CUDA 12.4.
+The main storage constraint is /home/jovyan at 90% utilization with approximately 5.1G free.
+The workflow scan exposed model filename references that are not represented in the current audited ComfyUI/models tree; these should be verified separately before treating them as missing runtime dependencies.
+
+AUDIT COMPLETE — 2026-08-26T11:55:20Z
+============================================================
