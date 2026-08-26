@@ -1,0 +1,293 @@
+{
+  "manifest_version": "1.0.0",
+  "revision": "2026.08.26-r1",
+  "status": "draft",
+  "profile": {
+    "id": "audio/qwen-tts",
+    "type": "audio",
+    "name": "qwen-tts"
+  },
+  "provenance": {
+    "workflows": ["tts-qwen-narrator", "tts-qwen-dialogue"],
+    "connectors_backend_only": ["conn-tts-narration", "conn-tts-dialogue"],
+    "sources": [
+      "docs/04-planning/private-worker-installer-dependency-research.md",
+      "docs/runtime-audits/audio-qwen/audit-2026-08-25.txt"
+    ],
+    "note": "Workflows are the single source of truth for 'required'. Connectors are backend-only execution metadata and are NOT installed. Runtime audits are reference only, never the source of truth."
+  },
+
+  "hardware": {
+    "gpu_min_vram_gb": null,
+    "basis": "unknown",
+    "reference_gpu": "NVIDIA L40S (46068 MiB)",
+    "todo": "Open question 12: minimum VRAM is not documented anywhere; needs measurement."
+  },
+
+  "runtime_requirements": {
+    "comfyui": {
+      "policy": "exact-pin-preferred",
+      "pin": null,
+      "min_version": null,
+      "max_tested_version": null,
+      "basis": "unknown",
+      "known_working_reference": {
+        "repository": "https://github.com/rajsingh1-dev/ComfyUI.git",
+        "commit": "c4cfee7ad16cfeb082e12f43cf4751b4a67a4e11",
+        "tag": null,
+        "source": "docs/runtime-audits/audio-qwen/audit-2026-08-25.txt"
+      },
+      "todo": "Decision D1: the reference instance runs a fork preinstalled in the E2E image. It is NOT established whether official ComfyUI v0.27.0 also works for this profile. Golden run required before a canonical pin can be set.",
+      "notes": [
+        "The fork@c4cfee7 below is a known-working reference, not a universal Animastor requirement.",
+        "Installer must never auto-downgrade or auto-replace an existing ComfyUI to satisfy this entry while the canonical pin is unknown."
+      ]
+    },
+    "python": {
+      "policy": "minimum",
+      "minimum": "3.10",
+      "basis": "minimum_supported",
+      "known_working_reference": {
+        "version": "3.10.12",
+        "source": "docs/runtime-audits/audio-qwen/audit-2026-08-25.txt"
+      },
+      "notes": ["All reference instances run 3.10.12; lower versions are unverified."]
+    },
+    "torch": {
+      "policy": "exact",
+      "pin": null,
+      "index_url": null,
+      "cuda_tier": null,
+      "basis": "unknown",
+      "known_working_reference": {
+        "version": "2.10.0+cu128",
+        "cuda_tier": "12.8",
+        "source": "docs/runtime-audits/audio-qwen/audit-2026-08-25.txt"
+      },
+      "todo": "Decision D1: cu124 (video) vs cu128 (audio/image reference) — a single tier or per-profile policy is not decided yet.",
+      "notes": ["Reference torch came with the preinstalled E2E image; it is known-working, not a universal requirement."]
+    },
+    "nodejs": {
+      "policy": "minimum",
+      "minimum": "20",
+      "basis": "minimum_supported",
+      "notes": [
+        "worker/worker/worker.cjs header: 'Node 20+ with global fetch is assumed'.",
+        "Discrepancy: worker/start-worker.sh installs Node 18 — open question 11."
+      ]
+    },
+    "nvidia_driver": {
+      "policy": "reference-only",
+      "basis": "environment_reference",
+      "reference": { "driver": "550.127.08", "cuda_reported_by_driver": "12.4" },
+      "notes": ["Installer v1 only checks driver/GPU presence; it never installs or upgrades the NVIDIA driver."]
+    }
+  },
+
+  "dependencies": [
+    {
+      "id": "custom-node:comfyui-qwen3-tts",
+      "kind": "custom_node",
+      "name": "ComfyUI-Qwen3-TTS",
+      "requirement": "required",
+      "basis": "known_working",
+      "install": {
+        "directory": "qwen3-tts",
+        "source": {
+          "kind": "github",
+          "repository": "https://github.com/wanaigc/ComfyUI-Qwen3-TTS",
+          "commit": "2ee1131",
+          "verification": "confirmed"
+        }
+      },
+      "provides_classes": [
+        "Qwen3TTSVoiceDesign",
+        "Qwen3TTSLoader",
+        "Qwen3TTSVoiceClonePrompt",
+        "Qwen3TTSRoleBank",
+        "Qwen3TTSAdvancedDialogue",
+        "Qwen3TTSScriptProcessor",
+        "SaveAudioMP3"
+      ],
+      "provenance": {
+        "workflows": ["tts-qwen-narrator", "tts-qwen-dialogue"],
+        "evidence": "docs/04-planning/private-worker-installer-dependency-research.md §6.1; audit-2026-08-25.txt [6]"
+      },
+      "notes": [
+        "SaveAudioMP3 attribution to this package is by elimination (only manager + qwen3-tts installed on the working instance); high confidence, needs /object_info confirmation (open question 5)."
+      ]
+    },
+    {
+      "id": "model-repo:qwen3-tts-12hz-1.7b-voicedesign",
+      "kind": "model_repo",
+      "name": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+      "requirement": "required",
+      "basis": "known_working",
+      "repo": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+      "target_dir": "models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+      "expected_files": ["model.safetensors", "speech_tokenizer/model.safetensors"],
+      "size": "3.57 GiB + 650.69 MiB (speech_tokenizer)",
+      "size_bytes_approx": 4515556229,
+      "checksum": { "algo": "sha256", "value": null },
+      "source": {
+        "kind": "modelscope",
+        "repository": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+        "revision": null,
+        "verification": "confirmed",
+        "evidence": "workflow field Qwen3TTSLoader.download_source='ModelScope' (tts-qwen-narrator.json, tts-qwen-dialogue.json)"
+      },
+      "delivery": {
+        "mechanism": "node_auto_download",
+        "auto_download": true,
+        "todo": "Decision D2: installer preloads the repo (deterministic/offline) vs relies on Qwen3TTSLoader.auto_download at first run."
+      },
+      "provenance": {
+        "workflows": ["tts-qwen-narrator", "tts-qwen-dialogue"],
+        "node_refs": ["78 Qwen3TTSLoader.model_repo"]
+      },
+      "notes": ["Revision is not pinned by the node; sizes from audit [5]."]
+    },
+    {
+      "id": "model-repo:qwen3-tts-12hz-1.7b-base",
+      "kind": "model_repo",
+      "name": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+      "requirement": "required",
+      "basis": "known_working",
+      "repo": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+      "target_dir": "models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+      "expected_files": ["model.safetensors", "speech_tokenizer/model.safetensors"],
+      "size": "3.59 GiB + 650.69 MiB (speech_tokenizer)",
+      "size_bytes_approx": 4537031065,
+      "checksum": { "algo": "sha256", "value": null },
+      "source": {
+        "kind": "modelscope",
+        "repository": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+        "revision": null,
+        "verification": "confirmed",
+        "evidence": "workflow field Qwen3TTSLoader.download_source='ModelScope' (tts-qwen-dialogue.json)"
+      },
+      "delivery": {
+        "mechanism": "node_auto_download",
+        "auto_download": true,
+        "todo": "Decision D2: preinstall vs auto_download."
+      },
+      "provenance": {
+        "workflows": ["tts-qwen-dialogue"],
+        "node_refs": ["79 Qwen3TTSLoader.model_repo"]
+      },
+      "notes": ["Revision is not pinned by the node; sizes from audit [5]."]
+    },
+    {
+      "id": "custom-node:comfyui-manager",
+      "kind": "custom_node",
+      "name": "ComfyUI-Manager",
+      "requirement": "optional",
+      "basis": "optional",
+      "install": {
+        "directory": "comfyui-manager",
+        "source": {
+          "kind": "github",
+          "repository": "https://github.com/ltdrdata/ComfyUI-Manager",
+          "commit": "df1eaff8",
+          "verification": "confirmed"
+        }
+      },
+      "provenance": {
+        "workflows": [],
+        "evidence": "present in audit [6]; not referenced by any production workflow"
+      },
+      "notes": ["Utility only. Inclusion in manifest is open question D7."]
+    }
+  ],
+
+  "worker_bundle": {
+    "basis": "minimum_supported",
+    "worker_type": "audio",
+    "min_version": "2.0.0",
+    "files": [
+      "worker.cjs",
+      "worker-cleanup.cjs",
+      "worker-cleanup-journal.cjs",
+      "package.json",
+      "package-lock.json",
+      ".env.example"
+    ],
+    "source": {
+      "kind": "animastor",
+      "options": [
+        { "kind": "animastor-origin", "endpoint": "GET {HUB_URL}/worker-source" },
+        { "kind": "repository", "path": "worker/worker/" }
+      ],
+      "verification": "confirmed"
+    },
+    "env": {
+      "template": "worker/worker/.env.example",
+      "required": ["HUB_URL", "ANIMASTOR_WORKER_TOKEN", "WORKER_TYPE", "WORKER_ID"],
+      "optional": ["COMFY_PORT", "COMFY_INPUT_DIR", "WORKER_JOURNAL_DIR", "NOTEBOOK_PATH"],
+      "secrets": ["ANIMASTOR_WORKER_TOKEN"],
+      "rules": [
+        "merge semantics: never overwrite an existing valid token",
+        "chmod 600 on .env",
+        "secrets never in logs/argv/state files (redaction per audit script SECRET_NAMES)"
+      ]
+    },
+    "provenance": {
+      "evidence": [
+        "worker/worker/worker.cjs:1-4 (v2.0.0, Node 20+)",
+        "worker/worker/.env.example",
+        "gpu-hub/gpu-hub.js GET /worker-source"
+      ]
+    }
+  },
+
+  "verification": {
+    "method": "resolver-diff",
+    "tools": [
+      "backend/src/installer/compatibility-resolver.js",
+      "scripts/animastor-runtime-audit.sh (read-only reference diff)"
+    ],
+    "pass": "all required dependencies status=installed; missing=0; incompatible=0",
+    "warn": "unknown>0 or unused>0",
+    "fail": "missing>0 or incompatible>0",
+    "notes": ["Runtime audit is reference/verification only — never the source of truth for this manifest."]
+  },
+
+  "environment_reference": [
+    {
+      "provider": "E2E Networks",
+      "label": "audio-qwen reference instance (preinstalled E2E image)",
+      "audit": "docs/runtime-audits/audio-qwen/audit-2026-08-25.txt",
+      "captured": "2026-08-25",
+      "gpu": { "name": "NVIDIA L40S", "vram_mib": 46068 },
+      "nvidia_driver": "550.127.08",
+      "cuda_reported_by_driver": "12.4",
+      "os_notes": "Ubuntu-based E2E image; python at /home/jovyan/python3 (3.10.12); ComfyUI at /home/jovyan/ComfyUI",
+      "comfyui": {
+        "repository": "https://github.com/rajsingh1-dev/ComfyUI.git",
+        "commit": "c4cfee7ad16cfeb082e12f43cf4751b4a67a4e11",
+        "note": "Old ComfyUI fork preinstalled in the E2E image — a known-working environment, not a universal Animastor requirement."
+      },
+      "torch": "2.10.0+cu128",
+      "python": "3.10.12",
+      "known_extras": [
+        { "kind": "custom_node", "name": "comfyui-manager", "note": "utility; not referenced by production workflows" }
+      ],
+      "disclaimer": "Known-working reference environment for this profile. Provider/image-specific information; MUST NOT be treated as a canonical requirement."
+    }
+  ],
+
+  "disk_budget": {
+    "models_bytes_approx": 9052587295,
+    "note": "≈8.4 GiB of models (audit [5]) plus ComfyUI + venv overhead. Approximate: derived from human-readable audit sizes."
+  },
+
+  "open_questions": [
+    "D1: canonical ComfyUI pin — fork c4cfee7 (known-working reference) vs official v0.27.0; golden run required",
+    "D1/D2: canonical torch/CUDA tier — cu128 reference vs cu124",
+    "D2: TTS model repos — installer preinstall vs node auto_download",
+    "Open question 5: confirm SaveAudioMP3 belongs to ComfyUI-Qwen3-TTS via /object_info",
+    "Open question 8: ComfyUI-Manager inclusion (D7)",
+    "Open question 11: Node.js 18 (start-worker.sh) vs 20 (worker.cjs)",
+    "Open question 12: minimum VRAM undocumented"
+  ]
+}

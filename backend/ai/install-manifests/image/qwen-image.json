@@ -1,0 +1,326 @@
+{
+  "manifest_version": "1.0.0",
+  "revision": "2026.08.26-r1",
+  "status": "draft",
+  "profile": {
+    "id": "image/qwen-image",
+    "type": "image",
+    "name": "qwen-image"
+  },
+  "provenance": {
+    "workflows": ["img-qwen-image"],
+    "connectors_backend_only": ["conn-image-generation"],
+    "sources": [
+      "docs/04-planning/private-worker-installer-dependency-research.md",
+      "docs/runtime-audits/image-qwen/animastor-image-qwen-runtime-audit-2026-08-26.md"
+    ],
+    "note": "Workflows are the single source of truth for 'required'. Connectors are backend-only execution metadata and are NOT installed. Runtime audits are reference only, never the source of truth. Legacy old_img-qwen-image.json is excluded by the workflow loader and must not influence this manifest (it references a different CLIP quant — Q4_K_M instead of Q8_0)."
+  },
+
+  "hardware": {
+    "gpu_min_vram_gb": null,
+    "basis": "unknown",
+    "reference_gpu": "NVIDIA L40S (46068 MiB)",
+    "todo": "Open question 12: minimum VRAM is not documented anywhere; needs measurement."
+  },
+
+  "runtime_requirements": {
+    "comfyui": {
+      "policy": "exact-pin-preferred",
+      "pin": null,
+      "min_version": null,
+      "max_tested_version": null,
+      "basis": "unknown",
+      "known_working_reference": {
+        "repository": "https://github.com/rajsingh1-dev/ComfyUI.git",
+        "commit": "c4cfee7ad16cfeb082e12f43cf4751b4a67a4e11",
+        "tag": null,
+        "source": "docs/runtime-audits/image-qwen/animastor-image-qwen-runtime-audit-2026-08-26.md"
+      },
+      "todo": "Decision D1: the reference instance runs a fork preinstalled in the E2E image. It is NOT established whether official ComfyUI v0.27.0 also works for this profile. Golden run required before a canonical pin can be set.",
+      "notes": [
+        "The fork@c4cfee7 below is a known-working reference, not a universal Animastor requirement.",
+        "Installer must never auto-downgrade or auto-replace an existing ComfyUI to satisfy this entry while the canonical pin is unknown."
+      ]
+    },
+    "python": {
+      "policy": "minimum",
+      "minimum": "3.10",
+      "basis": "minimum_supported",
+      "known_working_reference": {
+        "version": "3.10.12",
+        "source": "docs/runtime-audits/image-qwen/animastor-image-qwen-runtime-audit-2026-08-26.md"
+      },
+      "notes": ["All reference instances run 3.10.12; lower versions are unverified."]
+    },
+    "torch": {
+      "policy": "exact",
+      "pin": null,
+      "index_url": null,
+      "cuda_tier": null,
+      "basis": "unknown",
+      "known_working_reference": {
+        "version": "2.10.0+cu128",
+        "cuda_tier": "12.8",
+        "source": "docs/runtime-audits/image-qwen/animastor-image-qwen-runtime-audit-2026-08-26.md"
+      },
+      "todo": "Decision D1: cu124 (video) vs cu128 (audio/image reference) — a single tier or per-profile policy is not decided yet.",
+      "notes": ["Reference torch came with the preinstalled E2E image; it is known-working, not a universal requirement."]
+    },
+    "nodejs": {
+      "policy": "minimum",
+      "minimum": "20",
+      "basis": "minimum_supported",
+      "notes": [
+        "worker/worker/worker.cjs header: 'Node 20+ with global fetch is assumed'.",
+        "Discrepancy: worker/start-worker.sh installs Node 18 — open question 11."
+      ]
+    },
+    "nvidia_driver": {
+      "policy": "reference-only",
+      "basis": "environment_reference",
+      "reference": { "driver": "550.127.08", "cuda_reported_by_driver": "12.4" },
+      "notes": ["Installer v1 only checks driver/GPU presence; it never installs or upgrades the NVIDIA driver."]
+    }
+  },
+
+  "dependencies": [
+    {
+      "id": "custom-node:comfyui-gguf",
+      "kind": "custom_node",
+      "name": "ComfyUI-GGUF",
+      "requirement": "required",
+      "basis": "known_working",
+      "install": {
+        "directory": "ComfyUI-GGUF",
+        "source": {
+          "kind": "github",
+          "repository": "https://github.com/city96/ComfyUI-GGUF",
+          "commit": "6ea2651",
+          "verification": "needs_verification",
+          "todo": "Commit 6ea2651 confirmed by image audit; upstream repository URL attributed by package name only — verify before stable manifest."
+        }
+      },
+      "provides_classes": ["UnetLoaderGGUF", "CLIPLoaderGGUF"],
+      "provenance": {
+        "workflows": ["img-qwen-image"],
+        "evidence": "docs/04-planning/private-worker-installer-dependency-research.md §6.1; image audit (commit 6ea2651)"
+      }
+    },
+    {
+      "id": "model:image.unet.qwen-image-2512-q4-k-m",
+      "kind": "model",
+      "name": "qwen-image-2512-Q4_K_M.gguf",
+      "filename": "qwen-image-2512-Q4_K_M.gguf",
+      "target_dir": "models/unet",
+      "requirement": "required",
+      "basis": "known_working",
+      "size": "12.34 GiB",
+      "size_bytes_approx": 13249974108,
+      "checksum": { "algo": "sha256", "value": null },
+      "source": {
+        "kind": "huggingface",
+        "repository": null,
+        "revision": null,
+        "verification": "unknown",
+        "todo": "D5 download research: HF repo, file path, revision, sha256, license/gated status."
+      },
+      "provenance": {
+        "workflows": ["img-qwen-image"],
+        "node_refs": ["10 UnetLoaderGGUF.unet_name"]
+      },
+      "notes": ["Present and working on the reference instance (size from audit); download source not yet researched."]
+    },
+    {
+      "id": "model:image.clip.qwen2.5-vl-7b-instruct-q8-0",
+      "kind": "model",
+      "name": "Qwen2.5-VL-7B-Instruct-Q8_0.gguf",
+      "filename": "Qwen2.5-VL-7B-Instruct-Q8_0.gguf",
+      "target_dir": "models/clip",
+      "requirement": "required",
+      "basis": "known_working",
+      "size": "7.54 GiB",
+      "size_bytes_approx": 8096013353,
+      "checksum": { "algo": "sha256", "value": null },
+      "source": {
+        "kind": "huggingface",
+        "repository": null,
+        "revision": null,
+        "verification": "unknown",
+        "todo": "D5 download research. MUST be the Q8_0 quant: legacy old_img-qwen-image.json references Q4_K_M, which is a footgun and excluded."
+      },
+      "provenance": {
+        "workflows": ["img-qwen-image"],
+        "node_refs": ["11 CLIPLoaderGGUF.clip_name (type qwen_image)"]
+      }
+    },
+    {
+      "id": "model:image.vae.qwen-image-vae",
+      "kind": "model",
+      "name": "qwen_image_vae.safetensors",
+      "filename": "qwen_image_vae.safetensors",
+      "target_dir": "models/vae",
+      "requirement": "required",
+      "basis": "known_working",
+      "size": "242.05 MiB",
+      "size_bytes_approx": 253807821,
+      "checksum": {
+        "algo": "sha256",
+        "value": null,
+        "value_prefix": "a70580f0213e",
+        "note": "sha256[:12] captured by image audit; full hash pending D5."
+      },
+      "source": {
+        "kind": "huggingface",
+        "repository": null,
+        "revision": null,
+        "verification": "unknown",
+        "todo": "D5 download research."
+      },
+      "provenance": {
+        "workflows": ["img-qwen-image"],
+        "node_refs": ["12 VAELoader.vae_name"]
+      }
+    },
+    {
+      "id": "model:image.loras.wuli-qwen-image-2512-turbo-4steps",
+      "kind": "model",
+      "name": "Wuli-Qwen-Image-2512-Turbo-LoRA-4steps-V3.0.safetensors",
+      "filename": "Wuli-Qwen-Image-2512-Turbo-LoRA-4steps-V3.0.safetensors",
+      "target_dir": "models/loras",
+      "requirement": "required",
+      "basis": "known_working",
+      "size": "1.10 GiB",
+      "size_bytes_approx": 1181116006,
+      "checksum": { "algo": "sha256", "value": null },
+      "source": {
+        "kind": "huggingface",
+        "repository": null,
+        "revision": null,
+        "verification": "unknown",
+        "todo": "D5 download research (community LoRA; HF/Civitai origin to be confirmed, license check required)."
+      },
+      "provenance": {
+        "workflows": ["img-qwen-image"],
+        "node_refs": ["1010 LoraLoaderModelOnly.lora_name"]
+      }
+    },
+    {
+      "id": "custom-node:comfyui-manager",
+      "kind": "custom_node",
+      "name": "ComfyUI-Manager",
+      "requirement": "optional",
+      "basis": "optional",
+      "install": {
+        "directory": "comfyui-manager",
+        "source": {
+          "kind": "github",
+          "repository": "https://github.com/ltdrdata/ComfyUI-Manager",
+          "commit": "df1eaff8",
+          "verification": "confirmed"
+        }
+      },
+      "provenance": {
+        "workflows": [],
+        "evidence": "present in image audit; not referenced by any production workflow"
+      },
+      "notes": ["Utility only. Inclusion in manifest is open question D7."]
+    }
+  ],
+
+  "worker_bundle": {
+    "basis": "minimum_supported",
+    "worker_type": "image",
+    "min_version": "2.0.0",
+    "files": [
+      "worker.cjs",
+      "worker-cleanup.cjs",
+      "worker-cleanup-journal.cjs",
+      "package.json",
+      "package-lock.json",
+      ".env.example"
+    ],
+    "source": {
+      "kind": "animastor",
+      "options": [
+        { "kind": "animastor-origin", "endpoint": "GET {HUB_URL}/worker-source" },
+        { "kind": "repository", "path": "worker/worker/" }
+      ],
+      "verification": "confirmed"
+    },
+    "env": {
+      "template": "worker/worker/.env.example",
+      "required": ["HUB_URL", "ANIMASTOR_WORKER_TOKEN", "WORKER_TYPE", "WORKER_ID"],
+      "optional": ["COMFY_PORT", "COMFY_INPUT_DIR", "WORKER_JOURNAL_DIR", "NOTEBOOK_PATH"],
+      "secrets": ["ANIMASTOR_WORKER_TOKEN"],
+      "rules": [
+        "merge semantics: never overwrite an existing valid token",
+        "chmod 600 on .env",
+        "secrets never in logs/argv/state files (redaction per audit script SECRET_NAMES)"
+      ]
+    },
+    "provenance": {
+      "evidence": [
+        "worker/worker/worker.cjs:1-4 (v2.0.0, Node 20+)",
+        "worker/worker/.env.example",
+        "gpu-hub/gpu-hub.js GET /worker-source"
+      ]
+    }
+  },
+
+  "verification": {
+    "method": "resolver-diff",
+    "tools": [
+      "backend/src/installer/compatibility-resolver.js",
+      "scripts/animastor-runtime-audit.sh (read-only reference diff)"
+    ],
+    "pass": "all required dependencies status=installed; missing=0; incompatible=0",
+    "warn": "unknown>0 or unused>0",
+    "fail": "missing>0 or incompatible>0",
+    "notes": ["Runtime audit is reference/verification only — never the source of truth for this manifest."]
+  },
+
+  "environment_reference": [
+    {
+      "provider": "E2E Networks",
+      "label": "image-qwen reference instance (preinstalled E2E image)",
+      "audit": "docs/runtime-audits/image-qwen/animastor-image-qwen-runtime-audit-2026-08-26.md",
+      "captured": "2026-08-26",
+      "gpu": { "name": "NVIDIA L40S", "vram_mib": 46068 },
+      "nvidia_driver": "550.127.08",
+      "cuda_reported_by_driver": "12.4",
+      "os_notes": "Ubuntu-based E2E image; python at /home/jovyan/animastor/python3 (3.10.12); ComfyUI at /home/jovyan/ComfyUI",
+      "comfyui": {
+        "repository": "https://github.com/rajsingh1-dev/ComfyUI.git",
+        "commit": "c4cfee7ad16cfeb082e12f43cf4751b4a67a4e11",
+        "note": "Old ComfyUI fork preinstalled in the E2E image — a known-working environment, not a universal Animastor requirement."
+      },
+      "torch": "2.10.0+cu128",
+      "python": "3.10.12",
+      "known_extras": [
+        { "kind": "custom_node", "name": "ComfyUI-Florence2", "note": "operator extra; not referenced by img-qwen-image" },
+        { "kind": "custom_node", "name": "ComfyUI-KJNodes", "note": "operator extra; not referenced by img-qwen-image" },
+        { "kind": "custom_node", "name": "ComfyUI-RMBG", "note": "operator extra" },
+        { "kind": "custom_node", "name": "ComfyUI-segment-anything-2", "note": "operator extra" },
+        { "kind": "custom_node", "name": "qwen3-tts", "note": "audio-profile node present on the shared image instance" },
+        { "kind": "custom_node", "name": "comfyui-manager", "note": "utility" },
+        { "kind": "workflow_files", "name": "user/default/workflows/*", "note": "local UI test artifacts — explicitly NOT a dependency" }
+      ],
+      "disclaimer": "Known-working reference environment for this profile. Provider/image-specific information; MUST NOT be treated as a canonical requirement."
+    }
+  ],
+
+  "disk_budget": {
+    "models_bytes_approx": 22780911288,
+    "note": "≈21.2 GiB of models (audit) plus ComfyUI + venv overhead. Approximate: derived from human-readable audit sizes."
+  },
+
+  "open_questions": [
+    "D1: canonical ComfyUI pin — fork c4cfee7 (known-working reference) vs official v0.27.0; golden run required",
+    "D1: canonical torch/CUDA tier — cu128 reference vs cu124",
+    "D5: download research for all 4 model files (repo/revision/sha256/gated)",
+    "Open question 8: ComfyUI-Manager inclusion (D7)",
+    "Open question 11: Node.js 18 (start-worker.sh) vs 20 (worker.cjs)",
+    "Open question 12: minimum VRAM undocumented"
+  ]
+}

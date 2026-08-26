@@ -609,3 +609,5 @@ Security:
 - `docs/06-workflows/WORKFLOW_ARCHITECTURE.md` — three-layer workflow model
 - `worker/worker/.env.example`, `worker/start-worker.sh`, `worker/start-video.sh`
 - `docs/04-planning/RunPod_Integration_GPU_Hub.md` — будущий provider-based provisioning
+- `docs/04-planning/private-worker-installer-dependency-research.md` — factual dependency research (Phase 1 input)
+- `docs/04-planning/private-worker-installer-manifest-resolver.md` — Phase 1 implementation: manifests + resolver + evidence taxonomy + runtime modes
