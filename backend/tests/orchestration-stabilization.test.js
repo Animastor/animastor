@@ -273,8 +273,8 @@ describe('orchestration stabilization: executor acceptance', () => {
         stub('../src/orchestration/orchestrator', {
             completeStage: async () => ({ completed: true }),
             failStage: async () => {},
-            setScenePending: async (...args) => { calls.pending.push(args); },
-            setSceneGenerating: async (...args) => { calls.generating.push(args); },
+            setScenePending: async (...args) => { calls.pending.push(args); return { changed: true }; },
+            setSceneGenerating: async (...args) => { calls.generating.push(args); return { changed: true }; },
         });
         stub('../src/storage/postgres/repositories/scene-assets-repo', {
             getDirtyUnitIds: async () => [],

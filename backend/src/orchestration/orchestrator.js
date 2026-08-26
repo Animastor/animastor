@@ -202,12 +202,20 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId, 
         // T2: finalizeDispatch — handlerOk определяет success/failure
         // Если handler вернул ok:true (handlerOk = true) — всегда success,
         // даже при version gate stale. Failure только при ok:false/error handler.
+        //
+        // Fix (video-retry-targeted-investigation-2026-08-26): pass the
+        // taxonomy-classified failureType instead of the implicit 'transient'
+        // default — a rejected completion (e.g. 'invalid_asset_state', which is
+        // PERMANENT by failure-taxonomy) must not consume the transient retry
+        // budget and must not be retried like a transient GPU failure.
         try {
             const outcome = handlerOk ? 'success' : 'failure';
+            const failureTaxonomy = require('../runtime/failure-taxonomy');
             await dispatchEngine.finalizeDispatch(redis, bookId, chapterId, sceneId, stage, {
                 outcome,
                 dispatchId,
-                reason: handlerOk ? (phaseReason || undefined) : (phaseReason || 'handler_rejected')
+                reason: handlerOk ? (phaseReason || undefined) : (phaseReason || 'handler_rejected'),
+                failureType: handlerOk ? undefined : failureTaxonomy.classifyFailure(new Error(phaseReason || 'handler_rejected')).type,
             });
         } catch (dispErr) {
             warn(`completeStage: finalizeDispatch(${stage}) failed: ${dispErr.message}`);
@@ -403,6 +411,13 @@ async function setSceneAllReady(redis, bookId, chapterId, sceneId, buildId = nul
 // ── setSceneGenerating ──────────────────────────────
 // Set an asset to GENERATING. R1: validateAssetTransition + journal event.
 // T7+T8: syncLinearState удалён — per-asset state единственный source of truth.
+//
+// CONTRACT (fix: video-retry-targeted-investigation-2026-08-26):
+// returns { changed: false, reason } when the transition is invalid —
+// callers MUST abort the dispatch before sending any GPU job.
+// Sending a job from a state that cannot reach GENERATING turns the later
+// successful callback into 'invalid_asset_state' FAILURE (retry budget burn
+// + circuit breaker). See scene-orchestrator.ensureStageDispatchable.
 async function setSceneGenerating(redis, bookId, chapterId, sceneId, asset, buildId = null) {
     const state = require('../state');
     const journal = require('./event-journal');

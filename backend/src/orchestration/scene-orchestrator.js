@@ -40,6 +40,36 @@ async function startScene(redis, scene, loadedBook, buildId) {
     return { success: true };
 }
 
+// ── STAGE DISPATCH LIFECYCLE GUARD ───────────────────
+// Fix: docs/runtime-audits/video-retry-targeted-investigation-2026-08-26.md
+// Частичный SCENE_RESET может оставить ассет в NEW при готовых остальных
+// (image=READY, video=NEW): startScene() пропускается (не все три NEW),
+// после чего setSceneGenerating(new→generating) отклоняется state-машиной,
+// rejection проглатывался — и job уходил в GPU Hub из невалидного состояния.
+// Успешный результат затем отклонялся handleVideoCompleted
+// ('invalid_asset_state'), превращался в FAILURE, сжигал retry budget и
+// открывал circuit breaker.
+//
+// Контракт: перед отправкой любого GPU job ассет обязан пройти
+//   NEW → PENDING (здесь) → GENERATING (сразу ниже),
+// либо уже находиться в состоянии, из которого GENERATING достижим.
+// Если переход невозможен — dispatch ПРЕРЫВАЕТСЯ ДО отправки job.
+async function ensureStageDispatchable(redis, bookId, chapterId, sceneId, stage) {
+    const states = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    if (states?.[stage] === state.AssetState.NEW) {
+        const init = await setScenePending(redis, bookId, chapterId, sceneId, stage);
+        if (!init.changed) {
+            return { ok: false, reason: `pending_init_failed:${init.reason}` };
+        }
+        log(`STAGE_INIT: ${bookId}/${chapterId}/${sceneId} ${stage}: NEW → PENDING`);
+    }
+    const gen = await setSceneGenerating(redis, bookId, chapterId, sceneId, stage);
+    if (!gen.changed) {
+        return { ok: false, reason: `generating_transition_failed:${gen.reason}` };
+    }
+    return { ok: true };
+}
+
 // T3: Каждый executor возвращает { dispatched: true/false, jobs, reason }
 async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchId) {
     const bookId = scene.book_id;
@@ -54,7 +84,12 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
     });
 
     // T7: через фасад — единый владелец GENERATING (audio)
-    await setSceneGenerating(redis, bookId, chapterId, sceneId, 'audio');
+    // Lifecycle guard: abort BEFORE any GPU job if the transition chain fails.
+    const dispatchable = await ensureStageDispatchable(redis, bookId, chapterId, sceneId, 'audio');
+    if (!dispatchable.ok) {
+        warn(`AUDIO_DISPATCH: ${bookId}/${chapterId}/${sceneId}: state not dispatchable (${dispatchable.reason}) — aborting before any GPU job`);
+        return { dispatched: false, jobs: 0, reason: dispatchable.reason };
+    }
 
     // Fallback to disk load when runtime doesn't pass loadedBook
     const bookData = loadedBook || book.loadBook(bookId);
@@ -197,7 +232,12 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId, dispatchI
     });
 
     // T8: через фасад — единый владелец GENERATING
-    await setSceneGenerating(redis, bookId, chapterId, sceneId, 'image');
+    // Lifecycle guard: abort BEFORE any GPU job if the transition chain fails.
+    const dispatchable = await ensureStageDispatchable(redis, bookId, chapterId, sceneId, 'image');
+    if (!dispatchable.ok) {
+        warn(`IMAGE_DISPATCH: ${bookId}/${chapterId}/${sceneId}: state not dispatchable (${dispatchable.reason}) — aborting before any GPU job`);
+        return { dispatched: false, jobs: 0, reason: dispatchable.reason };
+    }
 
     const bookData = loadedBook || book.loadBook(bookId);
     const sceneData = book.findSceneRuntimeData(bookData, chapterId, sceneId);
@@ -269,7 +309,13 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchI
     });
 
     // T8: через фасад — единый владелец GENERATING
-    await setSceneGenerating(redis, bookId, chapterId, sceneId, 'video');
+    // Lifecycle guard: abort BEFORE any GPU job if the transition chain fails
+    // (root cause of the 2026-08-26 video re-dispatch incident).
+    const dispatchable = await ensureStageDispatchable(redis, bookId, chapterId, sceneId, 'video');
+    if (!dispatchable.ok) {
+        warn(`VIDEO_DISPATCH: ${bookId}/${chapterId}/${sceneId}: state not dispatchable (${dispatchable.reason}) — aborting before any GPU job`);
+        return { dispatched: false, jobs: 0, reason: dispatchable.reason };
+    }
 
     const bookData = loadedBook || book.loadBook(bookId);
     const sceneData = book.findSceneRuntimeData(bookData, chapterId, sceneId);
@@ -487,6 +533,7 @@ async function dispatchStage(redis, scene, loadedBook, buildId, overrideStage, d
 }
 
 module.exports = {
+    ensureStageDispatchable,
     dispatchStage,
     restoreSceneChunkStatus,
     handleAudioCompleted,
