@@ -464,6 +464,16 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
     if (circuitStatus.recovered) {
         log(`CIRCUIT_RECOVERED_TEST: ${bookId}/${chapterId}/${sceneId}:${stage} → half-open test dispatch`);
     }
+    // Half-open test-permit tracking: if this dispatch was admitted as a
+    // half-open test request, its permit MUST be released on every abort path
+    // below that does not reach finalizeDispatch('success'|'failure') — those
+    // two outcomes release it themselves via recordSuccess/recordFailure.
+    // Otherwise the permit leaks and the stage stays blocked on
+    // 'half_open_limit_reached' forever (2026-08-26 video incident follow-up).
+    const isCircuitTestRequest = Boolean(circuitStatus.allowed && circuitStatus.isTestRequest);
+    const releaseTestPermit = () => isCircuitTestRequest
+        ? circuitBreaker.releaseHalfOpenPermit(redis, stage)
+        : Promise.resolve({ released: false });
     if (!circuitStatus.allowed) {
         log(`CIRCUIT_BLOCKED: ${bookId}/${chapterId}/${sceneId}:${stage} (circuit: ${circuitStatus.circuitState})`);
         await journal.appendSceneEvent(
@@ -490,8 +500,8 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
                 await logDispatchEvent(redis, bookId, chapterId, sceneId, 'SKIPPED_DUPLICATE', stage, {
                     reason: shouldSkip.reason,
                     dispatchId
-                });
-                return { dispatched: false, reason: 'duplicate', skip: true, dispatchId };
+                });                    await releaseTestPermit();
+                    return { dispatched: false, reason: 'duplicate', skip: true, dispatchId };
             }
         }
     } else {
@@ -508,6 +518,7 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
             current: quota.current,
             max: quota.max
         });
+        await releaseTestPermit();
         return { dispatched: false, reason: 'backpressure', quota: quota, dispatchId };
     }
 
@@ -525,6 +536,7 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
     if (!retryBudgetCheck.allowed) {
         log(`RETRY_BUDGET_EXCEEDED: ${bookId}/${chapterId}/${sceneId}:${stage} (${retryBudgetCheck.reason})`);
         await releaseQuota(redis, stage);
+        await releaseTestPermit();
         await journal.appendSceneEvent(
             redis,
             bookId,
@@ -542,6 +554,7 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
     if (!lease.acquired) {
         // Release quota if lease acquisition failed
         await releaseQuota(redis, stage);
+        await releaseTestPermit();
         return { dispatched: false, reason: lease.reason, dispatchId };
     }
 
@@ -587,6 +600,9 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
                         reason: result.reason || 'executor_sent_no_jobs'
                     });
                 }
+                // Cancelled finalize does not touch the circuit breaker — release
+                // the test permit here so a half-open circuit can keep recovering.
+                await releaseTestPermit();
                 return { dispatched: false, dispatchId, reason: result.reason || 'already_done', result };
             }
 
@@ -601,6 +617,7 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
             return { dispatched: true, dispatchId, stage, leaseKey: lease.leaseKey, result };
     } catch (err) {
         error(`DISPATCH_FAILED: ${bookId}/${chapterId}/${sceneId}:${stage}: ${err.message}`);
+        await releaseTestPermit().catch(() => {});
         await logDispatchEvent(redis, bookId, chapterId, sceneId, 'FAILED', stage, {
             dispatchId,
             error: err.message

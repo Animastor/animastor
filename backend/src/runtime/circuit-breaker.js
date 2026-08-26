@@ -240,6 +240,35 @@ async function recordSuccess(redis, service) {
 }
 
 /**
+ * Release a half-open test permit.
+ *
+ * Fix (video-retry incident follow-up): a permit acquired by
+ * checkAndIncrementTestRequest was only released by recordSuccess/
+ * recordFailure. A half-open test dispatch that aborted BEFORE finalization
+ * (retry-budget exceeded, backpressure, duplicate, lease failure, cancelled)
+ * leaked its permit forever — with halfOpenMaxRequests=2 both permits leaked,
+ * the counter stuck at the limit and every later dispatch got
+ * 'half_open_limit_reached' → the stage stayed blocked permanently.
+ *
+ * Callers MUST call this when an admitted test request will NOT reach
+ * finalizeDispatch with outcome 'success'|'failure' (those two already DEL
+ * the counter themselves).
+ */
+async function releaseHalfOpenPermit(redis, service) {
+    const currentState = await getCircuitState(redis, service);
+    if (currentState !== CircuitState.HALF_OPEN) {
+        // Nothing to release (circuit already healed/reopened — the key was DELeted).
+        return { released: false, reason: 'not_half_open' };
+    }
+    const halfOpenKey = getCircuitHalfOpenKey(service);
+    const count = await redis.decr(halfOpenKey);
+    if (count <= 0) {
+        await redis.del(halfOpenKey);
+    }
+    return { released: true, remaining: Math.max(count, 0) };
+}
+
+/**
  * Check if circuit has failed recently.
  */
 async function hasRecentFailures(redis, service) {
@@ -542,6 +571,7 @@ module.exports = {
     checkDispatch,
     checkAndIncrementTestRequest,
     checkDispatchWithRecovery,
+    releaseHalfOpenPermit,
 
     // Recovery
     tryRecover,
