@@ -8,6 +8,32 @@ All notable changes to Animastor are documented here.
 
 ### Added
 
+- **Private Worker Installer — Phase 2** (executable installation engine).
+  Real installation on clean GPU instances with no provider-specific hacks:
+  - IO abstraction (`engine/io.js`): real filesystem + HTTP download + memory
+    FS + dry-run guard + SHA-256 hashing.
+  - Environment probe (`engine/probe.js`): GPU, ComfyUI, Python, Torch,
+    Node.js, custom nodes, models, workflows, worker detection.
+  - State persistence (`engine/state.js`): `install-state.json` for resume
+    support; atomic writes, artifact tracking.
+  - Resumable downloader (`engine/downloader.js`): `.part` files, HTTP Range,
+    atomic rename, SHA-256 verification, retry with backoff, HF/ModelScope
+    adapters.
+  - ComfyUI lifecycle (`engine/comfyui.js`): install, update, start, health
+    check, system stats, object_info probe, static workflow validation.
+  - Custom node installer (`engine/nodes.js`): git clone + pin + pip deps.
+  - Baseline workflow installer (`engine/workflows.js`): never overwrite
+    user-customized copies; fresh official copies to distinct paths.
+  - Worker bundle deploy (`engine/worker.js`): .env merge, key prompt,
+    registration verify against Hub.
+  - Orchestrator (`engine/engine.js`): detect → resolve → plan → execute →
+    verify; idempotent, resume-capable, dry-run safe.
+  - CLI (`cli.js`): `detect`, `plan`, `install`, `verify`, `resume` commands;
+    `--dry-run`, `--profile`, `--yes`, `--root`, `--worker-dir`, `--hub-url`;
+    hidden secret prompt via raw stdin.
+  - 20 mocked execution scenarios passing (engine tests).
+  - E2E acceptance document (`docs/04-planning/private-worker-installer-e2e-acceptance.md`).
+
 - **Private Worker Installer — Phase 1.5** (existing ComfyUI, workflows,
   flexible profile mode). Architecture + manifest/resolver foundation only;
   no installer executable, no downloads, no writes:

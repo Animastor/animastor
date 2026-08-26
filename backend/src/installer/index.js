@@ -18,6 +18,7 @@ const downloads = require('./download-planner');
 const plan = require('./install-plan');
 const safety = require('./safety-rules');
 const verification = require('./verification-report');
+const engine = require('./engine/engine');
 
 module.exports = {
     manifest,
@@ -27,4 +28,5 @@ module.exports = {
     plan,
     safety,
     verification,
+    engine,
 };

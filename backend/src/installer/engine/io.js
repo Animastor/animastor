@@ -1,0 +1,285 @@
+'use strict';
+
+/**
+ * IO layer — Private Worker Installer Phase 2.
+ *
+ * Every side effect the installation engine performs goes through an `io`
+ * object. Production uses createRealIo(); tests inject a mock; --dry-run
+ * wraps the real io with a mutation guard that throws on any write.
+ *
+ * The engine itself is pure orchestration: given the same io behavior it is
+ * fully deterministic and testable without network, GPU, or real downloads.
+ */
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { spawnSync, spawn } = require('child_process');
+
+// ---------------------------------------------------------------------------
+// Real IO
+// ---------------------------------------------------------------------------
+
+function createRealIo() {
+    return {
+        fs: {
+            existsSync: (p) => fs.existsSync(p),
+            isDirectory: (p) => fs.existsSync(p) && fs.statSync(p).isDirectory(),
+            readFileSync: (p, enc) => fs.readFileSync(p, enc),
+            writeFileSync: (p, data, opts) => fs.writeFileSync(p, data, opts),
+            appendFileSync: (p, data) => fs.appendFileSync(p, data),
+            mkdirSync: (p, opts) => fs.mkdirSync(p, opts),
+            renameSync: (a, b) => fs.renameSync(a, b),
+            unlinkSync: (p) => fs.unlinkSync(p),
+            copyFileSync: (a, b) => fs.copyFileSync(a, b),
+            chmodSync: (p, mode) => fs.chmodSync(p, mode),
+            statSync: (p) => {
+                const s = fs.statSync(p);
+                return { size: s.size, isFile: s.isFile(), isDirectory: s.isDirectory() };
+            },
+            readdirSync: (p) => fs.readdirSync(p),
+        },
+        /** Synchronous command execution (git, pip, npm, nvidia-smi…). */
+        exec(command, args = [], opts = {}) {
+            const r = spawnSync(command, args, {
+                cwd: opts.cwd,
+                env: opts.env || process.env,
+                encoding: 'utf8',
+                timeout: opts.timeout || 10 * 60 * 1000,
+                maxBuffer: 64 * 1024 * 1024,
+                input: opts.input,
+            });
+            return {
+                code: r.status === null ? -1 : r.status,
+                stdout: r.stdout || '',
+                stderr: r.stderr || '',
+                error: r.error ? String(r.error.message || r.error) : null,
+            };
+        },
+        /** Detached long-running process (ComfyUI server). Returns pid. */
+        spawnDaemon(command, args = [], opts = {}) {
+            const out = opts.logFile
+                ? fs.openSync(opts.logFile, 'a')
+                : 'ignore';
+            const child = spawn(command, args, {
+                cwd: opts.cwd,
+                env: opts.env || process.env,
+                detached: true,
+                stdio: ['ignore', out, out],
+            });
+            child.unref();
+            return child.pid;
+        },
+        /** Global fetch (Node 20+). */
+        fetch: (url, opts) => fetch(url, opts),
+        http: {
+            /**
+             * Stream-download a URL to dest. If appendFrom>0, request an HTTP
+             * Range and append (resumed=true when the server honors it with
+             * 206; otherwise the file is restarted from scratch).
+             * Returns { status, bytes, total, resumed, error? }.
+             */
+            async download({ url, dest, appendFrom = 0, headers = {}, onProgress = null }) {
+                const h = { ...headers };
+                if (appendFrom > 0) h.Range = `bytes=${appendFrom}-`;
+                const res = await fetch(url, { headers: h, redirect: 'follow' });
+                if (!(res.status === 200 || res.status === 206 || res.status === 416)) {
+                    let body = '';
+                    try { body = (await res.text()).slice(0, 300); } catch (_) { /* ignore */ }
+                    return { status: res.status, bytes: 0, total: null, resumed: false, error: body };
+                }
+                if (res.status === 416) {
+                    return { status: 416, bytes: 0, total: null, resumed: false };
+                }
+                const resumed = res.status === 206 && appendFrom > 0;
+                const totalHeader = res.headers.get('content-range') || res.headers.get('content-length');
+                let total = null;
+                if (totalHeader) {
+                    const m = /\/(\d+)$/.exec(String(totalHeader));
+                    total = m ? Number(m[1]) : Number(totalHeader) + (resumed ? appendFrom : 0);
+                }
+                await new Promise((resolve, reject) => {
+                    const out = fs.createWriteStream(dest, { flags: resumed ? 'a' : 'w' });
+                    let received = resumed ? appendFrom : 0;
+                    (async () => {
+                        try {
+                            const reader = res.body.getReader();
+                            for (;;) {
+                                const { done, value } = await reader.read();
+                                if (done) break;
+                                out.write(Buffer.from(value));
+                                received += value.byteLength;
+                                if (onProgress) onProgress({ received, total });
+                            }
+                            out.end();
+                            out.on('finish', resolve);
+                            out.on('error', reject);
+                        } catch (err) {
+                            out.destroy();
+                            reject(err);
+                        }
+                    })();
+                });
+                return { status: res.status, bytes: received, total, resumed };
+            },
+            async fetchJson(url, opts = {}) {
+                const res = await fetch(url, opts);
+                let json = null;
+                try { json = await res.json(); } catch (_) { /* non-json body */ }
+                return { status: res.status, json };
+            },
+            async fetchText(url, opts = {}) {
+                const res = await fetch(url, opts);
+                return { status: res.status, text: await res.text().catch(() => '') };
+            },
+        },
+        /** Streaming sha256 of a file (never loads whole multi-GB files). */
+        async hashFile(filePath, algo = 'sha256') {
+            return new Promise((resolve, reject) => {
+                const hash = crypto.createHash(algo);
+                const stream = fs.createReadStream(filePath);
+                stream.on('data', (d) => hash.update(d));
+                stream.on('end', () => resolve(hash.digest('hex')));
+                stream.on('error', reject);
+            });
+        },
+        now: () => Date.now(),
+    };
+}
+
+// ---------------------------------------------------------------------------
+// In-memory FS (tests, and a safe sandbox for unit-running the engine)
+// ---------------------------------------------------------------------------
+
+function createMemoryFs(initial = {}) {
+    const files = new Map(); // path -> { data: Buffer|string, mode }
+    const dirs = new Set(['/']);
+    for (const [p, data] of Object.entries(initial)) {
+        files.set(norm(p), { data, mode: 0o644 });
+        let d = path.dirname(norm(p));
+        while (d && d !== '/') { dirs.add(d); d = path.dirname(d); }
+    }
+
+    function norm(p) { return path.posix.normalize(String(p)); }
+    function assertParent(p) {
+        const d = path.dirname(norm(p));
+        if (d !== '/' && !dirs.has(d)) throw Object.assign(new Error(`ENOENT: no such directory ${d}`), { code: 'ENOENT' });
+    }
+
+    return {
+        _files: files,
+        _dirs: dirs,
+        existsSync: (p) => files.has(norm(p)) || dirs.has(norm(p)),
+        isDirectory: (p) => dirs.has(norm(p)),
+        readFileSync: (p) => {
+            const f = files.get(norm(p));
+            if (!f) throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+            return typeof f.data === 'string' ? f.data : Buffer.from(f.data).toString('utf8');
+        },
+        readBufferSync(p) {
+            const f = files.get(norm(p));
+            if (!f) throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+            return Buffer.from(f.data);
+        },
+        writeFileSync: (p, data) => { assertParent(p); files.set(norm(p), { data, mode: 0o644 }); },
+        appendFileSync: (p, data) => {
+            assertParent(p);
+            const cur = files.has(norm(p)) ? files.get(norm(p)).data : '';
+            files.set(norm(p), { data: String(cur) + String(data), mode: 0o644 });
+        },
+        mkdirSync: (p, opts) => {
+            const target = norm(p);
+            if (opts && opts.recursive) {
+                let d = target;
+                const stack = [];
+                while (d && d !== '/' && !dirs.has(d)) { stack.push(d); d = path.dirname(d); }
+                for (const dd of stack.reverse()) dirs.add(dd);
+                return;
+            }
+            assertParent(p);
+            dirs.add(target);
+        },
+        renameSync: (a, b) => {
+            const f = files.get(norm(a));
+            if (!f) throw Object.assign(new Error(`ENOENT: ${a}`), { code: 'ENOENT' });
+            assertParent(b);
+            files.set(norm(b), f);
+            files.delete(norm(a));
+        },
+        unlinkSync: (p) => {
+            if (!files.has(norm(p))) throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+            files.delete(norm(p));
+        },
+        copyFileSync: (a, b) => {
+            const f = files.get(norm(a));
+            if (!f) throw Object.assign(new Error(`ENOENT: ${a}`), { code: 'ENOENT' });
+            assertParent(b);
+            files.set(norm(b), { ...f });
+        },
+        chmodSync: (p, mode) => {
+            const f = files.get(norm(p));
+            if (f) f.mode = mode;
+        },
+        statSync: (p) => {
+            const f = files.get(norm(p));
+            if (f) return { size: Buffer.byteLength(f.data), isFile: true, isDirectory: false };
+            if (dirs.has(norm(p))) return { size: 0, isFile: false, isDirectory: true };
+            throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+        },
+        readdirSync: (p) => {
+            const target = norm(p);
+            if (!dirs.has(target)) throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+            const out = new Set();
+            const prefix = target === '/' ? '/' : `${target}/`;
+            for (const key of [...files.keys(), ...dirs]) {
+                if (key !== target && key.startsWith(prefix)) {
+                    out.add(key.slice(prefix.length).split('/')[0]);
+                }
+            }
+            return Array.from(out).sort();
+        },
+    };
+}
+
+/**
+ * Wrap an io so that ANY mutation throws. Used for --dry-run and for the
+ * "zero mutations" test invariant. Reads and prompts stay allowed.
+ */
+function createDryRunIo(io) {
+    const guard = (name) => () => {
+        throw new Error(`dry-run violation: attempted mutating operation "${name}"`);
+    };
+    return {
+        ...io,
+        fs: {
+            existsSync: io.fs.existsSync,
+            isDirectory: io.fs.isDirectory,
+            readFileSync: io.fs.readFileSync,
+            statSync: io.fs.statSync,
+            readdirSync: io.fs.readdirSync,
+            writeFileSync: guard('fs.writeFileSync'),
+            appendFileSync: guard('fs.appendFileSync'),
+            mkdirSync: guard('fs.mkdirSync'),
+            renameSync: guard('fs.renameSync'),
+            unlinkSync: guard('fs.unlinkSync'),
+            copyFileSync: guard('fs.copyFileSync'),
+            chmodSync: guard('fs.chmodSync'),
+        },
+        exec: guard('exec'),
+        spawnDaemon: guard('spawnDaemon'),
+        fetch: guard('fetch'),
+        http: {
+            download: guard('http.download'),
+            fetchJson: guard('http.fetchJson'),
+            fetchText: guard('http.fetchText'),
+        },
+        hashFile: io.hashFile, // read-only — allowed in dry-run
+        dryRun: true,
+    };
+}
+
+module.exports = {
+    createRealIo,
+    createMemoryFs,
+    createDryRunIo,
+};

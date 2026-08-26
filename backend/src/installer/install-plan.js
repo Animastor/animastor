@@ -309,6 +309,13 @@ function buildWorkerSteps({ report, manifests, decisions }) {
         return { setup, key: null };
     }
 
+    // If the user declined worker setup, don't prompt for the key either.
+    if (decisions.worker_setup === false || decisions.worker_setup === 'no') {
+        setup.kind = 'noop';
+        setup.result = 'user skipped worker setup';
+        return { setup, key: null };
+    }
+
     const actions = [];
     if (toInstall.length > 0) actions.push(`install worker bundle: ${toInstall.map((e) => e.worker_type).join(', ')}`);
     if (toConfigure.length > 0) actions.push(`create/update .env (merge semantics, chmod 600): ${toConfigure.map((e) => e.worker_type).join(', ')}`);

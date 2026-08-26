@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Animastor backend",
   "main": "src/backend.cjs",
+  "bin": {
+    "animastor-installer": "src/installer/cli.js"
+  },
   "type": "commonjs",
   "scripts": {
     "start": "node src/backend.cjs",
