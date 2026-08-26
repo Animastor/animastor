@@ -4,6 +4,38 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-08-26
+
+### Added
+
+- **Private Worker Installer — Phase 1.5** (existing ComfyUI, workflows,
+  flexible profile mode). Architecture + manifest/resolver foundation only;
+  no installer executable, no downloads, no writes:
+  - Baseline workflows are first-class install artifacts: `workflows`
+    section (policy `editable-baseline`) in all three canonical manifests,
+    with sha256 of the canonical production files; a baseline is an editable
+    starting point — the installer never overwrites a user-customized copy
+    (fresh official copies go to a distinct `.animastor-baseline` path).
+  - Resolver: new entry kinds `workflow` and `worker` (statuses
+    required/installed/missing/incompatible/unused/unknown; customized
+    workflow = installed, not an error), new non-destructive action
+    `configure` for interactive worker/.env setup.
+  - New pure planning modules: `install-plan.js` (canonical 12-step
+    interactive flow, plan rendering, confirmation gates),
+    `workflow-artifacts.js`, `download-planner.js` (resumable
+    HF/ModelScope specs; unresearched sources are `ready:false` — URLs are
+    never invented), `safety-rules.js` (never-automatic operations,
+    confirmation gate, secret redaction), `verification-report.js`
+    (INSTALLATION COMPLETE / FAIL / WARN).
+  - Worker secrets are modeled by key names + boolean flags only; values can
+    never enter reports, plans, logs, or argv.
+  - 78 installer tests (mocha), incl. the 15 required Phase 1.5 scenarios;
+    no real model downloads in tests.
+  - Docs: `docs/04-planning/private-worker-installer-phase15.md`;
+    architecture draft updated with the fixed pipeline and runtime modes.
+
+---
+
 ## [Unreleased] — 2026-08-24
 
 ### Added

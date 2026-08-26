@@ -1,36 +1,50 @@
 'use strict';
 
 /**
- * Compatibility Resolver — Private Worker Installer Phase 1.
+ * Compatibility Resolver — Private Worker Installer Phase 1 / Phase 1.5.
  *
  * Pure, read-only resolution logic. It accepts:
  *   - profiles/manifests (canonical install manifests),
- *   - environment probe (= installed state: ComfyUI, python/torch, nodes, models),
+ *   - environment probe (= installed state: ComfyUI, python/torch, nodes,
+ *     models, workflows, worker),
  *   - runtime mode,
  * and produces a structured resolution report. It performs NO installation,
  * NO deletion and NO mutation of any environment. The report is the input
  * for a future installer; the installer must not decide "what is needed"
  * on its own.
  *
- * Runtime modes (see docs/04-planning/private-worker-installer-manifest-resolver.md):
+ * Runtime modes (see docs/04-planning/private-worker-installer-phase15.md):
  *   managed  — installer fully owns the environment (V1 target);
  *   existing — detect → compare → report → optionally install missing;
  *              never replace/downgrade the user's environment automatically;
  *   isolated — one GPU machine, several independent ComfyUI environments
- *              (data model + interface only in Phase 1);
+ *              (data model + interface only; full implementation later);
  *   shared   — one ComfyUI serving several profiles; resolver computes the
  *              union of dependencies and detects runtime conflicts.
+ *
+ * Entry kinds (Phase 1.5): runtime | custom_node | model | model_repo |
+ * python_package | workflow | worker.
  *
  * Entry statuses: required | installed | missing | incompatible | unused | unknown
  *   required     — declared required by manifest; environment was not probed
  *                  for this kind, so no installed/missing judgement is possible
- *   installed    — required and found compatible
+ *   installed    — required and found compatible (for workflow: present —
+ *                  possibly customized by the user, which is ALLOWED)
  *   missing      — required and absent
  *   incompatible — found, but version/config conflicts with the manifest
  *   unused       — present on the machine, not required by selected profiles
  *                  (informational; NEVER auto-removed)
  *   unknown      — present but cannot be matched/verified, or compatibility
  *                  cannot be determined from available evidence
+ *
+ * Actions: install | skip | review | none | configure.
+ *   configure — interactive worker/.env setup (Worker Key entered hidden;
+ *               never logged, never passed via argv).
+ *
+ * Workflow semantics (Phase 1.5): a baseline workflow is an EDITABLE starting
+ * point. A copy whose hash differs from the manifest baseline_sha256 is
+ * "installed/customized" — NOT an error, never overwritten. A fresh official
+ * copy can be downloaded separately under a distinct name on request.
  *
  * Multi-profile (shared) verdicts:
  *   shared-compatible | shared-conflict | requires-isolation | unknown
@@ -42,7 +56,7 @@ const ENTRY_STATUSES = Object.freeze([
     'required', 'installed', 'missing', 'incompatible', 'unused', 'unknown',
 ]);
 
-const ACTIONS = Object.freeze(['install', 'skip', 'review', 'none']);
+const ACTIONS = Object.freeze(['install', 'skip', 'review', 'none', 'configure']);
 
 const SHARING_VERDICTS = Object.freeze([
     'shared-compatible', 'shared-conflict', 'requires-isolation', 'unknown',
@@ -133,6 +147,8 @@ function createEmptyEnvironment(root = null) {
         custom_nodes: [],
         models: [],
         python_packages: [],
+        workflows: [],
+        worker: null,
     };
 }
 
@@ -404,7 +420,7 @@ function findInstalledNode(env, dep) {
 }
 
 function checkCustomNode(dep, env, profiles) {
-    const base = { id: dep.id, kind: 'custom_node', requirement: dep.requirement, basis: dep.basis, profiles };
+    const base = { id: dep.id, kind: 'custom_node', name: dep.name, requirement: dep.requirement, basis: dep.basis, profiles };
     if (env.custom_nodes === undefined) {
         return { ...base, status: 'required', action: 'review', notes: ['environment not probed for custom nodes'] };
     }
@@ -443,7 +459,7 @@ function describeNodeFound(found) {
 }
 
 function checkModel(dep, env, profiles) {
-    const base = { id: dep.id, kind: 'model', requirement: dep.requirement, basis: dep.basis, profiles };
+    const base = { id: dep.id, kind: 'model', name: dep.name, requirement: dep.requirement, basis: dep.basis, profiles };
     if (env.models === undefined) {
         return { ...base, status: 'required', action: 'review', notes: ['environment not probed for models'] };
     }
@@ -499,7 +515,7 @@ function checkModel(dep, env, profiles) {
 }
 
 function checkModelRepo(dep, env, profiles) {
-    const base = { id: dep.id, kind: 'model_repo', requirement: dep.requirement, basis: dep.basis, profiles };
+    const base = { id: dep.id, kind: 'model_repo', name: dep.name, requirement: dep.requirement, basis: dep.basis, profiles };
     if (env.models === undefined) {
         return { ...base, status: 'required', action: 'review', notes: ['environment not probed for models'] };
     }
@@ -535,7 +551,7 @@ function checkModelRepo(dep, env, profiles) {
 }
 
 function checkPythonPackage(dep, env, profiles) {
-    const base = { id: dep.id, kind: 'python_package', requirement: dep.requirement, basis: dep.basis, profiles };
+    const base = { id: dep.id, kind: 'python_package', name: dep.name, requirement: dep.requirement, basis: dep.basis, profiles };
     if (env.python_packages === undefined) {
         return { ...base, status: 'required', action: 'review', notes: ['environment not probed for python packages'] };
     }
@@ -573,6 +589,150 @@ function checkDependency(slot, env) {
 }
 
 // ---------------------------------------------------------------------------
+// Workflow checks (Phase 1.5 — first-class artifacts, editable baselines)
+// ---------------------------------------------------------------------------
+
+/**
+ * A baseline workflow is an EDITABLE starting point:
+ *   - absent at the baseline path            → missing (download a copy);
+ *   - present, hash matches baseline_sha256  → installed / canonical-baseline;
+ *   - present, hash differs                  → installed / customized —
+ *     this is ALLOWED, never an error, and NEVER overwritten;
+ *   - present, no baseline hash recorded     → installed / presence.
+ * The installer may later download a FRESH official copy under a distinct
+ * name on explicit request; it never touches the user's copy.
+ */
+function checkWorkflow(wf, env, profiles) {
+    const base = {
+        id: wf.id,
+        kind: 'workflow',
+        name: wf.name,
+        requirement: wf.requirement || 'required',
+        basis: wf.basis || 'required',
+        profiles,
+    };
+    if (env.workflows === undefined) {
+        return { ...base, status: 'required', action: 'review', notes: ['environment not probed for workflows'] };
+    }
+    const expectedPath = `${normPath(wf.target_dir)}/${wf.filename}`;
+    const found = (env.workflows || []).find((w) => normPath(w.path) === expectedPath);
+    if (!found) {
+        return {
+            ...base,
+            status: 'missing',
+            action: missingAction({ requirement: base.requirement }),
+            expected: { path: expectedPath },
+            notes: ['baseline workflow download writes a NEW file only; it never touches existing user workflows'],
+        };
+    }
+    if (wf.baseline_sha256 && found.sha256) {
+        if (String(found.sha256).toLowerCase() === String(wf.baseline_sha256).toLowerCase()) {
+            return { ...base, status: 'installed', grade: 'canonical-baseline', action: 'skip', found: { path: found.path }, notes: [] };
+        }
+        return {
+            ...base,
+            status: 'installed',
+            grade: 'customized',
+            action: 'skip',
+            found: { path: found.path, sha256: found.sha256 },
+            notes: ['user has customized this baseline workflow — ALLOWED (editable baseline); NEVER overwritten; a fresh official copy can be downloaded separately under a distinct name on request'],
+        };
+    }
+    return {
+        ...base,
+        status: 'installed',
+        grade: 'presence',
+        action: 'skip',
+        found: { path: found.path },
+        notes: ['presence only — no baseline sha256 and/or file hash available'],
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Worker checks (Phase 1.5 — Animastor worker bundle + .env, secrets-safe)
+// ---------------------------------------------------------------------------
+
+/**
+ * Worker probe shape (env.worker): a single probe object or an array of
+ * probes (shared mode — one per worker_type):
+ *   { worker_type, bundle: { present, dir, files[] }, env: { present, set_keys[] } }
+ * SECURITY: probes record which env KEYS are set — never their VALUES.
+ * The resolver therefore can never leak a Worker Key into a report/log.
+ */
+function checkWorker(manifest, env) {
+    const wb = manifest.worker_bundle || {};
+    const profileId = manifest.profile ? manifest.profile.id : '<unknown>';
+    const workerType = wb.worker_type || (manifest.profile ? manifest.profile.type : null);
+    const base = {
+        id: `worker:${profileId}`,
+        kind: 'worker',
+        worker_type: workerType,
+        requirement: 'required',
+        basis: wb.basis || 'minimum_supported',
+        profiles: [profileId],
+    };
+    if (env.worker === undefined) {
+        return { ...base, status: 'required', action: 'review', notes: ['environment not probed for the Animastor worker'] };
+    }
+    const probes = Array.isArray(env.worker) ? env.worker : [env.worker];
+    const probe = probes.find((p) => p && (p.worker_type === workerType || workerType === null));
+    if (!probe || !probe.bundle || probe.bundle.present === false) {
+        return { ...base, status: 'missing', action: 'install', expected: { files: wb.files || [] }, notes: [] };
+    }
+    const haveFiles = probe.bundle.files || [];
+    const filesMissing = (wb.files || []).filter((f) => !haveFiles.includes(f));
+    if (filesMissing.length > 0) {
+        return {
+            ...base,
+            status: 'incompatible',
+            reason: 'incomplete_bundle',
+            action: 'install',
+            expected: { files: wb.files },
+            found: { files: haveFiles },
+            notes: [`bundle incomplete; missing files: ${filesMissing.join(', ')}`],
+        };
+    }
+    const requiredEnv = (wb.env && wb.env.required) || [];
+    const secretKeys = (wb.env && wb.env.secrets) || [];
+    if (!probe.env || probe.env.present === false) {
+        return {
+            ...base,
+            status: 'installed',
+            grade: 'bundle-only',
+            action: 'configure',
+            found: { files: haveFiles },
+            env: { present: false, missing_required: requiredEnv.slice() },
+            notes: ['.env not created yet — interactive configuration required (merge semantics; never overwrite an existing valid token)'],
+        };
+    }
+    const setKeys = probe.env.set_keys || [];
+    const envMissing = requiredEnv.filter((k) => !setKeys.includes(k));
+    if (envMissing.length > 0) {
+        const secretMissing = envMissing.filter((k) => secretKeys.includes(k));
+        return {
+            ...base,
+            status: 'installed',
+            grade: 'bundle-only',
+            action: 'configure',
+            found: { files: haveFiles },
+            env: { present: true, missing_required: envMissing },
+            notes: secretMissing.length > 0
+                ? [`missing secret key(s): ${secretMissing.join(', ')} — prompt interactively (hidden input); the VALUE is never logged, never stored in reports/state, never passed via argv`]
+                : [`missing env keys: ${envMissing.join(', ')}`],
+        };
+    }
+    return {
+        ...base,
+        status: 'installed',
+        grade: 'configured',
+        action: 'skip',
+        found: { files: haveFiles },
+        env: { present: true, missing_required: [] },
+        notes: [],
+    };
+}
+
+// ---------------------------------------------------------------------------
 // Extras: unused / unknown detection (never destructive)
 // ---------------------------------------------------------------------------
 
@@ -595,7 +755,7 @@ function collectKnownExtraNames(manifests) {
     return names;
 }
 
-function classifyExtras(manifests, env, matchedNodeDirs, matchedModelPaths) {
+function classifyExtras(manifests, env, matchedNodeDirs, matchedModelPaths, matchedWorkflowPaths) {
     const entries = [];
     const known = collectKnownExtraNames(manifests);
 
@@ -636,6 +796,28 @@ function classifyExtras(manifests, env, matchedNodeDirs, matchedModelPaths) {
                 notes: isKnown
                     ? ['known component, not referenced by the selected profiles\' production workflows — kept as-is, NEVER auto-removed']
                     : ['cannot be matched to any manifest record — left untouched, reported for the user'],
+            });
+        }
+    }
+
+    // Phase 1.5: any workflow file that is not a required baseline artifact is
+    // a USER workflow (editable by design) — reported, never touched.
+    if (Array.isArray(env.workflows)) {
+        for (const wf of env.workflows) {
+            const p = normPath(wf.path);
+            if (matchedWorkflowPaths.has(p)) continue;
+            const isUserArea = p.toLowerCase().startsWith('user/');
+            entries.push({
+                id: `extra:workflow:${p}`,
+                kind: 'workflow',
+                requirement: isUserArea ? 'optional' : 'unknown',
+                basis: isUserArea ? 'environment_reference' : 'unknown',
+                status: isUserArea ? 'unused' : 'unknown',
+                action: 'none',
+                found: { path: p, sha256: wf.sha256 || null },
+                notes: isUserArea
+                    ? ['user workflow — editable by design; NEVER modified, replaced or removed by the installer']
+                    : ['workflow file outside the user area — left untouched, reported for the user'],
             });
         }
     }
@@ -882,17 +1064,39 @@ function resolveInstallation({ manifests, environment = null, mode = 'existing',
         }
     }
 
+    // --- workflow entries (Phase 1.5: first-class artifacts) --------------
+    const matchedWorkflowPaths = new Set();
+    for (const m of list) {
+        const wfSection = m.workflows;
+        const artifacts = wfSection && Array.isArray(wfSection.artifacts) ? wfSection.artifacts : [];
+        for (const wf of artifacts) {
+            const entry = checkWorkflow(wf, env, [m.profile.id]);
+            entries.push(entry);
+            if (entry.found && entry.found.path) matchedWorkflowPaths.add(normPath(entry.found.path));
+        }
+    }
+
+    // --- worker entries (Phase 1.5: one per profile/worker_type) ----------
+    for (const m of list) {
+        entries.push(checkWorker(m, env));
+    }
+
     // --- extras: unused / unknown (never removed) -------------------------
-    entries.push(...classifyExtras(list, env, matchedNodeDirs, matchedModelPaths));
+    entries.push(...classifyExtras(list, env, matchedNodeDirs, matchedModelPaths, matchedWorkflowPaths));
 
     // --- summary -----------------------------------------------------------
     const byStatus = {};
     for (const s of ENTRY_STATUSES) byStatus[s] = 0;
     for (const e of entries) byStatus[e.status] = (byStatus[e.status] || 0) + 1;
 
+    const byKind = {};
+    for (const e of entries) byKind[e.kind] = (byKind[e.kind] || 0) + 1;
+
     const missingRequired = entries.filter((e) => e.status === 'missing' && e.requirement === 'required').length;
     const incompatible = entries.filter((e) => e.status === 'incompatible').length;
     const installPlan = entries.filter((e) => e.action === 'install').map((e) => e.id);
+    const configurePlan = entries.filter((e) => e.action === 'configure').map((e) => e.id);
+    const customizedWorkflows = entries.filter((e) => e.kind === 'workflow' && e.grade === 'customized').map((e) => e.id);
 
     // Hard invariant of Phase 1: resolver never plans destructive operations.
     for (const e of entries) {
@@ -911,10 +1115,13 @@ function resolveInstallation({ manifests, environment = null, mode = 'existing',
         hardware: summarizeHardware(env, list),
         summary: {
             by_status: byStatus,
+            by_kind: byKind,
             missing_required: missingRequired,
             incompatible,
             blocking: missingRequired + incompatible,
             install_plan: installPlan,
+            configure_plan: configurePlan,
+            customized_workflows: customizedWorkflows,
         },
         warnings,
         safe_to_proceed: incompatible === 0 && (sharing ? sharing.can_share : true),
@@ -1012,4 +1219,6 @@ module.exports = {
     resolveSharedRuntime,
     resolveInstallation,
     planIsolatedEnvironments,
+    checkWorkflow,
+    checkWorker,
 };

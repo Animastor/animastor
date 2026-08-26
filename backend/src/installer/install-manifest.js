@@ -23,6 +23,10 @@
  * Key principle: runtime audits are reference/verification material only —
  * they are NEVER the source of truth. Production workflows are the single
  * source of `required`.
+ *
+ * Phase 1.5 adds the top-level `workflows` section: baseline workflows are
+ * first-class install artifacts with policy `editable-baseline` — they are
+ * starting points the user may customize locally, never immutable config.
  */
 
 const fs = require('fs');
@@ -50,6 +54,10 @@ const DEPENDENCY_KINDS = Object.freeze([
 ]);
 
 const VERIFICATION_VALUES = Object.freeze(['confirmed', 'needs_verification', 'unknown']);
+
+const WORKFLOW_POLICY_VALUES = Object.freeze(['editable-baseline']);
+
+const WORKFLOW_SOURCE_KINDS = Object.freeze(['animastor']);
 
 const RUNTIME_COMPONENTS = Object.freeze([
     'comfyui',
@@ -179,6 +187,74 @@ function validateManifest(manifest) {
         });
     }
 
+    // Phase 1.5: workflows are first-class install artifacts (editable baselines).
+    if (manifest.workflows !== undefined) {
+        const wfs = manifest.workflows;
+        if (!isPlainObject(wfs)) {
+            errors.push('workflows must be an object { policy, baseline_dir, artifacts[] }');
+        } else {
+            if (!WORKFLOW_POLICY_VALUES.includes(wfs.policy)) {
+                errors.push(`workflows.policy must be one of ${WORKFLOW_POLICY_VALUES.join('|')} (a baseline workflow is an editable starting point, never an immutable prison)`);
+            }
+            if (!isNonEmptyString(wfs.baseline_dir)) {
+                errors.push('workflows.baseline_dir is required (user-visible location, e.g. user/default/workflows/animastor)');
+            }
+            const profileWorkflows = new Set(
+                isPlainObject(manifest.provenance) && Array.isArray(manifest.provenance.workflows) ? manifest.provenance.workflows : []
+            );
+            if (!Array.isArray(wfs.artifacts) || wfs.artifacts.length === 0) {
+                errors.push('workflows.artifacts must be a non-empty array');
+            } else {
+                const seenWfIds = new Set();
+                wfs.artifacts.forEach((wf, i) => {
+                    const where = `workflows.artifacts[${i}]`;
+                    if (!isPlainObject(wf)) {
+                        errors.push(`${where} must be an object`);
+                        return;
+                    }
+                    if (!isNonEmptyString(wf.id) || !wf.id.startsWith('workflow:')) {
+                        errors.push(`${where}.id is required and must start with "workflow:"`);
+                    } else if (seenWfIds.has(wf.id)) {
+                        errors.push(`${where}.id "${wf.id}" is duplicated`);
+                    } else {
+                        seenWfIds.add(wf.id);
+                    }
+                    if (!isNonEmptyString(wf.name)) errors.push(`${where}.name is required (user-visible)`);
+                    if (!isNonEmptyString(wf.filename) || !wf.filename.endsWith('.json')) {
+                        errors.push(`${where}.filename is required and must end with .json`);
+                    }
+                    if (!isNonEmptyString(wf.target_dir)) errors.push(`${where}.target_dir is required`);
+                    if (!REQUIREMENT_VALUES.includes(wf.requirement)) {
+                        errors.push(`${where}.requirement must be one of ${REQUIREMENT_VALUES.join('|')}`);
+                    }
+                    if (wf.editable === false) {
+                        errors.push(`${where}.editable must not be false — baseline workflows are editable by design; the installer never enforces immutability on the user's copy`);
+                    }
+                    if (wf.baseline_sha256 !== null && wf.baseline_sha256 !== undefined && !/^[0-9a-f]{64}$/i.test(String(wf.baseline_sha256))) {
+                        errors.push(`${where}.baseline_sha256 must be null or a full sha256 hex string`);
+                    }
+                    if (!isPlainObject(wf.source) || !WORKFLOW_SOURCE_KINDS.includes(wf.source.kind)) {
+                        errors.push(`${where}.source.kind must be one of ${WORKFLOW_SOURCE_KINDS.join('|')}`);
+                    } else if (!isNonEmptyString(wf.source.repository_path) && !isNonEmptyString(wf.source.endpoint)) {
+                        errors.push(`${where}.source needs repository_path and/or endpoint`);
+                    }
+                    if (!isPlainObject(wf.provenance) || !Array.isArray(wf.provenance.workflows) || wf.provenance.workflows.length === 0) {
+                        errors.push(`${where}.provenance.workflows must be non-empty (production workflows are the source of required)`);
+                    } else {
+                        for (const ref of wf.provenance.workflows) {
+                            if (!profileWorkflows.has(ref)) {
+                                errors.push(`${where} references workflow "${ref}" that is not in manifest provenance.workflows`);
+                            }
+                        }
+                    }
+                    if (wf.baseline_sha256 === null || wf.baseline_sha256 === undefined) {
+                        warnings.push(`${where} (${wf.id}): baseline_sha256 is null — customized-copy detection falls back to presence-only until the canonical file is hashed`);
+                    }
+                });
+            }
+        }
+    }
+
     if (!isPlainObject(manifest.worker_bundle)) {
         errors.push('worker_bundle is required');
     } else {
@@ -264,6 +340,8 @@ module.exports = {
     REQUIREMENT_VALUES,
     DEPENDENCY_KINDS,
     VERIFICATION_VALUES,
+    WORKFLOW_POLICY_VALUES,
+    WORKFLOW_SOURCE_KINDS,
     RUNTIME_COMPONENTS,
     validateManifest,
     manifestPath,

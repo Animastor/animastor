@@ -1,6 +1,6 @@
 {
   "manifest_version": "1.0.0",
-  "revision": "2026.08.26-r1",
+  "revision": "2026.08.26-r2",
   "status": "draft",
   "profile": {
     "id": "audio/qwen-tts",
@@ -199,6 +199,56 @@
       "notes": ["Utility only. Inclusion in manifest is open question D7."]
     }
   ],
+
+  "workflows": {
+    "policy": "editable-baseline",
+    "baseline_dir": "user/default/workflows/animastor",
+    "note": "Baseline workflows are first-class install artifacts (Phase 1.5). They are editable starting points, NOT immutable configuration: the installer downloads them once, never modifies them afterwards, and never overwrites a user-customized copy. In production the workflow JSON is delivered with each task via GPU Hub (task.params); installed copies serve the user's local ComfyUI (open/edit/debug) and offline use. A fresh official copy can always be downloaded separately under a distinct name without touching the user's version.",
+    "artifacts": [
+      {
+        "id": "workflow:tts-qwen-narrator",
+        "name": "Qwen TTS narrator",
+        "filename": "tts-qwen-narrator.json",
+        "requirement": "required",
+        "basis": "required",
+        "editable": true,
+        "target_dir": "user/default/workflows/animastor/audio",
+        "baseline_sha256": "87180aee01288be6e23240b2d873ce2d451f63cf404dec331a3b221bb9f8b8c1",
+        "source": {
+          "kind": "animastor",
+          "repository_path": "backend/ai/workflows/tts-qwen-narrator.json",
+          "endpoint": "GET {HUB_URL}/workflow/tts-qwen-narrator",
+          "verification": "confirmed"
+        },
+        "provenance": {
+          "workflows": ["tts-qwen-narrator"],
+          "evidence": "backend/ai/workflows/tts-qwen-narrator.json (production workflow)"
+        },
+        "notes": ["sha256 of the canonical production workflow file in this repository (computed 2026-08-26); a differing hash on the target machine means the user customized it — that is allowed"]
+      },
+      {
+        "id": "workflow:tts-qwen-dialogue",
+        "name": "Qwen TTS dialogue",
+        "filename": "tts-qwen-dialogue.json",
+        "requirement": "required",
+        "basis": "required",
+        "editable": true,
+        "target_dir": "user/default/workflows/animastor/audio",
+        "baseline_sha256": "7dcdc6997d36aaeb1a54e1578c69f0c534be29698c7a7b48813f637c740e69db",
+        "source": {
+          "kind": "animastor",
+          "repository_path": "backend/ai/workflows/tts-qwen-dialogue.json",
+          "endpoint": "GET {HUB_URL}/workflow/tts-qwen-dialogue",
+          "verification": "confirmed"
+        },
+        "provenance": {
+          "workflows": ["tts-qwen-dialogue"],
+          "evidence": "backend/ai/workflows/tts-qwen-dialogue.json (production workflow)"
+        },
+        "notes": ["sha256 of the canonical production workflow file in this repository (computed 2026-08-26); a differing hash on the target machine means the user customized it — that is allowed"]
+      }
+    ]
+  },
 
   "worker_bundle": {
     "basis": "minimum_supported",

@@ -1,6 +1,6 @@
 {
   "manifest_version": "1.0.0",
-  "revision": "2026.08.26-r1",
+  "revision": "2026.08.26-r2",
   "status": "draft",
   "profile": {
     "id": "image/qwen-image",
@@ -227,6 +227,35 @@
       "notes": ["Utility only. Inclusion in manifest is open question D7."]
     }
   ],
+
+  "workflows": {
+    "policy": "editable-baseline",
+    "baseline_dir": "user/default/workflows/animastor",
+    "note": "Baseline workflows are first-class install artifacts (Phase 1.5). They are editable starting points, NOT immutable configuration: the installer downloads them once, never modifies them afterwards, and never overwrites a user-customized copy. In production the workflow JSON is delivered with each task via GPU Hub (task.params); installed copies serve the user's local ComfyUI (open/edit/debug) and offline use. A fresh official copy can always be downloaded separately under a distinct name without touching the user's version.",
+    "artifacts": [
+      {
+        "id": "workflow:img-qwen-image",
+        "name": "Qwen Image",
+        "filename": "img-qwen-image.json",
+        "requirement": "required",
+        "basis": "required",
+        "editable": true,
+        "target_dir": "user/default/workflows/animastor/image",
+        "baseline_sha256": "fb4c25e52bbb2f75270367d2696b4b7469617d6557cd0bcc634a6a6fc03a5816",
+        "source": {
+          "kind": "animastor",
+          "repository_path": "backend/ai/workflows/img-qwen-image.json",
+          "endpoint": "GET {HUB_URL}/workflow/img-qwen-image",
+          "verification": "confirmed"
+        },
+        "provenance": {
+          "workflows": ["img-qwen-image"],
+          "evidence": "backend/ai/workflows/img-qwen-image.json (production workflow)"
+        },
+        "notes": ["sha256 of the canonical production workflow file in this repository (computed 2026-08-26); a differing hash on the target machine means the user customized it — that is allowed"]
+      }
+    ]
+  },
 
   "worker_bundle": {
     "basis": "minimum_supported",

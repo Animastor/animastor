@@ -1,13 +1,49 @@
 # Private Worker Installer — Architecture Draft
 
-> **Version:** 0.1.0 (draft — architecture only, no implementation)
-> **Status:** Planning
+> **Version:** 0.2.0 (draft — architecture; Phase 1 + Phase 1.5 foundation implemented)
+> **Status:** Planning + foundation implemented
 > **Date:** 2026-08-26
 >
 > Этот документ — архитектурный draft нового простого Installer для
 > **Animastor Private Workers**. Он НЕ является инструкцией по установке и
 > НЕ отменяет существующие системы: workflow/connector слой, GPU Hub,
 > runtime audits, `worker/start-worker.sh`.
+>
+> **Phase 1.5** (Existing ComfyUI, Workflows, гибкий профильный режим) —
+> см. `docs/04-planning/private-worker-installer-phase15.md`.
+
+---
+
+## 0. Fixed Pipeline (Phase 1.5)
+
+```
+Animastor Profile
+       ↓
+Baseline Requirements        (manifest: runtime, nodes, models, workflows, worker)
+       ↓
+Dependency Resolver          (required ∪ installed → missing/incompatible/unused/unknown)
+       ↓
+Runtime Mode                 (managed | existing | isolated | shared)
+       ↓
+Installer                    (interactive plan → confirmation gates → execution)
+       ↓
+ComfyUI + Models + Nodes + Workflow
+       ↓
+Animastor Worker
+```
+
+Ключевая установка Phase 1.5: **профиль — это baseline, а не тюрьма**.
+Baseline workflow является отправной точкой для пользователя и может быть
+изменён локально (installer никогда не перезаписывает пользовательскую копию).
+
+### Runtime Modes (зафиксированы)
+
+| Режим | Владелец окружения | Поведение installer'а |
+|---|---|---|
+| **Managed** | Installer (V1 target) | полная установка: ComfyUI → runtime → nodes → models → workflows → worker → .env → verify |
+| **Existing** | Пользователь | detect → compare → report → предложить недостающее; НИКОГДА не удалять/downgrade/заменять автоматически |
+| **Isolated** | Одна GPU-машина, N независимых ComfyUI-окружений | каждое окружение резолвится независимо под своим root (data model; полная реализация позже) |
+| **Shared** | Один ComfyUI на несколько профилей | dependency union + compatibility check; при конфликте — «Isolation recommended», без автоматического split |
 
 ---
 
@@ -611,3 +647,4 @@ Security:
 - `docs/04-planning/RunPod_Integration_GPU_Hub.md` — будущий provider-based provisioning
 - `docs/04-planning/private-worker-installer-dependency-research.md` — factual dependency research (Phase 1 input)
 - `docs/04-planning/private-worker-installer-manifest-resolver.md` — Phase 1 implementation: manifests + resolver + evidence taxonomy + runtime modes
+- `docs/04-planning/private-worker-installer-phase15.md` — Phase 1.5: existing ComfyUI, workflows as first-class artifacts, flexible profile mode, interactive flow, safety rules

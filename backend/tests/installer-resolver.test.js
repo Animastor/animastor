@@ -18,6 +18,32 @@ function assertNeverDestructive(report) {
     }
 }
 
+function workerProbe(workerType) {
+    return {
+        worker_type: workerType,
+        bundle: {
+            present: true,
+            dir: `/home/test/animastor/worker-${workerType}`,
+            files: ['worker.cjs', 'worker-cleanup.cjs', 'worker-cleanup-journal.cjs', 'package.json', 'package-lock.json', '.env.example'],
+        },
+        env: { present: true, set_keys: ['HUB_URL', 'ANIMASTOR_WORKER_TOKEN', 'WORKER_TYPE', 'WORKER_ID'] },
+    };
+}
+
+const WORKFLOW_HASHES = {
+    'tts-qwen-narrator': '87180aee01288be6e23240b2d873ce2d451f63cf404dec331a3b221bb9f8b8c1',
+    'tts-qwen-dialogue': '7dcdc6997d36aaeb1a54e1578c69f0c534be29698c7a7b48813f637c740e69db',
+    'img-qwen-image': 'fb4c25e52bbb2f75270367d2696b4b7469617d6557cd0bcc634a6a6fc03a5816',
+    'video-ltx-1p': '6ab036e1c7b4f9e3e9df11b31b08d7495a4c7a761d8f8159951bf06768df3cc1',
+    'video-ltx-2p': '1be44f6fd00e2684a6db138e1a20e8445653bfc65bbb3caa62dfe00b31067617',
+    'video-ltx-3p': 'ec15a01259afcc6b3d76df5d5eec75a080b6aa54bd6b064b79538bd30dcf90f4',
+    'video-ltx-4p': 'acef76b38f25b41f133b92bb71e2ab3ac8f75808209c29624319c9d08822d80d',
+};
+
+function baselineWorkflow(type, name) {
+    return { path: `user/default/workflows/animastor/${type}/${name}.json`, sha256: WORKFLOW_HASHES[name] };
+}
+
 function imageCompatibleEnv() {
     return {
         root: '/home/test/ComfyUI',
@@ -38,6 +64,8 @@ function imageCompatibleEnv() {
             { path: 'models/loras/Wuli-Qwen-Image-2512-Turbo-LoRA-4steps-V3.0.safetensors', size_bytes: 1181116006 },
         ],
         python_packages: [],
+        workflows: [baselineWorkflow('image', 'img-qwen-image')],
+        worker: workerProbe('image'),
     };
 }
 
@@ -78,6 +106,13 @@ function videoCompatibleEnv() {
             { path: 'models/vae/taeltx2_3.safetensors', size_bytes: 23530045 },
         ],
         python_packages: [{ name: 'gguf', version: '0.14.0' }],
+        workflows: [
+            baselineWorkflow('video', 'video-ltx-1p'),
+            baselineWorkflow('video', 'video-ltx-2p'),
+            baselineWorkflow('video', 'video-ltx-3p'),
+            baselineWorkflow('video', 'video-ltx-4p'),
+        ],
+        worker: workerProbe('video'),
     };
 }
 
@@ -133,11 +168,12 @@ describe('Compatibility Resolver', () => {
         it('plans installation of everything required, nothing destructive', () => {
             const r = resolver.resolveInstallation({ manifests: [AUDIO()], environment: resolver.createEmptyEnvironment(), mode: 'managed' });
             expect(r.mode).to.equal('managed');
-            expect(r.summary.missing_required).to.equal(7); // comfyui, torch, python, nodejs + 1 node + 2 model repos
+            expect(r.summary.missing_required).to.equal(10); // comfyui, torch, python, nodejs + 1 node + 2 model repos + 2 workflows + worker
             expect(r.summary.by_status.incompatible).to.equal(0);
-            expect(r.summary.by_status.missing).to.equal(8); // + optional manager (action none)
+            expect(r.summary.by_status.missing).to.equal(11); // + optional manager (action none)
             for (const id of ['runtime:comfyui', 'runtime:torch', 'custom-node:comfyui-qwen3-tts',
-                'model-repo:qwen3-tts-12hz-1.7b-voicedesign', 'model-repo:qwen3-tts-12hz-1.7b-base']) {
+                'model-repo:qwen3-tts-12hz-1.7b-voicedesign', 'model-repo:qwen3-tts-12hz-1.7b-base',
+                'workflow:tts-qwen-narrator', 'workflow:tts-qwen-dialogue', 'worker:audio/qwen-tts']) {
                 expect(entry(r, id).status).to.equal('missing');
                 expect(entry(r, id).action).to.equal('install');
             }
@@ -148,12 +184,13 @@ describe('Compatibility Resolver', () => {
     });
 
     describe('scenario 2: clean managed machine + image/qwen-image', () => {
-        it('plans installation of ComfyUI runtime, GGUF node and 4 models', () => {
+        it('plans installation of ComfyUI runtime, GGUF node, 4 models, baseline workflow and worker', () => {
             const r = resolver.resolveInstallation({ manifests: [IMAGE()], environment: resolver.createEmptyEnvironment(), mode: 'managed' });
-            expect(r.summary.missing_required).to.equal(9); // 4 runtime + 1 node + 4 models
+            expect(r.summary.missing_required).to.equal(11); // 4 runtime + 1 node + 4 models + 1 workflow + worker
             for (const id of ['custom-node:comfyui-gguf', 'model:image.unet.qwen-image-2512-q4-k-m',
                 'model:image.clip.qwen2.5-vl-7b-instruct-q8-0', 'model:image.vae.qwen-image-vae',
-                'model:image.loras.wuli-qwen-image-2512-turbo-4steps']) {
+                'model:image.loras.wuli-qwen-image-2512-turbo-4steps',
+                'workflow:img-qwen-image', 'worker:image/qwen-image']) {
                 expect(entry(r, id).status).to.equal('missing');
                 expect(entry(r, id).action).to.equal('install');
             }
@@ -162,15 +199,19 @@ describe('Compatibility Resolver', () => {
     });
 
     describe('scenario 3: clean managed machine + video/ltx-2.3', () => {
-        it('plans 14 required installs; unresolved VHS is review, not auto-install', () => {
+        it('plans 19 required installs; unresolved VHS is review, not auto-install', () => {
             const r = resolver.resolveInstallation({ manifests: [VIDEO()], environment: resolver.createEmptyEnvironment(), mode: 'managed' });
-            expect(r.summary.missing_required).to.equal(14); // 4 runtime + GGUF + gguf + kjnodes + 7 models
+            expect(r.summary.missing_required).to.equal(19); // 4 runtime + GGUF + gguf + kjnodes + 7 models + 4 workflows + worker
             const vhs = entry(r, 'custom-node:comfyui-videohelpersuite');
             expect(vhs.status).to.equal('missing');
             expect(vhs.requirement).to.equal('unknown');
             expect(vhs.action).to.equal('review'); // fail-safe: unknown requirement is never auto-installed
             expect(r.summary.install_plan).to.not.include(vhs.id);
             expect(entry(r, 'custom-node:comfyui-kjnodes').action).to.equal('install');
+            for (const id of ['workflow:video-ltx-1p', 'workflow:video-ltx-2p', 'workflow:video-ltx-3p', 'workflow:video-ltx-4p']) {
+                expect(entry(r, id).status).to.equal('missing');
+                expect(entry(r, id).action).to.equal('install');
+            }
             assertNeverDestructive(r);
         });
     });
@@ -182,13 +223,20 @@ describe('Compatibility Resolver', () => {
             const r = resolver.resolveInstallation({ manifests: [IMAGE()], environment: imageCompatibleEnv(), mode: 'existing' });
             expect(r.summary.missing_required).to.equal(0);
             expect(r.summary.by_status.incompatible).to.equal(0);
-            expect(r.summary.by_status.installed).to.equal(9); // 4 runtime + node + 4 models
+            expect(r.summary.by_status.installed).to.equal(11); // 4 runtime + node + 4 models + workflow + worker
             const comfy = entry(r, 'runtime:comfyui');
             expect(comfy.status).to.equal('installed');
             expect(comfy.grade).to.equal('reference'); // fork c4cfee7 = known-working reference, canonical pin still unknown
             expect(entry(r, 'runtime:torch').grade).to.equal('reference');
             expect(entry(r, 'custom-node:comfyui-gguf').status).to.equal('installed');
             expect(entry(r, 'model:image.vae.qwen-image-vae').grade).to.equal('checksum-prefix-verified');
+            const wf = entry(r, 'workflow:img-qwen-image');
+            expect(wf.status).to.equal('installed');
+            expect(wf.grade).to.equal('canonical-baseline');
+            const worker = entry(r, 'worker:image/qwen-image');
+            expect(worker.status).to.equal('installed');
+            expect(worker.grade).to.equal('configured');
+            expect(worker.action).to.equal('skip');
             expect(r.safe_to_proceed).to.be.true;
             assertNeverDestructive(r);
         });
@@ -292,12 +340,20 @@ describe('Compatibility Resolver', () => {
             const env = imageCompatibleEnv();
             env.custom_nodes.push({ directory: 'qwen3-tts', commit: '2ee1131' });
             env.models.push(...audioModelFiles());
+            env.workflows.push(
+                baselineWorkflow('audio', 'tts-qwen-narrator'),
+                baselineWorkflow('audio', 'tts-qwen-dialogue')
+            );
+            env.worker = [env.worker, workerProbe('audio')];
             const r = resolver.resolveInstallation({ manifests: [AUDIO(), IMAGE()], environment: env, mode: 'shared' });
             expect(r.sharing.verdict).to.equal('shared-compatible');
             expect(r.summary.missing_required).to.equal(0);
             expect(r.safe_to_proceed).to.be.true;
             expect(entry(r, 'custom-node:comfyui-qwen3-tts').status).to.equal('installed');
             expect(entry(r, 'custom-node:comfyui-gguf').status).to.equal('installed');
+            expect(entry(r, 'workflow:tts-qwen-narrator').status).to.equal('installed');
+            expect(entry(r, 'worker:audio/qwen-tts').status).to.equal('installed');
+            expect(entry(r, 'worker:image/qwen-image').status).to.equal('installed');
             assertNeverDestructive(r);
         });
     });

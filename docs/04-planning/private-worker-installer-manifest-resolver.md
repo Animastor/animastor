@@ -1,6 +1,9 @@
 # Private Worker Installer — Phase 1: Manifest & Runtime Compatibility Architecture
 
-> **Status:** implemented (Phase 1 — foundation only; no installer, no downloads)
+> **Status:** implemented (Phase 1 — foundation only; no installer, no downloads).
+> **Superseded in part by Phase 1.5** — workflows as first-class artifacts,
+> worker entries, interactive plan, safety rules: see
+> `docs/04-planning/private-worker-installer-phase15.md`.
 > **Date:** 2026-08-26
 > **Companion docs:**
 > - `docs/04-planning/private-worker-installer-architecture.md` — overall architecture draft
@@ -19,7 +22,8 @@ on which a real GPU Worker Installer can be safely built later. It contains:
 - **Compatibility resolver** that accepts manifests + environment probe data
   and produces a structured, non-destructive resolution report;
 - **47 unit tests** covering 12+ scenarios, manifest validation, and guard
-  rails;
+  rails (extended by Phase 1.5 to 78 tests incl. the 15 required installer
+  scenarios — see the Phase 1.5 doc).
 - Updated architecture documentation (this document + cross-references).
 
 **Phase 1 does NOT:**
@@ -217,18 +221,25 @@ Each `source.verification`: `"confirmed"` | `"needs_verification"` | `"unknown"`
 
 ```
 backend/ai/install-manifests/
-  audio/qwen-tts.json          ← canonical manifest (draft)
-  image/qwen-image.json        ← canonical manifest (draft)
-  video/ltx-2.3.json           ← canonical manifest (draft)
+  audio/qwen-tts.json          ← canonical manifest (draft; + workflows section in Phase 1.5)
+  image/qwen-image.json        ← canonical manifest (draft; + workflows section in Phase 1.5)
+  video/ltx-2.3.json           ← canonical manifest (draft; + workflows section in Phase 1.5)
 
 backend/src/installer/
   index.js                     ← module entry point
-  install-manifest.js          ← load/validate manifests
+  install-manifest.js          ← load/validate manifests (+ workflows validation)
   compatibility-resolver.js    ← resolveInstallation, resolveSharedRuntime, planIsolatedEnvironments
+                                 (+ workflow/worker entries, configure action in Phase 1.5)
+  workflow-artifacts.js        ← Phase 1.5: baseline workflow registry + fresh-copy planning
+  download-planner.js          ← Phase 1.5: resumable HF/ModelScope download specs (pure)
+  install-plan.js              ← Phase 1.5: 12-step interactive flow + plan rendering
+  safety-rules.js              ← Phase 1.5: never-automatic ops, confirmation gates, redaction
+  verification-report.js       ← Phase 1.5: INSTALLATION COMPLETE / FAIL / WARN rendering
 
 backend/tests/
-  install-manifest.test.js     ← manifest validation tests (21 tests)
-  installer-resolver.test.js   ← resolver scenarios + guard rails (26 tests)
+  install-manifest.test.js     ← manifest validation tests (incl. workflow artifacts)
+  installer-resolver.test.js   ← resolver scenarios + guard rails
+  installer-phase15.test.js    ← Phase 1.5: the 15 required installer scenarios
 ```
 
 ---

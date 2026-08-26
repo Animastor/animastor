@@ -1,5 +1,7 @@
 const { expect } = require('chai');
 const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
 const manifest = require('../src/installer/install-manifest');
 
 const PROFILES = ['audio/qwen-tts', 'image/qwen-image', 'video/ltx-2.3'];
@@ -132,6 +134,58 @@ describe('Install Manifest — loader & validator', () => {
             expect(vhs).to.be.an('object');
             expect(vhs.requirement).to.equal('unknown');
             expect(vhs.basis).to.equal('unknown');
+        });
+    });
+
+    describe('Phase 1.5: baseline workflows as first-class artifacts', () => {
+        const EXPECTED_WORKFLOWS = {
+            'audio/qwen-tts': ['workflow:tts-qwen-narrator', 'workflow:tts-qwen-dialogue'],
+            'image/qwen-image': ['workflow:img-qwen-image'],
+            'video/ltx-2.3': ['workflow:video-ltx-1p', 'workflow:video-ltx-2p', 'workflow:video-ltx-3p', 'workflow:video-ltx-4p'],
+        };
+
+        it('every manifest declares its production workflows as editable baselines', () => {
+            const all = manifest.loadAllManifests();
+            for (const [id, m] of Object.entries(all)) {
+                expect(m.workflows, `${id} workflows section`).to.be.an('object');
+                expect(m.workflows.policy).to.equal('editable-baseline');
+                expect(m.workflows.baseline_dir).to.include('user/default/workflows');
+                const ids = m.workflows.artifacts.map((a) => a.id).sort();
+                expect(ids, `${id} workflow artifacts`).to.deep.equal(EXPECTED_WORKFLOWS[id].slice().sort());
+                for (const wf of m.workflows.artifacts) {
+                    expect(wf.editable, `${id}: ${wf.id} must be editable`).to.equal(true);
+                    expect(wf.target_dir).to.include(`animastor/${m.profile.type}`);
+                    expect(wf.source.kind).to.equal('animastor');
+                    expect(wf.provenance.workflows).to.be.an('array').that.is.not.empty;
+                }
+            }
+        });
+
+        it('baseline_sha256 values match the canonical production workflow files (no drift)', () => {
+            const all = manifest.loadAllManifests();
+            const workflowsRoot = path.join(__dirname, '..', 'ai', 'workflows');
+            for (const m of Object.values(all)) {
+                for (const wf of m.workflows.artifacts) {
+                    expect(wf.baseline_sha256, `${m.profile.id}: ${wf.id} baseline_sha256`).to.match(/^[0-9a-f]{64}$/);
+                    const file = path.join(workflowsRoot, wf.filename);
+                    const actual = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+                    expect(actual, `${wf.id} must match ${wf.filename}`).to.equal(wf.baseline_sha256);
+                }
+            }
+        });
+
+        it('validator rejects an immutable baseline (editable=false) and unknown workflow references', () => {
+            const m = JSON.parse(JSON.stringify(manifest.loadManifest('image/qwen-image')));
+            m.workflows.artifacts[0].editable = false;
+            let v = manifest.validateManifest(m);
+            expect(v.valid).to.be.false;
+            expect(v.errors.join(' ')).to.match(/editable/);
+
+            const m2 = JSON.parse(JSON.stringify(manifest.loadManifest('image/qwen-image')));
+            m2.workflows.artifacts[0].provenance.workflows = ['not-a-real-workflow'];
+            v = manifest.validateManifest(m2);
+            expect(v.valid).to.be.false;
+            expect(v.errors.join(' ')).to.match(/not in manifest provenance/);
         });
     });
 
