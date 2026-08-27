@@ -21,6 +21,10 @@ for (const key of Object.keys(require.cache)) {
         delete require.cache[key];
     }
 }
+// The real books dir used by modules loaded before this file (config was
+// cached by other test files with the default BOOKS_DIR=/data/books).
+// We must purge stale test books from there during setup + teardown.
+const _realBooksDir = require('../src/config/runtime-config').BOOKS_DIR;
 
 const { expect } = require('chai');
 const express = require('express');
@@ -138,8 +142,10 @@ async function cleanup() {
     for (const bookId of cleanupBookIds) {
         await query(`DELETE FROM book_source WHERE book_id = $1`, [bookId]).catch(() => {});
         await query(`DELETE FROM books WHERE book_id = $1`, [bookId]).catch(() => {});
-        const bp = path.join(_testBooksDir, bookId);
-        if (fs.existsSync(bp)) fs.rmSync(bp, { recursive: true, force: true });
+        for (const dir of [_testBooksDir, _realBooksDir]) {
+            const bp = path.join(dir, bookId);
+            if (fs.existsSync(bp)) fs.rmSync(bp, { recursive: true, force: true });
+        }
     }
     for (const uname of cleanupUsernames) {
         const user = (await query(`SELECT user_id FROM users WHERE username = $1`, [uname])).rows[0];
@@ -174,6 +180,53 @@ describe('TXT Import Ownership Dedup', () => {
 
     before(async () => {
         await postgres.initialize();
+
+        // ── Purge stale state from prior runs ──
+        // The test uses a hardcoded SAMPLE_HASH, so any leftover book_source
+        // rows (and their orphaned books) from a previous run cause the dedup
+        // logic to short-circuit the "create new book" assertions.
+        //
+        // Two sources of contamination:
+        //  1. PG book_source rows (from a crashed or incomplete after-hook)
+        //  2. Books on DISK whose source.txt has the same hash — the disk
+        //     self-heal scan in resolveOwnedTxtDedup finds them even without
+        //     a book_source row.
+        try {
+            // 1. Delete all book_source rows + books for this hash
+            const orphaned = await query(
+                `SELECT bs.book_id FROM book_source bs
+                  WHERE bs.file_hash = $1`,
+                [SAMPLE_HASH]
+            );
+            for (const row of orphaned.rows) {
+                await query(`DELETE FROM book_source WHERE book_id = $1`, [row.book_id]).catch(() => {});
+                await query(`DELETE FROM books WHERE book_id = $1`, [row.book_id]).catch(() => {});
+                for (const dir of [_testBooksDir, _realBooksDir]) {
+                    const bp = path.join(dir, row.book_id);
+                    if (fs.existsSync(bp)) fs.rmSync(bp, { recursive: true, force: true });
+                }
+            }
+
+            // 2. Disk scan: remove test_* dirs with matching hash from BOTH dirs
+            for (const dir of [_testBooksDir, _realBooksDir]) {
+                if (!fs.existsSync(dir)) continue;
+                const dirEntries = fs.readdirSync(dir).filter((e) => e.startsWith('test_'));
+                for (const bookId of dirEntries) {
+                    const sourcePath = path.join(dir, bookId, 'source.txt');
+                    try {
+                        if (!fs.existsSync(sourcePath)) continue;
+                        const sourceBuf = fs.readFileSync(sourcePath);
+                        const sourceHash = crypto.createHash('sha256').update(sourceBuf).digest('hex');
+                        if (sourceHash === SAMPLE_HASH) {
+                            fs.rmSync(path.join(dir, bookId), { recursive: true, force: true });
+                            await query(`DELETE FROM book_source WHERE book_id = $1`, [bookId]).catch(() => {});
+                            await query(`DELETE FROM books WHERE book_id = $1`, [bookId]).catch(() => {});
+                        }
+                    } catch (_) { /* skip unreadable */ }
+                }
+            }
+        } catch (_) { /* non-fatal — test will still run */ }
+
         const app = buildApp();
         await new Promise((resolve) => {
             server = app.listen(0, '127.0.0.1', () => {
