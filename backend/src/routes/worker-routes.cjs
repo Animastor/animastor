@@ -9,6 +9,7 @@
 //   GET    /api/v1/workers/:workerId         — one worker detail (never returns secrets)
 //   POST   /api/v1/workers/:workerId/rotate  — new credential (old dies; one-time)
 //   DELETE /api/v1/workers/:workerId         — revoke (immediate; soft delete)
+//   DELETE /api/v1/workers/:workerId/purge   — permanent delete (revoked only; hard delete)
 //
 // Modes (PW-4 fail-closed model): tenants may create 'private' (default) or
 // 'share' (explicit confirm_share=true — the worker is volunteered to the
@@ -269,6 +270,53 @@ module.exports = function(app, redis) {
         } catch (err) {
             console.error('[WORKERS] revoke failed:', err.message);
             res.status(500).json({ error: 'Failed to revoke worker' });
+        }
+    });
+
+    // ── DELETE purge worker (permanent; revoked workers only) ─────────────
+    // Hard-deletes the registry row of an ALREADY REVOKED worker and clears
+    // every derived state that could surface or resurrect it:
+    //   - PG row removed → gone from list/detail, survives reload/re-login;
+    //   - auth-mirror entry dropped (also healed by the periodic resync,
+    //     which rebuilds the mirror from PG — the row no longer exists);
+    //   - heartbeat key deleted → never counted in liveness/availability;
+    //   - GPU hub registry entry dropped (SYNC: gpu-hub/gpu-hub.js
+    //     GPU_REGISTRY_KEY — TTL'd anyway, best-effort).
+    // Active workers are NEVER purgeable — revoke first (409). The token was
+    // already killed at revoke time, so no credential outlives the row.
+    app.delete('/api/v1/workers/:workerId/purge', async (req, res) => {
+        const workspaceId = userWorkspaceGuard(req, res);
+        if (!workspaceId) return;
+        if (!UUID_RE.test(req.params.workerId)) {
+            return res.status(404).json({ error: 'Worker not found' });
+        }
+        try {
+            const row = await workerRepo.findById(req.params.workerId);
+            if (!row || row.workspace_id !== workspaceId) {
+                // Foreign/unknown — one indistinct answer (no existence oracle).
+                return res.status(404).json({ error: 'Worker not found' });
+            }
+            if (row.revoked_at == null) {
+                return res.status(409).json({
+                    error: 'Worker is not revoked — revoke it before deleting',
+                    code: 'worker_not_revoked',
+                });
+            }
+            const { deleted, tokenHash, workerType } = await workerRepo.purgeWorker(req.params.workerId, workspaceId);
+            if (!deleted) {
+                return res.status(404).json({ error: 'Worker not found' });
+            }
+            await workerAuth.mirrorDrop(redis, tokenHash ? [tokenHash] : []);
+            try {
+                await redis.del(config.WORKER_HEARTBEAT_KEY(workerType, req.params.workerId));
+            } catch (_) { /* non-fatal — the key is TTL'd (30s) anyway */ }
+            try {
+                await redis.hdel('animastor:gpu-hub:workers', req.params.workerId);
+            } catch (_) { /* non-fatal — the registry hash is TTL'd anyway */ }
+            res.json({ deleted: true });
+        } catch (err) {
+            console.error('[WORKERS] purge failed:', err.message);
+            res.status(500).json({ error: 'Failed to delete worker' });
         }
     });
 

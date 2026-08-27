@@ -91,6 +91,23 @@ export function PrivateWorkersSection() {
     }
   }, [busy, load]);
 
+  // Permanent delete of an ALREADY REVOKED worker — the backend hard-deletes
+  // the registry row and clears every derived state (auth mirror, heartbeat,
+  // hub GPU registry), so the worker can never resurface (reload/re-login).
+  const onDelete = useCallback(async (worker: PrivateWorker) => {
+    if (busy || !confirm(t('worker_delete_confirm'))) return;
+    setBusy(true); setError('');
+    try {
+      await deleteJson(`/workers/${worker.worker_id}/purge`);
+      toast(t('worker_deleted'));
+      await load();
+    } catch (e) {
+      setError(humanError(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, load]);
+
   return (
     <section class="page settings-page">
       <div class="settings-page__scroll">
@@ -145,7 +162,9 @@ export function PrivateWorkersSection() {
                       </>
                     )}
                     {w.status === 'REVOKED' && (
-                      <span class="worker__revoked">{t('worker_revoked_label')}</span>
+                      <button class="btn btn--outlined btn--error" disabled={busy} onClick={() => void onDelete(w)}>
+                        {t('worker_delete')}
+                      </button>
                     )}
                     {/* Repair / Reinstall — UI extension point (Phase 3.1 §20).
                         Hidden until the backend/installer expose the capability;

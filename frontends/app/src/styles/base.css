@@ -1234,7 +1234,6 @@ button { font: inherit; color: inherit; }
 .worker__status--online { color: #0a7d33; background: rgba(46, 196, 105, 0.16); }
 .worker__status--offline { color: var(--text-2); background: var(--surface); border: 1px solid var(--outline-2); }
 .worker__status--revoked { color: var(--error); background: rgba(176, 0, 32, 0.12); }
-.worker__revoked { font-size: 0.75rem; color: var(--error); font-weight: 600; }
 .worker__warn { color: var(--error); font-weight: 600; }
 .worker__cred { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .worker__token {

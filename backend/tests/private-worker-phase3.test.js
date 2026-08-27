@@ -32,6 +32,14 @@
 //     cannot revoke another workspace's worker → 404            404
 //     revoked worker remains visible (soft delete) in list       ok
 //
+//   Purge (permanent delete of a REVOKED worker)
+//     purge own revoked worker → gone from list/detail/PG        200 + absent
+//     purge clears heartbeat + auth mirror + hub registry        cleared
+//     purge is idempotent (second call → 404)                    404
+//     purge own ACTIVE worker → 409, worker untouched            409
+//     cannot purge another workspace's worker → 404              404
+//     stale heartbeat never brings a purged worker back          absent
+//
 //   Operational status (derived, never authoritative)
 //     no heartbeat → OFFLINE                                     OFFLINE
 //     live heartbeat key → ONLINE                                ONLINE
@@ -387,6 +395,121 @@ describe('Private worker management (Phase 3)', () => {
             expect(w).to.exist;
             expect(w.status).to.equal('REVOKED');
             expect(w.revoked_at).to.be.a('number');
+        });
+    });
+
+    // ══════════════════════════════════════════════════════════════════
+    // Purge (permanent delete of a REVOKED worker)
+    // ══════════════════════════════════════════════════════════════════
+
+    describe('purge', () => {
+        async function purge(base, cookie, workerId) {
+            const res = await fetch(`${base}/api/v1/workers/${workerId}/purge`, {
+                method: 'DELETE', headers: { Cookie: cookie },
+            });
+            return { res, body: await res.json() };
+        }
+
+        it('purge own revoked worker: gone from list, detail and PG', async () => {
+            const cw = await createWorker(base, alice.cookie, { name: 'purge-me', worker_type: 'audio' });
+            const workerId = cw.body.worker.worker_id;
+            const { res: revRes } = await destroy(base, alice.cookie, workerId);
+            expect(revRes.status).to.equal(200);
+
+            const { res, body } = await purge(base, alice.cookie, workerId);
+            expect(res.status).to.equal(200);
+            expect(body.deleted).to.equal(true);
+
+            // Gone from the list (what the UI renders) …
+            const list = await listWorkers(base, alice.cookie);
+            expect(list.body.workers.map((w) => w.worker_id)).to.not.contain(workerId);
+            // … from the detail endpoint …
+            const detail = await getWorker(base, alice.cookie, workerId);
+            expect(detail.res.status).to.equal(404);
+            // … and from the durable source of truth (nothing can bring it back).
+            const { rows } = await query(`SELECT worker_id FROM workers WHERE worker_id = $1`, [workerId]);
+            expect(rows.length).to.equal(0);
+        });
+
+        it('purge clears heartbeat, auth mirror and hub GPU registry entries', async () => {
+            const cw = await createWorker(base, alice.cookie, { name: 'purge-state', worker_type: 'image' });
+            const token = cw.body.token;
+            const workerId = cw.body.worker.worker_id;
+            const secretHash = require('../src/storage/postgres/repositories/worker-repo').parseToken(token).secretHash;
+
+            // Simulate the live derived state the hub authors for this worker.
+            await writeHeartbeat(redis, 'image', workerId);
+            await redis.hset('animastor:gpu-hub:workers', workerId, JSON.stringify({ id: workerId }));
+            expect(await redis.get(config.WORKER_HEARTBEAT_KEY('image', workerId))).to.be.a('string');
+
+            await destroy(base, alice.cookie, workerId); // revoke first
+            const { res } = await purge(base, alice.cookie, workerId);
+            expect(res.status).to.equal(200);
+
+            expect(await redis.get(config.WORKER_HEARTBEAT_KEY('image', workerId))).to.equal(null);
+            expect(await redis.hget('animastor:worker-auth', secretHash)).to.equal(null);
+            expect(await redis.hget('animastor:gpu-hub:workers', workerId)).to.equal(null);
+        });
+
+        it('purge is idempotent — second purge → 404', async () => {
+            const cw = await createWorker(base, alice.cookie, { name: 'purge-twice', worker_type: 'video' });
+            const workerId = cw.body.worker.worker_id;
+            await destroy(base, alice.cookie, workerId);
+            const first = await purge(base, alice.cookie, workerId);
+            expect(first.res.status).to.equal(200);
+            const second = await purge(base, alice.cookie, workerId);
+            expect(second.res.status).to.equal(404);
+        });
+
+        it('purge own ACTIVE worker → 409 and the worker stays intact', async () => {
+            const cw = await createWorker(base, alice.cookie, { name: 'purge-active', worker_type: 'audio' });
+            const workerId = cw.body.worker.worker_id;
+            const { res, body } = await purge(base, alice.cookie, workerId);
+            expect(res.status).to.equal(409);
+            expect(body.code).to.equal('worker_not_revoked');
+
+            const detail = await getWorker(base, alice.cookie, workerId);
+            expect(detail.res.status).to.equal(200);
+            expect(detail.body.worker.revoked_at).to.equal(null);
+            // Its credential still authenticates.
+            const who = await fetch(`${base}/gpu/__test/whoami`, {
+                headers: { Authorization: `Bearer ${cw.body.token}` },
+            });
+            expect(who.status).to.equal(200);
+        });
+
+        it('cannot purge another workspace worker → 404', async () => {
+            const cw = await createWorker(base, bob.cookie, { name: 'bob-purge', worker_type: 'image' });
+            const workerId = cw.body.worker.worker_id;
+            await destroy(base, bob.cookie, workerId); // bob revokes his own
+            const { res } = await purge(base, alice.cookie, workerId);
+            expect(res.status).to.equal(404);
+            // Bob's revoked worker is still visible to BOB (alice deleted nothing).
+            const list = await listWorkers(base, bob.cookie);
+            const w = list.body.workers.find((x) => x.worker_id === workerId);
+            expect(w).to.exist;
+            expect(w.status).to.equal('REVOKED');
+        });
+
+        it('purge unknown / malformed worker id → 404', async () => {
+            const unknown = await purge(base, alice.cookie, '00000000-0000-4000-8000-000000000000');
+            expect(unknown.res.status).to.equal(404);
+            const malformed = await purge(base, alice.cookie, 'not-a-uuid');
+            expect(malformed.res.status).to.equal(404);
+        });
+
+        it('a stale heartbeat never brings a purged worker back', async () => {
+            const cw = await createWorker(base, alice.cookie, { name: 'purge-hb', worker_type: 'video' });
+            const workerId = cw.body.worker.worker_id;
+            await destroy(base, alice.cookie, workerId);
+            const { res } = await purge(base, alice.cookie, workerId);
+            expect(res.status).to.equal(200);
+
+            // A forged/stale heartbeat (no row behind it) resurrects nothing:
+            // the list is derived from PG rows only.
+            await writeHeartbeat(redis, 'video', workerId);
+            const list = await listWorkers(base, alice.cookie);
+            expect(list.body.workers.map((w) => w.worker_id)).to.not.contain(workerId);
         });
     });
 

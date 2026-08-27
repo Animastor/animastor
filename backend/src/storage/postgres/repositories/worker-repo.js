@@ -246,6 +246,29 @@ async function revokeWorker(workerId, workspaceId) {
     return { revoked: rowCount > 0, tokenHash: rows[0] ? rows[0].token_hash : null };
 }
 
+/**
+ * Permanently delete a REVOKED worker (hard delete — the row is removed
+ * entirely). Only revoked rows are purgeable: an active worker must be
+ * revoked first, which kills its credential before the identity disappears.
+ * Workspace-scoped SQL can never match workspace-less SYSTEM workers.
+ * Idempotent. Returns { deleted, tokenHash, workerType } — tokenHash lets the
+ * caller drop the dead credential from the Redis auth mirror (defense in
+ * depth: revoke already dropped it and the periodic resync rebuilds the
+ * mirror from PG, which no longer contains the row).
+ */
+async function purgeWorker(workerId, workspaceId) {
+    const { rows, rowCount } = await query(`
+        DELETE FROM workers
+        WHERE worker_id = $1 AND workspace_id = $2 AND revoked_at IS NOT NULL
+        RETURNING token_hash, worker_type
+    `, [workerId, workspaceId]);
+    return {
+        deleted: rowCount > 0,
+        tokenHash: rows[0] ? rows[0].token_hash : null,
+        workerType: rows[0] ? rows[0].worker_type : null,
+    };
+}
+
 // ── SYSTEM worker administration (requireAdmin routes only) ───────────────
 // SYSTEM workers are workspace-less, so the workspace-scoped helpers above
 // can never match them (SQL `workspace_id = $2` is never NULL-safe). These
@@ -315,6 +338,7 @@ module.exports = {
     rotateCredential,
     rotateSystemCredential,
     revokeWorker,
+    purgeWorker,
     revokeSystemWorker,
     touchLastSeen,
 };
