@@ -1,7 +1,7 @@
 {
   "manifest_version": "1.0.0",
-  "revision": "2026.08.26-r2",
-  "status": "draft",
+  "revision": "2026.08.27-r1",
+  "status": "ready",
   "profile": {
     "id": "audio/qwen-tts",
     "type": "audio",
@@ -153,14 +153,15 @@
       "source": {
         "kind": "modelscope",
         "repository": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-        "revision": null,
+        "revision": "master",
         "verification": "confirmed",
+        "verified_at": "2026-08-27",
         "evidence": "workflow field Qwen3TTSLoader.download_source='ModelScope' (tts-qwen-narrator.json, tts-qwen-dialogue.json)"
       },
       "delivery": {
-        "mechanism": "node_auto_download",
-        "auto_download": true,
-        "todo": "Decision D2: installer preloads the repo (deterministic/offline) vs relies on Qwen3TTSLoader.auto_download at first run."
+        "mechanism": "installer_preload",
+        "auto_download": false,
+        "note": "D2 closed: installer pre-downloads the repo for deterministic/offline operation. The custom node's auto_download is NOT relied upon."
       },
       "provenance": {
         "workflows": [
@@ -170,10 +171,7 @@
         "node_refs": [
           "78 Qwen3TTSLoader.model_repo"
         ]
-      },
-      "notes": [
-        "Revision is not pinned by the node; sizes from audit [5]."
-      ]
+      }
     },
     {
       "id": "model-repo:qwen3-tts-12hz-1.7b-base",
@@ -196,14 +194,15 @@
       "source": {
         "kind": "modelscope",
         "repository": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
-        "revision": null,
+        "revision": "master",
         "verification": "confirmed",
+        "verified_at": "2026-08-27",
         "evidence": "workflow field Qwen3TTSLoader.download_source='ModelScope' (tts-qwen-dialogue.json)"
       },
       "delivery": {
-        "mechanism": "node_auto_download",
-        "auto_download": true,
-        "todo": "Decision D2: preinstall vs auto_download."
+        "mechanism": "installer_preload",
+        "auto_download": false,
+        "note": "D2 closed: installer pre-downloads the repo for deterministic/offline operation."
       },
       "provenance": {
         "workflows": [
@@ -212,10 +211,7 @@
         "node_refs": [
           "79 Qwen3TTSLoader.model_repo"
         ]
-      },
-      "notes": [
-        "Revision is not pinned by the node; sizes from audit [5]."
-      ]
+      }
     },
     {
       "id": "custom-node:comfyui-manager",
@@ -227,8 +223,8 @@
         "directory": "comfyui-manager",
         "source": {
           "kind": "github",
-          "repository": "https://github.com/ltdrdata/ComfyUI-Manager",
-          "commit": "df1eaff8",
+          "repository": "https://github.com/Comfy-Org/ComfyUI-Manager",
+          "commit": "df1eaff802b2e2fac858551a18fd1e6389d18e81",
           "verification": "confirmed"
         }
       },
@@ -237,7 +233,8 @@
         "evidence": "present in audit [6]; not referenced by any production workflow"
       },
       "notes": [
-        "Utility only. Inclusion in manifest is open question D7."
+        "Utility only. Inclusion in manifest is open question D7.",
+        "Repository moved from ltdrdata/ComfyUI-Manager to Comfy-Org/ComfyUI-Manager."
       ]
     }
   ],
@@ -405,8 +402,7 @@
   },
   "open_questions": [
     "D1: canonical ComfyUI pin — fork c4cfee7 (known-working reference) vs official v0.27.0; golden run required",
-    "D1/D2: canonical torch/CUDA tier — cu128 reference vs cu124",
-    "D2: TTS model repos — installer preinstall vs node auto_download",
+    "D1: canonical torch/CUDA tier — cu128 reference vs cu124",
     "Open question 5: confirm SaveAudioMP3 belongs to ComfyUI-Qwen3-TTS via /object_info",
     "Open question 8: ComfyUI-Manager inclusion (D7)",
     "Open question 11: Node.js 18 (start-worker.sh) vs 20 (worker.cjs)",

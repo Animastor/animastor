@@ -28,6 +28,13 @@ const { confirmationGate } = require('./safety-rules');
 const { planWorkflowDownloads, summarizeWorkflowState } = require('./workflow-artifacts');
 const { planModelDownloads, estimateMissingBytes } = require('./download-planner');
 
+function formatBytes(bytes) {
+    if (typeof bytes !== 'number' || bytes === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TiB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return `${(bytes / (1024 ** i)).toFixed(i > 1 ? 1 : 0)} ${units[i]}`;
+}
+
 /** Canonical interactive flow step ids, in execution order. */
 const FLOW_STEPS = Object.freeze([
     'detect-gpu',
@@ -608,8 +615,36 @@ function renderPlanText(plan, report) {
     }
     if (actions.length > 0) {
         lines.push('Actions:');
-        for (const a of actions) lines.push(`- ${a}`);
+        for (const a of actions) lines.push(`  ${a}`);
         lines.push('');
+    }
+
+    // Download size summary
+    const modelsStep = plan.steps.find((s) => s.id === 'models');
+    if (modelsStep && modelsStep.estimated_bytes) {
+        const est = modelsStep.estimated_bytes;
+        if (est.total_bytes > 0 || est.unknown_count > 0) {
+            lines.push('Download size:');
+            if (est.total_bytes > 0) lines.push(`  ${formatBytes(est.total_bytes)}`);
+            if (est.unknown_count > 0) lines.push(`  + ${est.unknown_count} file(s) with unknown size`);
+            lines.push('');
+        }
+    }
+
+    // Auth requirements summary
+    const modelsStepEntry = plan.steps.find((s) => s.id === 'models');
+    if (modelsStepEntry && modelsStepEntry.download_specs) {
+        const authRequired = modelsStepEntry.download_specs.filter((s) => s.requires_auth);
+        if (authRequired.length > 0) {
+            const hasHfToken = !!(process.env.HF_TOKEN || process.env.HUGGINGFACE_HUB_TOKEN);
+            lines.push('Source: Hugging Face (gated models)');
+            if (hasHfToken) {
+                lines.push('  System HF token: available');
+            } else {
+                lines.push('  System HF token: UNAVAILABLE — set HF_TOKEN or HUGGINGFACE_HUB_TOKEN');
+            }
+            lines.push('');
+        }
     }
 
     if (plan.blocked.length > 0) {

@@ -445,9 +445,8 @@ describe('Private worker setup contract API (Phase 3)', () => {
             }
             expect(body.warnings).to.be.an('array');
             expect(body.blocks).to.be.an('array');
-            // draft manifests: model sources unresearched ⇒ honest BLOCKED
-            expect(body.result).to.equal('BLOCKED');
-            expect(body.blocks[0].code).to.equal('MODEL_SOURCE_NOT_PUBLISHED');
+            // sources researched: ready with warnings for missing models on clean machine
+            expect(body.result).to.be.oneOf(['READY', 'READY_WITH_WARNINGS']);
         });
 
         it('video and audio plans are computable', async () => {

@@ -1,7 +1,7 @@
 {
   "manifest_version": "1.0.0",
-  "revision": "2026.08.26-r2",
-  "status": "draft",
+  "revision": "2026.08.27-r1",
+  "status": "ready",
   "profile": {
     "id": "image/qwen-image",
     "type": "image",
@@ -106,9 +106,8 @@
         "source": {
           "kind": "github",
           "repository": "https://github.com/city96/ComfyUI-GGUF",
-          "commit": "6ea2651",
-          "verification": "needs_verification",
-          "todo": "Commit 6ea2651 confirmed by image audit; upstream repository URL attributed by package name only — verify before stable manifest."
+          "commit": "6ea2651e7df66d7585f6ffee804b20e92fb38b8a",
+          "verification": "confirmed"
         }
       },
       "provides_classes": [
@@ -130,18 +129,21 @@
       "target_dir": "models/unet",
       "requirement": "required",
       "basis": "known_working",
-      "size": "12.34 GiB",
-      "size_bytes_approx": 13249974108,
+      "size": "12.33 GiB",
+      "size_bytes_approx": 13244758560,
       "checksum": {
         "algo": "sha256",
-        "value": null
+        "value": "b2a5f6249eb58ee10c9e2ce8cb1114b89897db23de2fdf7dc49140800aa928fc"
       },
       "source": {
         "kind": "huggingface",
-        "repository": null,
-        "revision": null,
-        "verification": "unknown",
-        "todo": "D5 download research: HF repo, file path, revision, sha256, license/gated status."
+        "repository": "unsloth/Qwen-Image-2512-GGUF",
+        "file_path": "qwen-image-2512-Q4_K_M.gguf",
+        "revision": "main",
+        "gated": false,
+        "verification": "confirmed",
+        "verified_at": "2026-08-27",
+        "download_url": "https://huggingface.co/unsloth/Qwen-Image-2512-GGUF/resolve/main/qwen-image-2512-Q4_K_M.gguf"
       },
       "provenance": {
         "workflows": [
@@ -150,10 +152,7 @@
         "node_refs": [
           "10 UnetLoaderGGUF.unet_name"
         ]
-      },
-      "notes": [
-        "Present and working on the reference instance (size from audit); download source not yet researched."
-      ]
+      }
     },
     {
       "id": "model:image.clip.qwen2.5-vl-7b-instruct-q8-0",
@@ -164,17 +163,20 @@
       "requirement": "required",
       "basis": "known_working",
       "size": "7.54 GiB",
-      "size_bytes_approx": 8096013353,
+      "size_bytes_approx": 8098523680,
       "checksum": {
         "algo": "sha256",
-        "value": null
+        "value": "e191b017a8406c60f59c3bd023964aa2dea83ae0ab89caa57ba3290b7379846c"
       },
       "source": {
         "kind": "huggingface",
-        "repository": null,
-        "revision": null,
-        "verification": "unknown",
-        "todo": "D5 download research. MUST be the Q8_0 quant: legacy old_img-qwen-image.json references Q4_K_M, which is a footgun and excluded."
+        "repository": "ggml-org/Qwen2.5-VL-7B-Instruct-GGUF",
+        "file_path": "Qwen2.5-VL-7B-Instruct-Q8_0.gguf",
+        "revision": "main",
+        "gated": false,
+        "verification": "confirmed",
+        "verified_at": "2026-08-27",
+        "download_url": "https://huggingface.co/ggml-org/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct-Q8_0.gguf"
       },
       "provenance": {
         "workflows": [
@@ -193,20 +195,21 @@
       "target_dir": "models/vae",
       "requirement": "required",
       "basis": "known_working",
-      "size": "242.05 MiB",
-      "size_bytes_approx": 253807821,
+      "size": "242.0 MiB",
+      "size_bytes_approx": 253806246,
       "checksum": {
         "algo": "sha256",
-        "value": null,
-        "value_prefix": "a70580f0213e",
-        "note": "sha256[:12] captured by image audit; full hash pending D5."
+        "value": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f"
       },
       "source": {
         "kind": "huggingface",
-        "repository": null,
-        "revision": null,
-        "verification": "unknown",
-        "todo": "D5 download research."
+        "repository": "zhenshipo/qwen_image_vae_models",
+        "file_path": "qwen_image_vae.safetensors",
+        "revision": "main",
+        "gated": false,
+        "verification": "confirmed",
+        "verified_at": "2026-08-27",
+        "download_url": "https://huggingface.co/zhenshipo/qwen_image_vae_models/resolve/main/qwen_image_vae.safetensors"
       },
       "provenance": {
         "workflows": [
@@ -220,23 +223,26 @@
     {
       "id": "model:image.loras.wuli-qwen-image-2512-turbo-4steps",
       "kind": "model",
-      "name": "Wuli-Qwen-Image-2512-Turbo-LoRA-4steps-V3.0.safetensors",
-      "filename": "Wuli-Qwen-Image-2512-Turbo-LoRA-4steps-V3.0.safetensors",
+      "name": "Wuli-Qwen-Image-2512-Turbo-LoRA-4steps-V3.0-bf16.safetensors",
+      "filename": "Wuli-Qwen-Image-2512-Turbo-LoRA-4steps-V3.0-bf16.safetensors",
       "target_dir": "models/loras",
       "requirement": "required",
       "basis": "known_working",
       "size": "1.10 GiB",
-      "size_bytes_approx": 1181116006,
+      "size_bytes_approx": 1179883224,
       "checksum": {
         "algo": "sha256",
-        "value": null
+        "value": "150a8b0ecc14086d53b3243f2e2b133d7cbdb6e838210feef2c3cc3b5b510c1c"
       },
       "source": {
         "kind": "huggingface",
-        "repository": null,
-        "revision": null,
-        "verification": "unknown",
-        "todo": "D5 download research (community LoRA; HF/Civitai origin to be confirmed, license check required)."
+        "repository": "Wuli-art/Qwen-Image-2512-Turbo-LoRA",
+        "file_path": "Wuli-Qwen-Image-2512-Turbo-LoRA-4steps-V3.0-bf16.safetensors",
+        "revision": "main",
+        "gated": false,
+        "verification": "confirmed",
+        "verified_at": "2026-08-27",
+        "download_url": "https://huggingface.co/Wuli-art/Qwen-Image-2512-Turbo-LoRA/resolve/main/Wuli-Qwen-Image-2512-Turbo-LoRA-4steps-V3.0-bf16.safetensors"
       },
       "provenance": {
         "workflows": [
@@ -257,8 +263,8 @@
         "directory": "comfyui-manager",
         "source": {
           "kind": "github",
-          "repository": "https://github.com/ltdrdata/ComfyUI-Manager",
-          "commit": "df1eaff8",
+          "repository": "https://github.com/Comfy-Org/ComfyUI-Manager",
+          "commit": "df1eaff802b2e2fac858551a18fd1e6389d18e81",
           "verification": "confirmed"
         }
       },
@@ -267,7 +273,8 @@
         "evidence": "present in image audit; not referenced by any production workflow"
       },
       "notes": [
-        "Utility only. Inclusion in manifest is open question D7."
+        "Utility only. Inclusion in manifest is open question D7.",
+        "Repository moved from ltdrdata/ComfyUI-Manager to Comfy-Org/ComfyUI-Manager."
       ]
     }
   ],
@@ -435,13 +442,12 @@
     }
   ],
   "disk_budget": {
-    "models_bytes_approx": 22780911288,
-    "note": "≈21.2 GiB of models (audit) plus ComfyUI + venv overhead. Approximate: derived from human-readable audit sizes."
+    "models_bytes_approx": 22776971710,
+    "note": "≈21.2 GiB of models (13244758560 + 8098523680 + 253806246 + 1179883224) plus ComfyUI + venv overhead. Exact: from verified HF sources."
   },
   "open_questions": [
     "D1: canonical ComfyUI pin — fork c4cfee7 (known-working reference) vs official v0.27.0; golden run required",
     "D1: canonical torch/CUDA tier — cu128 reference vs cu124",
-    "D5: download research for all 4 model files (repo/revision/sha256/gated)",
     "Open question 8: ComfyUI-Manager inclusion (D7)",
     "Open question 11: Node.js 18 (start-worker.sh) vs 20 (worker.cjs)",
     "Open question 12: minimum VRAM undocumented"

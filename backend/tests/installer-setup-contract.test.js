@@ -100,7 +100,7 @@ describe('Setup contract — projections (unit)', () => {
             const image = profiles.find((p) => p.id === 'image/qwen-image');
             expect(image.name).to.equal('Qwen Image');
             expect(image.worker_type).to.equal('image');
-            expect(image.status).to.equal('draft');
+            expect(image.status).to.equal('ready');
             expect(image.supported_install_modes).to.include.members(['managed', 'existing', 'shared', 'isolated']);
             expect(image.gpu.min_vram_gb).to.equal(null); // unknown — not invented
             expect(image.gpu.reference_gpu).to.be.a('string');
@@ -314,7 +314,7 @@ describe('Setup contract — projections (unit)', () => {
                 expect(p.id).to.match(/^(audio|image|video)\/[a-z0-9._-]+$/);
                 expect(p.name).to.be.a('string').and.not.empty;
                 expect(p.worker_type).to.be.oneOf(['audio', 'image', 'video']);
-                expect(p.status).to.be.oneOf(['draft', 'stable', 'planned']);
+                expect(p.status).to.be.oneOf(['draft', 'stable', 'planned', 'ready']);
                 expect(p.description).to.be.a('string');
                 expect(p.supported_install_modes).to.be.an('array').and.not.empty;
                 expect(p.gpu.min_vram_gb === null || typeof p.gpu.min_vram_gb === 'number').to.equal(true);
@@ -400,7 +400,7 @@ describe('Setup contract — projections (unit)', () => {
             });
             expect(plan.mode).to.equal('isolated');
             expect(plan.platform).to.equal('linux');
-            expect(plan.result).to.be.oneOf(['READY', 'BLOCKED']);
+            expect(plan.result).to.be.oneOf(['READY', 'READY_WITH_WARNINGS', 'BLOCKED']);
             expect(plan.profiles).to.be.an('array').with.length(2);
             expect(plan.actions).to.be.an('array').and.not.empty;
             for (const a of plan.actions) {
@@ -711,9 +711,9 @@ describe('Setup contract — projections (unit)', () => {
     // ══════════════════════════════════════════════════════════════════
 
     describe('installation plan', () => {
-        it('image (managed): full action list, honest BLOCKED on unresearched model sources', () => {
+        it('image (managed): full action list with verified model sources', () => {
             const plan = sc.buildSetupPlan({ profileIds: ['image/qwen-image'], mode: 'managed', platform: 'linux' });
-            expect(plan.result).to.equal('BLOCKED');
+            expect(plan.result).to.be.oneOf(['READY', 'READY_WITH_WARNINGS']);
             expect(plan.profiles).to.deep.equal(['image/qwen-image']);
             const types = plan.actions.map((a) => `${a.type}:${a.component}`);
             expect(types).to.include('INSTALL:runtime');
@@ -723,8 +723,6 @@ describe('Setup contract — projections (unit)', () => {
             expect(types).to.include('INSTALL:worker-bundle');
             expect(types).to.include('CONFIGURE:worker-env');
             expect(types).to.include('VERIFY:verification');
-            expect(plan.blocks.length).to.be.greaterThan(0);
-            for (const b of plan.blocks) expect(b.code).to.equal('MODEL_SOURCE_NOT_PUBLISHED');
             expect(plan.disk_budget_bytes_approx).to.be.a('number');
             expect(plan.sharing).to.equal(null);
         });

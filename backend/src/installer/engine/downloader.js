@@ -193,16 +193,21 @@ function makeHeaderProvider(envVars = {}) {
 }
 
 /**
- * ModelScope strategy note: repo-style snapshots are either delivered by the
- * custom node itself (delivery.mechanism = node_auto_download) or need the
- * modelscope CLI. Until decision D2 is made, the engine does not invent a
- * download path — it reports the situation.
+ * ModelScope strategy: D2 closed — installer pre-downloads ModelScope repos
+ * for deterministic/offline operation. The custom node's auto_download is
+ * NOT relied upon.
  */
 function modelscopeStrategy(dep) {
+    if (dep.delivery && dep.delivery.mechanism === 'installer_preload') {
+        return {
+            mechanism: 'installer_preload',
+            note: 'installer pre-downloads this ModelScope repo (D2 closed: deterministic/offline)',
+        };
+    }
     if (dep.delivery && dep.delivery.mechanism === 'node_auto_download') {
         return {
             mechanism: 'node_auto_download',
-            note: 'the custom node downloads this ModelScope repo on first run; the installer verifies presence afterwards (decision D2 open)',
+            note: 'the custom node downloads this ModelScope repo on first run; the installer verifies presence afterwards',
         };
     }
     return {

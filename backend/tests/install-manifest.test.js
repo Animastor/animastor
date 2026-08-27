@@ -105,19 +105,21 @@ describe('Install Manifest — loader & validator', () => {
             expect(audio.environment_reference[0].torch).to.equal('2.10.0+cu128');
         });
 
-        it('does not invent model download sources — unknown sources carry todo markers', () => {
+        it('does not invent model download sources — unverified sources carry null repository', () => {
             const image = manifest.loadManifest('image/qwen-image');
             const video = manifest.loadManifest('video/ltx-2.3');
             for (const m of [image, video]) {
                 for (const dep of m.dependencies.filter((d) => d.kind === 'model' && d.requirement === 'required')) {
-                    expect(dep.source.repository, `${m.profile.id}: ${dep.id} repository must not be invented`).to.be.null;
-                    expect(dep.source.verification).to.equal('unknown');
-                    expect(dep.source.todo).to.be.a('string').that.is.not.empty;
+                    if (dep.source.verification === 'unknown') {
+                        expect(dep.source.repository, `${m.profile.id}: ${dep.id} unverified source must not have a repository`).to.be.null;
+                        expect(dep.source.todo).to.be.a('string').that.is.not.empty;
+                    } else if (dep.source.verification === 'confirmed') {
+                        expect(dep.source.repository, `${m.profile.id}: ${dep.id} confirmed source must have a repository`).to.be.a('string').that.is.not.empty;
+                        expect(dep.source.file_path || dep.kind === 'model_repo', `${m.profile.id}: ${dep.id} confirmed source needs file_path`).to.be.ok;
+                        expect(dep.checksum && dep.checksum.value, `${m.profile.id}: ${dep.id} confirmed source should have sha256`).to.be.a('string');
+                    }
                 }
             }
-            // and validation surfaces these honesty gaps as warnings
-            expect(image._validation.warnings.length).to.be.greaterThan(0);
-            expect(video._validation.warnings.length).to.be.greaterThan(0);
         });
 
         it('video manifest records unresolved class attributions instead of guessing', () => {

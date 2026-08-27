@@ -295,14 +295,23 @@ async function runInstallation(args) {
     if (modelsStep && modelsStep.action && modelsStep.decision === 'yes') {
         const getHeader = downloader.makeHeaderProvider(process.env);
         const missingIds = (modelsStep.missing || []).map((x) => x.id);
-        const specs = manifests.flatMap((m) => planModelDownloads(m, missingIds));
+        const hasHfToken = !!(process.env.HF_TOKEN || process.env.HUGGINGFACE_HUB_TOKEN);
+        const specs = manifests.flatMap((m) => planModelDownloads(m, missingIds, { hasHfToken }));
         for (const spec of specs) {
             const dep = findModelDep(manifests, spec.id);
             if (dep && dep.kind === 'model_repo' && dep.source && dep.source.kind === 'modelscope') {
                 const strategy = downloader.modelscopeStrategy(dep);
-                result.results.models.push({ id: spec.id, status: strategy.mechanism === 'node_auto_download' ? 'deferred-to-node' : 'blocked', reason: strategy.note });
-                state.setArtifact(st, spec.id, strategy.mechanism === 'node_auto_download' ? 'missing' : 'missing', { note: strategy.note });
-                continue;
+                if (strategy.mechanism === 'node_auto_download') {
+                    result.results.models.push({ id: spec.id, status: 'deferred-to-node', reason: strategy.note });
+                    state.setArtifact(st, spec.id, 'missing', { note: strategy.note });
+                } else if (strategy.mechanism === 'installer_preload') {
+                    // D2 closed: installer pre-downloads ModelScope repos
+                    // Fall through to the download logic below
+                } else {
+                    result.results.models.push({ id: spec.id, status: 'blocked', reason: strategy.note });
+                    state.setArtifact(st, spec.id, 'missing', { note: strategy.note });
+                }
+                if (strategy.mechanism !== 'installer_preload') continue;
             }
             const r = await log.step(`download model ${spec.id}`, async () => downloader.downloadArtifact(io, spec, {
                 root: comfyuiRoot,

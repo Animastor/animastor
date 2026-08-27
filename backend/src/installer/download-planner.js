@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Download Planner — Private Worker Installer Phase 1.5.
+ * Download Planner — Private Worker Installer Phase 3.2.
  *
  * Pure planning layer for model downloads. Given a manifest dependency
  * (kind=model | model_repo), it produces a declarative download spec the
@@ -13,9 +13,14 @@
  * Supported source kinds (architecturally):
  *   - huggingface — single file from an HF repo (resolve endpoint, HTTP
  *     range resume);
- *   - modelscope  — repo-style download (ModelScope snapshot); note that
- *     some TTS repos are alternatively delivered by node auto_download
- *     (decision D2), which the spec surfaces instead of hiding.
+ *   - modelscope  — repo-style download (ModelScope snapshot); the
+ *     installer preloads the repo (D2 closed: deterministic/offline).
+ *
+ * Auth logic:
+ *   - public HF model → download without token;
+ *   - gated/private HF model → use system HF_TOKEN;
+ *   - system token unavailable → clear BLOCKED error (user is NOT asked to
+ *     create their own HF account).
  *
  * Idempotency/resume contract for the engine:
  *   - download into `<target>.part`, rename on completion;
@@ -34,15 +39,18 @@ function normPath(p) {
  * Build a download spec for one model/model_repo dependency.
  *
  * @param {object} dep manifest dependency entry
+ * @param {object} [opts] planner options
+ * @param {boolean} [opts.hasHfToken] whether the system HF token is available
  * @returns {{
  *   id, kind, ready, url, target_path, part_path, resume, idempotent_skip,
- *   checksum, size_bytes_approx, blockers, notes
+ *   checksum, size_bytes_approx, requires_auth, blockers, notes
  * }}
  */
-function planModelDownload(dep) {
+function planModelDownload(dep, opts = {}) {
     const src = dep.source || {};
     const blockers = [];
     const notes = [];
+    const hasHfToken = opts.hasHfToken || false;
 
     const targetPath = dep.kind === 'model_repo'
         ? normPath(dep.target_dir)
@@ -59,6 +67,7 @@ function planModelDownload(dep) {
         idempotent_skip: true,
         checksum: dep.checksum || null,
         size_bytes_approx: dep.size_bytes_approx || null,
+        requires_auth: !!src.gated,
         blockers,
         notes,
     };
@@ -69,7 +78,7 @@ function planModelDownload(dep) {
     }
 
     if (src.verification === 'unknown' || !src.repository) {
-        blockers.push('download source is not researched yet (D5): repository/revision/sha256 must be confirmed by a human before the installer may download — URLs are never invented');
+        blockers.push('download source is not researched yet: repository/revision/sha256 must be confirmed by a human before the installer may download — URLs are never invented');
         if (src.todo) notes.push(src.todo);
         return spec;
     }
@@ -82,21 +91,38 @@ function planModelDownload(dep) {
         const revision = src.revision || 'main';
         spec.url = `https://huggingface.co/${src.repository}/resolve/${revision}/${src.file_path || dep.filename}`;
         spec.resume = 'http-range';
-        spec.ready = true;
+
         if (src.gated) {
-            notes.push('gated repository — HF_TOKEN must be provided interactively (hidden input, never logged)');
+            spec.requires_auth = true;
+            if (!hasHfToken) {
+                blockers.push('Required Hugging Face access is unavailable: set HF_TOKEN or HUGGINGFACE_HUB_TOKEN environment variable (gated model)');
+                return spec;
+            }
+            notes.push('gated repository — system HF token will be used for authentication');
         }
+
+        spec.ready = true;
         return spec;
     }
 
     // modelscope
-    if (dep.delivery && dep.delivery.mechanism === 'node_auto_download') {
-        spec.resume = 'node-managed';
-        notes.push('this repo can be auto-downloaded by the custom node on first run (decision D2: installer preinstall vs node auto_download is OPEN — the engine must ask the user, never decide silently');
-        // ready stays false until D2 is decided for this entry
-        blockers.push('D2 pending: choose installer preinstall (deterministic) vs node auto_download for this ModelScope repo');
+    if (dep.delivery && dep.delivery.mechanism === 'installer_preload') {
+        spec.resume = 'snapshot-restart';
+        const repoPath = normPath(src.repository);
+        spec.url = `https://modelscope.cn/models/${repoPath}`;
+        spec.ready = true;
+        notes.push('ModelScope repo pre-downloaded by installer (D2 closed: deterministic/offline)');
         return spec;
     }
+
+    if (dep.delivery && dep.delivery.mechanism === 'node_auto_download') {
+        spec.resume = 'node-managed';
+        notes.push('this repo can be auto-downloaded by the custom node on first run');
+        // ready stays false — the engine must decide
+        blockers.push('delivery mechanism is node_auto_download — installer preload not configured for this entry');
+        return spec;
+    }
+
     spec.url = `https://modelscope.cn/models/${src.repository}`;
     spec.resume = 'snapshot-restart';
     spec.ready = true;
@@ -108,12 +134,17 @@ function planModelDownload(dep) {
  * Plan downloads for all required model dependencies of a manifest that the
  * resolver reported as missing. `missingIds` comes from the resolution
  * report (entries with status=missing, action=install).
+ *
+ * @param {object} manifest install manifest
+ * @param {string[]} missingIds dependency IDs that need downloading
+ * @param {object} [opts] planner options
+ * @param {boolean} [opts.hasHfToken] whether the system HF token is available
  */
-function planModelDownloads(manifest, missingIds) {
+function planModelDownloads(manifest, missingIds, opts = {}) {
     const deps = (manifest.dependencies || []).filter(
         (d) => (d.kind === 'model' || d.kind === 'model_repo') && missingIds.includes(d.id)
     );
-    return deps.map(planModelDownload);
+    return deps.map((dep) => planModelDownload(dep, opts));
 }
 
 /**

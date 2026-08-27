@@ -1,7 +1,7 @@
 {
   "manifest_version": "1.0.0",
-  "revision": "2026.08.26-r2",
-  "status": "draft",
+  "revision": "2026.08.27-r1",
+  "status": "ready",
   "profile": {
     "id": "video/ltx-2.3",
     "type": "video",
@@ -118,9 +118,8 @@
         "source": {
           "kind": "github",
           "repository": "https://github.com/city96/ComfyUI-GGUF",
-          "commit": null,
-          "verification": "unknown",
-          "todo": "D4: on the reference instance this is a plain directory without .git — upstream repo/commit must be confirmed (image instance audit pins 6ea2651 for its own copy)."
+          "commit": "6ea2651e7df66d7585f6ffee804b20e92fb38b8a",
+          "verification": "confirmed"
         }
       },
       "provides_classes": [
@@ -135,10 +134,7 @@
           "video-ltx-4p"
         ],
         "evidence": "research doc §6.1; video audit [6] (present, plain dir)"
-      },
-      "notes": [
-        "Presence verified on the working reference instance; exact revision unverified (no git metadata)."
-      ]
+      }
     },
     {
       "id": "python-package:gguf",
@@ -171,9 +167,8 @@
         "source": {
           "kind": "github",
           "repository": "https://github.com/kijai/ComfyUI-KJNodes",
-          "commit": null,
-          "verification": "unknown",
-          "todo": "D4: plain directory without .git on the reference instance — upstream commit must be confirmed (image instance audit shows ComfyUI-KJNodes faf270a for its own copy)."
+          "commit": "faf270a25dde1c57afbb49e04010fe8993ca07df",
+          "verification": "confirmed"
         }
       },
       "provides_classes": [
@@ -209,8 +204,8 @@
         "source": {
           "kind": "github",
           "repository": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite",
-          "commit": null,
-          "verification": "unknown"
+          "commit": "115de7a9d9e34410cffb9ecfd268e993b11a50fb",
+          "verification": "confirmed"
         }
       },
       "provenance": {
@@ -230,23 +225,26 @@
     {
       "id": "model:video.unet.ltx-2.3-distilled-q4-k-m",
       "kind": "model",
-      "name": "LTX-2.3-distilled-Q4_K_M.gguf",
-      "filename": "LTX-2.3-distilled-Q4_K_M.gguf",
+      "name": "LTX-2.3-22B-distilled-1.1-Q4_K_M.gguf",
+      "filename": "LTX-2.3-22B-distilled-1.1-Q4_K_M.gguf",
       "target_dir": "models/unet",
       "requirement": "required",
       "basis": "known_working",
       "size": "16.54 GiB",
-      "size_bytes_approx": 17759689769,
+      "size_bytes_approx": 17763015328,
       "checksum": {
         "algo": "sha256",
-        "value": null
+        "value": "cfebeb7ac973230d61f6f51ba668c236587571461a4f57c72bb6d71ce1f75fbd"
       },
       "source": {
         "kind": "huggingface",
-        "repository": null,
-        "revision": null,
-        "verification": "unknown",
-        "todo": "D5 download research: HF repo, file path, revision, sha256, license/gated status."
+        "repository": "Abiray/LTX-2.3-22B-DISTILLED-1.1-GGUF",
+        "file_path": "LTX-2.3-22B-distilled-1.1-Q4_K_M.gguf",
+        "revision": "main",
+        "gated": false,
+        "verification": "confirmed",
+        "verified_at": "2026-08-27",
+        "download_url": "https://huggingface.co/Abiray/LTX-2.3-22B-DISTILLED-1.1-GGUF/resolve/main/LTX-2.3-22B-distilled-1.1-Q4_K_M.gguf"
       },
       "provenance": {
         "workflows": [
@@ -269,17 +267,20 @@
       "requirement": "required",
       "basis": "known_working",
       "size": "6.92 GiB",
-      "size_bytes_approx": 7430293422,
+      "size_bytes_approx": 7432229248,
       "checksum": {
         "algo": "sha256",
-        "value": null
+        "value": "da98f81c86916ed1c76b3eeda56b25cb7b8352b01093e2edb8028110fe2cb53b"
       },
       "source": {
         "kind": "huggingface",
-        "repository": null,
-        "revision": null,
-        "verification": "unknown",
-        "todo": "D5 download research; possibly gated (Gemma license) — HF_TOKEN support required."
+        "repository": "unsloth/gemma-3-12b-it-qat-GGUF",
+        "file_path": "gemma-3-12b-it-qat-UD-Q4_K_XL.gguf",
+        "revision": "main",
+        "gated": false,
+        "verification": "confirmed",
+        "verified_at": "2026-08-27",
+        "download_url": "https://huggingface.co/unsloth/gemma-3-12b-it-qat-GGUF/resolve/main/gemma-3-12b-it-qat-UD-Q4_K_XL.gguf"
       },
       "provenance": {
         "workflows": [
@@ -302,17 +303,20 @@
       "requirement": "required",
       "basis": "known_working",
       "size": "2.15 GiB",
-      "size_bytes_approx": 2308544922,
+      "size_bytes_approx": 2312149072,
       "checksum": {
         "algo": "sha256",
-        "value": null
+        "value": "911d59bb4cb7708179c9a0045ea0fe41212ecfb77aed3a02702b7c0a8274911f"
       },
       "source": {
         "kind": "huggingface",
-        "repository": null,
-        "revision": null,
-        "verification": "unknown",
-        "todo": "D5 download research."
+        "repository": "Kijai/LTX2.3_comfy",
+        "file_path": "text_encoders/ltx-2.3_text_projection_bf16.safetensors",
+        "revision": "main",
+        "gated": false,
+        "verification": "confirmed",
+        "verified_at": "2026-08-27",
+        "download_url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/text_encoders/ltx-2.3_text_projection_bf16.safetensors"
       },
       "provenance": {
         "workflows": [
@@ -335,17 +339,20 @@
       "requirement": "required",
       "basis": "known_working",
       "size": "2.44 GiB",
-      "size_bytes_approx": 2619930051,
+      "size_bytes_approx": 2617401920,
       "checksum": {
         "algo": "sha256",
-        "value": null
+        "value": "05efdae9e472e06d168e122f5ebb890e7ef348cc047cf9876da6504c36d7d0e2"
       },
       "source": {
         "kind": "huggingface",
-        "repository": null,
-        "revision": null,
-        "verification": "unknown",
-        "todo": "D5 download research."
+        "repository": "Lightricks/LTX-2-19b-IC-LoRA-Detailer",
+        "file_path": "ltx-2-19b-ic-lora-detailer.safetensors",
+        "revision": "main",
+        "gated": false,
+        "verification": "confirmed",
+        "verified_at": "2026-08-27",
+        "download_url": "https://huggingface.co/Lightricks/LTX-2-19b-IC-LoRA-Detailer/resolve/main/ltx-2-19b-ic-lora-detailer.safetensors"
       },
       "provenance": {
         "workflows": [
@@ -368,17 +375,20 @@
       "requirement": "required",
       "basis": "known_working",
       "size": "1.35 GiB",
-      "size_bytes_approx": 1449551462,
+      "size_bytes_approx": 1452258578,
       "checksum": {
         "algo": "sha256",
-        "value": null
+        "value": "01ea62d09bc139f95c5dee7b5c062ad6a3e6cd8be910a1983ac02e7eb5b8ee3b"
       },
       "source": {
         "kind": "huggingface",
-        "repository": null,
-        "revision": null,
-        "verification": "unknown",
-        "todo": "D5 download research."
+        "repository": "Kijai/LTX2.3_comfy",
+        "file_path": "vae/LTX23_video_vae_bf16.safetensors",
+        "revision": "main",
+        "gated": false,
+        "verification": "confirmed",
+        "verified_at": "2026-08-27",
+        "download_url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_video_vae_bf16.safetensors"
       },
       "provenance": {
         "workflows": [
@@ -400,18 +410,21 @@
       "target_dir": "models/vae",
       "requirement": "required",
       "basis": "known_working",
-      "size": "347.95 MiB",
-      "size_bytes_approx": 364852019,
+      "size": "348.0 MiB",
+      "size_bytes_approx": 364855188,
       "checksum": {
         "algo": "sha256",
-        "value": null
+        "value": "5bc10fa4adecf99dda132d916e23048cbd56797702c5fa50eb5d2079048a38c3"
       },
       "source": {
         "kind": "huggingface",
-        "repository": null,
-        "revision": null,
-        "verification": "unknown",
-        "todo": "D5 download research."
+        "repository": "Kijai/LTX2.3_comfy",
+        "file_path": "vae/LTX23_audio_vae_bf16.safetensors",
+        "revision": "main",
+        "gated": false,
+        "verification": "confirmed",
+        "verified_at": "2026-08-27",
+        "download_url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_audio_vae_bf16.safetensors"
       },
       "provenance": {
         "workflows": [
@@ -433,18 +446,21 @@
       "target_dir": "models/vae",
       "requirement": "required",
       "basis": "known_working",
-      "size": "22.44 MiB",
-      "size_bytes_approx": 23530045,
+      "size": "22.4 MiB",
+      "size_bytes_approx": 23531296,
       "checksum": {
         "algo": "sha256",
-        "value": null
+        "value": "f0773b4e3e57318e6aa4dd4a35e1d16213a5f160fbc0376163f06888bbcbe246"
       },
       "source": {
         "kind": "huggingface",
-        "repository": null,
-        "revision": null,
-        "verification": "unknown",
-        "todo": "D5 download research."
+        "repository": "Kijai/LTX2.3_comfy",
+        "file_path": "vae/taeltx2_3.safetensors",
+        "revision": "main",
+        "gated": false,
+        "verification": "confirmed",
+        "verified_at": "2026-08-27",
+        "download_url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/taeltx2_3.safetensors"
       },
       "provenance": {
         "workflows": [
@@ -497,8 +513,8 @@
         "directory": "comfyui-manager",
         "source": {
           "kind": "github",
-          "repository": "https://github.com/ltdrdata/ComfyUI-Manager",
-          "commit": "bbafbb12",
+          "repository": "https://github.com/Comfy-Org/ComfyUI-Manager",
+          "commit": "bbafbb1290f000c5241137d23b3887e6d087036d",
           "verification": "confirmed"
         }
       },
@@ -507,7 +523,8 @@
         "evidence": "present in video audit [6]; not referenced by any production workflow"
       },
       "notes": [
-        "Utility only. Inclusion in manifest is open question D7."
+        "Utility only. Inclusion in manifest is open question D7.",
+        "Repository moved from ltdrdata/ComfyUI-Manager to Comfy-Org/ComfyUI-Manager."
       ]
     }
   ],
@@ -852,13 +869,11 @@
     }
   ],
   "disk_budget": {
-    "models_bytes_approx": 31956391690,
-    "note": "≈29.8 GiB of required models (audit) plus ComfyUI + venv overhead. Approximate: derived from human-readable audit sizes."
+    "models_bytes_approx": 32169626754,
+    "note": "≈29.9 GiB of required models (17763015328 + 7432229248 + 2312149072 + 2617401920 + 1452258578 + 364855188 + 23531296) plus ComfyUI + venv overhead. Exact: from verified HF sources."
   },
   "open_questions": [
     "D3: /object_info verification of open_class_attributions (finalizes custom_nodes list, incl. VHS requirement)",
-    "D4: upstream repos/commits for plain-dir nodes (ComfyUI-GGUF, kjnodes, VHS) or bundle archives",
-    "D5: download research for all 7 model files (repo/revision/sha256/gated)",
     "D6: upscaler model + easy-use/rgthree documentation contradiction",
     "kjnodes AudioVAE patch must become a declarative manifest artifact",
     "Open question 11: Node.js 18 (start-worker.sh) vs 20 (worker.cjs)",

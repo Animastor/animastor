@@ -56,12 +56,12 @@ function imageCompatibleEnv() {
         torch: { version: '2.10.0+cu128' },
         nodejs: { version: '20.11.1' },
         gpu: { name: 'NVIDIA L40S', vram_mib: 46068, driver_version: '550.127.08' },
-        custom_nodes: [{ directory: 'ComfyUI-GGUF', commit: '6ea2651' }],
+        custom_nodes: [{ directory: 'ComfyUI-GGUF', commit: '6ea2651e7df66d7585f6ffee804b20e92fb38b8a' }],
         models: [
-            { path: 'models/unet/qwen-image-2512-Q4_K_M.gguf', size_bytes: 13249974108 },
-            { path: 'models/clip/Qwen2.5-VL-7B-Instruct-Q8_0.gguf', size_bytes: 8096013353 },
-            { path: 'models/vae/qwen_image_vae.safetensors', size_bytes: 253807821, sha256: `a70580f0213e${'0'.repeat(52)}` },
-            { path: 'models/loras/Wuli-Qwen-Image-2512-Turbo-LoRA-4steps-V3.0.safetensors', size_bytes: 1181116006 },
+            { path: 'models/unet/qwen-image-2512-Q4_K_M.gguf', size_bytes: 13244758560 },
+            { path: 'models/clip/Qwen2.5-VL-7B-Instruct-Q8_0.gguf', size_bytes: 8098523680 },
+            { path: 'models/vae/qwen_image_vae.safetensors', size_bytes: 253806246, sha256: 'a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f' },
+            { path: 'models/loras/Wuli-Qwen-Image-2512-Turbo-LoRA-4steps-V3.0-bf16.safetensors', size_bytes: 1179883224 },
         ],
         python_packages: [],
         workflows: [baselineWorkflow('image', 'img-qwen-image')],
@@ -97,13 +97,13 @@ function videoCompatibleEnv() {
             { directory: 'comfyui-kjnodes', is_git: false },
         ],
         models: [
-            { path: 'models/unet/LTX-2.3-distilled-Q4_K_M.gguf', size_bytes: 17759689769 },
-            { path: 'models/text_encoders/gemma-3-12b-it-qat-UD-Q4_K_XL.gguf', size_bytes: 7430293422 },
-            { path: 'models/text_encoders/ltx-2.3_text_projection_bf16.safetensors', size_bytes: 2308544922 },
-            { path: 'models/loras/ltx-2-19b-ic-lora-detailer.safetensors', size_bytes: 2619930051 },
-            { path: 'models/vae/ltx-2.3-22b-dev_video_vae.safetensors', size_bytes: 1449551462 },
-            { path: 'models/vae/ltx-2.3-22b-dev_audio_vae.safetensors', size_bytes: 364852019 },
-            { path: 'models/vae/taeltx2_3.safetensors', size_bytes: 23530045 },
+            { path: 'models/unet/LTX-2.3-22B-distilled-1.1-Q4_K_M.gguf', size_bytes: 17763015328 },
+            { path: 'models/text_encoders/gemma-3-12b-it-qat-UD-Q4_K_XL.gguf', size_bytes: 7432229248 },
+            { path: 'models/text_encoders/ltx-2.3_text_projection_bf16.safetensors', size_bytes: 2312149072 },
+            { path: 'models/loras/ltx-2-19b-ic-lora-detailer.safetensors', size_bytes: 2617401920 },
+            { path: 'models/vae/ltx-2.3-22b-dev_video_vae.safetensors', size_bytes: 1452258578 },
+            { path: 'models/vae/ltx-2.3-22b-dev_audio_vae.safetensors', size_bytes: 364855188 },
+            { path: 'models/vae/taeltx2_3.safetensors', size_bytes: 23531296 },
         ],
         python_packages: [{ name: 'gguf', version: '0.14.0' }],
         workflows: [
@@ -229,7 +229,7 @@ describe('Compatibility Resolver', () => {
             expect(comfy.grade).to.equal('reference'); // fork c4cfee7 = known-working reference, canonical pin still unknown
             expect(entry(r, 'runtime:torch').grade).to.equal('reference');
             expect(entry(r, 'custom-node:comfyui-gguf').status).to.equal('installed');
-            expect(entry(r, 'model:image.vae.qwen-image-vae').grade).to.equal('checksum-prefix-verified');
+            expect(entry(r, 'model:image.vae.qwen-image-vae').grade).to.equal('checksum-verified');
             const wf = entry(r, 'workflow:img-qwen-image');
             expect(wf.status).to.equal('installed');
             expect(wf.grade).to.equal('canonical-baseline');

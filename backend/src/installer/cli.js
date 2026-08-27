@@ -395,6 +395,111 @@ function printResult(result) {
     }
 }
 
+/**
+ * validate-manifests — check all manifests for completeness and readiness.
+ *
+ * Validates:
+ *   - JSON schema compliance
+ *   - All required dependencies have confirmed sources
+ *   - Download planner reports READY for all required models
+ *   - Auth requirements are documented
+ *   - Checksums are present where possible
+ */
+async function cmdValidateManifests(flags) {
+    const loadedManifests = manifest.loadAllManifests();
+    const profiles = Object.keys(loadedManifests);
+    let allReady = true;
+    const hasHfToken = !!(process.env.HF_TOKEN || process.env.HUGGINGFACE_HUB_TOKEN);
+
+    console.log('Installer Manifest Validation');
+    console.log(`Profiles found: ${profiles.length}`);
+    console.log(`System HF token: ${hasHfToken ? 'available' : 'not set'}`);
+    console.log('');
+
+    for (const profileId of profiles) {
+        const m = loadedManifests[profileId];
+        const validation = m._validation;
+        console.log(`${m.profile.id}`);
+        console.log(`  Status: ${m.status}`);
+        console.log(`  Revision: ${m.revision}`);
+
+        // Show validation errors/warnings
+        if (validation && validation.errors.length > 0) {
+            console.log(`  ERRORS: ${validation.errors.length}`);
+            for (const e of validation.errors) console.log(`    - ${e}`);
+        }
+        if (validation && validation.warnings.length > 0) {
+            console.log(`  Warnings: ${validation.warnings.length}`);
+            for (const w of validation.warnings) console.log(`    - ${w}`);
+        }
+
+        // Check dependencies
+        const deps = m.dependencies || [];
+        const requiredModels = deps.filter((d) => (d.kind === 'model' || d.kind === 'model_repo') && d.requirement === 'required');
+        const requiredNodes = deps.filter((d) => d.kind === 'custom_node' && d.requirement === 'required');
+
+        console.log(`  Required models: ${requiredModels.length}`);
+        console.log(`  Required nodes: ${requiredNodes.length}`);
+
+        // Check each model source
+        let profileReady = true;
+        for (const dep of requiredModels) {
+            const src = dep.source || {};
+            const hasRepo = !!src.repository;
+            const hasFilePath = !!src.file_path || dep.kind === 'model_repo';
+            const verified = src.verification === 'confirmed';
+            const hasChecksum = !!(dep.checksum && dep.checksum.value);
+            const gated = !!src.gated;
+
+            let status = 'READY';
+            if (!hasRepo || !verified) {
+                status = 'BLOCKED — source not verified';
+                profileReady = false;
+            } else if (gated && !hasHfToken) {
+                status = 'BLOCKED — gated model, no HF token';
+                profileReady = false;
+            }
+
+            const check = hasRepo ? '\u2713' : '\u2717';
+            const gatedMark = gated ? ' (gated)' : '';
+            const checksumMark = hasChecksum ? '' : ' [no sha256]';
+            console.log(`    ${check} ${dep.id}${gatedMark}: ${status}${checksumMark}`);
+        }
+
+        // Check custom nodes
+        for (const dep of requiredNodes) {
+            const src = (dep.install || {}).source || {};
+            const hasRepo = !!src.repository;
+            const hasCommit = !!src.commit;
+            const verified = src.verification === 'confirmed';
+            let status = 'READY';
+            if (!hasRepo || !hasCommit || !verified) {
+                status = 'BLOCKED — commit not pinned';
+                profileReady = false;
+            }
+            const check = (hasRepo && hasCommit) ? '\u2713' : '\u2717';
+            console.log(`    ${check} ${dep.id}: ${status}`);
+        }
+
+        // Check workflows
+        const workflows = (m.workflows || {}).artifacts || [];
+        console.log(`  Workflows: ${workflows.length}`);
+        for (const wf of workflows) {
+            const check = wf.baseline_sha256 ? '\u2713' : '\u2717';
+            console.log(`    ${check} ${wf.id}${wf.baseline_sha256 ? '' : ' [no sha256]'}`);
+        }
+
+        if (!profileReady) allReady = false;
+        console.log('');
+    }
+
+    console.log(`\nOVERALL: ${allReady ? 'READY' : 'BLOCKED'}`);
+    if (!allReady) {
+        console.log('Some profiles have unresolved dependencies. See above for details.');
+        process.exit(1);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -414,11 +519,14 @@ async function main() {
         case 'verify':
             await cmdVerify(args.flags);
             break;
+        case 'validate':
+            await cmdValidateManifests(args.flags);
+            break;
         case 'resume':
             await cmdResume(args.flags);
             break;
         default:
-            console.error('Usage: animastor-installer <detect|plan|install|verify|resume> [options]');
+            console.error('Usage: animastor-installer <detect|plan|install|verify|validate|resume> [options]');
             console.error('  --profile P[,P2]   Generation profile id');
             console.error('  --mode MODE        managed | existing | shared');
             console.error('  --root PATH        ComfyUI root (default: ~/ComfyUI)');
@@ -437,4 +545,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseArgs, cmdDetect, cmdPlan, cmdInstall, cmdVerify, cmdResume };
+module.exports = { parseArgs, cmdDetect, cmdPlan, cmdInstall, cmdVerify, cmdValidateManifests, cmdResume };
