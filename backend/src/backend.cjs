@@ -238,6 +238,12 @@ require('./routes/admin-routes.cjs')(app, redis);
 // Phase 1). Users only; workspace always resolved server-side.
 require('./routes/worker-routes.cjs')(app, redis);
 
+// Private worker SETUP CONTRACT (Phase 3) — the unified UI-safe contract for
+// Web and Android: profiles, installation methods, artifacts, workflows,
+// instructions, worker setup status, installation plan. Additive layer; the
+// existing worker API above is unchanged. Same session/workspace guards.
+require('./routes/worker-setup-routes.cjs')(app, redis);
+
 // ======================================================
 // PROMETHEUS METRICS
 // ======================================================

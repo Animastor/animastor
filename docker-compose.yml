@@ -109,7 +109,17 @@ services:
     volumes:
       # Experimental Beta onboarding: hub serves worker.cjs at GET /gpu/worker-source
       # (self-contained file, no secrets — same as worker/worker/worker.cjs).
+      # DEPRECATED (Setup Contract Phase 3): kept for the old instruction;
+      # canonical artifact is the full bundle below (GET /gpu/worker-bundle).
       - ./worker/worker/worker.cjs:/app/worker-source/worker.cjs:ro
+      # Setup Contract Phase 3 artifacts (all secret-free, read-only):
+      # GET /gpu/worker-bundle — full worker runtime bundle (tar.gz; .env never included)
+      - ./worker/worker:/app/worker-bundle:ro
+      # GET /gpu/workflow/:id — baseline workflows (allowlist from install manifests)
+      - ./backend/ai/workflows:/app/workflows:ro
+      # GET /gpu/installer — self-contained installer package (tar.gz)
+      - ./backend/src/installer:/app/installer-src:ro
+      - ./backend/ai/install-manifests:/app/install-manifests:ro
 
   nginx:
     image: nginx:alpine

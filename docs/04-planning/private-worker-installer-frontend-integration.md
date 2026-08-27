@@ -1,8 +1,9 @@
 # Private GPU Worker Installer — Frontend Integration Proposal
 
-> **Status:** proposal (research only — no code changed)
+> **Status:** Phase 3 (Backend Setup Contract) **implemented**; Web/Android UI — не изменялись
 > **Date:** 2026-08-27
 > **Scope:** Web frontend (priority 1), Android frontend (priority 2), общий backend contract.
+> **API reference (Phase 3):** `docs/04-planning/private-worker-setup-contract-api.md`
 > **Companion docs:**
 > - `docs/04-planning/private-worker-installer-architecture.md` — installer architecture (Phase 1/1.5)
 > - `docs/04-planning/private-worker-installer-phase15.md` — existing ComfyUI, workflows, runtime modes
@@ -10,8 +11,9 @@
 > - `docs/architecture/EXPERIMENTAL_BETA_WORKER_SETUP.md` — текущая (устаревающая) инструкция
 > - `docs/architecture/LINUX_INSTALLER_RECONNAISSANCE.md` — reconnaissance одноимённого installer'а
 >
-> На этом этапе UI НЕ реализуется. Документ фиксирует текущее состояние,
-> устаревшие места и целевую схему для последующей задачи на реализацию.
+> Разделы §1–§15 — исходный proposal. Итоговый backend contract, реализованный
+> в Phase 3, зафиксирован в §16 и в отдельном API-документе. UI-задачи
+> (Web/Android) идут отдельными фазами поверх реализованного контракта.
 
 ---
 
@@ -864,8 +866,93 @@ Installation Artifact
 
 ---
 
+## 16. Phase 3 Implementation (Backend Setup Contract) — реализовано 2026-08-27
+
+Единый backend contract для Web и Android реализован как дополнительный слой
+поверх существующего Worker API (без breaking changes; UI не менялся).
+Полные схемы ответов, auth/security, artifact/worker-bundle модели и план
+миграции с `/gpu/worker-source` — в
+`docs/04-planning/private-worker-setup-contract-api.md`.
+
+### 16.1 Endpoints
+
+| Endpoint | Назначение |
+|---|---|
+| `GET /api/v1/private-worker/setup/profiles` | UI-safe профили из canonical installer манифестов (`?type=`) |
+| `GET /api/v1/private-worker/setup/methods` | platforms × installer/uninstaller/worker_bundle metadata |
+| `GET /api/v1/private-worker/setup/artifacts` | артефакты одной platform (`?platform=`, неизвестная → 404) |
+| `GET /api/v1/private-worker/setup/workflows` | baseline workflows: sha256, `editable: true`, download_url |
+| `GET /api/v1/private-worker/setup/instructions` | динамическая инструкция (`?profile_id=&platform=&mode=`) |
+| `GET /api/v1/private-worker/setup/workers/:id` | расширенный UI-safe статус (adapter) + normalized capabilities |
+| `POST /api/v1/private-worker/setup/plan` | UI-safe installation plan (preview; никогда не исполняется) |
+| `GET /gpu/worker-bundle` (+`/sha256`) | полный worker bundle tar.gz (Worker Key НЕ внутри) |
+| `GET /gpu/workflow/:id` | baseline workflow (allowlist из манифестов; `old_*.json` не отдаются) |
+| `GET /gpu/installer` (+`/sha256`) | self-contained installer package tar.gz |
+| `GET /gpu/worker-source` | **DEPRECATED** — работает, помечен `Deprecation: true` + `Link` |
+
+### 16.2 Ключевые решения реализации
+
+- **Проекции, а не манифесты:** `backend/src/installer/setup-contract.js` —
+  единственный выход манифестов наружу; сырые манифесты, source URL'ы моделей,
+  provenance, resolver-детали не покидают backend.
+- **Честность вместо выдумок:** VRAM unknown → `null`; uninstaller не
+  существует → `available:false, status:"planned"` (schema готова к
+  `available:true` без изменения фронтов); неисследованные источники моделей
+  → plan `BLOCKED` c `MODEL_SOURCE_NOT_PUBLISHED`; Windows/Docker →
+  `PLATFORM_NOT_SUPPORTED`.
+- **Installer artifact реален:** hub собирает self-contained пакет
+  (`src/installer/**` + `ai/install-manifests/**` + generated package.json)
+  детерминированным pure-JS ustar-райтером (`gpu-hub/tarball.js`); версия
+  `1.0.0`, статус `draft` (E2E на железе не принят), sha256 публикуется и
+  резолвится backend'ом server-side.
+- **Worker bundle:** tar.gz из 6 файлов; `.env*` (кроме `.env.example`)
+  исключены фильтром hub'а; токен — только через существующий one-time
+  disclosure + installer hidden prompt. Single-file `/gpu/worker-source`
+  помечен deprecated (не удалён).
+- **Статус worker'а:** adapter поверх существующей derivation —
+  ONLINE/OFFLINE/REVOKED не ломаются; создан и ни разу не виделся →
+  `CONNECTING`; `NOT_CONFIGURED/INSTALLING/ERROR` задокументированы как
+  состояния фронта/будущих сигналов. `base_status` отдаётся рядом.
+- **Sharing:** реальные verdict'ы resolver'а — audio+image ⇒
+  `SHARED_COMPATIBLE`, image+video ⇒ `REQUIRES_ISOLATION` (разные ComfyUI
+  commit'ы reference-окружений); multi-ComfyUI orchestration не реализуется.
+- **Instructions** собираются сервером (решение §14 Q12 — серверная сборка):
+  фронтам не хардкодить ни команд, ни версий; токен только placeholder'ом.
+- **Security:** все endpoints под сессией зарегистрированного пользователя +
+  workspace guard; чужой worker → неразличимый 404; download URL'ы — только
+  backend-авторизованные origin-relative константы; тесты на отсутствие
+  token/token_hash/секретов во всех ответах.
+
+### 16.3 Покрытие тестами (все passing)
+
+- `backend/tests/worker-setup-api.test.js` — API: auth/isolation, profiles,
+  platforms, artifacts+checksum, workflows, instructions, worker status,
+  security sweep, plan (image/video/audio, managed/existing/shared/isolated,
+  SHARED_COMPATIBLE/REQUIRES_ISOLATION), legacy API intact;
+- `backend/tests/installer-setup-contract.test.js` — проекции: hidden
+  profiles не отдаются, planned-платформы, editable workflows, token
+  placeholder, status adapter, capabilities, plan-семантика, hub outage →
+  sha256 null;
+- `backend/tests/gpu-hub-artifacts.test.js` — bundle состав/детерминизм/
+  `.env`-исключение, workflow allowlist + traversal, installer package,
+  sha256 integrity, deprecated worker-source работает.
+- Полный backend suite: 1705 тестов passing.
+
+### 16.4 Открытые blockers (унаследованы, не блокируют UI-фазы)
+
+1. Linux uninstaller не существует (нужен отдельный ownership-design, §15.6)
+   — в контракте `planned`.
+2. Model sources не исследованы (D5) → plan честно BLOCKED по моделям.
+3. E2E installer'а на реальном GPU не принят → installer `status: draft`.
+4. VRAM-минимумы неизвестны → `gpu.min_vram_gb: null`.
+5. `details` (GPU/VRAM online-детали) требуют расширения heartbeat payload
+   hub'а — в контракте пока `null`.
+
+---
+
 ### Связанные документы
 
+- `docs/04-planning/private-worker-setup-contract-api.md` — **Phase 3 API reference (реализовано)**
 - `docs/04-planning/private-worker-installer-architecture.md`
 - `docs/04-planning/private-worker-installer-phase15.md`
 - `docs/04-planning/private-worker-installer-manifest-resolver.md`

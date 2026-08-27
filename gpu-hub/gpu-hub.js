@@ -26,6 +26,7 @@ const cors = require("cors")
 const crypto = require("crypto")
 const fs = require("fs")
 const path = require("path")
+const { buildTarGz, walkDir } = require("./tarball")
 
 // SYNC: backend/src/runtime/job-schema.js (PROTOCOL_VERSION)
 const PROTOCOL_VERSION = 2;
@@ -1037,12 +1038,15 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   })
 
   // ======================================================
-  // WORKER SOURCE (Experimental Beta — onboarding)
+  // WORKER SOURCE (Experimental Beta — onboarding) — DEPRECATED
   // ======================================================
-  // Serves the self-contained worker.cjs so a Private Worker operator can
-  // obtain it from the hub itself (the repo mirror is private). No secrets
-  // here — this is the same file that ships in the repo at
-  // worker/worker/worker.cjs. Mounted read-only into the container.
+  // DEPRECATED (Private Worker Setup Contract Phase 3): serves worker.cjs
+  // ONLY. The worker requires additional runtime files (worker-cleanup.cjs,
+  // worker-cleanup-journal.cjs, package*.json, .env.example), so a
+  // single-file install is broken. Canonical replacement: GET /worker-bundle
+  // (full versioned bundle, sha256 published at /worker-bundle/sha256).
+  // Kept for backward compatibility with the old instruction; no secrets
+  // here — same file as worker/worker/worker.cjs, mounted read-only.
 
   const WORKER_SOURCE_PATH =
     config.WORKER_SOURCE_PATH || "/app/worker-source/worker.cjs";
@@ -1055,7 +1059,288 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
       res.setHeader("Content-Type", "application/javascript; charset=utf-8");
       res.setHeader("Content-Disposition", 'attachment; filename="worker.cjs"');
       res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Deprecation", "true");
+      res.setHeader("Link", '</worker-bundle>; rel="successor-version"');
       res.send(buf);
+    });
+  });
+
+  // ======================================================
+  // SETUP CONTRACT ARTIFACTS (Private Worker — Phase 3)
+  // ======================================================
+  // Public download endpoints behind the UI-safe setup contract metadata
+  // served by the backend (GET /api/v1/private-worker/setup/*). Artifacts
+  // carry NO secrets: the Worker Key is never part of any bundle — it is
+  // entered interactively on the GPU machine. Integrity: every artifact
+  // publishes a sha256 (signature infrastructure is a future extension).
+  //
+  //   GET /worker-bundle          full worker runtime bundle (tar.gz)
+  //   GET /worker-bundle/sha256   bundle checksum + version metadata
+  //   GET /workflow/:id           baseline workflow JSON (editable-baseline)
+  //   GET /installer              installer package (tar.gz, self-contained)
+  //   GET /installer/sha256       installer checksum + version metadata
+
+  const WORKER_BUNDLE_DIR = config.WORKER_BUNDLE_DIR || "/app/worker-bundle";
+  const WORKER_BUNDLE_VERSION = config.WORKER_BUNDLE_VERSION || "2.0.0";
+  const WORKFLOW_DIR = config.WORKFLOW_DIR || "/app/workflows";
+  const INSTALLER_SRC_DIR = config.INSTALLER_SRC_DIR || "/app/installer-src";
+  const INSTALLER_MANIFESTS_DIR =
+    config.INSTALLER_MANIFESTS_DIR || "/app/install-manifests";
+  const INSTALLER_VERSION = config.INSTALLER_VERSION || "1.0.0";
+
+  // A file is servable only if it cannot be a secret: `.env` and any
+  // `.env.*` variant are NEVER included (defense in depth — the mounted
+  // directory must not contain them, but we never trust the mount alone).
+  function isServableBundleFile(relPath) {
+    const base = relPath.split("/").pop();
+    if (base === ".env" || /^\.env\..+$/.test(base)) return base === ".env.example";
+    return true;
+  }
+
+  // Deterministic artifact cache: rebuilt only when the source tree changes
+  // (fingerprint = sorted relpath + size + mtime of every included file).
+  function cachedArtifact(cache, fingerprintFn, buildFn) {
+    let fingerprint = null;
+    try { fingerprint = fingerprintFn(); } catch (_) { return null; }
+    if (!fingerprint) return null;
+    if (cache.fingerprint === fingerprint) return cache.artifact;
+    const artifact = buildFn();
+    cache.fingerprint = fingerprint;
+    cache.artifact = artifact;
+    return artifact;
+  }
+
+  function dirFingerprint(dir, filter) {
+    if (!fs.existsSync(dir)) return null;
+    const files = walkDir(fs, dir).filter((f) => !filter || filter(f)).sort();
+    if (files.length === 0) return null;
+    const parts = [];
+    for (const f of files) {
+      const st = fs.statSync(path.join(dir, f));
+      parts.push(`${f}:${st.size}:${st.mtimeMs}`);
+    }
+    return parts.join("|");
+  }
+
+  function buildBundleArtifact() {
+    const files = walkDir(fs, WORKER_BUNDLE_DIR)
+      .filter(isServableBundleFile)
+      .sort();
+    const entries = files.map((f) => ({
+      name: `animastor-worker/${f}`,
+      data: fs.readFileSync(path.join(WORKER_BUNDLE_DIR, f)),
+    }));
+    const buffer = buildTarGz(entries);
+    return {
+      buffer,
+      sha256: crypto.createHash("sha256").update(buffer).digest("hex"),
+      files,
+      bytes: buffer.length,
+    };
+  }
+
+  const workerBundleCache = { fingerprint: null, artifact: null };
+
+  app.get("/worker-bundle", (req, res) => {
+    const artifact = cachedArtifact(
+      workerBundleCache,
+      () => dirFingerprint(WORKER_BUNDLE_DIR, isServableBundleFile),
+      buildBundleArtifact
+    );
+    if (!artifact) {
+      return res.status(404).json({ error: "worker_bundle_unavailable" });
+    }
+    res.setHeader("Content-Type", "application/gzip");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="animastor-worker-${WORKER_BUNDLE_VERSION}.tar.gz"`
+    );
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Animastor-Artifact-Version", WORKER_BUNDLE_VERSION);
+    res.setHeader("X-Animastor-Sha256", artifact.sha256);
+    res.send(artifact.buffer);
+  });
+
+  app.get("/worker-bundle/sha256", (req, res) => {
+    const artifact = cachedArtifact(
+      workerBundleCache,
+      () => dirFingerprint(WORKER_BUNDLE_DIR, isServableBundleFile),
+      buildBundleArtifact
+    );
+    if (!artifact) {
+      return res.status(404).json({ error: "worker_bundle_unavailable" });
+    }
+    res.json({
+      artifact: "worker-bundle",
+      version: WORKER_BUNDLE_VERSION,
+      sha256: artifact.sha256,
+      bytes: artifact.bytes,
+      files: artifact.files,
+      signature: null, // future: signature + signature_algorithm
+    });
+  });
+
+  // Baseline workflows (editable-baseline policy). The allowlist is derived
+  // from the canonical install manifests — legacy/excluded workflow files
+  // (old_*.json) are never served. The id is the manifest workflow id
+  // without the "workflow:" prefix (e.g. img-qwen-image).
+  const WORKFLOW_ID_RE = /^[a-z0-9][a-z0-9._-]*$/i;
+
+  function loadWorkflowAllowlist() {
+    const allow = new Map();
+    if (!fs.existsSync(INSTALLER_MANIFESTS_DIR)) return allow;
+    for (const type of fs.readdirSync(INSTALLER_MANIFESTS_DIR).sort()) {
+      const typeDir = path.join(INSTALLER_MANIFESTS_DIR, type);
+      if (!fs.statSync(typeDir).isDirectory()) continue;
+      for (const file of fs.readdirSync(typeDir).sort()) {
+        if (!file.endsWith(".json")) continue;
+        let manifest = null;
+        try {
+          manifest = JSON.parse(fs.readFileSync(path.join(typeDir, file), "utf8"));
+        } catch (_) { continue; }
+        const profileId = manifest.profile && manifest.profile.id;
+        const artifacts =
+          manifest.workflows && Array.isArray(manifest.workflows.artifacts)
+            ? manifest.workflows.artifacts
+            : [];
+        for (const wf of artifacts) {
+          if (!wf || !wf.id || !wf.filename) continue;
+          allow.set(String(wf.id).replace(/^workflow:/, ""), {
+            filename: wf.filename,
+            name: wf.name || null,
+            profile_id: profileId || null,
+            baseline_sha256: wf.baseline_sha256 || null,
+          });
+        }
+      }
+    }
+    return allow;
+  }
+
+  app.get("/workflow/:id", (req, res) => {
+    const id = req.params.id;
+    if (!WORKFLOW_ID_RE.test(id)) {
+      return res.status(404).json({ error: "workflow_not_found" });
+    }
+    const meta = loadWorkflowAllowlist().get(id);
+    if (!meta) {
+      return res.status(404).json({ error: "workflow_not_found" });
+    }
+    const filePath = path.resolve(WORKFLOW_DIR, meta.filename);
+    // Path traversal defense: resolved path must stay inside WORKFLOW_DIR.
+    if (!filePath.startsWith(path.resolve(WORKFLOW_DIR) + path.sep)) {
+      return res.status(404).json({ error: "workflow_not_found" });
+    }
+    fs.readFile(filePath, (err, buf) => {
+      if (err) {
+        return res.status(404).json({ error: "workflow_unavailable" });
+      }
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${meta.filename}"`);
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader(
+        "X-Animastor-Sha256",
+        crypto.createHash("sha256").update(buf).digest("hex")
+      );
+      res.send(buf);
+    });
+  });
+
+  // Installer package — self-contained: installer sources + canonical
+  // install manifests + generated package.json/README. Layout mirrors the
+  // repo (src/installer/*, ai/install-manifests/*) so install-manifest.js
+  // resolves its manifests without modification. No Worker Key, no .env,
+  // no credentials of any kind.
+  function buildInstallerArtifact() {
+    const entries = [];
+    const srcFiles = walkDir(fs, INSTALLER_SRC_DIR).sort();
+    for (const f of srcFiles) {
+      entries.push({
+        name: `animastor-installer/src/installer/${f}`,
+        data: fs.readFileSync(path.join(INSTALLER_SRC_DIR, f)),
+      });
+    }
+    const manifestFiles = walkDir(fs, INSTALLER_MANIFESTS_DIR).sort();
+    for (const f of manifestFiles) {
+      entries.push({
+        name: `animastor-installer/ai/install-manifests/${f}`,
+        data: fs.readFileSync(path.join(INSTALLER_MANIFESTS_DIR, f)),
+      });
+    }
+    entries.push({
+      name: "animastor-installer/package.json",
+      data: JSON.stringify(
+        {
+          name: "animastor-installer",
+          version: INSTALLER_VERSION,
+          private: true,
+          description: "Animastor Private GPU Worker installer (setup contract Phase 3 distribution)",
+          bin: { "animastor-installer": "src/installer/cli.js" },
+          engines: { node: ">=20" },
+        },
+        null,
+        2
+      ) + "\n",
+    });
+    entries.push({
+      name: "animastor-installer/README.txt",
+      data: [
+        "Animastor Private GPU Worker installer",
+        "",
+        "Usage:",
+        "  node src/installer/cli.js detect",
+        "  node src/installer/cli.js plan --profile image/qwen-image",
+        "  node src/installer/cli.js install --profile image/qwen-image --mode managed",
+        "",
+        "The Worker Key is asked interactively on this machine (hidden input).",
+        "It is never logged, never stored in installer state, never passed via argv.",
+        "",
+      ].join("\n"),
+    });
+    const buffer = buildTarGz(entries);
+    return {
+      buffer,
+      sha256: crypto.createHash("sha256").update(buffer).digest("hex"),
+      bytes: buffer.length,
+      files: entries.map((e) => e.name),
+    };
+  }
+
+  const installerCache = { fingerprint: null, artifact: null };
+
+  function installerFingerprint() {
+    const a = dirFingerprint(INSTALLER_SRC_DIR);
+    const b = dirFingerprint(INSTALLER_MANIFESTS_DIR);
+    return a && b ? `${INSTALLER_VERSION}|${a}|${b}` : null;
+  }
+
+  app.get("/installer", (req, res) => {
+    const artifact = cachedArtifact(installerCache, installerFingerprint, buildInstallerArtifact);
+    if (!artifact) {
+      return res.status(404).json({ error: "installer_unavailable" });
+    }
+    res.setHeader("Content-Type", "application/gzip");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="animastor-installer-${INSTALLER_VERSION}.tar.gz"`
+    );
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Animastor-Artifact-Version", INSTALLER_VERSION);
+    res.setHeader("X-Animastor-Sha256", artifact.sha256);
+    res.send(artifact.buffer);
+  });
+
+  app.get("/installer/sha256", (req, res) => {
+    const artifact = cachedArtifact(installerCache, installerFingerprint, buildInstallerArtifact);
+    if (!artifact) {
+      return res.status(404).json({ error: "installer_unavailable" });
+    }
+    res.json({
+      artifact: "installer",
+      version: INSTALLER_VERSION,
+      sha256: artifact.sha256,
+      bytes: artifact.bytes,
+      signature: null, // future: signature + signature_algorithm
     });
   });
 
