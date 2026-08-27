@@ -79,7 +79,7 @@ function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log }) {
 
     if (!io.fs.existsSync(py)) {
         let r = io.exec('python3', ['-m', 'venv', venvDir]);
-        if (r.code !== 0) throw new Error(`python3 -m venv failed: ${r.stderr || r.error}`);
+        if (r.code !== 0) throw new Error(`python3 -m venv failed (code ${r.code}): ${String(r.stderr || r.stdout || r.error || 'no output').slice(-500)}`);
         if (log) log.info(`venv created at ${venvDir}`);
     }
 
