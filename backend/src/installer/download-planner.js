@@ -110,6 +110,8 @@ function planModelDownload(dep, opts = {}) {
         spec.resume = 'snapshot-restart';
         const repoPath = normPath(src.repository);
         spec.url = `https://modelscope.cn/models/${repoPath}`;
+        spec.repository = src.repository;
+        spec.revision = src.revision || 'master';
         spec.ready = true;
         notes.push('ModelScope repo pre-downloaded by installer (D2 closed: deterministic/offline)');
         return spec;

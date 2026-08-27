@@ -216,10 +216,242 @@ function modelscopeStrategy(dep) {
     };
 }
 
+// ---------------------------------------------------------------------------
+// ModelScope snapshot download (D2 closed: deterministic/offline)
+// ---------------------------------------------------------------------------
+
+/**
+ * ModelScope REST API base for file operations.
+ * Pattern: /api/v1/models/{owner}/{name}/repo?Revision={rev}&FilePath={path}
+ */
+const MODELSCOPE_API_BASE = 'https://modelscope.cn/api/v1/models';
+
+/**
+ * Build a ModelScope file download URL.
+ * @param {string} repository e.g. "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+ * @param {string} filePath relative path within the repo
+ * @param {string} [revision] git revision (default: master)
+ * @returns {string} full download URL
+ */
+function modelscopeFileUrl(repository, filePath, revision = 'master') {
+    const encoded = encodeURIComponent(filePath);
+    return `${MODELSCOPE_API_BASE}/${repository}/repo?Revision=${encodeURIComponent(revision)}&FilePath=${encoded}`;
+}
+
+/**
+ * List all files in a ModelScope repository via the REST API.
+ *
+ * @param {object} io io adapter (io.http.fetchJson)
+ * @param {string} repository e.g. "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+ * @param {string} [revision] git revision (default: master)
+ * @param {string} [token] MODELSCOPE_API_TOKEN (optional, public repos work without)
+ * @returns {{ ok: boolean, files?: Array<{Path, Size}>, error?: string }}
+ */
+async function listModelScopeFiles(io, repository, revision = 'master', token = null) {
+    const url = `${MODELSCOPE_API_BASE}/${repository}/repo?Revision=${encodeURIComponent(revision)}`;
+    const headers = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    try {
+        const { status, json } = await io.http.fetchJson(url, { headers });
+        if (status === 200 && json) {
+            // ModelScope API returns { Data: { Items: [{Path, Size, ...}] } }
+            // or a flat array of {Path, Size} objects
+            const items = json.Data && json.Data.Items ? json.Data.Items : (Array.isArray(json) ? json : []);
+            const files = items.map((item) => ({
+                Path: item.Path || item.path || item.FilePath || '',
+                Size: typeof item.Size === 'number' ? item.Size : (typeof item.size === 'number' ? item.size : 0),
+            })).filter((f) => f.Path && !f.Path.endsWith('/'));
+            return { ok: true, files };
+        }
+        if (status === 401 || status === 403) {
+            return { ok: false, error: `HTTP ${status} — authentication required (private/gated ModelScope repo?)` };
+        }
+        return { ok: false, error: `HTTP ${status} listing ModelScope repo ${repository}` };
+    } catch (err) {
+        return { ok: false, error: `failed to list ModelScope repo ${repository}: ${err.message}` };
+    }
+}
+
+/**
+ * Download all files from a ModelScope repo into a target directory.
+ *
+ * This is the `installer_preload` implementation: the engine calls this
+ * instead of downloadArtifact when the dependency source kind is modelscope
+ * and the delivery mechanism is installer_preload.
+ *
+ * Behavior:
+ *   - Lists files via ModelScope REST API
+ *   - Downloads each file individually with the same retry/resume/verify
+ *     logic as downloadArtifact
+ *   - Idempotent: verified files are skipped
+ *   - Checksum mismatch: file is deleted and re-downloaded
+ *   - Creates subdirectories as needed (e.g. speech_tokenizer/)
+ *
+ * @param {object} io io adapter
+ * @param {object} spec download-planner spec (from planModelDownload)
+ * @param {object} opts { root, getHeader, retries, retryDelayMs, log, expectedFiles, checksums }
+ * @returns {{ status, files?, reason?, attempts }}
+ */
+async function downloadModelScopeRepo(io, spec, opts = {}) {
+    const {
+        root = '',
+        getHeader = () => ({}),
+        retries = 3,
+        retryDelayMs = 500,
+        log = null,
+        expectedFiles = null,
+        checksums = null,
+    } = opts;
+
+    const repository = spec.repository || (spec.url && spec.url.replace(/.*\/models\//, '').replace(/\/repo.*/, ''));
+    const revision = spec.revision || 'master';
+    const targetDir = normPath(spec.target_path);
+    const absTargetDir = root ? `${root}/${targetDir}` : targetDir;
+
+    if (!repository) {
+        return { status: 'blocked', reason: 'ModelScope repository is not specified in the manifest' };
+    }
+
+    // Step 1: list files
+    const token = (typeof process !== 'undefined' && process.env)
+        ? (process.env.MODELSCOPE_API_TOKEN || null)
+        : null;
+    const listing = await listModelScopeFiles(io, repository, revision, token);
+    if (!listing.ok) {
+        return { status: 'failed', reason: `ModelScope file listing failed: ${listing.error}` };
+    }
+
+    if (listing.files.length === 0) {
+        return { status: 'failed', reason: `ModelScope repo ${repository} has no downloadable files` };
+    }
+
+    // Step 2: determine which files to download
+    // Use expectedFiles from manifest if provided, otherwise download all
+    let filesToDownload = listing.files;
+    if (expectedFiles && expectedFiles.length > 0) {
+        const expectedSet = new Set(expectedFiles.map(normPath));
+        filesToDownload = listing.files.filter((f) => expectedSet.has(normPath(f.Path)));
+        if (filesToDownload.length === 0) {
+            return { status: 'failed', reason: `none of the expected files (${expectedFiles.join(', ')}) were found in ModelScope repo ${repository}` };
+        }
+    }
+
+    // Step 3: download each file
+    const results = [];
+    let totalAttempts = 0;
+    let anyFailed = false;
+
+    for (const file of filesToDownload) {
+        const filePath = normPath(file.Path);
+        const absFile = `${absTargetDir}/${filePath}`;
+        const absPart = `${absFile}.part`;
+
+        // Checksum for this specific file (if provided)
+        const fileChecksum = checksums && checksums[filePath] ? checksums[filePath] : null;
+
+        // Idempotency: verify existing file
+        const existing = await verifyFile(io, absFile, { checksum: fileChecksum || null, sizeBytesApprox: file.Size || null });
+        if (existing.ok) {
+            results.push({ path: filePath, status: 'skipped', grade: existing.grade });
+            continue;
+        }
+        if (existing.grade === 'corrupt' || existing.grade === 'size-mismatch') {
+            try { io.fs.unlinkSync(absFile); } catch (_) { /* already gone */ }
+            if (log) log.warn(`${spec.id}: file ${filePath} failed verification (${existing.reason}) — re-downloading`);
+        }
+
+        // Ensure directory exists
+        const dir = absFile.replace(/\/[^/]+$/, '');
+        if (dir && !io.fs.existsSync(dir)) io.fs.mkdirSync(dir, { recursive: true });
+
+        // Download with retry
+        const url = modelscopeFileUrl(repository, filePath, revision);
+        const headers = getHeader({ kind: 'modelscope' });
+        let fileAttempts = 0;
+        let lastError = null;
+
+        for (let attempt = 1; attempt <= retries; attempt += 1) {
+            fileAttempts = attempt;
+            try {
+                let appendFrom = 0;
+                if (io.fs.existsSync(absPart)) {
+                    try { appendFrom = io.fs.statSync(absPart).size; } catch (_) { appendFrom = 0; }
+                }
+
+                const res = await io.http.download({
+                    url,
+                    dest: absPart,
+                    appendFrom,
+                    headers,
+                });
+
+                if (res.status === 416 && appendFrom > 0) {
+                    // Range not satisfiable — verify below
+                } else if (res.status !== 200 && res.status !== 206) {
+                    const authHint = res.status === 401 || res.status === 403
+                        ? ' — authentication error: check the MODELSCOPE_API_TOKEN' : '';
+                    throw new Error(`HTTP ${res.status} from ModelScope${authHint}`);
+                }
+
+                // Verify downloaded file
+                const verification = await verifyFile(io, absPart, {
+                    checksum: fileChecksum || null,
+                    sizeBytesApprox: file.Size || null,
+                });
+                if (!verification.ok) {
+                    try { io.fs.unlinkSync(absPart); } catch (_) { /* ignore */ }
+                    results.push({ path: filePath, status: 'failed', grade: verification.grade, reason: verification.reason });
+                    anyFailed = true;
+                    break;
+                }
+
+                // Atomic publish
+                io.fs.renameSync(absPart, absFile);
+                results.push({ path: filePath, status: res.resumed ? 'resumed' : 'downloaded', grade: verification.grade });
+                lastError = null;
+                break;
+            } catch (err) {
+                lastError = err;
+                if (log) log.warn(`${spec.id}: file ${filePath} attempt ${attempt}/${retries} failed: ${err.message}`);
+                if (attempt < retries && retryDelayMs > 0) {
+                    await new Promise((r) => setTimeout(r, retryDelayMs * attempt));
+                }
+            }
+        }
+
+        totalAttempts += fileAttempts;
+        if (lastError) {
+            results.push({ path: filePath, status: 'failed', reason: lastError.message });
+            anyFailed = true;
+        }
+    }
+
+    if (anyFailed) {
+        const failed = results.filter((r) => r.status === 'failed');
+        return {
+            status: 'failed',
+            reason: `${failed.length} file(s) failed to download from ModelScope repo ${repository}`,
+            files: results,
+            attempts: totalAttempts,
+        };
+    }
+
+    return {
+        status: 'downloaded',
+        files: results,
+        attempts: totalAttempts,
+    };
+}
+
 module.exports = {
     SIZE_TOLERANCE,
     verifyFile,
     downloadArtifact,
     makeHeaderProvider,
     modelscopeStrategy,
+    listModelScopeFiles,
+    downloadModelScopeRepo,
+    modelscopeFileUrl,
+    MODELSCOPE_API_BASE,
 };

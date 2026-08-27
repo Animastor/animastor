@@ -306,7 +306,24 @@ async function runInstallation(args) {
                     state.setArtifact(st, spec.id, 'missing', { note: strategy.note });
                 } else if (strategy.mechanism === 'installer_preload') {
                     // D2 closed: installer pre-downloads ModelScope repos
-                    // Fall through to the download logic below
+                    // Use dedicated ModelScope snapshot download (not single-file downloadArtifact)
+                    const expectedFiles = dep.expected_files || null;
+                    const checksums = null; // ModelScope checksums not yet in manifest; verified by size
+                    const r = await log.step(`download model ${spec.id} (ModelScope)`, async () => downloader.downloadModelScopeRepo(io, spec, {
+                        root: comfyuiRoot,
+                        getHeader,
+                        retries: options.downloadRetries || 3,
+                        retryDelayMs: options.retryDelayMs || 500,
+                        log,
+                        expectedFiles,
+                        checksums,
+                    }));
+                    const res = r.ok ? r.value : { status: 'failed', reason: String(r.error && r.error.message) };
+                    const status = res.status === 'failed' ? 'failed' : res.status === 'skipped' ? 'verified' : 'installed';
+                    result.results.models.push({ id: spec.id, ...res });
+                    state.setArtifact(st, spec.id, status, { reason: res.reason });
+                    save();
+                    continue; // skip the generic downloadArtifact below
                 } else {
                     result.results.models.push({ id: spec.id, status: 'blocked', reason: strategy.note });
                     state.setArtifact(st, spec.id, 'missing', { note: strategy.note });
