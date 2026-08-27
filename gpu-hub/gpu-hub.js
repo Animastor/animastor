@@ -1081,12 +1081,41 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   //   GET /installer/sha256       installer checksum + version metadata
 
   const WORKER_BUNDLE_DIR = config.WORKER_BUNDLE_DIR || "/app/worker-bundle";
-  const WORKER_BUNDLE_VERSION = config.WORKER_BUNDLE_VERSION || "2.0.0";
   const WORKFLOW_DIR = config.WORKFLOW_DIR || "/app/workflows";
   const INSTALLER_SRC_DIR = config.INSTALLER_SRC_DIR || "/app/installer-src";
   const INSTALLER_MANIFESTS_DIR =
     config.INSTALLER_MANIFESTS_DIR || "/app/install-manifests";
-  const INSTALLER_VERSION = config.INSTALLER_VERSION || "1.0.0";
+
+  // Versions have ONE canonical source each (no manual duplication):
+  //   worker bundle → worker/worker/package.json (mounted as WORKER_BUNDLE_DIR)
+  //   installer     → backend/src/installer/package.json (INSTALLER_SRC_DIR)
+  // The hub reads them at request time; config overrides exist for tests.
+  function readCanonicalVersion(dir, fallbackName) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+      if (pkg && typeof pkg.version === "string" && pkg.version) {
+        return { version: pkg.version, name: pkg.name || fallbackName, description: pkg.description || null };
+      }
+    } catch (_) { /* canonical package.json missing/unreadable */ }
+    return null;
+  }
+
+  function workerBundleMeta() {
+    const canonical = readCanonicalVersion(WORKER_BUNDLE_DIR, "animastor-worker");
+    return {
+      version: config.WORKER_BUNDLE_VERSION || (canonical && canonical.version) || null,
+      name: (canonical && canonical.name) || "animastor-worker",
+    };
+  }
+
+  function installerMeta() {
+    const canonical = readCanonicalVersion(INSTALLER_SRC_DIR, "animastor-installer");
+    return {
+      version: config.INSTALLER_VERSION || (canonical && canonical.version) || null,
+      name: (canonical && canonical.name) || "animastor-installer",
+      description: canonical && canonical.description,
+    };
+  }
 
   // A file is servable only if it cannot be a secret: `.env` and any
   // `.env.*` variant are NEVER included (defense in depth — the mounted
@@ -1142,27 +1171,31 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   const workerBundleCache = { fingerprint: null, artifact: null };
 
   app.get("/worker-bundle", (req, res) => {
-    const artifact = cachedArtifact(
+    const meta = workerBundleMeta();
+    const artifact = meta.version && cachedArtifact(
       workerBundleCache,
       () => dirFingerprint(WORKER_BUNDLE_DIR, isServableBundleFile),
       buildBundleArtifact
     );
     if (!artifact) {
+      // No canonical version (package.json missing) or no files — never
+      // serve a versionless artifact.
       return res.status(404).json({ error: "worker_bundle_unavailable" });
     }
     res.setHeader("Content-Type", "application/gzip");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="animastor-worker-${WORKER_BUNDLE_VERSION}.tar.gz"`
+      `attachment; filename="${meta.name}-${meta.version}.tar.gz"`
     );
     res.setHeader("Cache-Control", "no-store");
-    res.setHeader("X-Animastor-Artifact-Version", WORKER_BUNDLE_VERSION);
+    res.setHeader("X-Animastor-Artifact-Version", meta.version);
     res.setHeader("X-Animastor-Sha256", artifact.sha256);
     res.send(artifact.buffer);
   });
 
   app.get("/worker-bundle/sha256", (req, res) => {
-    const artifact = cachedArtifact(
+    const meta = workerBundleMeta();
+    const artifact = meta.version && cachedArtifact(
       workerBundleCache,
       () => dirFingerprint(WORKER_BUNDLE_DIR, isServableBundleFile),
       buildBundleArtifact
@@ -1172,7 +1205,7 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     }
     res.json({
       artifact: "worker-bundle",
-      version: WORKER_BUNDLE_VERSION,
+      version: meta.version,
       sha256: artifact.sha256,
       bytes: artifact.bytes,
       files: artifact.files,
@@ -1247,11 +1280,14 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   });
 
   // Installer package — self-contained: installer sources + canonical
-  // install manifests + generated package.json/README. Layout mirrors the
-  // repo (src/installer/*, ai/install-manifests/*) so install-manifest.js
-  // resolves its manifests without modification. No Worker Key, no .env,
-  // no credentials of any kind.
+  // install manifests + generated root package.json/README. Layout mirrors
+  // the repo (src/installer/*, ai/install-manifests/*) so
+  // install-manifest.js resolves its manifests without modification. The
+  // version comes from the canonical backend/src/installer/package.json —
+  // never hardcoded here. No Worker Key, no .env, no credentials.
   function buildInstallerArtifact() {
+    const meta = installerMeta();
+    if (!meta.version) return null; // no canonical version → not publishable
     const entries = [];
     const srcFiles = walkDir(fs, INSTALLER_SRC_DIR).sort();
     for (const f of srcFiles) {
@@ -1271,11 +1307,12 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
       name: "animastor-installer/package.json",
       data: JSON.stringify(
         {
-          name: "animastor-installer",
-          version: INSTALLER_VERSION,
+          name: meta.name,
+          version: meta.version,
           private: true,
-          description: "Animastor Private GPU Worker installer (setup contract Phase 3 distribution)",
-          bin: { "animastor-installer": "src/installer/cli.js" },
+          description: meta.description
+            || "Animastor Private GPU Worker installer (setup contract distribution)",
+          bin: { [meta.name]: "src/installer/cli.js" },
           engines: { node: ">=20" },
         },
         null,
@@ -1311,10 +1348,12 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   function installerFingerprint() {
     const a = dirFingerprint(INSTALLER_SRC_DIR);
     const b = dirFingerprint(INSTALLER_MANIFESTS_DIR);
-    return a && b ? `${INSTALLER_VERSION}|${a}|${b}` : null;
+    const meta = installerMeta();
+    return a && b && meta.version ? `${meta.version}|${a}|${b}` : null;
   }
 
   app.get("/installer", (req, res) => {
+    const meta = installerMeta();
     const artifact = cachedArtifact(installerCache, installerFingerprint, buildInstallerArtifact);
     if (!artifact) {
       return res.status(404).json({ error: "installer_unavailable" });
@@ -1322,22 +1361,23 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     res.setHeader("Content-Type", "application/gzip");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="animastor-installer-${INSTALLER_VERSION}.tar.gz"`
+      `attachment; filename="${meta.name}-${meta.version}.tar.gz"`
     );
     res.setHeader("Cache-Control", "no-store");
-    res.setHeader("X-Animastor-Artifact-Version", INSTALLER_VERSION);
+    res.setHeader("X-Animastor-Artifact-Version", meta.version);
     res.setHeader("X-Animastor-Sha256", artifact.sha256);
     res.send(artifact.buffer);
   });
 
   app.get("/installer/sha256", (req, res) => {
+    const meta = installerMeta();
     const artifact = cachedArtifact(installerCache, installerFingerprint, buildInstallerArtifact);
     if (!artifact) {
       return res.status(404).json({ error: "installer_unavailable" });
     }
     res.json({
       artifact: "installer",
-      version: INSTALLER_VERSION,
+      version: meta.version,
       sha256: artifact.sha256,
       bytes: artifact.bytes,
       signature: null, // future: signature + signature_algorithm

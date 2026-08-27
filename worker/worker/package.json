@@ -1,6 +1,7 @@
 {
-  "name": "worker",
-  "version": "0.1.0",
+  "name": "animastor-worker",
+  "version": "2.0.0",
+  "description": "Animastor Private GPU Worker runtime bundle. The version field is the canonical worker bundle version: the hub publishes it with the bundle artifact (GET /worker-bundle) and worker.cjs reports it in beacons when WORKER_VERSION is not set.",
   "main": "worker.cjs",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -8,7 +9,6 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
   "type": "module",
   "dependencies": {
     "node-fetch": "^3.3.2"

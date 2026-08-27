@@ -1,14 +1,18 @@
-# Private Worker Setup Contract — API Reference (Phase 3)
+# Private Worker Setup Contract — API Reference (Phase 3 / 3.1)
 
-> **Status:** implemented (backend only — Web/Android UI не изменялись)
+> **Status:** Phase 3 implemented; **Phase 3.1** — backend production-ready
+> (canonical versions, probe-based availability, integrity/security tests) +
+> Web Setup Center integrated. Android UI пока не изменялся.
 > **Date:** 2026-08-27
 > **Proposal:** `docs/04-planning/private-worker-installer-frontend-integration.md`
 > **Код:** `backend/src/routes/worker-setup-routes.cjs`,
 > `backend/src/installer/setup-contract.js`, `gpu-hub/gpu-hub.js` (artifacts),
-> `gpu-hub/tarball.js`
+> `gpu-hub/tarball.js`; Web — `frontends/app/src/features/workers/workerSetup.ts`,
+> `frontends/app/src/features/workers/PrivateWorkersSection.tsx`
 > **Тесты:** `backend/tests/worker-setup-api.test.js`,
 > `backend/tests/installer-setup-contract.test.js`,
-> `backend/tests/gpu-hub-artifacts.test.js`
+> `backend/tests/gpu-hub-artifacts.test.js`,
+> `frontends/app/src/features/workers/workerSetup.test.ts`
 
 Единый backend Setup Contract для Web и Android:
 
@@ -124,25 +128,26 @@ Query: `?type=audio|image|video` (опц.; иначе 400 `invalid_type`).
     {
       "platform": "linux",
       "architectures": ["x86_64"],
-      "status": "available",
+      "status": "available",                  // hub probe: артефакт реально раздаётся
       "installer": {
-        "available": true,
-        "status": "draft",                   // E2E на реальном GPU ещё не принят
-        "version": "1.0.0",
-        "download_url": "/gpu/installer",
-        "sha256": "…64 hex…",                // резолвится server-side из hub; null при недоступном hub
-        "signature": null,                   // будущее: signature + signature_algorithm
+        "available": true,                    // Phase 3.1: только по результатам hub-probe
+        "status": "draft",                    // E2E на реальном GPU ещё не принят
+        "version": "1.0.0",                   // canonical: backend/src/installer/package.json
+        "download_url": "/gpu/installer",     // null, если артефакт недоступен
+        "sha256": "…64 hex…",                 // из hub-probe; null при недоступном hub
+        "signature": null,                    // будущее: signature + signature_algorithm
         "signature_algorithm": null
       },
       "uninstaller": {
-        "available": false,                  // uninstaller не существует — честно planned
+        "available": false,                   // uninstaller не существует — честно planned
         "status": "planned",
         "version": null, "download_url": null, "sha256": null,
         "signature": null, "signature_algorithm": null
       },
       "worker_bundle": {
         "available": true,
-        "version": "2.0.0",
+        "status": "available",
+        "version": "2.0.0",                   // canonical: worker/worker/package.json
         "download_url": "/gpu/worker-bundle",
         "sha256": "…64 hex…",
         "files": ["worker.cjs", "worker-cleanup.cjs", "worker-cleanup-journal.cjs",
@@ -355,12 +360,27 @@ Response:
 
 ## 4. Artifact model
 
-| Artifact | Версия | Источник | Целостность | Подпись |
+| Artifact | Версия (canonical source) | Источник | Целостность | Подпись |
 |---|---|---|---|---|
-| Installer | `1.0.0` (первая packaged-дистрибуция CLI фаз 1–2.1) | hub `GET /installer` — tar.gz: `src/installer/**` + `ai/install-manifests/**` + generated `package.json`/`README.txt` | sha256 (детерминированная сборка: фиксированные mtime/order) | `signature: null` — schema готова |
-| Uninstaller | — | не существует | — | planned; отдельный артефакт, не `install --remove` |
-| Worker bundle | `2.0.0` (worker.cjs v2.0.0) | hub `GET /worker-bundle` — tar.gz 6 файлов | sha256 | — |
-| Baseline workflow | baseline_sha256 из манифеста | hub `GET /workflow/:id` (allowlist манифестов) | sha256 совпадает с манифестом | — |
+| Installer | `backend/src/installer/package.json` → `version` (сейчас `1.0.0`) | hub `GET /installer` — tar.gz: `src/installer/**` + `ai/install-manifests/**` + generated root `package.json`/`README.txt` | sha256 (детерминированная сборка: фиксированные mtime/order) | `signature: null` — schema готова |
+| Uninstaller | отсутствует ⇒ `version: null` | не существует | — | planned; отдельный артефакт, не `install --remove` |
+| Worker bundle | `worker/worker/package.json` → `version` (сейчас `2.0.0`) | hub `GET /worker-bundle` — tar.gz 6 файлов | sha256 | — |
+| Baseline workflow | `revision` манифеста + baseline_sha256 (content-addressed) | hub `GET /workflow/:id` (allowlist манифестов) | sha256 совпадает с манифестом | — |
+
+**Phase 3.1: версии имеют один источник истины.** Hub читает версии из
+canonical `package.json` файлов при запросе (без config-дублей); backend
+Setup Contract получает версию из hub-probe (что реально раздаётся), с
+fallback на canonical файл репозитория. Артефакт без canonical версии не
+раздаётся (404). `worker.cjs` сообщает в beacon ту же версию из своего
+`package.json` (override — `WORKER_VERSION` env).
+
+**Phase 3.1: availability соответствует реальности.** Backend probe'ит hub
+(`GET /worker-bundle/sha256`, `GET /installer/sha256`, TTL-кэш 30 с):
+`available: true` только если hub действительно раздаёт артефакт. Probe
+неудачен ⇒ `available: false, status: "unavailable", download_url: null`
+(fake-ссылки невозможны). Статусы артефактов: `available` | `draft`
+(implemented, E2E acceptance pending) | `planned` (не implemented) |
+`unavailable` (не раздаётся этим деплоем).
 
 Детерминизм: tar-архивы собираются pure-JS ustar-райтером
 (`gpu-hub/tarball.js`) с фиксированными mtime=0/uid/gid/mode и сортировкой
@@ -370,7 +390,12 @@ fingerprint'у исходных файлов (size+mtime).
 `download_url` в контракте — origin-relative (`/gpu/…`): frontend резолвит
 против своего origin (Web — `location.origin`, Android — `BASE_URL`).
 sha256 backend резолвит server-side из hub (`HUB_URL` env); hub недоступен ⇒
-`sha256: null` (metadata не ломается).
+`sha256: null`, `available: false` (metadata не ломается).
+
+Workflow metadata (Phase 3.1): `baseline_available` отражает реальное
+наличие canonical файла в дереве, которое раздаёт hub; файл отсутствует ⇒
+`download_url: null, sha256: null`. `revision` — версия манифеста,
+определяющего workflow-артефакт.
 
 ---
 
@@ -417,7 +442,9 @@ Deployment note: hub получает новые endpoints после перес
 
 ## 7. Что НЕ менялось на этой фазе
 
-- Web UI, Android UI — не тронуты;
+- Android UI — не тронут (тот же Setup Contract будет использован позже);
+- Web: старый single-file flow удалён из основного onboarding, но его
+  helpers/строки сохранены как compatibility fallback (Phase 3.1 §9);
 - Worker (`worker/worker/*`), GPU Hub protocol (`protocol_version=2`),
   dispatch/task-контур — не тронуты;
 - существующий Worker API (`/api/v1/workers*`, `/api/v1/worker/verify`) —

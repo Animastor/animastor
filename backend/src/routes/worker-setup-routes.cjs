@@ -89,11 +89,21 @@ module.exports = function(app, redis, opts = {}) {
     const fetchImpl = opts.fetchImpl || null;
     const registry = opts.registry || setupContract.getManifestRegistry();
 
-    async function checksums() {
-        return setupContract.resolveArtifactChecksums({
-            hubUrl: hubUrlResolver(),
-            fetchImpl,
-        });
+    // Artifact availability is REAL: the hub is probed for each artifact's
+    // sha256 endpoint (available=true only what the hub actually serves).
+    // Probed at most once per PROBE_TTL_MS to keep the metadata endpoints
+    // light; a hub outage degrades to available=false (honest, not fake).
+    const PROBE_TTL_MS = typeof opts.probeTtlMs === 'number' ? opts.probeTtlMs : 30_000;
+    let probeCache = { ts: 0, promise: null };
+    function probe() {
+        const now = Date.now();
+        if (!probeCache.promise || now - probeCache.ts > PROBE_TTL_MS) {
+            probeCache = {
+                ts: now,
+                promise: setupContract.probeHubArtifacts({ hubUrl: hubUrlResolver(), fetchImpl }),
+            };
+        }
+        return probeCache.promise;
     }
 
     // ── GET setup profiles (canonical installer metadata, UI-safe) ──────
@@ -116,8 +126,8 @@ module.exports = function(app, redis, opts = {}) {
     app.get('/api/v1/private-worker/setup/methods', async (req, res) => {
         if (!setupGuard(req, res)) return;
         try {
-            const sums = await checksums();
-            res.json(setupContract.getInstallationMethods({ registry, checksums: sums }));
+            const sums = await probe();
+            res.json(setupContract.getInstallationMethods({ registry, probe: sums }));
         } catch (err) {
             console.error('[WORKER-SETUP] methods failed:', err.message);
             res.status(500).json({ error: 'Failed to load installation methods' });
@@ -129,8 +139,8 @@ module.exports = function(app, redis, opts = {}) {
         if (!setupGuard(req, res)) return;
         const platform = typeof req.query.platform === 'string' ? req.query.platform : 'linux';
         try {
-            const sums = await checksums();
-            const artifacts = setupContract.getPlatformArtifacts({ platform, registry, checksums: sums });
+            const sums = await probe();
+            const artifacts = setupContract.getPlatformArtifacts({ platform, registry, probe: sums });
             if (!artifacts) {
                 return res.status(404).json({
                     error: `unsupported platform "${platform}"`,
@@ -174,10 +184,10 @@ module.exports = function(app, redis, opts = {}) {
         const platform = typeof q.platform === 'string' ? q.platform : 'linux';
         const mode = typeof q.mode === 'string' ? q.mode : 'managed';
         try {
-            const sums = await checksums();
+            const sums = await probe();
             const origin = `${req.protocol}://${req.get('host')}`;
             const instructions = setupContract.buildInstructions({
-                profileIds, platform, mode, origin, registry, checksums: sums,
+                profileIds, platform, mode, origin, registry, probe: sums,
             });
             res.json(instructions);
         } catch (err) {

@@ -144,26 +144,46 @@ describe('Setup contract — projections (unit)', () => {
     // ══════════════════════════════════════════════════════════════════
 
     describe('installation methods', () => {
-        it('Linux: installer available (draft), uninstaller planned, bundle available', () => {
-            const { methods } = sc.getInstallationMethods();
+        const PROBE_OK = {
+            installer: { available: true, status: 'available', version: null, sha256: 'c'.repeat(64) },
+            worker_bundle: { available: true, status: 'available', version: null, sha256: 'b'.repeat(64) },
+        };
+
+        it('Linux: installer available (draft) only when the hub actually serves it', () => {
+            const { methods } = sc.getInstallationMethods({ probe: PROBE_OK });
             const linux = methods.find((m) => m.platform === 'linux');
             expect(linux.installer.available).to.equal(true);
             expect(linux.installer.status).to.equal('draft');
-            expect(linux.installer.version).to.equal(sc.INSTALLER_VERSION);
             expect(linux.installer.download_url).to.equal('/gpu/installer');
+            expect(linux.installer.sha256).to.equal('c'.repeat(64));
             expect(linux.installer.signature).to.equal(null);
-            expect(linux.uninstaller.available).to.equal(false);
-            expect(linux.uninstaller.status).to.equal('planned');
             expect(linux.worker_bundle.available).to.equal(true);
             expect(linux.worker_bundle.download_url).to.equal('/gpu/worker-bundle');
+            expect(linux.worker_bundle.sha256).to.equal('b'.repeat(64));
             expect(linux.worker_bundle.files).to.include('worker.cjs');
+            expect(linux.uninstaller.available).to.equal(false);
+            expect(linux.uninstaller.status).to.equal('planned');
+            expect(linux.uninstaller.download_url).to.equal(null);
             expect(linux.supported_profiles.sort()).to.deep.equal(REAL_PROFILE_IDS);
             expect(linux.minimum_requirements.node).to.equal('20');
             expect(linux.minimum_requirements.python).to.equal('3.10');
         });
 
+        it('hub not serving the artifacts → available=false, NO fake download URLs', () => {
+            const { methods } = sc.getInstallationMethods(); // no probe
+            const linux = methods.find((m) => m.platform === 'linux');
+            expect(linux.installer.available).to.equal(false);
+            expect(linux.installer.status).to.equal('unavailable');
+            expect(linux.installer.download_url).to.equal(null);
+            expect(linux.installer.sha256).to.equal(null);
+            expect(linux.worker_bundle.available).to.equal(false);
+            expect(linux.worker_bundle.download_url).to.equal(null);
+            // the canonical version is still real metadata (repo source)
+            expect(linux.installer.version).to.equal(sc.getInstallerVersion());
+        });
+
         it('Windows and Docker are schema-ready with status planned', () => {
-            const { methods } = sc.getInstallationMethods();
+            const { methods } = sc.getInstallationMethods({ probe: PROBE_OK });
             for (const platform of ['windows', 'docker']) {
                 const m = methods.find((x) => x.platform === platform);
                 expect(m.status).to.equal('planned');
@@ -176,21 +196,44 @@ describe('Setup contract — projections (unit)', () => {
         });
 
         it('no shell/file-format details leak into methods metadata', () => {
-            const json = JSON.stringify(sc.getInstallationMethods());
+            const json = JSON.stringify(sc.getInstallationMethods({ probe: PROBE_OK }));
             for (const needle of ['.sh', '.bat', '.exe', 'PowerShell', 'curl ', 'bash']) {
                 expect(json).to.not.contain(needle);
             }
         });
+    });
 
-        it('hub-resolved checksums are reflected when available', () => {
-            const checksums = {
-                worker_bundle: { sha256: 'b'.repeat(64), version: '2.0.0' },
-                installer: { sha256: 'c'.repeat(64), version: sc.INSTALLER_VERSION },
-            };
-            const { methods } = sc.getInstallationMethods({ checksums });
+    describe('versions — single source of truth', () => {
+        it('installer version is read from the canonical installer package.json', () => {
+            const canonical = require('../src/installer/package.json');
+            expect(sc.getInstallerVersion()).to.equal(canonical.version);
+            expect(sc.getInstallerVersion()).to.match(/^\d+\.\d+\.\d+$/);
+        });
+
+        it('worker bundle version is read from the canonical worker package.json', () => {
+            const canonical = require('../../worker/worker/package.json');
+            expect(sc.getWorkerBundleVersion()).to.equal(canonical.version);
+        });
+
+        it('probe-provided versions take precedence (the hub is the artifact authority)', () => {
+            const { methods } = sc.getInstallationMethods({
+                probe: {
+                    installer: { available: true, status: 'available', version: '9.9.9', sha256: 'c'.repeat(64) },
+                    worker_bundle: { available: true, status: 'available', version: '8.8.8', sha256: 'b'.repeat(64) },
+                },
+            });
             const linux = methods.find((m) => m.platform === 'linux');
-            expect(linux.installer.sha256).to.equal('c'.repeat(64));
-            expect(linux.worker_bundle.sha256).to.equal('b'.repeat(64));
+            expect(linux.installer.version).to.equal('9.9.9');
+            expect(linux.worker_bundle.version).to.equal('8.8.8');
+        });
+
+        it('setup-contract.js contains no manually duplicated version literals', () => {
+            const src = require('fs').readFileSync(
+                require('path').join(__dirname, '..', 'src', 'installer', 'setup-contract.js'), 'utf8'
+            );
+            // The old hardcoded constants must stay gone.
+            expect(src).to.not.contain("INSTALLER_VERSION = '");
+            expect(src).to.not.contain("WORKER_BUNDLE_VERSION = '");
         });
     });
 
@@ -209,8 +252,165 @@ describe('Setup contract — projections (unit)', () => {
         });
     });
 
-    describe('resolveArtifactChecksums', () => {
-        it('fetches sha256 from the hub sha256 endpoints', async () => {
+    // Phase 3.1 §6 — every public response shape is validated field-by-field
+    // and must not leak internals (tokens, hashes, resolver internals,
+    // server filesystem paths).
+    describe('public contract schema validation', () => {
+        const PROBE_OK = {
+            installer: { available: true, status: 'available', version: '1.0.0', sha256: 'c'.repeat(64) },
+            worker_bundle: { available: true, status: 'available', version: '2.0.0', sha256: 'b'.repeat(64) },
+        };
+        const ARTIFACT_KEYS = ['available', 'status', 'version', 'download_url', 'sha256'];
+
+        function assertArtifactShape(a) {
+            for (const k of ARTIFACT_KEYS) expect(a, `artifact key ${k}`).to.have.property(k);
+            expect(a.available).to.be.a('boolean');
+            expect(a.status).to.be.a('string');
+            if (a.available) {
+                expect(a.download_url).to.match(/^\/gpu\//);
+            } else {
+                expect(a.download_url).to.equal(null); // no fake URLs
+            }
+        }
+
+        it('profiles schema', () => {
+            const profiles = sc.listSetupProfiles();
+            expect(profiles).to.be.an('array').and.not.empty;
+            for (const p of profiles) {
+                expect(p.id).to.match(/^(audio|image|video)\/[a-z0-9._-]+$/);
+                expect(p.name).to.be.a('string').and.not.empty;
+                expect(p.worker_type).to.be.oneOf(['audio', 'image', 'video']);
+                expect(p.status).to.be.oneOf(['draft', 'stable', 'planned']);
+                expect(p.description).to.be.a('string');
+                expect(p.supported_install_modes).to.be.an('array').and.not.empty;
+                expect(p.gpu.min_vram_gb === null || typeof p.gpu.min_vram_gb === 'number').to.equal(true);
+                expect(p.disk_budget_bytes_approx).to.be.a('number');
+                expect(p.workflows).to.be.an('array');
+                expect(p.dependencies_summary).to.be.an('object');
+            }
+        });
+
+        it('installation methods schema', () => {
+            const { methods } = sc.getInstallationMethods({ probe: PROBE_OK });
+            expect(methods.map((m) => m.platform)).to.deep.equal(['linux', 'windows', 'docker']);
+            for (const m of methods) {
+                expect(m.status).to.be.oneOf(['available', 'unavailable', 'planned']);
+                assertArtifactShape(m.installer);
+                assertArtifactShape(m.uninstaller);
+                assertArtifactShape(m.worker_bundle);
+                expect(m.supported_profiles).to.be.an('array');
+            }
+        });
+
+        it('platform artifacts schema', () => {
+            const a = sc.getPlatformArtifacts({ platform: 'linux', probe: PROBE_OK });
+            expect(a.platform).to.equal('linux');
+            assertArtifactShape(a.installer);
+            assertArtifactShape(a.uninstaller);
+            assertArtifactShape(a.worker_bundle);
+        });
+
+        it('workflows schema', () => {
+            for (const wf of sc.listWorkflowArtifacts()) {
+                expect(wf.id).to.match(/^[a-z0-9._-]+$/);
+                expect(wf.name).to.be.a('string').and.not.empty;
+                expect(wf.profile_id).to.be.a('string');
+                expect(wf.baseline_available).to.be.a('boolean');
+                expect(wf.editable).to.equal(true);
+                if (wf.baseline_available) expect(wf.download_url).to.match(/^\/gpu\/workflow\//);
+                else expect(wf.download_url).to.equal(null);
+            }
+        });
+
+        it('instructions schema', () => {
+            const i = sc.buildInstructions({
+                profileIds: ['image/qwen-image'], platform: 'linux', mode: 'managed', probe: PROBE_OK,
+            });
+            expect(i.platform).to.equal('linux');
+            expect(i.mode).to.equal('managed');
+            expect(i.profile_ids).to.deep.equal(['image/qwen-image']);
+            expect(i.steps).to.be.an('array').and.not.empty;
+            for (const s of i.steps) {
+                expect(s.id).to.be.a('string');
+                expect(s.title).to.be.a('string');
+                expect(s.body).to.be.a('string');
+            }
+            expect(i.env.required).to.include('ANIMASTOR_WORKER_TOKEN');
+            expect(i.env.template_block).to.contain('<your-worker-key>');
+            expect(i.worker_key_policy.disclosed_once).to.equal(true);
+        });
+
+        it('worker status adapter + capabilities schema', () => {
+            // adaptSetupStatus maps the legacy derived status to the extended
+            // UI-safe status string (route wraps it into the response object).
+            expect(sc.adaptSetupStatus({ status: 'ONLINE', last_seen: 123 })).to.equal('ONLINE');
+            expect(sc.adaptSetupStatus({ status: 'OFFLINE', last_seen: 123 })).to.equal('OFFLINE');
+            expect(sc.adaptSetupStatus({ status: 'OFFLINE', last_seen: null })).to.equal('CONNECTING');
+            expect(sc.adaptSetupStatus({ status: 'REVOKED', last_seen: null })).to.equal('REVOKED');
+            for (const s of ['ONLINE', 'OFFLINE', 'CONNECTING', 'REVOKED']) {
+                expect(sc.SETUP_WORKER_STATUSES).to.include(s);
+            }
+            const caps = sc.normalizeCapabilities({
+                profiles: ['image/qwen-image'],
+                gpu: { name: 'RTX 3090', vram_mib: 24576 },
+            });
+            expect(caps.profiles).to.deep.equal(['image/qwen-image']);
+            expect(caps.gpu).to.deep.equal({ name: 'RTX 3090', vram_gb: 24 });
+            expect(sc.normalizeCapabilities(null)).to.equal(null);
+            expect(sc.normalizeCapabilities({})).to.equal(null); // never invents data
+        });
+
+        it('installation plan schema', () => {
+            const plan = sc.buildSetupPlan({
+                profileIds: ['image/qwen-image', 'video/ltx-2.3'], mode: 'isolated', platform: 'linux',
+            });
+            expect(plan.mode).to.equal('isolated');
+            expect(plan.platform).to.equal('linux');
+            expect(plan.result).to.be.oneOf(['READY', 'BLOCKED']);
+            expect(plan.profiles).to.be.an('array').with.length(2);
+            expect(plan.actions).to.be.an('array').and.not.empty;
+            for (const a of plan.actions) {
+                expect(a.type).to.be.oneOf(['INSTALL', 'DOWNLOAD', 'KEEP', 'REVIEW', 'CONFIGURE', 'VERIFY']);
+                expect(a.name).to.be.a('string');
+                expect(a.component).to.be.a('string');
+            }
+            expect(plan.sharing.verdict).to.be.oneOf(Object.values(sc.SHARING_VERDICT_MAP));
+            expect(plan.blocks).to.be.an('array');
+            for (const b of plan.blocks) expect(b.code).to.be.a('string');
+        });
+
+        it('NO internals leak in any projection (tokens/hashes/fs paths/resolver internals)', () => {
+            const payloads = [
+                sc.listSetupProfiles(),
+                sc.getInstallationMethods({ probe: PROBE_OK }),
+                sc.getPlatformArtifacts({ platform: 'linux', probe: PROBE_OK }),
+                sc.listWorkflowArtifacts(),
+                sc.buildInstructions({ profileIds: REAL_PROFILE_IDS, platform: 'linux', mode: 'isolated', probe: PROBE_OK }),
+                sc.buildSetupPlan({ profileIds: REAL_PROFILE_IDS, mode: 'shared', platform: 'linux' }),
+                sc.adaptSetupStatus({ status: 'ONLINE', last_seen: 1 }),
+                sc.normalizeCapabilities({ profiles: ['image/qwen-image'] }),
+            ];
+            const json = JSON.stringify(payloads);
+            // secrets / credentials
+            expect(json).to.not.match(/token_hash/i);
+            expect(json).to.not.match(/wrk\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/);
+            expect(json).to.not.match(/credential/i);
+            // server filesystem paths (repo or container layout)
+            expect(json).to.not.contain('/app/');
+            expect(json).to.not.contain('/home/');
+            expect(json).to.not.contain('backend/ai');
+            expect(json).to.not.contain('backend/src');
+            expect(json).to.not.contain('worker/worker');
+            expect(json).to.not.contain('repository_path');
+            // resolver internals
+            expect(json).to.not.contain('expected');
+            expect(json).to.not.contain('found');
+            expect(json).to.not.contain('evidence');
+        });
+    });
+
+    describe('probeHubArtifacts', () => {
+        it('marks artifacts available when the hub sha256 endpoints answer', async () => {
             const seen = [];
             const fetchImpl = async (url) => {
                 seen.push(url);
@@ -219,19 +419,27 @@ describe('Setup contract — projections (unit)', () => {
                     json: async () => ({ sha256: 'd'.repeat(64), version: '9.9.9', bytes: 42 }),
                 };
             };
-            const sums = await sc.resolveArtifactChecksums({ hubUrl: 'http://hub.test:5000', fetchImpl });
-            expect(sums.worker_bundle.sha256).to.equal('d'.repeat(64));
-            expect(sums.installer.sha256).to.equal('d'.repeat(64));
+            const probe = await sc.probeHubArtifacts({ hubUrl: 'http://hub.test:5000', fetchImpl });
+            expect(probe.worker_bundle.available).to.equal(true);
+            expect(probe.worker_bundle.sha256).to.equal('d'.repeat(64));
+            expect(probe.worker_bundle.version).to.equal('9.9.9');
+            expect(probe.installer.available).to.equal(true);
             expect(seen).to.include('http://hub.test:5000/worker-bundle/sha256');
             expect(seen).to.include('http://hub.test:5000/installer/sha256');
         });
 
-        it('hub outage degrades to null (metadata endpoint never breaks)', async () => {
-            const fetchImpl = async () => { throw new Error('ECONNREFUSED'); };
-            const sums = await sc.resolveArtifactChecksums({ hubUrl: 'http://hub.test:5000', fetchImpl });
-            expect(sums).to.deep.equal({ worker_bundle: null, installer: null });
-            const noHub = await sc.resolveArtifactChecksums({ hubUrl: null });
-            expect(noHub).to.deep.equal({ worker_bundle: null, installer: null });
+        it('hub outage / 404 → available=false (metadata endpoint never breaks, no fake URLs)', async () => {
+            const failing = async () => { throw new Error('ECONNREFUSED'); };
+            const probe = await sc.probeHubArtifacts({ hubUrl: 'http://hub.test:5000', fetchImpl: failing });
+            expect(probe.worker_bundle.available).to.equal(false);
+            expect(probe.worker_bundle.status).to.equal('unavailable');
+            expect(probe.installer.available).to.equal(false);
+            const notFound = async () => ({ ok: false, status: 404, json: async () => ({}) });
+            const probe404 = await sc.probeHubArtifacts({ hubUrl: 'http://hub.test:5000', fetchImpl: notFound });
+            expect(probe404.installer.available).to.equal(false);
+            const noHub = await sc.probeHubArtifacts({ hubUrl: null });
+            expect(noHub.worker_bundle.available).to.equal(false);
+            expect(noHub.installer.available).to.equal(false);
         });
     });
 
@@ -244,13 +452,26 @@ describe('Setup contract — projections (unit)', () => {
             const workflows = sc.listWorkflowArtifacts();
             expect(workflows.length).to.be.greaterThan(0);
             for (const wf of workflows) {
-                expect(wf.baseline_available).to.equal(true);
+                expect(wf.baseline_available).to.equal(true); // real files exist
                 expect(wf.editable).to.equal(true); // never immutable
                 expect(wf.download_url).to.match(/^\/gpu\/workflow\/[a-z0-9._-]+$/);
                 expect(wf.profile_id).to.be.oneOf(REAL_PROFILE_IDS);
+                expect(wf.revision).to.match(/^\d{4}\.\d{2}\.\d{2}-r\d+$/); // manifest revision = artifact version
             }
             const image = workflows.find((w) => w.id === 'img-qwen-image');
             expect(image.sha256).to.match(/^[0-9a-f]{64}$/);
+        });
+
+        it('missing canonical file → baseline_available=false, no fake download URL', () => {
+            const workflows = sc.listWorkflowArtifacts({
+                profileId: 'image/qwen-image',
+                workflowsRoot: '/nonexistent/workflows',
+            });
+            expect(workflows).to.have.length(1);
+            expect(workflows[0].baseline_available).to.equal(false);
+            expect(workflows[0].download_url).to.equal(null);
+            expect(workflows[0].sha256).to.equal(null);
+            expect(workflows[0].editable).to.equal(true);
         });
 
         it('filters by profile and rejects no secrets', () => {
@@ -267,23 +488,31 @@ describe('Setup contract — projections (unit)', () => {
     // ══════════════════════════════════════════════════════════════════
 
     describe('instructions', () => {
+        // Instructions reflect REAL availability: a full flow only when the
+        // hub probe says the installer artifact exists.
+        const PROBE_OK = {
+            installer: { available: true, status: 'available', version: sc.getInstallerVersion(), sha256: 'c'.repeat(64) },
+            worker_bundle: { available: true, status: 'available', version: sc.getWorkerBundleVersion(), sha256: 'b'.repeat(64) },
+        };
+
         it('linux/managed returns the full dynamic setup flow', () => {
             const i = sc.buildInstructions({
                 profileIds: ['image/qwen-image'], platform: 'linux', mode: 'managed',
-                origin: 'https://app.animastor.in',
+                origin: 'https://app.animastor.in', probe: PROBE_OK,
             });
             expect(i.steps.map((s) => s.id)).to.deep.equal([
                 'create-worker', 'download-installer', 'run-installer', 'verify',
             ]);
             const download = i.steps.find((s) => s.id === 'download-installer');
             expect(download.code).to.contain('https://app.animastor.in/gpu/installer');
+            expect(download.checksum.value).to.equal('c'.repeat(64));
             const run = i.steps.find((s) => s.id === 'run-installer');
             expect(run.code).to.contain('--profile image/qwen-image --mode managed');
         });
 
         it('linux/existing adds detection prerequisites and --mode existing', () => {
             const i = sc.buildInstructions({
-                profileIds: ['audio/qwen-tts'], platform: 'linux', mode: 'existing',
+                profileIds: ['audio/qwen-tts'], platform: 'linux', mode: 'existing', probe: PROBE_OK,
             });
             expect(i.steps.map((s) => s.id)).to.contain('prerequisites');
             const prereq = i.steps.find((s) => s.id === 'prerequisites');
@@ -295,14 +524,23 @@ describe('Setup contract — projections (unit)', () => {
         });
 
         it('windows returns the planned flow without commands', () => {
-            const i = sc.buildInstructions({ profileIds: ['image/qwen-image'], platform: 'windows', mode: 'managed' });
+            const i = sc.buildInstructions({
+                profileIds: ['image/qwen-image'], platform: 'windows', mode: 'managed', probe: PROBE_OK,
+            });
             expect(i.steps.map((s) => s.id)).to.deep.equal(['create-worker', 'platform-planned']);
             expect(JSON.stringify(i)).to.not.contain('curl');
         });
 
+        it('installer artifact unavailable → degraded flow (no fake commands)', () => {
+            const i = sc.buildInstructions({
+                profileIds: ['image/qwen-image'], platform: 'linux', mode: 'managed',
+            }); // no probe → hub not serving the installer
+            expect(i.steps.map((s) => s.id)).to.deep.equal(['create-worker', 'platform-planned']);
+        });
+
         it('multi-profile instructions use comma-separated profile ids; shared passes --mode shared', () => {
             const i = sc.buildInstructions({
-                profileIds: ['audio/qwen-tts', 'image/qwen-image'], platform: 'linux', mode: 'shared',
+                profileIds: ['audio/qwen-tts', 'image/qwen-image'], platform: 'linux', mode: 'shared', probe: PROBE_OK,
             });
             const run = i.steps.find((s) => s.id === 'run-installer');
             expect(run.code).to.contain('--profile audio/qwen-tts,image/qwen-image');
@@ -311,7 +549,7 @@ describe('Setup contract — projections (unit)', () => {
 
         it('isolated mode instructs one installer run per profile into distinct roots', () => {
             const i = sc.buildInstructions({
-                profileIds: ['image/qwen-image', 'video/ltx-2.3'], platform: 'linux', mode: 'isolated',
+                profileIds: ['image/qwen-image', 'video/ltx-2.3'], platform: 'linux', mode: 'isolated', probe: PROBE_OK,
             });
             const run = i.steps.find((s) => s.id === 'run-installer');
             expect(run.code).to.contain('--profile image/qwen-image');
@@ -321,7 +559,9 @@ describe('Setup contract — projections (unit)', () => {
         });
 
         it('the Worker Key appears only as a placeholder — never a value', () => {
-            const i = sc.buildInstructions({ profileIds: ['image/qwen-image'], platform: 'linux', mode: 'managed' });
+            const i = sc.buildInstructions({
+                profileIds: ['image/qwen-image'], platform: 'linux', mode: 'managed', probe: PROBE_OK,
+            });
             expect(i.env.template_block).to.contain('ANIMASTOR_WORKER_TOKEN=<your-worker-key>');
             expect(i.env.template_block).to.not.match(/wrk\.[A-Za-z0-9_-]{8,}/);
             expect(i.worker_key_policy.disclosed_once).to.equal(true);

@@ -34,12 +34,38 @@ const { planModelDownload } = require('./download-planner');
 // ---------------------------------------------------------------------------
 // Versions & registries (single source of truth for the contract)
 // ---------------------------------------------------------------------------
+// Versions are READ from canonical sources — never duplicated here:
+//   installer     → backend/src/installer/package.json   (getInstallerVersion)
+//   worker bundle → worker/worker/package.json           (hub probe first,
+//                   repo fallback via getWorkerBundleVersion)
+//   workflows     → manifest revision + baseline_sha256  (content-addressed)
+//   uninstaller   → does not exist yet → version stays null, status 'planned'
 
-/** Distribution version of the packaged installer (hub GET /installer). */
-const INSTALLER_VERSION = '1.0.0';
+/** Read the canonical installer version from the installer's package.json. */
+function getInstallerVersion() {
+    try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+        return typeof pkg.version === 'string' && pkg.version ? pkg.version : null;
+    } catch (_) {
+        return null;
+    }
+}
 
-/** Worker runtime bundle version (worker/worker — worker.cjs v2.0.0). */
-const WORKER_BUNDLE_VERSION = '2.0.0';
+/**
+ * Read the canonical worker bundle version from the bundle's own
+ * package.json (repo checkout). In container deployments the worker tree
+ * may not be mounted into the backend — then the hub probe is the only
+ * source (probeHubArtifacts carries the version the hub actually serves).
+ */
+function getWorkerBundleVersion() {
+    try {
+        const file = path.join(__dirname, '..', '..', '..', 'worker', 'worker', 'package.json');
+        const pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
+        return typeof pkg.version === 'string' && pkg.version ? pkg.version : null;
+    } catch (_) {
+        return null;
+    }
+}
 
 const PLATFORMS = Object.freeze(['linux', 'windows', 'docker']);
 
@@ -211,13 +237,17 @@ function strictestMinimum(manifests, component) {
 }
 
 /**
- * Fetch artifact checksums from the hub (GET <hub>/worker-bundle/sha256,
- * GET <hub>/installer/sha256). Failures degrade to null — the metadata
- * endpoint must never break because the hub is unreachable.
- * @returns {Promise<{worker_bundle: object|null, installer: object|null}>}
+ * Probe the hub for the artifacts it actually serves (task Phase 3.1:
+ * available=true ONLY when the artifact genuinely exists). Each artifact's
+ * sha256 endpoint is the authority: reachable + 200 ⇒ available with the
+ * real version/sha256; anything else ⇒ unavailable (no fake download URLs).
+ *
+ * @returns {Promise<{worker_bundle: object, installer: object}>}
+ *   each: { available, status, version, sha256, bytes, files? }
  */
-async function resolveArtifactChecksums({ hubUrl = null, fetchImpl = null, timeoutMs = 2500 } = {}) {
-    const result = { worker_bundle: null, installer: null };
+async function probeHubArtifacts({ hubUrl = null, fetchImpl = null, timeoutMs = 2500 } = {}) {
+    const unavailable = { available: false, status: 'unavailable', version: null, sha256: null, bytes: null };
+    const result = { worker_bundle: { ...unavailable }, installer: { ...unavailable } };
     if (!hubUrl) return result;
     const doFetch = fetchImpl || ((url, opts) => fetch(url, opts));
     const targets = [
@@ -234,13 +264,15 @@ async function resolveArtifactChecksums({ hubUrl = null, fetchImpl = null, timeo
             const body = await res.json();
             if (body && typeof body.sha256 === 'string') {
                 result[key] = {
+                    available: true,
+                    status: 'available',
                     sha256: body.sha256,
-                    version: body.version || null,
+                    version: typeof body.version === 'string' ? body.version : null,
                     bytes: typeof body.bytes === 'number' ? body.bytes : null,
                     files: Array.isArray(body.files) ? body.files : undefined,
                 };
             }
-        } catch (_) { /* hub unreachable — checksums stay null */ }
+        } catch (_) { /* hub unreachable — artifact stays unavailable */ }
     }));
     return result;
 }
@@ -249,25 +281,40 @@ async function resolveArtifactChecksums({ hubUrl = null, fetchImpl = null, timeo
  * Installation methods metadata (task §4): which platform has which
  * lifecycle artifacts. No file extensions, shells or commands here — pure
  * availability metadata the UI renders.
+ *
+ * Availability is REAL (Phase 3.1): `probe` carries the hub probe result —
+ * an artifact is available=true only if the hub actually serves it. The
+ * version is taken from the probe (what the hub publishes); the canonical
+ * repo package.json is the fallback when the probe is unavailable.
+ * download_url is present ONLY for available artifacts — no fake URLs.
+ *
+ * `status` values: available | draft (implemented, E2E acceptance pending)
+ * | planned (not implemented) | unavailable (not served by this deployment).
  */
-function getInstallationMethods({ registry = defaultRegistry, checksums = null } = {}) {
+function getInstallationMethods({ registry = defaultRegistry, probe = null } = {}) {
     const manifests = Object.values(registry.all()).filter((m) => !isHiddenManifest(m));
     const profileIds = manifests.map((m) => m.profile.id).sort();
     const workerBundleFiles = manifests.length > 0 ? (manifests[0].worker_bundle.files || []).slice() : [];
-    const checksumsResolved = checksums || { worker_bundle: null, installer: null };
+    const p = probe || {
+        worker_bundle: { available: false, status: 'unavailable', version: null, sha256: null },
+        installer: { available: false, status: 'unavailable', version: null, sha256: null },
+    };
+
+    const installerAvailable = !!(p.installer && p.installer.available);
+    const bundleAvailable = !!(p.worker_bundle && p.worker_bundle.available);
 
     const linux = {
         platform: 'linux',
         architectures: ['x86_64'],
-        status: 'available',
+        status: installerAvailable ? 'available' : 'unavailable',
         installer: {
-            available: true,
+            available: installerAvailable,
             // Installer code exists and its tests pass, but E2E acceptance on
-            // real GPU hardware is still pending — honest draft status.
-            status: 'draft',
-            version: INSTALLER_VERSION,
-            download_url: '/gpu/installer',
-            sha256: checksumsResolved.installer ? checksumsResolved.installer.sha256 : null,
+            // real GPU hardware is still pending — honest draft marker.
+            status: installerAvailable ? 'draft' : 'unavailable',
+            version: (p.installer && p.installer.version) || getInstallerVersion(),
+            download_url: installerAvailable ? '/gpu/installer' : null,
+            sha256: (p.installer && p.installer.sha256) || null,
             signature: null,
             signature_algorithm: null,
         },
@@ -284,12 +331,11 @@ function getInstallationMethods({ registry = defaultRegistry, checksums = null }
             signature_algorithm: null,
         },
         worker_bundle: {
-            available: true,
-            version: checksumsResolved.worker_bundle && checksumsResolved.worker_bundle.version
-                ? checksumsResolved.worker_bundle.version
-                : WORKER_BUNDLE_VERSION,
-            download_url: '/gpu/worker-bundle',
-            sha256: checksumsResolved.worker_bundle ? checksumsResolved.worker_bundle.sha256 : null,
+            available: bundleAvailable,
+            status: bundleAvailable ? 'available' : 'unavailable',
+            version: (p.worker_bundle && p.worker_bundle.version) || getWorkerBundleVersion(),
+            download_url: bundleAvailable ? '/gpu/worker-bundle' : null,
+            sha256: (p.worker_bundle && p.worker_bundle.sha256) || null,
             files: workerBundleFiles,
         },
         supported_profiles: profileIds,
@@ -329,9 +375,9 @@ function getInstallationMethods({ registry = defaultRegistry, checksums = null }
  * Artifact summary for one platform (task §5/§6). Unknown platform → null
  * (the route answers 404 unsupported_platform).
  */
-function getPlatformArtifacts({ platform = 'linux', registry = defaultRegistry, checksums = null } = {}) {
+function getPlatformArtifacts({ platform = 'linux', registry = defaultRegistry, probe = null } = {}) {
     if (!PLATFORMS.includes(platform)) return null;
-    const { methods } = getInstallationMethods({ registry, checksums });
+    const { methods } = getInstallationMethods({ registry, probe });
     const method = methods.find((m) => m.platform === platform);
     return {
         platform: method.platform,
@@ -352,8 +398,14 @@ function getPlatformArtifacts({ platform = 'linux', registry = defaultRegistry, 
  * UI-safe workflow metadata (task §8). Baseline workflows are EDITABLE
  * starting points — never immutable. No resolver internals, no repository
  * paths; download_url is the public hub endpoint.
+ *
+ * Phase 3.1 honesty: `baseline_available` is true ONLY when the canonical
+ * workflow file actually exists in the repo tree the hub serves; otherwise
+ * download_url/sha256 are null (no fake downloads). `revision` is the
+ * manifest revision — the canonical workflow artifact version.
  */
-function listWorkflowArtifacts({ profileId = null, registry = defaultRegistry } = {}) {
+function listWorkflowArtifacts({ profileId = null, registry = defaultRegistry, workflowsRoot = null } = {}) {
+    const root = workflowsRoot || path.join(MANIFEST_ROOT, '..', 'workflows');
     const manifests = registry.all();
     const out = [];
     for (const id of Object.keys(manifests).sort()) {
@@ -363,13 +415,18 @@ function listWorkflowArtifacts({ profileId = null, registry = defaultRegistry } 
         const artifacts = (manifest.workflows && manifest.workflows.artifacts) || [];
         for (const wf of artifacts) {
             const wfId = String(wf.id).replace(/^workflow:/, '');
+            let available = false;
+            try {
+                available = fs.existsSync(path.join(root, wf.filename));
+            } catch (_) { available = false; }
             out.push({
                 id: wfId,
                 name: wf.name,
                 profile_id: manifest.profile.id,
-                baseline_available: true,
-                download_url: `/gpu/workflow/${wfId}`,
-                sha256: wf.baseline_sha256 || null,
+                revision: manifest.revision || null,
+                baseline_available: available,
+                download_url: available ? `/gpu/workflow/${wfId}` : null,
+                sha256: available ? (wf.baseline_sha256 || null) : null,
                 editable: wf.editable !== false,
             });
         }
@@ -403,7 +460,7 @@ function envTemplateBlock(manifests) {
  * GPU machine through the installer's hidden prompt).
  *
  * @param {{profileIds: string[], platform?: string, mode?: string,
- *          origin?: string, registry?: object, checksums?: object}} args
+ *          origin?: string, registry?: object, probe?: object}} args
  */
 function buildInstructions({
     profileIds,
@@ -411,7 +468,7 @@ function buildInstructions({
     mode = 'managed',
     origin = '',
     registry = defaultRegistry,
-    checksums = null,
+    probe = null,
 }) {
     if (!Array.isArray(profileIds) || profileIds.length === 0) {
         const err = new Error('profile_ids is required (non-empty array)');
@@ -439,7 +496,7 @@ function buildInstructions({
     });
 
     const profileArg = profileIds.join(',');
-    const artifacts = getPlatformArtifacts({ platform, registry, checksums });
+    const artifacts = getPlatformArtifacts({ platform, registry, probe });
     const base = String(origin || '').replace(/\/$/, '');
     const steps = [];
 
@@ -834,19 +891,19 @@ function buildSetupPlan({ profileIds, mode, platform = 'linux', registry = defau
 }
 
 module.exports = {
-    INSTALLER_VERSION,
-    WORKER_BUNDLE_VERSION,
     PLATFORMS,
     INSTALL_MODES,
     SETUP_WORKER_STATUSES,
     SHARING_VERDICT_MAP,
+    getInstallerVersion,
+    getWorkerBundleVersion,
     createManifestRegistry,
     getManifestRegistry,
     isHiddenManifest,
     listSetupProfiles,
     getInstallationMethods,
     getPlatformArtifacts,
-    resolveArtifactChecksums,
+    probeHubArtifacts,
     listWorkflowArtifacts,
     buildInstructions,
     adaptSetupStatus,

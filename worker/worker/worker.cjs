@@ -34,7 +34,12 @@ const ANIMASTOR_API_URL = process.env.ANIMASTOR_API_URL
 
 const NOTEBOOK_PATH = process.env.NOTEBOOK_PATH || "";
 const WORKER_ID = process.env.WORKER_ID || "gpu-" + os.hostname();
-const WORKER_VERSION = process.env.WORKER_VERSION || null;
+// Canonical bundle version lives in ./package.json (the hub publishes the
+// same value with the worker-bundle artifact). WORKER_VERSION env overrides.
+function readBundleVersion() {
+  try { return require("./package.json").version || null; } catch (_) { return null; }
+}
+const WORKER_VERSION = process.env.WORKER_VERSION || readBundleVersion();
 const WORKER_IMAGE_TAG = process.env.WORKER_IMAGE_TAG || null;
 const PROTOCOL_VERSION = 2;
 

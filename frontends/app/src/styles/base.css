@@ -1257,6 +1257,49 @@ button { font: inherit; color: inherit; }
 .worker__actions .btn { flex: 1 1 0; min-width: 0; }
 .worker__actions .btn--error { width: auto; }
 
+/* Private Worker Setup Center (Phase 3.1) — reuses card/btn/modal tokens */
+.worker__status--connecting { color: var(--warning); background: var(--warning-container, rgba(212, 168, 75, 0.14)); }
+.worker__status--error { color: var(--error); background: rgba(176, 0, 32, 0.12); }
+.setup__step { display: flex; flex-direction: column; gap: 0.6rem; }
+.setup__grid {
+  display: grid; gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+.setup__card {
+  background: var(--surface-2); border: 1px solid var(--outline-2);
+  border-radius: var(--radius-sm); padding: 0.85rem 1rem;
+  display: flex; flex-direction: column; gap: 0.3rem;
+}
+.setup__card-type { font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-2); font-weight: 700; }
+.setup__card-name { font-size: 0.9375rem; font-weight: 600; color: var(--text); }
+.setup__card-hint { font-size: 0.75rem; color: var(--text-2); }
+.setup__badge {
+  align-self: flex-start; font-size: 0.6875rem; font-weight: 700;
+  color: var(--warning); background: var(--warning-container, rgba(212, 168, 75, 0.14));
+  border-radius: var(--radius-pill); padding: 0.1rem 0.5rem;
+}
+.setup__card-btn { margin-top: 0.5rem; }
+.setup__choice {
+  display: flex; align-items: flex-start; gap: 0.6rem;
+  background: var(--surface-2); border: 1px solid var(--outline-2);
+  border-radius: var(--radius-sm); padding: 0.7rem 0.85rem; cursor: pointer;
+}
+.setup__choice input { margin-top: 0.2rem; accent-color: var(--accent); }
+.setup__choice--disabled { opacity: 0.55; cursor: not-allowed; }
+.setup__choice-main { display: flex; flex-direction: column; gap: 0.15rem; }
+.setup__choice-title { font-size: 0.875rem; font-weight: 600; color: var(--text); }
+.setup__notice { font-size: 0.8125rem; line-height: 1.45; }
+.setup__artifact { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.setup__artifact-meta { font-size: 0.75rem; color: var(--text-2); font-family: var(--font-mono, ui-monospace, monospace); }
+.setup__workflows { display: flex; flex-direction: column; gap: 0.4rem; }
+.setup__workflow { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; flex-wrap: wrap; }
+.setup__workflow-name { font-size: 0.8125rem; color: var(--text); font-weight: 600; }
+.setup__checksum { font-size: 0.6875rem; color: var(--text-2); word-break: break-all; }
+.setup__caps { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.5rem; }
+@media (max-width: 480px) {
+  .setup__grid { grid-template-columns: 1fr; }
+}
+
 
 /* Spinner → <select> (Widget.Animastor: match_parent/weight=1 width, 40dp height) */
 /* flex: 1 0 auto — grow fills the row width inside .card__row, but flex-basis: auto

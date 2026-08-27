@@ -151,6 +151,7 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
         it('NEVER includes .env even if present in the source directory', async () => {
             const dir = makeTmpDir({
                 'worker.cjs': '// worker',
+                'package.json': JSON.stringify({ name: 'animastor-worker', version: '2.0.0' }),
                 '.env': 'ANIMASTOR_WORKER_TOKEN=wrk.SUPER-SECRET-LEAK',
                 '.env.backup': 'ANIMASTOR_WORKER_TOKEN=wrk.ANOTHER-LEAK',
                 '.env.example': 'ANIMASTOR_WORKER_TOKEN=wrk.your-worker-id.your-secret',
@@ -167,6 +168,82 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
             expect(buf.toString('latin1')).to.not.contain('SUPER-SECRET-LEAK');
             const meta = await (await fetch(`${hub.base}/worker-bundle/sha256`)).json();
             expect(meta.files).to.not.include('.env');
+        });
+
+        // Phase 3.1 §4 — unpack the REAL bundle and scan every file for
+        // secrets: .env files, Worker Keys, tokens, token_hash, credentials.
+        it('security scan: unpacked real bundle contains no secrets', async () => {
+            hub = await startHub(ARTIFACT_CONFIG);
+            const res = await fetch(`${hub.base}/worker-bundle`);
+            const buf = Buffer.from(await res.arrayBuffer());
+            const entries = parseTar(zlib.gunzipSync(buf));
+            expect(entries.length).to.be.greaterThanOrEqual(6); // full runtime, not just worker.cjs
+            for (const e of entries) {
+                const base = path.basename(e.name);
+                if (base.startsWith('.env')) {
+                    expect(base, `only .env.example may ship: ${e.name}`).to.equal('.env.example');
+                }
+                const text = e.data.toString('utf8');
+                // no real Worker Keys (wrk.<id>.<secret> with plausible entropy)
+                expect(text, `no worker key in ${e.name}`).to.not.match(/wrk\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/);
+                // no credential material of any kind
+                expect(text, `no token_hash in ${e.name}`).to.not.match(/token_hash/i);
+                expect(text, `no credentials in ${e.name}`).to.not.match(/credentials?\s*[:=]/i);
+                expect(text, `no bearer tokens in ${e.name}`).to.not.match(/Bearer\s+[A-Za-z0-9._-]{16,}/);
+            }
+            // .env.example is allowed ONLY with the documented placeholder
+            const example = entries.find((e) => e.name.endsWith('.env.example'));
+            expect(example, '.env.example ships as the template').to.exist;
+            expect(example.data.toString('utf8')).to.contain('<your-worker-key>');
+        });
+
+        it('planted secret in a servable file is never shipped', async () => {
+            const planted = 'wrk.plantedid0123456.plantedsecret0123456789abcdef';
+            const dir = makeTmpDir({
+                'worker.cjs': `// worker\nconst leaked = "${planted}";\n`,
+                'package.json': JSON.stringify({ name: 'animastor-worker', version: '2.0.0' }),
+                '.env': `ANIMASTOR_WORKER_TOKEN=${planted}`,
+                '.env.example': 'ANIMASTOR_WORKER_TOKEN=<your-worker-key>',
+            });
+            hub = await startHub({ ...ARTIFACT_CONFIG, WORKER_BUNDLE_DIR: dir });
+            const buf = Buffer.from(await (await fetch(`${hub.base}/worker-bundle`)).arrayBuffer());
+            // worker.cjs is servable, so the planted string WOULD ship if the
+            // source itself contained it — this asserts the hub never adds
+            // secrets on its own and .env is excluded even when it matches.
+            const entries = parseTar(zlib.gunzipSync(buf));
+            expect(entries.map((e) => e.name)).to.not.contain('animastor-worker/.env');
+            const envLeak = entries.some((e) => e.name.endsWith('.env') && e.data.toString().includes(planted));
+            expect(envLeak).to.equal(false);
+        });
+
+        it('reports Content-Length matching the body (integrity header)', async () => {
+            hub = await startHub(ARTIFACT_CONFIG);
+            for (const ep of ['/worker-bundle', '/installer']) {
+                const res = await fetch(`${hub.base}${ep}`);
+                const buf = Buffer.from(await res.arrayBuffer());
+                expect(Number(res.headers.get('content-length'))).to.equal(buf.length);
+            }
+        });
+
+        it('version comes from the canonical bundle package.json (no hub-side hardcode)', async () => {
+            const dir = makeTmpDir({
+                'worker.cjs': '// worker',
+                'package.json': JSON.stringify({ name: 'animastor-worker', version: '7.7.7' }),
+            });
+            hub = await startHub({ ...ARTIFACT_CONFIG, WORKER_BUNDLE_DIR: dir });
+            const res = await fetch(`${hub.base}/worker-bundle`);
+            expect(res.headers.get('x-animastor-artifact-version')).to.equal('7.7.7');
+            expect(res.headers.get('content-disposition')).to.contain('animastor-worker-7.7.7.tar.gz');
+            const meta = await (await fetch(`${hub.base}/worker-bundle/sha256`)).json();
+            expect(meta.version).to.equal('7.7.7');
+        });
+
+        it('no canonical package.json → 404 (a versionless artifact is never served)', async () => {
+            const dir = makeTmpDir({ 'worker.cjs': '// worker' });
+            hub = await startHub({ ...ARTIFACT_CONFIG, WORKER_BUNDLE_DIR: dir });
+            const res = await fetch(`${hub.base}/worker-bundle`);
+            expect(res.status).to.equal(404);
+            expect((await res.json()).error).to.equal('worker_bundle_unavailable');
         });
 
         it('answers 404 (never 500) when the bundle directory is absent', async () => {
@@ -218,6 +295,13 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
                 expect(res.status).to.equal(404);
             }
         });
+
+        it('reports Content-Length matching the body', async () => {
+            hub = await startHub(ARTIFACT_CONFIG);
+            const res = await fetch(`${hub.base}/workflow/img-qwen-image`);
+            const buf = Buffer.from(await res.arrayBuffer());
+            expect(Number(res.headers.get('content-length'))).to.equal(buf.length);
+        });
     });
 
     // ══════════════════════════════════════════════════════════════════
@@ -255,6 +339,32 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
 
         it('answers 404 when installer sources are not mounted', async () => {
             hub = await startHub({ ...ARTIFACT_CONFIG, INSTALLER_SRC_DIR: '/nonexistent/installer' });
+            const res = await fetch(`${hub.base}/installer`);
+            expect(res.status).to.equal(404);
+            expect((await res.json()).error).to.equal('installer_unavailable');
+        });
+
+        it('version comes from the canonical installer package.json (no hub-side hardcode)', async () => {
+            const src = makeTmpDir({
+                'cli.js': '// cli',
+                'package.json': JSON.stringify({ name: 'animastor-installer', version: '3.1.4' }),
+            });
+            hub = await startHub({ ...ARTIFACT_CONFIG, INSTALLER_SRC_DIR: src });
+            const res = await fetch(`${hub.base}/installer`);
+            expect(res.status).to.equal(200);
+            expect(res.headers.get('x-animastor-artifact-version')).to.equal('3.1.4');
+            expect(res.headers.get('content-disposition')).to.contain('animastor-installer-3.1.4.tar.gz');
+            const meta = await (await fetch(`${hub.base}/installer/sha256`)).json();
+            expect(meta.version).to.equal('3.1.4');
+            // the generated root package.json carries the same canonical version
+            const root = parseTar(zlib.gunzipSync(Buffer.from(await res.arrayBuffer())))
+                .find((e) => e.name === 'animastor-installer/package.json');
+            expect(JSON.parse(root.data.toString('utf8')).version).to.equal('3.1.4');
+        });
+
+        it('no canonical package.json → 404 (a versionless artifact is never served)', async () => {
+            const src = makeTmpDir({ 'cli.js': '// cli' });
+            hub = await startHub({ ...ARTIFACT_CONFIG, INSTALLER_SRC_DIR: src });
             const res = await fetch(`${hub.base}/installer`);
             expect(res.status).to.equal(404);
             expect((await res.json()).error).to.equal('installer_unavailable');

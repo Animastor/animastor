@@ -521,6 +521,166 @@ describe('Private worker setup contract API (Phase 3)', () => {
                 expect(text, url).to.not.match(/wrk\.[A-Za-z0-9_-]{8,}/);
             }
         });
+
+        it('the new Setup Contract never references the deprecated /worker-source', async () => {
+            const urls = [
+                '/api/v1/private-worker/setup/profiles',
+                '/api/v1/private-worker/setup/methods',
+                '/api/v1/private-worker/setup/artifacts',
+                '/api/v1/private-worker/setup/workflows',
+                '/api/v1/private-worker/setup/instructions?profile_id=image/qwen-image',
+                '/api/v1/private-worker/setup/instructions?profile_id=image/qwen-image&mode=existing',
+            ];
+            for (const url of urls) {
+                const text = await (await fetch(`${base}${url}`, { headers: { Cookie: alice.cookie } })).text();
+                expect(text, url).to.not.contain('worker-source');
+            }
+            const planRes = await fetch(`${base}/api/v1/private-worker/setup/plan`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Cookie: alice.cookie },
+                body: JSON.stringify({ profile_ids: ['image/qwen-image'], mode: 'managed', platform: 'linux' }),
+            });
+            expect(await planRes.text()).to.not.contain('worker-source');
+        });
+    });
+
+    // ══════════════════════════════════════════════════════════════════
+    // Phase 3.1 — artifact integrity cross-check (API ↔ real download)
+    // ══════════════════════════════════════════════════════════════════
+
+    describe('artifact integrity (Phase 3.1)', () => {
+        const crypto = require('crypto');
+        const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+
+        it('API checksums equal the sha256 of the actually downloadable artifacts', async () => {
+            const { methods } = await (await fetch(`${base}/api/v1/private-worker/setup/methods`, { headers: { Cookie: alice.cookie } })).json();
+            const linux = methods.find((m) => m.platform === 'linux');
+
+            // download artifact → calculate sha256 → compare with API checksum
+            const installerBuf = Buffer.from(await (await fetch(`${hubBase}/installer`)).arrayBuffer());
+            expect(linux.installer.sha256).to.equal(sha256(installerBuf));
+            const bundleBuf = Buffer.from(await (await fetch(`${hubBase}/worker-bundle`)).arrayBuffer());
+            expect(linux.worker_bundle.sha256).to.equal(sha256(bundleBuf));
+
+            // same via the artifacts endpoint
+            const artifacts = await (await fetch(`${base}/api/v1/private-worker/setup/artifacts?platform=linux`, { headers: { Cookie: alice.cookie } })).json();
+            expect(artifacts.installer.sha256).to.equal(sha256(installerBuf));
+            expect(artifacts.worker_bundle.sha256).to.equal(sha256(bundleBuf));
+
+            // and via instructions checksum
+            const instructions = await (await fetch(`${base}/api/v1/private-worker/setup/instructions?profile_id=image/qwen-image`, { headers: { Cookie: alice.cookie } })).json();
+            const download = instructions.steps.find((s) => s.id === 'download-installer');
+            expect(download.checksum.value).to.equal(sha256(installerBuf));
+        });
+
+        it('advertised versions match the downloaded artifact headers', async () => {
+            const { methods } = await (await fetch(`${base}/api/v1/private-worker/setup/methods`, { headers: { Cookie: alice.cookie } })).json();
+            const linux = methods.find((m) => m.platform === 'linux');
+            const installerRes = await fetch(`${hubBase}/installer`);
+            expect(linux.installer.version).to.equal(installerRes.headers.get('x-animastor-artifact-version'));
+            const bundleRes = await fetch(`${hubBase}/worker-bundle`);
+            expect(linux.worker_bundle.version).to.equal(bundleRes.headers.get('x-animastor-artifact-version'));
+        });
+
+        it('available=true only for artifacts that really exist; uninstaller stays planned without fake URL', async () => {
+            const { methods } = await (await fetch(`${base}/api/v1/private-worker/setup/methods`, { headers: { Cookie: alice.cookie } })).json();
+            const linux = methods.find((m) => m.platform === 'linux');
+            // the hub under test really serves these ⇒ available must be true
+            expect(linux.installer.available).to.equal(true);
+            expect((await fetch(`${hubBase}/installer`)).status).to.equal(200);
+            expect(linux.worker_bundle.available).to.equal(true);
+            expect((await fetch(`${hubBase}/worker-bundle`)).status).to.equal(200);
+            expect((await fetch(`${hubBase}/worker-bundle/sha256`)).status).to.equal(200);
+            // uninstaller does not exist ⇒ no fake download URL
+            expect(linux.uninstaller.available).to.equal(false);
+            expect(linux.uninstaller.status).to.equal('planned');
+            expect(linux.uninstaller.download_url).to.equal(null);
+            expect(linux.uninstaller.version).to.equal(null);
+        });
+    });
+
+    // ══════════════════════════════════════════════════════════════════
+    // Phase 3.1 — workspace isolation for contract metadata + plan
+    // ══════════════════════════════════════════════════════════════════
+
+    describe('workspace isolation (Phase 3.1)', () => {
+        it('contract metadata is workspace-independent and identical for both users', async () => {
+            for (const ep of ['profiles', 'methods', 'artifacts?platform=linux', 'workflows']) {
+                const a = await (await fetch(`${base}/api/v1/private-worker/setup/${ep}`, { headers: { Cookie: alice.cookie } })).text();
+                const b = await (await fetch(`${base}/api/v1/private-worker/setup/${ep}`, { headers: { Cookie: bob.cookie } })).text();
+                expect(a, ep).to.equal(b); // canonical metadata — no per-workspace divergence
+                // no workspace/worker identifiers leak into global metadata
+                expect(a, ep).to.not.contain(alice.workspaceId);
+                expect(a, ep).to.not.contain(bob.workspaceId);
+                expect(a, ep).to.not.contain(aliceWorker.worker_id);
+            }
+        });
+
+        it('installation plan is a pure preview: same input → same result, no workspace data', async () => {
+            const body = { profile_ids: ['image/qwen-image', 'video/ltx-2.3'], mode: 'shared', platform: 'linux' };
+            const a = await (await fetch(`${base}/api/v1/private-worker/setup/plan`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: alice.cookie }, body: JSON.stringify(body),
+            })).text();
+            const b = await (await fetch(`${base}/api/v1/private-worker/setup/plan`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: bob.cookie }, body: JSON.stringify(body),
+            })).text();
+            expect(a).to.equal(b);
+            expect(a).to.not.contain(alice.workspaceId);
+            expect(a).to.not.contain(bob.workspaceId);
+        });
+
+        it('user A cannot inspect user B worker via the setup status endpoint', async () => {
+            // bob creates a worker; alice gets an indistinct 404
+            const cw = await fetch(`${base}/api/v1/workers`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Cookie: bob.cookie },
+                body: JSON.stringify({ name: 'bob-private', worker_type: 'image' }),
+            });
+            const { worker: bobWorker } = await cw.json();
+            const cross = await fetch(`${base}/api/v1/private-worker/setup/workers/${bobWorker.worker_id}`, { headers: { Cookie: alice.cookie } });
+            expect(cross.status).to.equal(404);
+            const own = await fetch(`${base}/api/v1/private-worker/setup/workers/${bobWorker.worker_id}`, { headers: { Cookie: bob.cookie } });
+            expect(own.status).to.equal(200);
+            await fetch(`${base}/api/v1/workers/${bobWorker.worker_id}`, { method: 'DELETE', headers: { Cookie: bob.cookie } });
+        });
+    });
+
+    // ══════════════════════════════════════════════════════════════════
+    // Phase 3.1 — installation plan is preview-only (no side effects)
+    // ══════════════════════════════════════════════════════════════════
+
+    describe('installation plan preview-only (Phase 3.1)', () => {
+        it('planning never registers workers, mutates state, or creates heartbeats', async () => {
+            const before = await query('SELECT COUNT(*)::int AS n FROM workers');
+            const workersBefore = before.rows[0].n;
+
+            for (const mode of ['managed', 'existing', 'isolated']) {
+                for (const id of ['image/qwen-image', 'video/ltx-2.3', 'audio/qwen-tts']) {
+                    const res = await fetch(`${base}/api/v1/private-worker/setup/plan`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Cookie: alice.cookie },
+                        body: JSON.stringify({ profile_ids: [id], mode, platform: 'linux' }),
+                    });
+                    expect(res.status, `${mode}/${id}`).to.equal(200);
+                }
+            }
+            // 'shared' is defined over profile PAIRS (one ComfyUI for several profiles)
+            const shared = await fetch(`${base}/api/v1/private-worker/setup/plan`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Cookie: alice.cookie },
+                body: JSON.stringify({ profile_ids: ['audio/qwen-tts', 'image/qwen-image'], mode: 'shared', platform: 'linux' }),
+            });
+            expect(shared.status).to.equal(200);
+
+            const after = await query('SELECT COUNT(*)::int AS n FROM workers');
+            expect(after.rows[0].n).to.equal(workersBefore); // no worker registration
+            // no heartbeat materialized by planning — the endpoint is a pure
+            // function of canonical manifests (never touches worker state)
+            for (const type of ['image', 'video', 'audio']) {
+                const hb = await redis.get(config.WORKER_HEARTBEAT_KEY(type, aliceWorker.worker_id));
+                expect(hb, `heartbeat ${type}`).to.equal(null);
+            }
+        });
     });
 
     describe('legacy worker API (unchanged)', () => {
