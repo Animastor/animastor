@@ -145,10 +145,10 @@ function GeneralSection() {
             which Android opens from GenerateFragment's gear icons. Placed ABOVE the
             destructive Cache/Storyboard buttons per user request. */}
         <div class="settings__group">
+          <NavRow label={t('ai_provider_title')} onClick={() => navigate('/settings/ai')} />
+          <NavRow label={t('worker_mgmt_title')} onClick={() => navigate('/settings/private-workers')} />
           <NavRow label={t('vbook_settings_title')} onClick={() => navigate('/settings/vbook')} />
           <NavRow label={t('worker_settings_title')} onClick={() => navigate('/settings/worker')} />
-          <NavRow label={t('worker_mgmt_title')} onClick={() => navigate('/settings/private-workers')} />
-          <NavRow label={t('ai_provider_title')} onClick={() => navigate('/settings/ai')} />
         </div>
 
         {/* Cache / Storyboard — settings_cache + clearCacheButton + deleteVbookButton
