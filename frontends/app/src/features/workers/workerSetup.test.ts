@@ -8,6 +8,7 @@ import {
   fetchSetupProfiles, fetchSetupMethods, fetchSetupWorkflows,
   fetchSetupInstructions,
   resolveArtifactUrl, groupProfilesByType, platformOptions, pickMethod,
+  platformSelectable, linuxModeAvailability,
   setupStatusKey, setupStatusClass,
   initialWizardState, canGoNext, nextStep, prevStep,
   stepTitleKey, stepBodyKey, formatDiskBudget,
@@ -38,7 +39,12 @@ const PROFILES: SetupProfile[] = [
   },
 ];
 
-function method(platform: SetupMethod['platform'], installerAvailable: boolean, version: string | null): SetupMethod {
+function method(
+  platform: SetupMethod['platform'],
+  installerAvailable: boolean,
+  version: string | null,
+  bundleAvailable?: boolean,
+): SetupMethod {
   const artifact = (available: boolean, v: string | null, url: string | null): SetupMethod['installer'] => ({
     available,
     status: available ? 'draft' : 'planned',
@@ -46,13 +52,15 @@ function method(platform: SetupMethod['platform'], installerAvailable: boolean, 
     download_url: url,
     sha256: available ? 'a'.repeat(64) : null,
   });
+  const bundleUp = bundleAvailable === undefined ? installerAvailable : bundleAvailable;
+  const linuxUp = installerAvailable || bundleUp;
   return {
     platform,
     architectures: platform === 'docker' ? [] : ['x86_64'],
-    status: platform === 'linux' ? (installerAvailable ? 'available' : 'unavailable') : 'planned',
+    status: platform === 'linux' ? (linuxUp ? 'available' : 'unavailable') : 'planned',
     installer: artifact(installerAvailable, version, installerAvailable ? '/gpu/installer' : null),
     uninstaller: artifact(false, null, null),
-    worker_bundle: artifact(installerAvailable, '2.0.0', installerAvailable ? '/gpu/worker-bundle' : null),
+    worker_bundle: artifact(bundleUp, '2.0.0', bundleUp ? '/gpu/worker-bundle' : null),
     supported_profiles: PROFILES.map((p) => p.id),
     minimum_requirements: null,
   };
@@ -117,10 +125,34 @@ describe('installation', () => {
   });
 
   it('linux installer artifact temporarily down → unavailable state, not selectable', () => {
-    const opts = platformOptions([method('linux', false, '1.0.0'), ...METHODS.slice(1)]);
+    const opts = platformOptions([method('linux', false, '1.0.0', false), ...METHODS.slice(1)]);
     const linux = opts.find((o) => o.platform === 'linux')!;
     expect(linux.selectable).toBe(false);
     expect(linux.stateKey).toBe('worker_setup_platform_unavailable');
+  });
+
+  it('independence — installer down but bundle served: Existing ComfyUI stays selectable', () => {
+    const bundleOnly = [method('linux', false, '1.0.0', true), ...METHODS.slice(1)];
+    // managed needs the installer → blocked with a reason, not a silent dead end
+    const managed = platformOptions(bundleOnly, 'managed').find((o) => o.platform === 'linux')!;
+    expect(managed.selectable).toBe(false);
+    expect(managed.stateKey).toBe('worker_setup_platform_no_installer');
+    // existing needs only the bundle → still actionable
+    const existing = platformOptions(bundleOnly, 'existing').find((o) => o.platform === 'linux')!;
+    expect(existing.selectable).toBe(true);
+    expect(existing.stateKey).toBe('worker_setup_platform_existing_only');
+    // platform-level availability is independent of the installer artifact
+    expect(pickMethod(bundleOnly, 'linux')!.status).toBe('available');
+    expect(platformSelectable(pickMethod(bundleOnly, 'linux'), 'existing')).toBe(true);
+    expect(platformSelectable(pickMethod(bundleOnly, 'linux'), 'managed')).toBe(false);
+  });
+
+  it('mode gating — linuxModeAvailability reflects real artifact capabilities', () => {
+    expect(linuxModeAvailability(METHODS)).toEqual({ managed: true, existing: true });
+    const bundleOnly = [method('linux', false, '1.0.0', true), ...METHODS.slice(1)];
+    expect(linuxModeAvailability(bundleOnly)).toEqual({ managed: false, existing: true });
+    const allDown = [method('linux', false, '1.0.0', false), ...METHODS.slice(1)];
+    expect(linuxModeAvailability(allDown)).toEqual({ managed: false, existing: false });
   });
 
   it('correct artifact/version displayed — no hardcoded version anywhere', async () => {
@@ -167,8 +199,8 @@ describe('resolveArtifactUrl', () => {
 describe('worker', () => {
   it('create — wizard allows creation only with a valid name', () => {
     const base = { ...initialWizardState(), step: 'create' as const, profileId: 'image/qwen-image', mode: 'managed' as const, platform: 'linux' as const };
-    expect(canGoNext(base, { installerSelectable: true, nameValid: false })).toBe(false);
-    expect(canGoNext(base, { installerSelectable: true, nameValid: true })).toBe(true);
+    expect(canGoNext(base, { platformSelectable: true, nameValid: false })).toBe(false);
+    expect(canGoNext(base, { platformSelectable: true, nameValid: true })).toBe(true);
   });
 
   it('key handling — one-time token shape recognized; wizard steps never carry it', () => {
@@ -209,10 +241,10 @@ describe('worker', () => {
     expect(nextStep(s)).toBe('install');
     s = { ...s, step: 'install' };
     expect(nextStep(s)).toBeNull();
-    // platform step blocked unless the installer is actually selectable
+    // platform step blocked unless the platform is actually selectable
     const atPlatform = { ...initialWizardState(), step: 'platform' as const, platform: 'linux' as const };
-    expect(canGoNext(atPlatform, { installerSelectable: false, nameValid: false })).toBe(false);
-    expect(canGoNext(atPlatform, { installerSelectable: true, nameValid: false })).toBe(true);
+    expect(canGoNext(atPlatform, { platformSelectable: false, nameValid: false })).toBe(false);
+    expect(canGoNext(atPlatform, { platformSelectable: true, nameValid: false })).toBe(true);
   });
 });
 
@@ -313,6 +345,16 @@ describe('instruction step mapping', () => {
     expect(stepBodyKey('run-installer')).toBe('worker_setup_step_run_body');
     expect(stepTitleKey('some-future-step')).toBeNull();
     expect(stepBodyKey('some-future-step')).toBeNull();
+  });
+
+  it('bundle-based existing flow + degraded states have localized mappings', () => {
+    for (const id of ['download-bundle', 'unpack-bundle', 'configure-worker', 'start-worker', 'installer-unavailable', 'platform-planned']) {
+      expect(stepTitleKey(id), id).toBeTypeOf('string');
+      expect(stepBodyKey(id), id).toBeTypeOf('string');
+    }
+    expect(stepTitleKey('download-bundle')).toBe('worker_setup_step_download_bundle_title');
+    expect(stepBodyKey('start-worker')).toBe('worker_setup_step_start_worker_body');
+    expect(stepTitleKey('installer-unavailable')).toBe('worker_setup_step_installer_unavailable_title');
   });
 });
 

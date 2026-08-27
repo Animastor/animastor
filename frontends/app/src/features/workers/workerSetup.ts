@@ -174,16 +174,31 @@ export function groupProfilesByType(profiles: SetupProfile[]): {
 
 export interface PlatformOption {
   platform: SetupPlatform;
-  /** true only when the platform's installer artifact is actually available. */
+  /** true only when the platform can actually serve the selected mode. */
   selectable: boolean;
-  /** i18n state key: installer available / coming soon / temporarily unavailable. */
-  stateKey: 'worker_setup_platform_ready' | 'worker_setup_platform_soon' | 'worker_setup_platform_unavailable';
+  /** i18n state key: installer available / existing-only / coming soon /
+   *  installer down / temporarily unavailable. */
+  stateKey:
+  | 'worker_setup_platform_ready'
+  | 'worker_setup_platform_existing_only'
+  | 'worker_setup_platform_no_installer'
+  | 'worker_setup_platform_soon'
+  | 'worker_setup_platform_unavailable';
   installerVersion: string | null;
 }
 
-/** Map installation methods to UI platform options. Unavailable platforms
- *  are NEVER presented as actionable (Phase 3.1 §11). */
-export function platformOptions(methods: SetupMethod[]): PlatformOption[] {
+/** Can this method serve the given install mode? Managed needs the installer;
+ *  Existing ComfyUI needs the installer OR the worker runtime bundle — one
+ *  missing artifact must never block the whole platform (Phase 3.1 §3). */
+export function platformSelectable(method: SetupMethod | null, mode: 'managed' | 'existing' | null): boolean {
+  if (!method || method.status === 'planned') return false;
+  if (method.installer.available) return true;
+  return mode === 'existing' && method.worker_bundle.available;
+}
+
+/** Map installation methods to UI platform options for the SELECTED mode.
+ *  Unavailable platforms are NEVER presented as actionable (Phase 3.1 §11). */
+export function platformOptions(methods: SetupMethod[], mode: 'managed' | 'existing' | null = null): PlatformOption[] {
   const order: SetupPlatform[] = ['linux', 'windows', 'docker'];
   return order.map((platform) => {
     const m = methods.find((x) => x.platform === platform);
@@ -193,8 +208,24 @@ export function platformOptions(methods: SetupMethod[]): PlatformOption[] {
     if (m.installer.available) {
       return { platform, selectable: true, stateKey: 'worker_setup_platform_ready' as const, installerVersion: m.installer.version };
     }
+    if (m.worker_bundle.available) {
+      return mode === 'existing'
+        ? { platform, selectable: true, stateKey: 'worker_setup_platform_existing_only' as const, installerVersion: null }
+        : { platform, selectable: false, stateKey: 'worker_setup_platform_no_installer' as const, installerVersion: null };
+    }
     return { platform, selectable: false, stateKey: 'worker_setup_platform_unavailable' as const, installerVersion: m.installer.version };
   });
+}
+
+/** Per-mode availability on the real (linux) platform — used to gate the mode
+ *  step so the wizard never offers a mode that cannot continue. */
+export function linuxModeAvailability(methods: SetupMethod[]): { managed: boolean; existing: boolean } {
+  const linux = methods.find((m) => m.platform === 'linux');
+  if (!linux || linux.status === 'planned') return { managed: false, existing: false };
+  return {
+    managed: linux.installer.available,
+    existing: linux.installer.available || linux.worker_bundle.available,
+  };
 }
 
 export function pickMethod(methods: SetupMethod[], platform: SetupPlatform): SetupMethod | null {
@@ -246,11 +277,11 @@ export function initialWizardState(): WizardState {
 
 const STEP_ORDER: WizardStep[] = ['profile', 'mode', 'platform', 'create', 'install'];
 
-export function canGoNext(state: WizardState, ctx: { installerSelectable: boolean; nameValid: boolean }): boolean {
+export function canGoNext(state: WizardState, ctx: { platformSelectable: boolean; nameValid: boolean }): boolean {
   switch (state.step) {
     case 'profile': return state.profileId !== null;
     case 'mode': return state.mode !== null;
-    case 'platform': return state.platform !== null && ctx.installerSelectable;
+    case 'platform': return state.platform !== null && ctx.platformSelectable;
     case 'create': return ctx.nameValid;
     default: return false;
   }
@@ -274,8 +305,13 @@ export function stepTitleKey(id: string): string | null {
     'create-worker': 'worker_setup_step_create_worker_title',
     'prerequisites': 'worker_setup_step_prereq_title',
     'download-installer': 'worker_setup_step_download_title',
+    'download-bundle': 'worker_setup_step_download_bundle_title',
+    'unpack-bundle': 'worker_setup_step_unpack_bundle_title',
+    'configure-worker': 'worker_setup_step_configure_worker_title',
+    'start-worker': 'worker_setup_step_start_worker_title',
     'run-installer': 'worker_setup_step_run_title',
     'verify': 'worker_setup_step_verify_title',
+    'installer-unavailable': 'worker_setup_step_installer_unavailable_title',
     'platform-planned': 'worker_setup_step_planned_title',
   };
   return map[id] ?? null;
@@ -286,8 +322,13 @@ export function stepBodyKey(id: string): string | null {
     'create-worker': 'worker_setup_step_create_worker_body',
     'prerequisites': 'worker_setup_step_prereq_body',
     'download-installer': 'worker_setup_step_download_body',
+    'download-bundle': 'worker_setup_step_download_bundle_body',
+    'unpack-bundle': 'worker_setup_step_unpack_bundle_body',
+    'configure-worker': 'worker_setup_step_configure_worker_body',
+    'start-worker': 'worker_setup_step_start_worker_body',
     'run-installer': 'worker_setup_step_run_body',
     'verify': 'worker_setup_step_verify_body',
+    'installer-unavailable': 'worker_setup_step_installer_unavailable_body',
     'platform-planned': 'worker_setup_step_planned_body',
   };
   return map[id] ?? null;

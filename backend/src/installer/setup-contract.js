@@ -306,7 +306,11 @@ function getInstallationMethods({ registry = defaultRegistry, probe = null } = {
     const linux = {
         platform: 'linux',
         architectures: ['x86_64'],
-        status: installerAvailable ? 'available' : 'unavailable',
+        // Capability model: the platform is available when AT LEAST ONE
+        // lifecycle artifact is served. A missing installer must not block
+        // the Existing ComfyUI flow (worker bundle only) — the UI derives
+        // per-mode availability from the artifact flags below.
+        status: (installerAvailable || bundleAvailable) ? 'available' : 'unavailable',
         installer: {
             available: installerAvailable,
             // Installer code exists and its tests pass, but E2E acceptance on
@@ -438,14 +442,16 @@ function listWorkflowArtifacts({ profileId = null, registry = defaultRegistry, w
 // Instructions (server-assembled; the frontend only renders)
 // ---------------------------------------------------------------------------
 
-function envTemplateBlock(manifests) {
+function envTemplateBlock(manifests, { hubUrl = null } = {}) {
     const wb = manifests[0] && manifests[0].worker_bundle;
     const required = (wb && wb.env && wb.env.required) || ['HUB_URL', 'ANIMASTOR_WORKER_TOKEN', 'WORKER_TYPE', 'WORKER_ID'];
     const secrets = (wb && wb.env && wb.env.secrets) || ['ANIMASTOR_WORKER_TOKEN'];
+    const types = new Set(manifests.map((m) => m.profile && m.profile.type).filter(Boolean));
+    const workerType = types.size === 1 ? [...types][0] : null;
     const lines = required.map((key) => {
         if (secrets.includes(key)) return `${key}=<your-worker-key>`;
-        if (key === 'HUB_URL') return `${key}=<hub-url>`;
-        if (key === 'WORKER_TYPE') return `${key}=<worker-type>`;
+        if (key === 'HUB_URL') return hubUrl ? `HUB_URL=${hubUrl}` : `${key}=<hub-url>`;
+        if (key === 'WORKER_TYPE') return workerType ? `WORKER_TYPE=${workerType}` : `${key}=<worker-type>`;
         if (key === 'WORKER_ID') return `${key}=<worker-id>`;
         return `${key}=<value>`;
     });
@@ -498,6 +504,7 @@ function buildInstructions({
     const profileArg = profileIds.join(',');
     const artifacts = getPlatformArtifacts({ platform, registry, probe });
     const base = String(origin || '').replace(/\/$/, '');
+    const hubUrl = base ? `${base}/gpu` : null;
     const steps = [];
 
     const response = {
@@ -513,7 +520,7 @@ function buildInstructions({
         env: {
             required: (manifests[0].worker_bundle.env && manifests[0].worker_bundle.env.required) || [],
             secrets: (manifests[0].worker_bundle.env && manifests[0].worker_bundle.env.secrets) || ['ANIMASTOR_WORKER_TOKEN'],
-            template_block: envTemplateBlock(manifests),
+            template_block: envTemplateBlock(manifests, { hubUrl }),
         },
         steps,
     };
@@ -524,7 +531,70 @@ function buildInstructions({
         body: 'In Settings → Private Workers create a worker (POST /api/v1/workers). The Worker Key is shown exactly once — the setup contract never returns it again.',
     });
 
-    if (!artifacts || !artifacts.installer.available) {
+    const installerAvailable = !!(artifacts && artifacts.installer.available);
+    const bundle = artifacts && artifacts.worker_bundle;
+    const bundleAvailable = !!(bundle && bundle.available);
+
+    if (!installerAvailable) {
+        if (mode === 'existing' && bundleAvailable) {
+            // Existing ComfyUI without the installer: the worker runtime
+            // bundle alone is enough to connect an already installed ComfyUI.
+            // One bundle download — never manual per-file instructions.
+            steps.push({
+                id: 'prerequisites',
+                title: 'Existing ComfyUI — what you need',
+                body: 'Your ComfyUI stays untouched — the worker bundle only connects it to Animastor. Nothing is replaced, downgraded or removed.',
+                requirements: {
+                    comfyui: 'installed and running (the worker finds it at http://127.0.0.1:8188; override with COMFY_PORT)',
+                    node: `>= ${(artifacts.minimum_requirements && artifacts.minimum_requirements.node) || '20'} (for the worker runtime)`,
+                    gpu: 'NVIDIA GPU with a CUDA-capable driver',
+                },
+            });
+            const bundleFile = `animastor-worker-${bundle.version || 'latest'}.tar.gz`;
+            steps.push({
+                id: 'download-bundle',
+                title: 'Download the worker runtime bundle',
+                body: `Download the worker runtime bundle (version ${bundle.version}). It contains the complete worker runtime — no manual per-file downloads.`,
+                code: `curl -fsSL -o ${bundleFile} ${base}${bundle.download_url}`,
+                checksum: bundle.sha256
+                    ? { algorithm: 'sha256', value: bundle.sha256, verify_code: `echo "${bundle.sha256}  ${bundleFile}" | sha256sum -c -` }
+                    : null,
+            });
+            steps.push({
+                id: 'unpack-bundle',
+                title: 'Unpack the bundle',
+                body: 'Unpack the bundle on the GPU machine (e.g. next to your ComfyUI installation).',
+                code: `tar -xzf ${bundleFile} && cd animastor-worker`,
+            });
+            steps.push({
+                id: 'configure-worker',
+                title: 'Configure the worker',
+                body: 'Copy the environment template and fill in your Worker Key (shown once above) — the key value never passes through this contract. HUB_URL is this site address + /gpu.',
+                code: `cp .env.example .env\n# then edit .env:\n${envTemplateBlock(manifests, { hubUrl })}`,
+            });
+            steps.push({
+                id: 'start-worker',
+                title: 'Start the worker',
+                body: 'Start the worker and keep it running (e.g. in tmux/screen or as a systemd service). It verifies the credential, finds your ComfyUI and connects to the hub.',
+                code: 'node worker.cjs',
+            });
+            steps.push({
+                id: 'verify',
+                title: 'Verify',
+                body: 'Return to Settings → Private Workers: the worker status changes CONNECTING → ONLINE within ~30 seconds after the worker starts.',
+            });
+            return response;
+        }
+        if (bundleAvailable) {
+            // Installer missing but the bundle is served — do not block the
+            // whole platform: point at the Existing ComfyUI flow instead.
+            steps.push({
+                id: 'installer-unavailable',
+                title: 'Installer temporarily unavailable',
+                body: `The ${platform} installer is temporarily unavailable. Existing ComfyUI setup may still be available — choose the "Existing ComfyUI" mode: the worker runtime bundle is served by this deployment.`,
+            });
+            return response;
+        }
         steps.push({
             id: 'platform-planned',
             title: 'Installation is not available on this platform yet',

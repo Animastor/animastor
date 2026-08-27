@@ -28,6 +28,7 @@ import {
   fetchSetupProfiles, fetchSetupMethods, fetchSetupWorkflows,
   fetchSetupInstructions, fetchSetupWorkerStatus,
   resolveArtifactUrl, groupProfilesByType, platformOptions, pickMethod,
+  platformSelectable, linuxModeAvailability,
   setupStatusKey, setupStatusClass, initialWizardState, canGoNext,
   nextStep, prevStep, stepTitleKey, stepBodyKey, formatDiskBudget,
 } from './workerSetup';
@@ -259,8 +260,9 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
 
   const profile = profiles?.find((p) => p.id === state.profileId) ?? null;
   const method = methods && state.platform ? pickMethod(methods, state.platform) : null;
-  const platforms = methods ? platformOptions(methods) : [];
-  const installerSelectable = !!(method && method.installer.available);
+  const platforms = methods ? platformOptions(methods, state.mode) : [];
+  const modeAvail = methods ? linuxModeAvailability(methods) : { managed: false, existing: false };
+  const platformOk = platformSelectable(method, state.mode);
 
   const goto = useCallback((step: WizardState['step']) => {
     setState((s) => ({ ...s, step }));
@@ -320,7 +322,7 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
   }, [created]);
 
   const nameValid = validateCreateInput(name, profile?.worker_type ?? 'image').ok;
-  const canNext = canGoNext(state, { installerSelectable, nameValid });
+  const canNext = canGoNext(state, { platformSelectable: platformOk, nameValid });
 
   return (
     <Modal title={t('worker_setup_center_title')} onClose={onClose}>
@@ -365,26 +367,32 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
         {state.step === 'mode' && profile && (
           <div class="setup__step">
             <p class="card__label">{t('worker_setup_mode_title')}</p>
-            <label class="setup__choice">
+            <label class={'setup__choice' + (modeAvail.managed ? '' : ' setup__choice--disabled')}>
               <input
                 type="radio" name="setup-mode" value="managed"
+                disabled={!modeAvail.managed}
                 checked={state.mode === 'managed'}
-                onChange={() => setState((s) => ({ ...s, mode: 'managed' }))}
+                onChange={() => { if (modeAvail.managed) setState((s) => ({ ...s, mode: 'managed' })); }}
               />
               <span class="setup__choice-main">
                 <span class="setup__choice-title">{t('worker_setup_mode_managed')}</span>
-                <span class="card__hint card__hint--wrap">{t('worker_setup_mode_managed_desc')}</span>
+                <span class="card__hint card__hint--wrap">
+                  {modeAvail.managed ? t('worker_setup_mode_managed_desc') : t('worker_setup_mode_managed_unavailable')}
+                </span>
               </span>
             </label>
-            <label class="setup__choice">
+            <label class={'setup__choice' + (modeAvail.existing ? '' : ' setup__choice--disabled')}>
               <input
                 type="radio" name="setup-mode" value="existing"
+                disabled={!modeAvail.existing}
                 checked={state.mode === 'existing'}
-                onChange={() => setState((s) => ({ ...s, mode: 'existing' }))}
+                onChange={() => { if (modeAvail.existing) setState((s) => ({ ...s, mode: 'existing' })); }}
               />
               <span class="setup__choice-main">
                 <span class="setup__choice-title">{t('worker_setup_mode_existing')}</span>
-                <span class="card__hint card__hint--wrap">{t('worker_setup_mode_existing_desc')}</span>
+                <span class="card__hint card__hint--wrap">
+                  {modeAvail.existing ? t('worker_setup_mode_existing_desc') : t('worker_setup_mode_existing_unavailable')}
+                </span>
               </span>
             </label>
             {state.mode === 'existing' && (
@@ -441,6 +449,7 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
           <InstallStep
             created={created}
             method={method}
+            mode={state.mode ?? 'managed'}
             workflows={workflows}
             instructions={instructions}
             instructionsFailed={instructionsFailed}
@@ -478,9 +487,10 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
 // Install step: one-time Worker Key + installer artifact + workflows +
 // API-driven instructions. Versions/URLs/checksums all come from the API.
 // ─────────────────────────────────────────────────────────────────────────
-function InstallStep({ created, method, workflows, instructions, instructionsFailed, copied, onCopyKey }: {
+function InstallStep({ created, method, mode, workflows, instructions, instructionsFailed, copied, onCopyKey }: {
   created: { token: string; worker: PrivateWorker };
   method: SetupMethod | null;
+  mode: 'managed' | 'existing';
   workflows: SetupWorkflow[] | null;
   instructions: SetupInstructions | null;
   instructionsFailed: boolean;
@@ -490,6 +500,9 @@ function InstallStep({ created, method, workflows, instructions, instructionsFai
   const installer = method?.installer ?? null;
   const installerUrl = resolveArtifactUrl(installer?.download_url ?? null);
   const bundle = method?.worker_bundle ?? null;
+  const bundleUrl = resolveArtifactUrl(bundle?.download_url ?? null);
+  // Existing ComfyUI without the installer: the runtime bundle is THE artifact.
+  const bundlePrimary = mode === 'existing' && !!bundle?.available && !(installer && installer.available);
 
   return (
     <div class="setup__step setup__install">
@@ -517,11 +530,29 @@ function InstallStep({ created, method, workflows, instructions, instructionsFai
           </a>
         </div>
       ) : (
-        <p class="card__hint card__hint--wrap">{t('worker_setup_installer_unavailable')}</p>
+        <p class="card__hint card__hint--wrap">
+          {bundle?.available ? t('worker_setup_installer_down_existing_hint') : t('worker_setup_installer_unavailable')}
+        </p>
       )}
-      {bundle && bundle.available && bundle.version && (
+
+      {/* Worker runtime bundle — primary artifact for the bundle-based
+          Existing ComfyUI flow; otherwise a note (installer provisions it). */}
+      {bundle && bundle.available && bundleUrl && bundlePrimary ? (
+        <>
+          <p class="card__label">{t('worker_setup_bundle_title')}</p>
+          <div class="setup__artifact">
+            <span class="setup__artifact-meta">
+              {tf('worker_setup_version_fmt', bundle.version ?? '—')}
+              {bundle.sha256 ? ` · SHA-256: ${bundle.sha256.slice(0, 12)}…` : ''}
+            </span>
+            <a class="btn" href={bundleUrl} download>
+              {t('worker_setup_download_bundle')}
+            </a>
+          </div>
+        </>
+      ) : bundle && bundle.available && bundle.version ? (
         <p class="card__hint card__hint--wrap">{tf('worker_setup_bundle_note', bundle.version)}</p>
-      )}
+      ) : null}
 
       {/* Baseline workflows — editable starting points (Phase 3.1 §17) */}
       <p class="card__label">{t('worker_setup_workflows_title')}</p>

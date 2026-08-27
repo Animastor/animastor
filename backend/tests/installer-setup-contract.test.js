@@ -172,6 +172,7 @@ describe('Setup contract — projections (unit)', () => {
         it('hub not serving the artifacts → available=false, NO fake download URLs', () => {
             const { methods } = sc.getInstallationMethods(); // no probe
             const linux = methods.find((m) => m.platform === 'linux');
+            expect(linux.status).to.equal('unavailable');
             expect(linux.installer.available).to.equal(false);
             expect(linux.installer.status).to.equal('unavailable');
             expect(linux.installer.download_url).to.equal(null);
@@ -180,6 +181,39 @@ describe('Setup contract — projections (unit)', () => {
             expect(linux.worker_bundle.download_url).to.equal(null);
             // the canonical version is still real metadata (repo source)
             expect(linux.installer.version).to.equal(sc.getInstallerVersion());
+        });
+
+        it('capability independence: installer down + bundle served → linux stays available', () => {
+            const { methods } = sc.getInstallationMethods({
+                probe: {
+                    installer: { available: false, status: 'unavailable', version: null, sha256: null },
+                    worker_bundle: { available: true, status: 'available', version: '2.0.0', sha256: 'b'.repeat(64) },
+                },
+            });
+            const linux = methods.find((m) => m.platform === 'linux');
+            // one missing artifact must NOT block the whole platform
+            expect(linux.status).to.equal('available');
+            expect(linux.installer.available).to.equal(false);
+            expect(linux.installer.status).to.equal('unavailable');
+            expect(linux.installer.download_url).to.equal(null); // no fake URL
+            expect(linux.worker_bundle.available).to.equal(true);
+            expect(linux.worker_bundle.status).to.equal('available');
+            expect(linux.worker_bundle.download_url).to.equal('/gpu/worker-bundle');
+            expect(linux.worker_bundle.sha256).to.equal('b'.repeat(64));
+        });
+
+        it('capability independence: installer served + bundle down → linux available, bundle honest', () => {
+            const { methods } = sc.getInstallationMethods({
+                probe: {
+                    installer: { available: true, status: 'available', version: '1.0.0', sha256: 'c'.repeat(64) },
+                    worker_bundle: { available: false, status: 'unavailable', version: null, sha256: null },
+                },
+            });
+            const linux = methods.find((m) => m.platform === 'linux');
+            expect(linux.status).to.equal('available');
+            expect(linux.installer.available).to.equal(true);
+            expect(linux.worker_bundle.available).to.equal(false);
+            expect(linux.worker_bundle.download_url).to.equal(null);
         });
 
         it('Windows and Docker are schema-ready with status planned', () => {
@@ -536,6 +570,59 @@ describe('Setup contract — projections (unit)', () => {
                 profileIds: ['image/qwen-image'], platform: 'linux', mode: 'managed',
             }); // no probe → hub not serving the installer
             expect(i.steps.map((s) => s.id)).to.deep.equal(['create-worker', 'platform-planned']);
+        });
+
+        it('existing mode, installer down but bundle served → bundle-based flow (no dead end)', () => {
+            const i = sc.buildInstructions({
+                profileIds: ['image/qwen-image'], platform: 'linux', mode: 'existing',
+                origin: 'https://app.animastor.in',
+                probe: {
+                    installer: { available: false, status: 'unavailable', version: null, sha256: null },
+                    worker_bundle: { available: true, status: 'available', version: sc.getWorkerBundleVersion(), sha256: 'b'.repeat(64) },
+                },
+            });
+            expect(i.steps.map((s) => s.id)).to.deep.equal([
+                'create-worker', 'prerequisites', 'download-bundle', 'unpack-bundle',
+                'configure-worker', 'start-worker', 'verify',
+            ]);
+            const dl = i.steps.find((s) => s.id === 'download-bundle');
+            expect(dl.code).to.contain('https://app.animastor.in/gpu/worker-bundle');
+            expect(dl.code).to.not.contain('/gpu/installer');
+            expect(dl.checksum.value).to.equal('b'.repeat(64));
+            const cfg = i.steps.find((s) => s.id === 'configure-worker');
+            expect(cfg.code).to.contain('cp .env.example .env');
+            expect(cfg.code).to.contain('ANIMASTOR_WORKER_TOKEN=<your-worker-key>');
+            expect(cfg.code).to.contain('HUB_URL=https://app.animastor.in/gpu');
+            expect(cfg.code).to.contain('WORKER_TYPE=image'); // real type, not a placeholder
+            const start = i.steps.find((s) => s.id === 'start-worker');
+            expect(start.code).to.contain('node worker.cjs');
+            // the bundle is one archive — never manual per-file downloads
+            expect(JSON.stringify(i)).to.not.contain('worker-source');
+            expect(JSON.stringify(i)).to.not.match(/wrk\.[A-Za-z0-9_-]{8,}/);
+        });
+
+        it('managed mode, installer down but bundle served → points at Existing ComfyUI', () => {
+            const i = sc.buildInstructions({
+                profileIds: ['image/qwen-image'], platform: 'linux', mode: 'managed',
+                probe: {
+                    installer: { available: false, status: 'unavailable', version: null, sha256: null },
+                    worker_bundle: { available: true, status: 'available', version: '2.0.0', sha256: 'b'.repeat(64) },
+                },
+            });
+            expect(i.steps.map((s) => s.id)).to.deep.equal(['create-worker', 'installer-unavailable']);
+            expect(i.steps[1].body).to.contain('Existing ComfyUI');
+            expect(JSON.stringify(i)).to.not.contain('curl');
+        });
+
+        it('env template fills real public values, keeps the key a placeholder', () => {
+            const i = sc.buildInstructions({
+                profileIds: ['audio/qwen-tts'], platform: 'linux', mode: 'managed',
+                origin: 'https://app.animastor.in', probe: PROBE_OK,
+            });
+            expect(i.env.template_block).to.contain('HUB_URL=https://app.animastor.in/gpu');
+            expect(i.env.template_block).to.contain('WORKER_TYPE=audio');
+            expect(i.env.template_block).to.contain('ANIMASTOR_WORKER_TOKEN=<your-worker-key>');
+            expect(i.env.template_block).to.contain('WORKER_ID=<worker-id>');
         });
 
         it('multi-profile instructions use comma-separated profile ids; shared passes --mode shared', () => {

@@ -8,22 +8,24 @@
     "name": "qwen-image"
   },
   "provenance": {
-    "workflows": ["img-qwen-image"],
-    "connectors_backend_only": ["conn-image-generation"],
+    "workflows": [
+      "img-qwen-image"
+    ],
+    "connectors_backend_only": [
+      "conn-image-generation"
+    ],
     "sources": [
       "docs/04-planning/private-worker-installer-dependency-research.md",
       "docs/runtime-audits/image-qwen/animastor-image-qwen-runtime-audit-2026-08-26.md"
     ],
     "note": "Workflows are the single source of truth for 'required'. Connectors are backend-only execution metadata and are NOT installed. Runtime audits are reference only, never the source of truth. Legacy old_img-qwen-image.json is excluded by the workflow loader and must not influence this manifest (it references a different CLIP quant — Q4_K_M instead of Q8_0)."
   },
-
   "hardware": {
     "gpu_min_vram_gb": null,
     "basis": "unknown",
     "reference_gpu": "NVIDIA L40S (46068 MiB)",
     "todo": "Open question 12: minimum VRAM is not documented anywhere; needs measurement."
   },
-
   "runtime_requirements": {
     "comfyui": {
       "policy": "exact-pin-preferred",
@@ -51,7 +53,9 @@
         "version": "3.10.12",
         "source": "docs/runtime-audits/image-qwen/animastor-image-qwen-runtime-audit-2026-08-26.md"
       },
-      "notes": ["All reference instances run 3.10.12; lower versions are unverified."]
+      "notes": [
+        "All reference instances run 3.10.12; lower versions are unverified."
+      ]
     },
     "torch": {
       "policy": "exact",
@@ -65,7 +69,9 @@
         "source": "docs/runtime-audits/image-qwen/animastor-image-qwen-runtime-audit-2026-08-26.md"
       },
       "todo": "Decision D1: cu124 (video) vs cu128 (audio/image reference) — a single tier or per-profile policy is not decided yet.",
-      "notes": ["Reference torch came with the preinstalled E2E image; it is known-working, not a universal requirement."]
+      "notes": [
+        "Reference torch came with the preinstalled E2E image; it is known-working, not a universal requirement."
+      ]
     },
     "nodejs": {
       "policy": "minimum",
@@ -79,11 +85,15 @@
     "nvidia_driver": {
       "policy": "reference-only",
       "basis": "environment_reference",
-      "reference": { "driver": "550.127.08", "cuda_reported_by_driver": "12.4" },
-      "notes": ["Installer v1 only checks driver/GPU presence; it never installs or upgrades the NVIDIA driver."]
+      "reference": {
+        "driver": "550.127.08",
+        "cuda_reported_by_driver": "12.4"
+      },
+      "notes": [
+        "Installer v1 only checks driver/GPU presence; it never installs or upgrades the NVIDIA driver."
+      ]
     }
   },
-
   "dependencies": [
     {
       "id": "custom-node:comfyui-gguf",
@@ -101,9 +111,14 @@
           "todo": "Commit 6ea2651 confirmed by image audit; upstream repository URL attributed by package name only — verify before stable manifest."
         }
       },
-      "provides_classes": ["UnetLoaderGGUF", "CLIPLoaderGGUF"],
+      "provides_classes": [
+        "UnetLoaderGGUF",
+        "CLIPLoaderGGUF"
+      ],
       "provenance": {
-        "workflows": ["img-qwen-image"],
+        "workflows": [
+          "img-qwen-image"
+        ],
         "evidence": "docs/04-planning/private-worker-installer-dependency-research.md §6.1; image audit (commit 6ea2651)"
       }
     },
@@ -117,7 +132,10 @@
       "basis": "known_working",
       "size": "12.34 GiB",
       "size_bytes_approx": 13249974108,
-      "checksum": { "algo": "sha256", "value": null },
+      "checksum": {
+        "algo": "sha256",
+        "value": null
+      },
       "source": {
         "kind": "huggingface",
         "repository": null,
@@ -126,10 +144,16 @@
         "todo": "D5 download research: HF repo, file path, revision, sha256, license/gated status."
       },
       "provenance": {
-        "workflows": ["img-qwen-image"],
-        "node_refs": ["10 UnetLoaderGGUF.unet_name"]
+        "workflows": [
+          "img-qwen-image"
+        ],
+        "node_refs": [
+          "10 UnetLoaderGGUF.unet_name"
+        ]
       },
-      "notes": ["Present and working on the reference instance (size from audit); download source not yet researched."]
+      "notes": [
+        "Present and working on the reference instance (size from audit); download source not yet researched."
+      ]
     },
     {
       "id": "model:image.clip.qwen2.5-vl-7b-instruct-q8-0",
@@ -141,7 +165,10 @@
       "basis": "known_working",
       "size": "7.54 GiB",
       "size_bytes_approx": 8096013353,
-      "checksum": { "algo": "sha256", "value": null },
+      "checksum": {
+        "algo": "sha256",
+        "value": null
+      },
       "source": {
         "kind": "huggingface",
         "repository": null,
@@ -150,8 +177,12 @@
         "todo": "D5 download research. MUST be the Q8_0 quant: legacy old_img-qwen-image.json references Q4_K_M, which is a footgun and excluded."
       },
       "provenance": {
-        "workflows": ["img-qwen-image"],
-        "node_refs": ["11 CLIPLoaderGGUF.clip_name (type qwen_image)"]
+        "workflows": [
+          "img-qwen-image"
+        ],
+        "node_refs": [
+          "11 CLIPLoaderGGUF.clip_name (type qwen_image)"
+        ]
       }
     },
     {
@@ -178,8 +209,12 @@
         "todo": "D5 download research."
       },
       "provenance": {
-        "workflows": ["img-qwen-image"],
-        "node_refs": ["12 VAELoader.vae_name"]
+        "workflows": [
+          "img-qwen-image"
+        ],
+        "node_refs": [
+          "12 VAELoader.vae_name"
+        ]
       }
     },
     {
@@ -192,7 +227,10 @@
       "basis": "known_working",
       "size": "1.10 GiB",
       "size_bytes_approx": 1181116006,
-      "checksum": { "algo": "sha256", "value": null },
+      "checksum": {
+        "algo": "sha256",
+        "value": null
+      },
       "source": {
         "kind": "huggingface",
         "repository": null,
@@ -201,8 +239,12 @@
         "todo": "D5 download research (community LoRA; HF/Civitai origin to be confirmed, license check required)."
       },
       "provenance": {
-        "workflows": ["img-qwen-image"],
-        "node_refs": ["1010 LoraLoaderModelOnly.lora_name"]
+        "workflows": [
+          "img-qwen-image"
+        ],
+        "node_refs": [
+          "1010 LoraLoaderModelOnly.lora_name"
+        ]
       }
     },
     {
@@ -224,10 +266,11 @@
         "workflows": [],
         "evidence": "present in image audit; not referenced by any production workflow"
       },
-      "notes": ["Utility only. Inclusion in manifest is open question D7."]
+      "notes": [
+        "Utility only. Inclusion in manifest is open question D7."
+      ]
     }
   ],
-
   "workflows": {
     "policy": "editable-baseline",
     "baseline_dir": "user/default/workflows/animastor",
@@ -249,20 +292,24 @@
           "verification": "confirmed"
         },
         "provenance": {
-          "workflows": ["img-qwen-image"],
+          "workflows": [
+            "img-qwen-image"
+          ],
           "evidence": "backend/ai/workflows/img-qwen-image.json (production workflow)"
         },
-        "notes": ["sha256 of the canonical production workflow file in this repository (computed 2026-08-26); a differing hash on the target machine means the user customized it — that is allowed"]
+        "notes": [
+          "sha256 of the canonical production workflow file in this repository (computed 2026-08-26); a differing hash on the target machine means the user customized it — that is allowed"
+        ]
       }
     ]
   },
-
   "worker_bundle": {
     "basis": "minimum_supported",
     "worker_type": "image",
     "min_version": "2.0.0",
     "files": [
       "worker.cjs",
+      "worker-env.cjs",
       "worker-cleanup.cjs",
       "worker-cleanup-journal.cjs",
       "package.json",
@@ -272,16 +319,34 @@
     "source": {
       "kind": "animastor",
       "options": [
-        { "kind": "animastor-origin", "endpoint": "GET {HUB_URL}/worker-source" },
-        { "kind": "repository", "path": "worker/worker/" }
+        {
+          "kind": "animastor-origin",
+          "endpoint": "GET {HUB_URL}/worker-source"
+        },
+        {
+          "kind": "repository",
+          "path": "worker/worker/"
+        }
       ],
       "verification": "confirmed"
     },
     "env": {
       "template": "worker/worker/.env.example",
-      "required": ["HUB_URL", "ANIMASTOR_WORKER_TOKEN", "WORKER_TYPE", "WORKER_ID"],
-      "optional": ["COMFY_PORT", "COMFY_INPUT_DIR", "WORKER_JOURNAL_DIR", "NOTEBOOK_PATH"],
-      "secrets": ["ANIMASTOR_WORKER_TOKEN"],
+      "required": [
+        "HUB_URL",
+        "ANIMASTOR_WORKER_TOKEN",
+        "WORKER_TYPE",
+        "WORKER_ID"
+      ],
+      "optional": [
+        "COMFY_PORT",
+        "COMFY_INPUT_DIR",
+        "WORKER_JOURNAL_DIR",
+        "NOTEBOOK_PATH"
+      ],
+      "secrets": [
+        "ANIMASTOR_WORKER_TOKEN"
+      ],
       "rules": [
         "merge semantics: never overwrite an existing valid token",
         "chmod 600 on .env",
@@ -296,7 +361,6 @@
       ]
     }
   },
-
   "verification": {
     "method": "resolver-diff",
     "tools": [
@@ -306,16 +370,20 @@
     "pass": "all required dependencies status=installed; missing=0; incompatible=0",
     "warn": "unknown>0 or unused>0",
     "fail": "missing>0 or incompatible>0",
-    "notes": ["Runtime audit is reference/verification only — never the source of truth for this manifest."]
+    "notes": [
+      "Runtime audit is reference/verification only — never the source of truth for this manifest."
+    ]
   },
-
   "environment_reference": [
     {
       "provider": "E2E Networks",
       "label": "image-qwen reference instance (preinstalled E2E image)",
       "audit": "docs/runtime-audits/image-qwen/animastor-image-qwen-runtime-audit-2026-08-26.md",
       "captured": "2026-08-26",
-      "gpu": { "name": "NVIDIA L40S", "vram_mib": 46068 },
+      "gpu": {
+        "name": "NVIDIA L40S",
+        "vram_mib": 46068
+      },
       "nvidia_driver": "550.127.08",
       "cuda_reported_by_driver": "12.4",
       "os_notes": "Ubuntu-based E2E image; python at /home/jovyan/animastor/python3 (3.10.12); ComfyUI at /home/jovyan/ComfyUI",
@@ -327,23 +395,49 @@
       "torch": "2.10.0+cu128",
       "python": "3.10.12",
       "known_extras": [
-        { "kind": "custom_node", "name": "ComfyUI-Florence2", "note": "operator extra; not referenced by img-qwen-image" },
-        { "kind": "custom_node", "name": "ComfyUI-KJNodes", "note": "operator extra; not referenced by img-qwen-image" },
-        { "kind": "custom_node", "name": "ComfyUI-RMBG", "note": "operator extra" },
-        { "kind": "custom_node", "name": "ComfyUI-segment-anything-2", "note": "operator extra" },
-        { "kind": "custom_node", "name": "qwen3-tts", "note": "audio-profile node present on the shared image instance" },
-        { "kind": "custom_node", "name": "comfyui-manager", "note": "utility" },
-        { "kind": "workflow_files", "name": "user/default/workflows/*", "note": "local UI test artifacts — explicitly NOT a dependency" }
+        {
+          "kind": "custom_node",
+          "name": "ComfyUI-Florence2",
+          "note": "operator extra; not referenced by img-qwen-image"
+        },
+        {
+          "kind": "custom_node",
+          "name": "ComfyUI-KJNodes",
+          "note": "operator extra; not referenced by img-qwen-image"
+        },
+        {
+          "kind": "custom_node",
+          "name": "ComfyUI-RMBG",
+          "note": "operator extra"
+        },
+        {
+          "kind": "custom_node",
+          "name": "ComfyUI-segment-anything-2",
+          "note": "operator extra"
+        },
+        {
+          "kind": "custom_node",
+          "name": "qwen3-tts",
+          "note": "audio-profile node present on the shared image instance"
+        },
+        {
+          "kind": "custom_node",
+          "name": "comfyui-manager",
+          "note": "utility"
+        },
+        {
+          "kind": "workflow_files",
+          "name": "user/default/workflows/*",
+          "note": "local UI test artifacts — explicitly NOT a dependency"
+        }
       ],
       "disclaimer": "Known-working reference environment for this profile. Provider/image-specific information; MUST NOT be treated as a canonical requirement."
     }
   ],
-
   "disk_budget": {
     "models_bytes_approx": 22780911288,
     "note": "≈21.2 GiB of models (audit) plus ComfyUI + venv overhead. Approximate: derived from human-readable audit sizes."
   },
-
   "open_questions": [
     "D1: canonical ComfyUI pin — fork c4cfee7 (known-working reference) vs official v0.27.0; golden run required",
     "D1: canonical torch/CUDA tier — cu128 reference vs cu124",

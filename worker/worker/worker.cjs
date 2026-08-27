@@ -10,6 +10,11 @@ const fsp = require("fs").promises;
 const path = require("path");
 const { cleanupJobArtifacts } = require("./worker-cleanup.cjs");
 const journal = require("./worker-cleanup-journal.cjs");
+const { loadDotEnv } = require("./worker-env.cjs");
+
+// Bundle self-containment: load ./.env next to the worker (cp .env.example
+// .env). Real environment variables always win over the file.
+loadDotEnv(__dirname);
 
 // ======================================================
 // CONFIG

@@ -120,6 +120,7 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
                 'animastor-worker/package.json',
                 'animastor-worker/worker-cleanup-journal.cjs',
                 'animastor-worker/worker-cleanup.cjs',
+                'animastor-worker/worker-env.cjs',
                 'animastor-worker/worker.cjs',
             ]);
             // every file's content matches the repo source

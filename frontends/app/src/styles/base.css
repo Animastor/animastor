@@ -1298,6 +1298,12 @@ button { font: inherit; color: inherit; }
 .setup__caps { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.5rem; }
 @media (max-width: 480px) {
   .setup__grid { grid-template-columns: 1fr; }
+  /* Mobile web: give the setup wizard (long instructions, Worker Key,
+     download buttons) as much viewport as possible. */
+  .modal-backdrop { padding: 0.75rem; }
+  .modal { max-height: 92vh; }
+  .modal__footer { flex-wrap: wrap; }
+  .modal__footer .btn { flex: 1 1 auto; }
 }
 
 

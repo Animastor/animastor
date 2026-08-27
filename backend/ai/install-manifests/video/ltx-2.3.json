@@ -8,8 +8,18 @@
     "name": "ltx-2.3"
   },
   "provenance": {
-    "workflows": ["video-ltx-1p", "video-ltx-2p", "video-ltx-3p", "video-ltx-4p"],
-    "connectors_backend_only": ["conn-video-1p", "conn-video-2p", "conn-video-3p", "conn-video-4p"],
+    "workflows": [
+      "video-ltx-1p",
+      "video-ltx-2p",
+      "video-ltx-3p",
+      "video-ltx-4p"
+    ],
+    "connectors_backend_only": [
+      "conn-video-1p",
+      "conn-video-2p",
+      "conn-video-3p",
+      "conn-video-4p"
+    ],
     "sources": [
       "docs/04-planning/private-worker-installer-dependency-research.md",
       "docs/runtime-audits/video-ltx-2.3/audit-2026-08-26.txt",
@@ -18,14 +28,12 @@
     ],
     "note": "Workflows are the single source of truth for 'required'. The four video workflows are identical in dependencies (differ only in LTXVAddGuide count). Connectors are backend-only execution metadata and are NOT installed. Runtime audits are reference only, never the source of truth. Legacy old_video-ltx.json is excluded by the workflow loader."
   },
-
   "hardware": {
     "gpu_min_vram_gb": null,
     "basis": "unknown",
     "reference_gpu": "NVIDIA L40S (46068 MiB)",
     "todo": "Open question 12: the 24 GB draft figure in the architecture doc is NOT confirmed; reference generation ran on a 46 GB L40S. Needs measurement."
   },
-
   "runtime_requirements": {
     "comfyui": {
       "policy": "exact-pin-preferred",
@@ -57,7 +65,9 @@
         "version": "3.10.12",
         "source": "worker/new/SYSTEM.md:17; docs/runtime-audits/video-ltx-2.3/audit-2026-08-26.txt [3]"
       },
-      "notes": ["Reference venv: /opt/venv (python /usr/bin/python3.10). pip lock: comfy-v0.27.0.lock.txt (start-video.sh)."]
+      "notes": [
+        "Reference venv: /opt/venv (python /usr/bin/python3.10). pip lock: comfy-v0.27.0.lock.txt (start-video.sh)."
+      ]
     },
     "torch": {
       "policy": "exact",
@@ -87,11 +97,15 @@
     "nvidia_driver": {
       "policy": "reference-only",
       "basis": "environment_reference",
-      "reference": { "driver": "550.127.08", "cuda_reported_by_driver": "12.4" },
-      "notes": ["Installer v1 only checks driver/GPU presence; it never installs or upgrades the NVIDIA driver."]
+      "reference": {
+        "driver": "550.127.08",
+        "cuda_reported_by_driver": "12.4"
+      },
+      "notes": [
+        "Installer v1 only checks driver/GPU presence; it never installs or upgrades the NVIDIA driver."
+      ]
     }
   },
-
   "dependencies": [
     {
       "id": "custom-node:comfyui-gguf",
@@ -109,12 +123,22 @@
           "todo": "D4: on the reference instance this is a plain directory without .git — upstream repo/commit must be confirmed (image instance audit pins 6ea2651 for its own copy)."
         }
       },
-      "provides_classes": ["UnetLoaderGGUF", "DualCLIPLoaderGGUF"],
+      "provides_classes": [
+        "UnetLoaderGGUF",
+        "DualCLIPLoaderGGUF"
+      ],
       "provenance": {
-        "workflows": ["video-ltx-1p", "video-ltx-2p", "video-ltx-3p", "video-ltx-4p"],
+        "workflows": [
+          "video-ltx-1p",
+          "video-ltx-2p",
+          "video-ltx-3p",
+          "video-ltx-4p"
+        ],
         "evidence": "research doc §6.1; video audit [6] (present, plain dir)"
       },
-      "notes": ["Presence verified on the working reference instance; exact revision unverified (no git metadata)."]
+      "notes": [
+        "Presence verified on the working reference instance; exact revision unverified (no git metadata)."
+      ]
     },
     {
       "id": "python-package:gguf",
@@ -124,10 +148,17 @@
       "basis": "known_working",
       "version": null,
       "provenance": {
-        "workflows": ["video-ltx-1p", "video-ltx-2p", "video-ltx-3p", "video-ltx-4p"],
+        "workflows": [
+          "video-ltx-1p",
+          "video-ltx-2p",
+          "video-ltx-3p",
+          "video-ltx-4p"
+        ],
         "evidence": "python library required by ComfyUI-GGUF (research doc §6.2); present on reference instance"
       },
-      "notes": ["Version not pinned — TODO: capture installed version from a reference venv."]
+      "notes": [
+        "Version not pinned — TODO: capture installed version from a reference venv."
+      ]
     },
     {
       "id": "custom-node:comfyui-kjnodes",
@@ -145,7 +176,9 @@
           "todo": "D4: plain directory without .git on the reference instance — upstream commit must be confirmed (image instance audit shows ComfyUI-KJNodes faf270a for its own copy)."
         }
       },
-      "provides_classes": ["VAELoaderKJ"],
+      "provides_classes": [
+        "VAELoaderKJ"
+      ],
       "patches": [
         {
           "id": "kjnodes-audio-vae-v0.27.0",
@@ -156,7 +189,12 @@
         }
       ],
       "provenance": {
-        "workflows": ["video-ltx-1p", "video-ltx-2p", "video-ltx-3p", "video-ltx-4p"],
+        "workflows": [
+          "video-ltx-1p",
+          "video-ltx-2p",
+          "video-ltx-3p",
+          "video-ltx-4p"
+        ],
         "evidence": "worker/new/SYSTEM.md:45; research doc §6.1"
       }
     },
@@ -176,11 +214,18 @@
         }
       },
       "provenance": {
-        "workflows": ["video-ltx-1p", "video-ltx-2p", "video-ltx-3p", "video-ltx-4p"],
+        "workflows": [
+          "video-ltx-1p",
+          "video-ltx-2p",
+          "video-ltx-3p",
+          "video-ltx-4p"
+        ],
         "evidence": "research doc §6.1: SaveVideo/CreateVideo attribution unresolved (core v0.27.0 vs VHS)"
       },
       "todo": "D3: verify via /object_info on the reference instance whether SaveVideo/CreateVideo come from VHS or from core v0.27.0. Until then requirement stays 'unknown' — the resolver reports it but never auto-installs or auto-removes it.",
-      "notes": ["Present on the reference instance (plain dir); SYSTEM.md:46 attributes VHS_VideoCombine to it, but production workflows use SaveVideo/CreateVideo instead."]
+      "notes": [
+        "Present on the reference instance (plain dir); SYSTEM.md:46 attributes VHS_VideoCombine to it, but production workflows use SaveVideo/CreateVideo instead."
+      ]
     },
     {
       "id": "model:video.unet.ltx-2.3-distilled-q4-k-m",
@@ -192,7 +237,10 @@
       "basis": "known_working",
       "size": "16.54 GiB",
       "size_bytes_approx": 17759689769,
-      "checksum": { "algo": "sha256", "value": null },
+      "checksum": {
+        "algo": "sha256",
+        "value": null
+      },
       "source": {
         "kind": "huggingface",
         "repository": null,
@@ -201,8 +249,15 @@
         "todo": "D5 download research: HF repo, file path, revision, sha256, license/gated status."
       },
       "provenance": {
-        "workflows": ["video-ltx-1p", "video-ltx-2p", "video-ltx-3p", "video-ltx-4p"],
-        "node_refs": ["141 UnetLoaderGGUF.unet_name"]
+        "workflows": [
+          "video-ltx-1p",
+          "video-ltx-2p",
+          "video-ltx-3p",
+          "video-ltx-4p"
+        ],
+        "node_refs": [
+          "141 UnetLoaderGGUF.unet_name"
+        ]
       }
     },
     {
@@ -215,7 +270,10 @@
       "basis": "known_working",
       "size": "6.92 GiB",
       "size_bytes_approx": 7430293422,
-      "checksum": { "algo": "sha256", "value": null },
+      "checksum": {
+        "algo": "sha256",
+        "value": null
+      },
       "source": {
         "kind": "huggingface",
         "repository": null,
@@ -224,8 +282,15 @@
         "todo": "D5 download research; possibly gated (Gemma license) — HF_TOKEN support required."
       },
       "provenance": {
-        "workflows": ["video-ltx-1p", "video-ltx-2p", "video-ltx-3p", "video-ltx-4p"],
-        "node_refs": ["227 DualCLIPLoaderGGUF.clip_name1"]
+        "workflows": [
+          "video-ltx-1p",
+          "video-ltx-2p",
+          "video-ltx-3p",
+          "video-ltx-4p"
+        ],
+        "node_refs": [
+          "227 DualCLIPLoaderGGUF.clip_name1"
+        ]
       }
     },
     {
@@ -238,7 +303,10 @@
       "basis": "known_working",
       "size": "2.15 GiB",
       "size_bytes_approx": 2308544922,
-      "checksum": { "algo": "sha256", "value": null },
+      "checksum": {
+        "algo": "sha256",
+        "value": null
+      },
       "source": {
         "kind": "huggingface",
         "repository": null,
@@ -247,8 +315,15 @@
         "todo": "D5 download research."
       },
       "provenance": {
-        "workflows": ["video-ltx-1p", "video-ltx-2p", "video-ltx-3p", "video-ltx-4p"],
-        "node_refs": ["227 DualCLIPLoaderGGUF.clip_name2"]
+        "workflows": [
+          "video-ltx-1p",
+          "video-ltx-2p",
+          "video-ltx-3p",
+          "video-ltx-4p"
+        ],
+        "node_refs": [
+          "227 DualCLIPLoaderGGUF.clip_name2"
+        ]
       }
     },
     {
@@ -261,7 +336,10 @@
       "basis": "known_working",
       "size": "2.44 GiB",
       "size_bytes_approx": 2619930051,
-      "checksum": { "algo": "sha256", "value": null },
+      "checksum": {
+        "algo": "sha256",
+        "value": null
+      },
       "source": {
         "kind": "huggingface",
         "repository": null,
@@ -270,8 +348,15 @@
         "todo": "D5 download research."
       },
       "provenance": {
-        "workflows": ["video-ltx-1p", "video-ltx-2p", "video-ltx-3p", "video-ltx-4p"],
-        "node_refs": ["188 LoraLoaderModelOnly.lora_name"]
+        "workflows": [
+          "video-ltx-1p",
+          "video-ltx-2p",
+          "video-ltx-3p",
+          "video-ltx-4p"
+        ],
+        "node_refs": [
+          "188 LoraLoaderModelOnly.lora_name"
+        ]
       }
     },
     {
@@ -284,7 +369,10 @@
       "basis": "known_working",
       "size": "1.35 GiB",
       "size_bytes_approx": 1449551462,
-      "checksum": { "algo": "sha256", "value": null },
+      "checksum": {
+        "algo": "sha256",
+        "value": null
+      },
       "source": {
         "kind": "huggingface",
         "repository": null,
@@ -293,8 +381,15 @@
         "todo": "D5 download research."
       },
       "provenance": {
-        "workflows": ["video-ltx-1p", "video-ltx-2p", "video-ltx-3p", "video-ltx-4p"],
-        "node_refs": ["222 VAELoaderKJ.vae_name"]
+        "workflows": [
+          "video-ltx-1p",
+          "video-ltx-2p",
+          "video-ltx-3p",
+          "video-ltx-4p"
+        ],
+        "node_refs": [
+          "222 VAELoaderKJ.vae_name"
+        ]
       }
     },
     {
@@ -307,7 +402,10 @@
       "basis": "known_working",
       "size": "347.95 MiB",
       "size_bytes_approx": 364852019,
-      "checksum": { "algo": "sha256", "value": null },
+      "checksum": {
+        "algo": "sha256",
+        "value": null
+      },
       "source": {
         "kind": "huggingface",
         "repository": null,
@@ -316,8 +414,15 @@
         "todo": "D5 download research."
       },
       "provenance": {
-        "workflows": ["video-ltx-1p", "video-ltx-2p", "video-ltx-3p", "video-ltx-4p"],
-        "node_refs": ["226 VAELoaderKJ.vae_name"]
+        "workflows": [
+          "video-ltx-1p",
+          "video-ltx-2p",
+          "video-ltx-3p",
+          "video-ltx-4p"
+        ],
+        "node_refs": [
+          "226 VAELoaderKJ.vae_name"
+        ]
       }
     },
     {
@@ -330,7 +435,10 @@
       "basis": "known_working",
       "size": "22.44 MiB",
       "size_bytes_approx": 23530045,
-      "checksum": { "algo": "sha256", "value": null },
+      "checksum": {
+        "algo": "sha256",
+        "value": null
+      },
       "source": {
         "kind": "huggingface",
         "repository": null,
@@ -339,8 +447,15 @@
         "todo": "D5 download research."
       },
       "provenance": {
-        "workflows": ["video-ltx-1p", "video-ltx-2p", "video-ltx-3p", "video-ltx-4p"],
-        "node_refs": ["191 VAELoader.vae_name"]
+        "workflows": [
+          "video-ltx-1p",
+          "video-ltx-2p",
+          "video-ltx-3p",
+          "video-ltx-4p"
+        ],
+        "node_refs": [
+          "191 VAELoader.vae_name"
+        ]
       }
     },
     {
@@ -353,7 +468,10 @@
       "basis": "optional",
       "size": "949.62 MiB",
       "size_bytes_approx": 995747430,
-      "checksum": { "algo": "sha256", "value": null },
+      "checksum": {
+        "algo": "sha256",
+        "value": null
+      },
       "source": {
         "kind": "huggingface",
         "repository": null,
@@ -365,7 +483,9 @@
         "evidence": "video audit [5]; mentioned in EXPERIMENTAL_BETA_WORKER_SETUP.md:46 and worker/new/SYSTEM.md:66"
       },
       "todo": "D6: NOT referenced by any production workflow (no latent-upscale nodes). Excluded from required; keep optional 'for growth' or drop — decision pending.",
-      "notes": ["Documented contradiction recorded: setup doc claims it is needed, workflow scan says it is not."]
+      "notes": [
+        "Documented contradiction recorded: setup doc claims it is needed, workflow scan says it is not."
+      ]
     },
     {
       "id": "custom-node:comfyui-manager",
@@ -386,33 +506,101 @@
         "workflows": [],
         "evidence": "present in video audit [6]; not referenced by any production workflow"
       },
-      "notes": ["Utility only. Inclusion in manifest is open question D7."]
+      "notes": [
+        "Utility only. Inclusion in manifest is open question D7."
+      ]
     }
   ],
-
   "open_class_attributions": {
     "todo": "D3: verify provider of each class via /object_info on the reference video instance. Until verified, these classes are NOT mapped to any custom node in this manifest.",
     "classes": [
-      { "class_type": "LTXVConditioning", "candidate": "core v0.27.0 (comfy_extras/nodes_ltxv*)", "confidence": "probable-core-by-elimination" },
-      { "class_type": "EmptyLTXVLatentVideo", "candidate": "core v0.27.0", "confidence": "probable-core-by-elimination" },
-      { "class_type": "LTXVPreprocess", "candidate": "core v0.27.0", "confidence": "probable-core-by-elimination" },
-      { "class_type": "LTXVCropGuides", "candidate": "core v0.27.0", "confidence": "probable-core-by-elimination" },
-      { "class_type": "LTXVAddGuide", "candidate": "core v0.27.0", "confidence": "probable-core-by-elimination" },
-      { "class_type": "LTXVChunkFeedForward", "candidate": "core v0.27.0", "confidence": "probable-core-by-elimination" },
-      { "class_type": "LTXVConcatAVLatent", "candidate": "core v0.27.0 (LTX-2 AV support)", "confidence": "probable-core-by-elimination" },
-      { "class_type": "LTXVSeparateAVLatent", "candidate": "core v0.27.0", "confidence": "probable-core-by-elimination" },
-      { "class_type": "LTXVEmptyLatentAudio", "candidate": "core v0.27.0", "confidence": "probable-core-by-elimination" },
-      { "class_type": "LTXVAudioVAEDecode", "candidate": "core v0.27.0", "confidence": "probable-core-by-elimination" },
-      { "class_type": "LTX2SamplingPreviewOverride", "candidate": "core v0.27.0 | kjnodes", "confidence": "unknown" },
-      { "class_type": "ManualSigmas", "candidate": "core | kjnodes | rgthree", "confidence": "unknown" },
-      { "class_type": "ResizeImageMaskNode", "candidate": "core | kjnodes | easy-use", "confidence": "unknown" },
-      { "class_type": "PrimitiveInt", "candidate": "core v0.27.0 | rgthree", "confidence": "unknown" },
-      { "class_type": "PrimitiveFloat", "candidate": "core v0.27.0 | rgthree", "confidence": "unknown" },
-      { "class_type": "SaveVideo", "candidate": "core v0.27.0 | comfyui-videohelpersuite", "confidence": "unknown" },
-      { "class_type": "CreateVideo", "candidate": "core v0.27.0 | comfyui-videohelpersuite", "confidence": "unknown" }
+      {
+        "class_type": "LTXVConditioning",
+        "candidate": "core v0.27.0 (comfy_extras/nodes_ltxv*)",
+        "confidence": "probable-core-by-elimination"
+      },
+      {
+        "class_type": "EmptyLTXVLatentVideo",
+        "candidate": "core v0.27.0",
+        "confidence": "probable-core-by-elimination"
+      },
+      {
+        "class_type": "LTXVPreprocess",
+        "candidate": "core v0.27.0",
+        "confidence": "probable-core-by-elimination"
+      },
+      {
+        "class_type": "LTXVCropGuides",
+        "candidate": "core v0.27.0",
+        "confidence": "probable-core-by-elimination"
+      },
+      {
+        "class_type": "LTXVAddGuide",
+        "candidate": "core v0.27.0",
+        "confidence": "probable-core-by-elimination"
+      },
+      {
+        "class_type": "LTXVChunkFeedForward",
+        "candidate": "core v0.27.0",
+        "confidence": "probable-core-by-elimination"
+      },
+      {
+        "class_type": "LTXVConcatAVLatent",
+        "candidate": "core v0.27.0 (LTX-2 AV support)",
+        "confidence": "probable-core-by-elimination"
+      },
+      {
+        "class_type": "LTXVSeparateAVLatent",
+        "candidate": "core v0.27.0",
+        "confidence": "probable-core-by-elimination"
+      },
+      {
+        "class_type": "LTXVEmptyLatentAudio",
+        "candidate": "core v0.27.0",
+        "confidence": "probable-core-by-elimination"
+      },
+      {
+        "class_type": "LTXVAudioVAEDecode",
+        "candidate": "core v0.27.0",
+        "confidence": "probable-core-by-elimination"
+      },
+      {
+        "class_type": "LTX2SamplingPreviewOverride",
+        "candidate": "core v0.27.0 | kjnodes",
+        "confidence": "unknown"
+      },
+      {
+        "class_type": "ManualSigmas",
+        "candidate": "core | kjnodes | rgthree",
+        "confidence": "unknown"
+      },
+      {
+        "class_type": "ResizeImageMaskNode",
+        "candidate": "core | kjnodes | easy-use",
+        "confidence": "unknown"
+      },
+      {
+        "class_type": "PrimitiveInt",
+        "candidate": "core v0.27.0 | rgthree",
+        "confidence": "unknown"
+      },
+      {
+        "class_type": "PrimitiveFloat",
+        "candidate": "core v0.27.0 | rgthree",
+        "confidence": "unknown"
+      },
+      {
+        "class_type": "SaveVideo",
+        "candidate": "core v0.27.0 | comfyui-videohelpersuite",
+        "confidence": "unknown"
+      },
+      {
+        "class_type": "CreateVideo",
+        "candidate": "core v0.27.0 | comfyui-videohelpersuite",
+        "confidence": "unknown"
+      }
     ]
   },
-
   "workflows": {
     "policy": "editable-baseline",
     "baseline_dir": "user/default/workflows/animastor",
@@ -434,10 +622,14 @@
           "verification": "confirmed"
         },
         "provenance": {
-          "workflows": ["video-ltx-1p"],
+          "workflows": [
+            "video-ltx-1p"
+          ],
           "evidence": "backend/ai/workflows/video-ltx-1p.json (production workflow)"
         },
-        "notes": ["sha256 of the canonical production workflow file in this repository (computed 2026-08-26); a differing hash on the target machine means the user customized it — that is allowed"]
+        "notes": [
+          "sha256 of the canonical production workflow file in this repository (computed 2026-08-26); a differing hash on the target machine means the user customized it — that is allowed"
+        ]
       },
       {
         "id": "workflow:video-ltx-2p",
@@ -455,10 +647,14 @@
           "verification": "confirmed"
         },
         "provenance": {
-          "workflows": ["video-ltx-2p"],
+          "workflows": [
+            "video-ltx-2p"
+          ],
           "evidence": "backend/ai/workflows/video-ltx-2p.json (production workflow)"
         },
-        "notes": ["sha256 of the canonical production workflow file in this repository (computed 2026-08-26); a differing hash on the target machine means the user customized it — that is allowed"]
+        "notes": [
+          "sha256 of the canonical production workflow file in this repository (computed 2026-08-26); a differing hash on the target machine means the user customized it — that is allowed"
+        ]
       },
       {
         "id": "workflow:video-ltx-3p",
@@ -476,10 +672,14 @@
           "verification": "confirmed"
         },
         "provenance": {
-          "workflows": ["video-ltx-3p"],
+          "workflows": [
+            "video-ltx-3p"
+          ],
           "evidence": "backend/ai/workflows/video-ltx-3p.json (production workflow)"
         },
-        "notes": ["sha256 of the canonical production workflow file in this repository (computed 2026-08-26); a differing hash on the target machine means the user customized it — that is allowed"]
+        "notes": [
+          "sha256 of the canonical production workflow file in this repository (computed 2026-08-26); a differing hash on the target machine means the user customized it — that is allowed"
+        ]
       },
       {
         "id": "workflow:video-ltx-4p",
@@ -497,20 +697,24 @@
           "verification": "confirmed"
         },
         "provenance": {
-          "workflows": ["video-ltx-4p"],
+          "workflows": [
+            "video-ltx-4p"
+          ],
           "evidence": "backend/ai/workflows/video-ltx-4p.json (production workflow)"
         },
-        "notes": ["sha256 of the canonical production workflow file in this repository (computed 2026-08-26); a differing hash on the target machine means the user customized it — that is allowed"]
+        "notes": [
+          "sha256 of the canonical production workflow file in this repository (computed 2026-08-26); a differing hash on the target machine means the user customized it — that is allowed"
+        ]
       }
     ]
   },
-
   "worker_bundle": {
     "basis": "minimum_supported",
     "worker_type": "video",
     "min_version": "2.0.0",
     "files": [
       "worker.cjs",
+      "worker-env.cjs",
       "worker-cleanup.cjs",
       "worker-cleanup-journal.cjs",
       "package.json",
@@ -520,16 +724,34 @@
     "source": {
       "kind": "animastor",
       "options": [
-        { "kind": "animastor-origin", "endpoint": "GET {HUB_URL}/worker-source" },
-        { "kind": "repository", "path": "worker/worker/" }
+        {
+          "kind": "animastor-origin",
+          "endpoint": "GET {HUB_URL}/worker-source"
+        },
+        {
+          "kind": "repository",
+          "path": "worker/worker/"
+        }
       ],
       "verification": "confirmed"
     },
     "env": {
       "template": "worker/worker/.env.example",
-      "required": ["HUB_URL", "ANIMASTOR_WORKER_TOKEN", "WORKER_TYPE", "WORKER_ID"],
-      "optional": ["COMFY_PORT", "COMFY_INPUT_DIR", "WORKER_JOURNAL_DIR", "NOTEBOOK_PATH"],
-      "secrets": ["ANIMASTOR_WORKER_TOKEN"],
+      "required": [
+        "HUB_URL",
+        "ANIMASTOR_WORKER_TOKEN",
+        "WORKER_TYPE",
+        "WORKER_ID"
+      ],
+      "optional": [
+        "COMFY_PORT",
+        "COMFY_INPUT_DIR",
+        "WORKER_JOURNAL_DIR",
+        "NOTEBOOK_PATH"
+      ],
+      "secrets": [
+        "ANIMASTOR_WORKER_TOKEN"
+      ],
       "rules": [
         "merge semantics: never overwrite an existing valid token",
         "chmod 600 on .env",
@@ -544,7 +766,6 @@
       ]
     }
   },
-
   "verification": {
     "method": "resolver-diff",
     "tools": [
@@ -559,14 +780,16 @@
       "kjnodes AudioVAE patch state is NOT visible in audits — verification needs a dedicated check once the patch becomes declarative."
     ]
   },
-
   "environment_reference": [
     {
       "provider": "E2E Networks",
       "label": "video-ltx-2.3 reference instance (separate Ubuntu/ComfyUI/Torch configuration)",
       "audit": "docs/runtime-audits/video-ltx-2.3/audit-2026-08-26.txt",
       "captured": "2026-08-26",
-      "gpu": { "name": "NVIDIA L40S", "vram_mib": 46068 },
+      "gpu": {
+        "name": "NVIDIA L40S",
+        "vram_mib": 46068
+      },
       "nvidia_driver": "550.127.08",
       "cuda_reported_by_driver": "12.4",
       "os_notes": "Ubuntu; python /usr/bin/python3.10; venv /opt/venv; ComfyUI at /home/jovyan/ComfyUI. Different configuration from the audio/image E2E image.",
@@ -579,25 +802,59 @@
       "torch": "2.6.0+cu124",
       "python": "3.10.12",
       "known_extras": [
-        { "kind": "custom_node", "name": "comfyui-easy-use", "note": "claimed required by EXPERIMENTAL_BETA_WORKER_SETUP.md:56-58 but NOT referenced by production workflows — contradiction D6/D9" },
-        { "kind": "custom_node", "name": "ComfyUI-MelBandRoFormer", "note": "operator extra" },
-        { "kind": "custom_node", "name": "ComfyUI-PromptRelay", "note": "operator extra" },
-        { "kind": "custom_node", "name": "rgthree-comfy", "note": "operator extra; candidate provider for unknown class_types" },
-        { "kind": "custom_node", "name": "ComfyUI-Manager", "note": "utility" },
-        { "kind": "model", "name": "ltx-2.3-spatial-upscaler-x2-1.0.safetensors", "note": "not referenced by production workflows (D6)" },
-        { "kind": "model", "name": "gemma-3-12b-it-qat-q4_0-unquantized_readout_proj/model/model.safetensors", "note": "local UI-workflow artifact" },
-        { "kind": "model", "name": "ltx-av-step-1751000_vocoder_24K.safetensors", "note": "local UI-workflow artifact" },
-        { "kind": "workflow_files", "name": "user/default/workflows/* (14 files)", "note": "local UI test artifacts — explicitly NOT a dependency" }
+        {
+          "kind": "custom_node",
+          "name": "comfyui-easy-use",
+          "note": "claimed required by EXPERIMENTAL_BETA_WORKER_SETUP.md:56-58 but NOT referenced by production workflows — contradiction D6/D9"
+        },
+        {
+          "kind": "custom_node",
+          "name": "ComfyUI-MelBandRoFormer",
+          "note": "operator extra"
+        },
+        {
+          "kind": "custom_node",
+          "name": "ComfyUI-PromptRelay",
+          "note": "operator extra"
+        },
+        {
+          "kind": "custom_node",
+          "name": "rgthree-comfy",
+          "note": "operator extra; candidate provider for unknown class_types"
+        },
+        {
+          "kind": "custom_node",
+          "name": "ComfyUI-Manager",
+          "note": "utility"
+        },
+        {
+          "kind": "model",
+          "name": "ltx-2.3-spatial-upscaler-x2-1.0.safetensors",
+          "note": "not referenced by production workflows (D6)"
+        },
+        {
+          "kind": "model",
+          "name": "gemma-3-12b-it-qat-q4_0-unquantized_readout_proj/model/model.safetensors",
+          "note": "local UI-workflow artifact"
+        },
+        {
+          "kind": "model",
+          "name": "ltx-av-step-1751000_vocoder_24K.safetensors",
+          "note": "local UI-workflow artifact"
+        },
+        {
+          "kind": "workflow_files",
+          "name": "user/default/workflows/* (14 files)",
+          "note": "local UI test artifacts — explicitly NOT a dependency"
+        }
       ],
       "disclaimer": "Known-working reference environment for this profile. Provider/image-specific information; MUST NOT be treated as a canonical requirement."
     }
   ],
-
   "disk_budget": {
     "models_bytes_approx": 31956391690,
     "note": "≈29.8 GiB of required models (audit) plus ComfyUI + venv overhead. Approximate: derived from human-readable audit sizes."
   },
-
   "open_questions": [
     "D3: /object_info verification of open_class_attributions (finalizes custom_nodes list, incl. VHS requirement)",
     "D4: upstream repos/commits for plain-dir nodes (ComfyUI-GGUF, kjnodes, VHS) or bundle archives",

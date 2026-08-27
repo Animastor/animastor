@@ -683,6 +683,67 @@ describe('Private worker setup contract API (Phase 3)', () => {
         });
     });
 
+    // ══════════════════════════════════════════════════════════════════
+    // Phase 3.1 — degraded hub: installer down, bundle up (the failure
+    // mode that made Linux look fully unavailable in the Web wizard)
+    // ══════════════════════════════════════════════════════════════════
+
+    describe('degraded hub — installer unavailable, bundle available (Phase 3.1)', () => {
+        let degServer;
+        let degBase;
+
+        before(async () => {
+            const express2 = require('express');
+            const app2 = express2();
+            app2.use(express2.json());
+            app2.use(authContext);
+            require('../src/routes/worker-setup-routes.cjs')(app2, redis, {
+                hubUrlResolver: () => 'http://hub.degraded.test',
+                probeTtlMs: 0, // probe on every request — no stale cache in tests
+                fetchImpl: async (url) => {
+                    if (String(url).endsWith('/worker-bundle/sha256')) {
+                        return { ok: true, json: async () => ({ sha256: 'b'.repeat(64), version: '2.0.0', bytes: 1 }) };
+                    }
+                    return { ok: false, status: 404, json: async () => ({}) }; // installer endpoint down
+                },
+            });
+            await new Promise((resolve) => {
+                degServer = app2.listen(0, () => {
+                    degBase = `http://127.0.0.1:${degServer.address().port}`;
+                    resolve();
+                });
+            });
+        });
+
+        after(() => { if (degServer) degServer.close(); });
+
+        it('methods: linux stays available; installer unavailable without fake URL; bundle real', async () => {
+            const res = await fetch(`${degBase}/api/v1/private-worker/setup/methods`, { headers: { Cookie: alice.cookie } });
+            expect(res.status).to.equal(200);
+            const { methods } = await res.json();
+            const linux = methods.find((m) => m.platform === 'linux');
+            expect(linux.status).to.equal('available'); // NOT blocked by the missing installer
+            expect(linux.installer).to.deep.include({ available: false, status: 'unavailable', download_url: null, sha256: null });
+            expect(linux.worker_bundle.available).to.equal(true);
+            expect(linux.worker_bundle.download_url).to.equal('/gpu/worker-bundle');
+            expect(linux.worker_bundle.sha256).to.equal('b'.repeat(64));
+            expect(linux.worker_bundle.version).to.equal('2.0.0');
+        });
+
+        it('instructions: existing mode → real bundle flow; managed → honest installer-unavailable', async () => {
+            const existing = await (await fetch(`${degBase}/api/v1/private-worker/setup/instructions?profile_id=image/qwen-image&platform=linux&mode=existing`, { headers: { Cookie: alice.cookie } })).json();
+            expect(existing.steps.map((s) => s.id)).to.include('download-bundle');
+            const dl = existing.steps.find((s) => s.id === 'download-bundle');
+            expect(dl.code).to.contain('/gpu/worker-bundle');
+            expect(dl.checksum.value).to.equal('b'.repeat(64));
+            expect(JSON.stringify(existing)).to.not.contain('/gpu/installer');
+
+            const managed = await (await fetch(`${degBase}/api/v1/private-worker/setup/instructions?profile_id=image/qwen-image&platform=linux&mode=managed`, { headers: { Cookie: alice.cookie } })).json();
+            expect(managed.steps.map((s) => s.id)).to.deep.equal(['create-worker', 'installer-unavailable']);
+            expect(managed.steps[1].body).to.contain('Existing ComfyUI');
+        });
+    });
+
     describe('legacy worker API (unchanged)', () => {
         it('create/list/detail/rotate/revoke still work alongside the contract', async () => {
             const cw = await fetch(`${base}/api/v1/workers`, {

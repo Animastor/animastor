@@ -8,22 +8,26 @@
     "name": "qwen-tts"
   },
   "provenance": {
-    "workflows": ["tts-qwen-narrator", "tts-qwen-dialogue"],
-    "connectors_backend_only": ["conn-tts-narration", "conn-tts-dialogue"],
+    "workflows": [
+      "tts-qwen-narrator",
+      "tts-qwen-dialogue"
+    ],
+    "connectors_backend_only": [
+      "conn-tts-narration",
+      "conn-tts-dialogue"
+    ],
     "sources": [
       "docs/04-planning/private-worker-installer-dependency-research.md",
       "docs/runtime-audits/audio-qwen/audit-2026-08-25.txt"
     ],
     "note": "Workflows are the single source of truth for 'required'. Connectors are backend-only execution metadata and are NOT installed. Runtime audits are reference only, never the source of truth."
   },
-
   "hardware": {
     "gpu_min_vram_gb": null,
     "basis": "unknown",
     "reference_gpu": "NVIDIA L40S (46068 MiB)",
     "todo": "Open question 12: minimum VRAM is not documented anywhere; needs measurement."
   },
-
   "runtime_requirements": {
     "comfyui": {
       "policy": "exact-pin-preferred",
@@ -51,7 +55,9 @@
         "version": "3.10.12",
         "source": "docs/runtime-audits/audio-qwen/audit-2026-08-25.txt"
       },
-      "notes": ["All reference instances run 3.10.12; lower versions are unverified."]
+      "notes": [
+        "All reference instances run 3.10.12; lower versions are unverified."
+      ]
     },
     "torch": {
       "policy": "exact",
@@ -65,7 +71,9 @@
         "source": "docs/runtime-audits/audio-qwen/audit-2026-08-25.txt"
       },
       "todo": "Decision D1: cu124 (video) vs cu128 (audio/image reference) — a single tier or per-profile policy is not decided yet.",
-      "notes": ["Reference torch came with the preinstalled E2E image; it is known-working, not a universal requirement."]
+      "notes": [
+        "Reference torch came with the preinstalled E2E image; it is known-working, not a universal requirement."
+      ]
     },
     "nodejs": {
       "policy": "minimum",
@@ -79,11 +87,15 @@
     "nvidia_driver": {
       "policy": "reference-only",
       "basis": "environment_reference",
-      "reference": { "driver": "550.127.08", "cuda_reported_by_driver": "12.4" },
-      "notes": ["Installer v1 only checks driver/GPU presence; it never installs or upgrades the NVIDIA driver."]
+      "reference": {
+        "driver": "550.127.08",
+        "cuda_reported_by_driver": "12.4"
+      },
+      "notes": [
+        "Installer v1 only checks driver/GPU presence; it never installs or upgrades the NVIDIA driver."
+      ]
     }
   },
-
   "dependencies": [
     {
       "id": "custom-node:comfyui-qwen3-tts",
@@ -110,7 +122,10 @@
         "SaveAudioMP3"
       ],
       "provenance": {
-        "workflows": ["tts-qwen-narrator", "tts-qwen-dialogue"],
+        "workflows": [
+          "tts-qwen-narrator",
+          "tts-qwen-dialogue"
+        ],
         "evidence": "docs/04-planning/private-worker-installer-dependency-research.md §6.1; audit-2026-08-25.txt [6]"
       },
       "notes": [
@@ -125,10 +140,16 @@
       "basis": "known_working",
       "repo": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
       "target_dir": "models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-      "expected_files": ["model.safetensors", "speech_tokenizer/model.safetensors"],
+      "expected_files": [
+        "model.safetensors",
+        "speech_tokenizer/model.safetensors"
+      ],
       "size": "3.57 GiB + 650.69 MiB (speech_tokenizer)",
       "size_bytes_approx": 4515556229,
-      "checksum": { "algo": "sha256", "value": null },
+      "checksum": {
+        "algo": "sha256",
+        "value": null
+      },
       "source": {
         "kind": "modelscope",
         "repository": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
@@ -142,10 +163,17 @@
         "todo": "Decision D2: installer preloads the repo (deterministic/offline) vs relies on Qwen3TTSLoader.auto_download at first run."
       },
       "provenance": {
-        "workflows": ["tts-qwen-narrator", "tts-qwen-dialogue"],
-        "node_refs": ["78 Qwen3TTSLoader.model_repo"]
+        "workflows": [
+          "tts-qwen-narrator",
+          "tts-qwen-dialogue"
+        ],
+        "node_refs": [
+          "78 Qwen3TTSLoader.model_repo"
+        ]
       },
-      "notes": ["Revision is not pinned by the node; sizes from audit [5]."]
+      "notes": [
+        "Revision is not pinned by the node; sizes from audit [5]."
+      ]
     },
     {
       "id": "model-repo:qwen3-tts-12hz-1.7b-base",
@@ -155,10 +183,16 @@
       "basis": "known_working",
       "repo": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
       "target_dir": "models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-Base",
-      "expected_files": ["model.safetensors", "speech_tokenizer/model.safetensors"],
+      "expected_files": [
+        "model.safetensors",
+        "speech_tokenizer/model.safetensors"
+      ],
       "size": "3.59 GiB + 650.69 MiB (speech_tokenizer)",
       "size_bytes_approx": 4537031065,
-      "checksum": { "algo": "sha256", "value": null },
+      "checksum": {
+        "algo": "sha256",
+        "value": null
+      },
       "source": {
         "kind": "modelscope",
         "repository": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
@@ -172,10 +206,16 @@
         "todo": "Decision D2: preinstall vs auto_download."
       },
       "provenance": {
-        "workflows": ["tts-qwen-dialogue"],
-        "node_refs": ["79 Qwen3TTSLoader.model_repo"]
+        "workflows": [
+          "tts-qwen-dialogue"
+        ],
+        "node_refs": [
+          "79 Qwen3TTSLoader.model_repo"
+        ]
       },
-      "notes": ["Revision is not pinned by the node; sizes from audit [5]."]
+      "notes": [
+        "Revision is not pinned by the node; sizes from audit [5]."
+      ]
     },
     {
       "id": "custom-node:comfyui-manager",
@@ -196,10 +236,11 @@
         "workflows": [],
         "evidence": "present in audit [6]; not referenced by any production workflow"
       },
-      "notes": ["Utility only. Inclusion in manifest is open question D7."]
+      "notes": [
+        "Utility only. Inclusion in manifest is open question D7."
+      ]
     }
   ],
-
   "workflows": {
     "policy": "editable-baseline",
     "baseline_dir": "user/default/workflows/animastor",
@@ -221,10 +262,14 @@
           "verification": "confirmed"
         },
         "provenance": {
-          "workflows": ["tts-qwen-narrator"],
+          "workflows": [
+            "tts-qwen-narrator"
+          ],
           "evidence": "backend/ai/workflows/tts-qwen-narrator.json (production workflow)"
         },
-        "notes": ["sha256 of the canonical production workflow file in this repository (computed 2026-08-26); a differing hash on the target machine means the user customized it — that is allowed"]
+        "notes": [
+          "sha256 of the canonical production workflow file in this repository (computed 2026-08-26); a differing hash on the target machine means the user customized it — that is allowed"
+        ]
       },
       {
         "id": "workflow:tts-qwen-dialogue",
@@ -242,20 +287,24 @@
           "verification": "confirmed"
         },
         "provenance": {
-          "workflows": ["tts-qwen-dialogue"],
+          "workflows": [
+            "tts-qwen-dialogue"
+          ],
           "evidence": "backend/ai/workflows/tts-qwen-dialogue.json (production workflow)"
         },
-        "notes": ["sha256 of the canonical production workflow file in this repository (computed 2026-08-26); a differing hash on the target machine means the user customized it — that is allowed"]
+        "notes": [
+          "sha256 of the canonical production workflow file in this repository (computed 2026-08-26); a differing hash on the target machine means the user customized it — that is allowed"
+        ]
       }
     ]
   },
-
   "worker_bundle": {
     "basis": "minimum_supported",
     "worker_type": "audio",
     "min_version": "2.0.0",
     "files": [
       "worker.cjs",
+      "worker-env.cjs",
       "worker-cleanup.cjs",
       "worker-cleanup-journal.cjs",
       "package.json",
@@ -265,16 +314,34 @@
     "source": {
       "kind": "animastor",
       "options": [
-        { "kind": "animastor-origin", "endpoint": "GET {HUB_URL}/worker-source" },
-        { "kind": "repository", "path": "worker/worker/" }
+        {
+          "kind": "animastor-origin",
+          "endpoint": "GET {HUB_URL}/worker-source"
+        },
+        {
+          "kind": "repository",
+          "path": "worker/worker/"
+        }
       ],
       "verification": "confirmed"
     },
     "env": {
       "template": "worker/worker/.env.example",
-      "required": ["HUB_URL", "ANIMASTOR_WORKER_TOKEN", "WORKER_TYPE", "WORKER_ID"],
-      "optional": ["COMFY_PORT", "COMFY_INPUT_DIR", "WORKER_JOURNAL_DIR", "NOTEBOOK_PATH"],
-      "secrets": ["ANIMASTOR_WORKER_TOKEN"],
+      "required": [
+        "HUB_URL",
+        "ANIMASTOR_WORKER_TOKEN",
+        "WORKER_TYPE",
+        "WORKER_ID"
+      ],
+      "optional": [
+        "COMFY_PORT",
+        "COMFY_INPUT_DIR",
+        "WORKER_JOURNAL_DIR",
+        "NOTEBOOK_PATH"
+      ],
+      "secrets": [
+        "ANIMASTOR_WORKER_TOKEN"
+      ],
       "rules": [
         "merge semantics: never overwrite an existing valid token",
         "chmod 600 on .env",
@@ -289,7 +356,6 @@
       ]
     }
   },
-
   "verification": {
     "method": "resolver-diff",
     "tools": [
@@ -299,16 +365,20 @@
     "pass": "all required dependencies status=installed; missing=0; incompatible=0",
     "warn": "unknown>0 or unused>0",
     "fail": "missing>0 or incompatible>0",
-    "notes": ["Runtime audit is reference/verification only — never the source of truth for this manifest."]
+    "notes": [
+      "Runtime audit is reference/verification only — never the source of truth for this manifest."
+    ]
   },
-
   "environment_reference": [
     {
       "provider": "E2E Networks",
       "label": "audio-qwen reference instance (preinstalled E2E image)",
       "audit": "docs/runtime-audits/audio-qwen/audit-2026-08-25.txt",
       "captured": "2026-08-25",
-      "gpu": { "name": "NVIDIA L40S", "vram_mib": 46068 },
+      "gpu": {
+        "name": "NVIDIA L40S",
+        "vram_mib": 46068
+      },
       "nvidia_driver": "550.127.08",
       "cuda_reported_by_driver": "12.4",
       "os_notes": "Ubuntu-based E2E image; python at /home/jovyan/python3 (3.10.12); ComfyUI at /home/jovyan/ComfyUI",
@@ -320,17 +390,19 @@
       "torch": "2.10.0+cu128",
       "python": "3.10.12",
       "known_extras": [
-        { "kind": "custom_node", "name": "comfyui-manager", "note": "utility; not referenced by production workflows" }
+        {
+          "kind": "custom_node",
+          "name": "comfyui-manager",
+          "note": "utility; not referenced by production workflows"
+        }
       ],
       "disclaimer": "Known-working reference environment for this profile. Provider/image-specific information; MUST NOT be treated as a canonical requirement."
     }
   ],
-
   "disk_budget": {
     "models_bytes_approx": 9052587295,
     "note": "≈8.4 GiB of models (audit [5]) plus ComfyUI + venv overhead. Approximate: derived from human-readable audit sizes."
   },
-
   "open_questions": [
     "D1: canonical ComfyUI pin — fork c4cfee7 (known-working reference) vs official v0.27.0; golden run required",
     "D1/D2: canonical torch/CUDA tier — cu128 reference vs cu124",

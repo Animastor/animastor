@@ -57,7 +57,7 @@ function workerProbe(workerType, { withEnv = true, setKeys = ['HUB_URL', 'ANIMAS
         bundle: {
             present: true,
             dir: `/home/test/animastor/worker-${workerType}`,
-            files: ['worker.cjs', 'worker-cleanup.cjs', 'worker-cleanup-journal.cjs', 'package.json', 'package-lock.json', '.env.example'],
+            files: ['worker.cjs', 'worker-env.cjs', 'worker-cleanup.cjs', 'worker-cleanup-journal.cjs', 'package.json', 'package-lock.json', '.env.example'],
         },
         env: withEnv ? { present: true, set_keys: setKeys } : null,
     };
