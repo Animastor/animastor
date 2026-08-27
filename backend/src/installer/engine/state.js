@@ -21,6 +21,21 @@ const STATE_VERSION = 1;
 
 const ARTIFACT_STATUSES = Object.freeze(['missing', 'partial', 'installed', 'verified', 'failed']);
 
+const { isSecretName } = require('../safety-rules');
+
+/** Defensive scrub: never persist values under secret-looking names. */
+function scrubSecrets(obj) {
+    if (!obj || typeof obj !== 'object') return obj;
+    for (const key of Object.keys(obj)) {
+        if (isSecretName(key)) {
+            delete obj[key];
+        } else if (typeof obj[key] === 'object') {
+            scrubSecrets(obj[key]);
+        }
+    }
+    return obj;
+}
+
 function emptyState({ mode = null, profiles = [], root = null } = {}) {
     return {
         state_version: STATE_VERSION,
@@ -29,6 +44,9 @@ function emptyState({ mode = null, profiles = [], root = null } = {}) {
         mode,
         profiles,
         root,
+        // non-secret user decisions (comfyui_update, install_models, …).
+        // Recorded so `resume` continues without re-prompting.
+        decisions: {},
         artifacts: {},
         checkpoints: [],
     };
@@ -48,6 +66,7 @@ function loadState(io, statePath) {
 function saveState(io, statePath, state, now) {
     state.updated = new Date(now()).toISOString();
     if (!state.created) state.created = state.updated;
+    scrubSecrets(state);
     const dir = statePath.replace(/\/[^/]+$/, '');
     if (dir && !io.fs.existsSync(dir)) io.fs.mkdirSync(dir, { recursive: true });
     const tmp = `${statePath}.tmp`;

@@ -30,7 +30,7 @@ const readline = require('readline');
 const { createRealIo, createDryRunIo } = require('./engine/io');
 const { createLogger } = require('./engine/logger');
 const { probeEnvironment, renderDetection } = require('./engine/probe');
-const { runInstallation } = require('./engine/engine');
+const { runInstallation, loadResumableState, renderResumeSummary } = require('./engine/engine');
 const resolver = require('./compatibility-resolver');
 const { buildInstallPlan, renderPlanText } = require('./install-plan');
 const manifest = require('./install-manifest');
@@ -57,7 +57,7 @@ function parseArgs(argv) {
         const a = args[i];
         if (a.startsWith('--')) {
             const key = a.slice(2);
-            if (['yes', 'dry-run', 'resume'].includes(key)) {
+            if (['yes', 'dry-run', 'resume', 'start-comfy'].includes(key)) {
                 parsed.flags[key] = true;
             } else {
                 const val = args[++i];
@@ -72,6 +72,8 @@ function parseArgs(argv) {
     if (profileFlag) {
         parsed.profiles = profileFlag.split(',').map((s) => s.trim()).filter(Boolean);
     }
+    // Normalize: every cmd* receives `flags` and reads flags.profiles
+    parsed.flags.profiles = parsed.profiles;
     return parsed;
 }
 
@@ -177,7 +179,7 @@ async function cmdPlan(flags) {
     const crypto = require('crypto');
     const env = probeEnvironment(io, { root, workerDir, crypto, workerType: null });
 
-    const loadedManifests = flags.profiles.map((p) => manifest.load(p));
+    const loadedManifests = flags.profiles.map((p) => manifest.loadManifest(p));
     const mode = flags.mode || (env.comfyui && env.comfyui.present ? 'existing' : 'managed');
     const report = resolver.resolveInstallation({ manifests: loadedManifests, environment: env, mode });
     const plan = buildInstallPlan({ report, manifests: loadedManifests, decisions: {} });
@@ -198,15 +200,21 @@ async function cmdInstall(flags) {
     const yes = flags.yes || false;
     const crypto = require('crypto');
 
-    const io = dryRun ? createDryRunIo(createRealIo()) : createRealIo();
-    const logger = createLogger({ io });
-    const loadedManifests = flags.profiles.map((p) => manifest.load(p));
+    // Probing is read-only and always runs against the REAL io. In dry-run
+    // mode the guarded io is used ONLY inside the engine, where every
+    // mutating operation would throw a "dry-run violation".
+    const realIo = createRealIo();
+    const logger = createLogger({ io: realIo });
+    const loadedManifests = flags.profiles.map((p) => manifest.loadManifest(p));
     const mode = flags.mode || 'managed';
 
-    const env = probeEnvironment(io, {
+    const env = probeEnvironment(realIo, {
         root, workerDir, crypto,
         workerType: loadedManifests.length === 1 ? (loadedManifests[0].worker_bundle || {}).worker_type : null,
     });
+    // The dry-run guard wraps everything handed to the engine so any
+    // accidental mutation throws "dry-run violation" instead of executing.
+    const io = dryRun ? createDryRunIo(realIo) : realIo;
 
     const report = resolver.resolveInstallation({ manifests: loadedManifests, environment: env, mode });
     const plan = buildInstallPlan({ report, manifests: loadedManifests, decisions: {} });
@@ -255,7 +263,7 @@ async function cmdInstall(flags) {
         const result = await runInstallation({
             manifests: loadedManifests, mode, io,
             roots: { comfyuiRoot: root, workerDir, statePath, repoRoot, hubUrl },
-            decisions, logger, crypto, env,
+            decisions, logger, crypto, env, dryRun, options: installOptions(flags),
         });
         printResult(result);
     } else {
@@ -268,14 +276,93 @@ async function cmdInstall(flags) {
             decisions.workflows = 'all';
             decisions.worker_setup = true;
             decisions.worker_key_provided = true;
+            if (flags['accept-reference-runtime']) decisions.accept_reference_runtime = true;
+            if (flags['accept-runtime-change']) decisions.accept_runtime_change = true;
         }
         const result = await runInstallation({
             manifests: loadedManifests, mode, io,
             roots: { comfyuiRoot: root, workerDir, statePath, repoRoot, hubUrl },
-            decisions, logger, crypto, env,
+            decisions, logger, crypto, env, dryRun, options: installOptions(flags),
         });
         printResult(result);
     }
+}
+
+function installOptions(flags) {
+    return {
+        // Verification uses an already-running ComfyUI if present. Pass
+        // --start-comfy to let the installer start one for the live check.
+        startComfyui: flags['start-comfy'] === true,
+        comfyPort: flags['comfy-port'] ? Number(flags['comfy-port']) : undefined,
+        verifyTimeoutMs: flags['verify-timeout-ms'] ? Number(flags['verify-timeout-ms']) : undefined,
+    };
+}
+
+/**
+ * resume — continue an interrupted installation from install-state.json.
+ *
+ * The state file is the source of "what has been attempted"; disk truth is
+ * re-verified for every artifact. If there is NO state file, resume does NOT
+ * silently start a new installation.
+ */
+async function cmdResume(flags) {
+    const root = resolveRoot(flags);
+    const workerDir = resolveWorkerDir(flags);
+    const hubUrl = resolveHubUrl(flags);
+    const repoRoot = resolveRepoRoot(flags);
+    const statePath = resolveStatePath(flags);
+    const crypto = require('crypto');
+
+    const io = createRealIo();
+    const check = loadResumableState(io, statePath);
+    if (!check.ok) {
+        console.log('No resumable installation state found.');
+        if (check.reason === 'state-has-no-profiles') {
+            console.log(`(state file at ${statePath} exists but records no profiles — cannot resume)`);
+        }
+        process.exit(1);
+    }
+
+    const st = check.state;
+    console.log(`Resuming installation of ${st.profiles.join(' + ')}`);
+    for (const line of renderResumeSummary(st)) console.log(line);
+
+    let loadedManifests;
+    try {
+        loadedManifests = st.profiles.map((p) => manifest.loadManifest(p));
+    } catch (err) {
+        console.error(`fatal: cannot load profile manifests recorded in state: ${err.message}`);
+        process.exit(1);
+    }
+
+    const mode = st.mode || flags.mode || 'managed';
+    const logger = createLogger({ io });
+    const env = probeEnvironment(io, {
+        root, workerDir, crypto,
+        workerType: loadedManifests.length === 1 ? (loadedManifests[0].worker_bundle || {}).worker_type : null,
+    });
+
+    const result = await runInstallation({
+        manifests: loadedManifests, mode, io,
+        roots: { comfyuiRoot: root, workerDir, statePath, repoRoot, hubUrl },
+        // restored non-secret decisions from state; CLI --yes can still widen them
+        decisions: { ...(st.decisions || {}), ...(flags.yes ? yesDecisions() : {}) },
+        secretProvider: null, // secrets are never persisted; enter them via a fresh `install` if truly required
+        logger, crypto, env, initialState: st,
+        options: installOptions(flags),
+    });
+    printResult(result);
+}
+
+function yesDecisions() {
+    return {
+        comfyui_update: 'yes',
+        install_custom_nodes: true,
+        install_models: true,
+        workflows: 'all',
+        worker_setup: true,
+        worker_key_provided: true,
+    };
 }
 
 async function cmdVerify(flags) {
@@ -286,8 +373,8 @@ async function cmdVerify(flags) {
     const io = createRealIo();
 
     const loadedManifests = flags.profiles.length > 0
-        ? flags.profiles.map((p) => manifest.load(p))
-        : [manifest.load('image/qwen-image')]; // default
+        ? flags.profiles.map((p) => manifest.loadManifest(p))
+        : [manifest.loadManifest('image/qwen-image')]; // default
 
     const env = probeEnvironment(io, { root, workerDir, crypto, workerType: loadedManifests[0].worker_bundle.worker_type });
     const report = resolver.resolveInstallation({ manifests: loadedManifests, environment: env, mode: 'existing' });
@@ -328,8 +415,7 @@ async function main() {
             await cmdVerify(args.flags);
             break;
         case 'resume':
-            // Resume: load state, probe, resolve, build plan, execute from where we left off
-            console.log('resume: loading state...');
+            await cmdResume(args.flags);
             break;
         default:
             console.error('Usage: animastor-installer <detect|plan|install|verify|resume> [options]');
@@ -351,4 +437,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseArgs, cmdDetect, cmdPlan, cmdInstall, cmdVerify };
+module.exports = { parseArgs, cmdDetect, cmdPlan, cmdInstall, cmdVerify, cmdResume };

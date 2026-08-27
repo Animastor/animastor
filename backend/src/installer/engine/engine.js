@@ -61,6 +61,47 @@ function pickTorchSpec(manifests, decisions, warnings) {
     return null;
 }
 
+/** Non-secret decision keys persisted to install-state.json for `resume`. */
+const PERSISTED_DECISION_KEYS = Object.freeze([
+    'comfyui_update', 'install_custom_nodes', 'install_models',
+    'workflows', 'restore_baseline', 'worker_setup', 'worker_key_provided',
+    'accept_reference_runtime', 'accept_runtime_change',
+]);
+
+function sanitizeDecisions(decisions) {
+    const out = {};
+    for (const k of PERSISTED_DECISION_KEYS) {
+        if (decisions[k] !== undefined) out[k] = decisions[k];
+    }
+    return out;
+}
+
+/**
+ * Load resumable install state or produce a resumable-not-possible verdict.
+ * @returns {{ ok: true, state } | { ok: false, reason }}
+ */
+function loadResumableState(io, statePath) {
+    const st = state.loadState(io, statePath);
+    if (!st) return { ok: false, reason: 'no-state-file' };
+    if (!st.profiles || !Array.isArray(st.profiles) || st.profiles.length === 0) {
+        return { ok: false, reason: 'state-has-no-profiles' };
+    }
+    return { ok: true, state: st };
+}
+
+/** Render prior-progress summary lines from a saved state. */
+function renderResumeSummary(st) {
+    const ids = Object.keys(st.artifacts || {});
+    if (ids.length === 0) return ['Prior progress: nothing recorded yet'];
+    const marks = { verified: '✓', installed: '✓', failed: '✗', partial: '~', missing: '·' };
+    const lines = ['Prior progress (from install-state.json):'];
+    for (const id of ids.sort()) {
+        const a = st.artifacts[id];
+        lines.push(`  ${marks[a.status] || '·'} ${id}: ${a.status}${a.attempts ? ` (${a.attempts} failed attempt(s))` : ''}`);
+    }
+    return lines;
+}
+
 /**
  * Run the installation.
  *
@@ -75,6 +116,8 @@ function pickTorchSpec(manifests, decisions, warnings) {
  * @param {object} [args.crypto] - crypto module (hashing)
  * @param {object} [args.env] - pre-probed environment (else probed here)
  * @param {boolean} [args.dryRun]
+ * @param {object} [args.initialState] - pre-loaded install state (`resume`); when
+ *   given, it is used as-is and never reset
  * @param {object} [args.options] - { startComfyui, comfyPort, verifyTimeoutMs }
  */
 async function runInstallation(args) {
@@ -82,7 +125,7 @@ async function runInstallation(args) {
         manifests, mode, io, roots,
         decisions = {}, secretProvider = null,
         logger = null, crypto = null, env: preEnv = null,
-        dryRun = false, options = {},
+        dryRun = false, initialState = null, options = {},
     } = args;
 
     const log = logger || { info: () => {}, warn: () => {}, error: () => {}, output: () => {}, step: async (n, fn) => ({ ok: true, value: await fn() }), registerSecret: () => {} };
@@ -143,10 +186,20 @@ async function runInstallation(args) {
     }
 
     // ── 4. execute ────────────────────────────────────────────────────────
-    const st = state.loadState(io, statePath) || state.emptyState({
-        mode, profiles: report.profiles, root: comfyuiRoot,
-    });
+    // State is an OPTIMIZATION; disk truth is always re-checked before doing.
+    const st = initialState
+        || state.loadState(io, statePath)
+        || state.emptyState({ mode, profiles: report.profiles, root: comfyuiRoot });
+    st.profiles = report.profiles;
+    if (!dryRun) {
+        // persist the (non-secret) decisions so `resume` does not re-prompt
+        st.decisions = { ...(st.decisions || {}), ...sanitizeDecisions(decisions) };
+    }
     const save = () => state.saveState(io, statePath, st, io.now);
+    if (initialState) {
+        for (const line of renderResumeSummary(st)) log.info(line);
+    }
+    save();
 
     // 4.1 ComfyUI -----------------------------------------------------------
     const comfyStep = stepById(plan, 'comfyui-update');
@@ -170,6 +223,8 @@ async function runInstallation(args) {
                 const r = await log.step('install ComfyUI', async () => comfyui.installComfyUI(io, { root: comfyuiRoot, source: src.source, log }));
                 result.results.comfyui = r.ok ? { op, grade: src.grade, ...r.value } : { op, failed: String(r.error && r.error.message) };
                 if (!r.ok) result.warnings.push(`ComfyUI install failed: ${r.error && r.error.message}`);
+                state.setArtifact(st, 'comfyui', r.ok ? 'installed' : 'failed', { ref: src.source.commit || src.source.tag });
+                save();
             }
         } else if (op === 'update_comfyui' || op === 'downgrade_comfyui') {
             const gate = confirmationGate(op, { confirmed: true, op, via: 'install-plan' });
@@ -188,21 +243,35 @@ async function runInstallation(args) {
     }
 
     // 4.2 Python runtime / torch (managed, or when missing) ------------------
+    // Never touch an EXISTING working Python/Torch/CUDA setup without an
+    // explicit user decision: `accept_runtime_change`.
     const torchEntry = report.entries.find((e) => e.id === 'runtime:torch');
     const pythonEntry = report.entries.find((e) => e.id === 'runtime:python');
     const needRuntime = [torchEntry, pythonEntry].some((e) => e && (e.status === 'missing' || e.status === 'incompatible'));
     if (needRuntime && io.fs.existsSync(comfyuiRoot)) {
-        const torchSpec = pickTorchSpec(manifests, decisions, result.warnings);
-        if (torchEntry && torchEntry.status === 'missing' && !torchSpec) {
-            result.blocked.push({ step: 'runtime', reason: 'torch requirement cannot be satisfied: no canonical pin and reference not accepted' });
+        const presentRuntime = [torchEntry, pythonEntry].some((e) => e && e.status === 'incompatible');
+        if (presentRuntime && decisions.accept_runtime_change !== true) {
+            result.blocked.push({
+                step: 'runtime',
+                reason: 'existing Python/Torch runtime does not match the profile requirements. The installer will NOT replace it without an explicit accept_runtime_change decision.',
+            });
+            state.setArtifact(st, 'runtime', 'failed', { reason: 'runtime change not accepted' });
+            save();
         } else {
-            const r = await log.step('prepare Python runtime', async () => comfyui.preparePythonRuntime(io, {
-                root: comfyuiRoot,
-                torchSpec: torchSpec ? torchSpec.spec : null,
-                log,
-            }));
-            result.results.runtime = r.ok ? { grade: torchSpec ? torchSpec.grade : null, ...r.value } : { failed: String(r.error && r.error.message) };
-            if (!r.ok) result.warnings.push(`python runtime preparation failed: ${r.error && r.error.message}`);
+            const torchSpec = pickTorchSpec(manifests, decisions, result.warnings);
+            if (torchEntry && torchEntry.status === 'missing' && !torchSpec) {
+                result.blocked.push({ step: 'runtime', reason: 'torch requirement cannot be satisfied: no canonical pin and reference not accepted' });
+            } else {
+                const r = await log.step('prepare Python runtime', async () => comfyui.preparePythonRuntime(io, {
+                    root: comfyuiRoot,
+                    torchSpec: torchSpec ? torchSpec.spec : null,
+                    log,
+                }));
+                result.results.runtime = r.ok ? { grade: torchSpec ? torchSpec.grade : null, ...r.value } : { failed: String(r.error && r.error.message) };
+                state.setArtifact(st, 'runtime', r.ok ? 'installed' : 'failed', {});
+                if (!r.ok) result.warnings.push(`python runtime preparation failed: ${r.error && r.error.message}`);
+                save();
+            }
         }
     }
 
@@ -289,11 +358,11 @@ async function runInstallation(args) {
 
     // 4.7 Worker Key + .env configuration ----------------------------------------
     const keyStep = stepById(plan, 'worker-key');
+    let tokenValue = null; // held in memory only; never stored on result/state
     if (keyStep && (keyStep.provided || decisions.worker_setup === true || decisions.worker_setup === 'yes')) {
         const manifest = manifests[0];
         const required = ((manifest.worker_bundle || {}).env || {}).required || [];
         const values = {};
-        let tokenValue = null;
         for (const key of keyStep.secret_keys || []) {
             if (secretProvider) {
                 const value = await secretProvider(key);
@@ -311,21 +380,22 @@ async function runInstallation(args) {
         }
         const cfg = await log.step('configure worker .env', async () => worker.configureEnv(io, { workerDir, manifest, values, log }));
         result.results.worker.push({ id: 'env', config: cfg.ok ? cfg.value : { status: 'failed', reason: String(cfg.error && cfg.error.message) } });
-        // store token value in result for verification (used only locally, never logged)
-        if (tokenValue) result._tokenValue = tokenValue;
+        state.setArtifact(st, 'env', cfg.ok && cfg.value.status === 'configured' ? 'installed' : 'partial', {});
         save();
     }
 
     // 4.8 Verification --------------------------------------------------------------
     const ver = await runVerification({
         io, manifests, roots: { comfyuiRoot, workerDir, hubUrl },
-        options, log, crypto, result,
+        options, log, crypto,
+        tokenValue,
+        onEvent: (kind, value) => { result.results[kind] = value; },
     });
     result.verification = ver;
 
     const blockedCount = result.blocked.length + result.results.models.filter((m) => m.status === 'blocked').length;
-    if (ver.status === 'FAIL') result.status = 'failed';
-    else if (blockedCount > 0) result.status = 'blocked';
+    if (result.blocked.length > 0 || blockedCount > 0) result.status = 'blocked';
+    else if (ver.status === 'FAIL') result.status = 'failed';
     else if (ver.status === 'WARN') result.status = 'warn';
     else result.status = 'ready';
 
@@ -359,7 +429,8 @@ function defaultEnvValue(key, { hubUrl, manifests }) {
 // Verification (live checks where possible)
 // ---------------------------------------------------------------------------
 
-async function runVerification({ io, manifests, roots, options, log, crypto, result }) {
+async function runVerification({ io, manifests, roots, options, log, crypto, tokenValue = null, onEvent = null }) {
+    const emit = (kind, value) => { if (onEvent) onEvent(kind, value); };
     const { comfyuiRoot, workerDir, hubUrl } = roots;
     const live = {};
 
@@ -376,7 +447,7 @@ async function runVerification({ io, manifests, roots, options, log, crypto, res
         });
         if (started.ok && started.value.up.ok) {
             stats = started.value.up.system_stats;
-            result.results.comfyui_started = { pid: started.value.pid, port };
+            emit('comfyui_started', { pid: started.value.pid, port });
         } else {
             live.comfyui = { running: false, api_reachable: false };
         }
@@ -416,15 +487,14 @@ async function runVerification({ io, manifests, roots, options, log, crypto, res
     // Worker registration check
     const manifest = manifests[0];
     const expectedType = (manifest.worker_bundle || {}).worker_type || null;
-    let token = null;
-    if (result._tokenValue) token = result._tokenValue;
+    let token = tokenValue;
     if (!token && workerDir && io.fs.existsSync(path.join(workerDir, '.env'))) {
         token = readEnvValueLocal(io, workerDir, 'ANIMASTOR_WORKER_TOKEN');
         if (token && log.registerSecret) log.registerSecret(token);
     }
     if (hubUrl && token) {
         const reg = await worker.verifyRegistration(io, { hubUrl, token, expectedType });
-        result.results.registration = { registered: reg.registered, worker_id: reg.worker_id || null, worker_type: reg.worker_type || null, reason: reg.reason || null };
+        emit('registration', { registered: reg.registered, worker_id: reg.worker_id || null, worker_type: reg.worker_type || null, reason: reg.reason || null });
         live.worker = { process_alive: null, registered: reg.registered === true };
         live.hub = { connection: reg.reason ? reg.reason.indexOf('unreachable') === -1 : true, registration: reg.registered === true };
         if (!reg.registered) {
@@ -461,4 +531,7 @@ module.exports = {
     runInstallation,
     runVerification,
     readEnvValueLocal,
+    loadResumableState,
+    renderResumeSummary,
+    sanitizeDecisions,
 };

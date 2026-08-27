@@ -452,8 +452,11 @@ function buildInstallPlan({ report, manifests = [], decisions = {} }) {
     if (report.sharing) {
         selectStep.sharing = { verdict: report.sharing.verdict, message: report.sharing.message };
         if (!report.sharing.can_share) {
+            const code = String(report.sharing.verdict || '').toUpperCase().replace(/-/g, '_')
+                || 'REQUIRES_ISOLATION';
             blocked.push({
                 step: 'select-profiles',
+                code, // machine-readable verdict: REQUIRES_ISOLATION | SHARED_CONFLICT | UNKNOWN
                 reason: 'Profiles cannot safely share this ComfyUI runtime. Isolation recommended.',
                 detail: report.sharing.message,
             });
@@ -611,7 +614,7 @@ function renderPlanText(plan, report) {
 
     if (plan.blocked.length > 0) {
         lines.push('Blocked:');
-        for (const b of plan.blocked) lines.push(`- ${b.reason}`);
+        for (const b of plan.blocked) lines.push(`- ${b.code ? `[${b.code}] ` : ''}${b.reason}`);
         lines.push('');
     }
 

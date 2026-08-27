@@ -4,6 +4,66 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-08-27
+
+### Added
+
+- **Private Worker Installer — Phase 2.1** (finish execution engine, prepare
+  real E2E). Hardened the Phase 2 engine for safe use on a clean GPU instance:
+  - **Real `resume`**: `animastor-installer resume` loads
+    `install-state.json`, prints prior progress, skips already-completed
+    operations, retries the first incomplete one, and re-runs verification.
+    With no state file it prints `No resumable installation state found.` and
+    does NOT silently start a new install. Non-secret decisions are persisted
+    in state so resume does not re-prompt.
+  - **Idempotency**: re-running `install` never re-downloads a verified model,
+    never re-clones an installed node, never overwrites a user workflow, and
+    never replaces a valid `.env` token (merge semantics). Proven by test.
+  - **Runtime safety gate**: an existing-but-mismatched Python/Torch/CUDA
+    runtime is now BLOCKED behind an explicit `accept_runtime_change` decision
+    instead of being silently replaced.
+  - **Secret hygiene**: the Worker Key no longer rides on the result object;
+    it is passed privately to verification. Install state is scrubbed of any
+    secret-named keys before persisting.
+  - **Shared-profile verdicts**: blocked shared installs now carry a
+    machine-readable `code` (`REQUIRES_ISOLATION` / `SHARED_CONFLICT`) surfaced
+    in the plan text; incompatible profiles are never silently merged.
+  - **CLI fixes**: `--dry-run` no longer crashes during probing (probe is
+    read-only and runs on the real IO; the mutation guard wraps only the
+    engine); `manifest.load()` corrected to `manifest.loadManifest()`; profile
+    list normalized onto `flags.profiles`.
+  - **New test suites** (all passing):
+    - `installer-resume.test.js` — 11 scenarios: resume-from-crash, transient
+      download retry, checksum-mismatch safety, custom-node failure/retry,
+      ComfyUI health failure, invalid-workflow rejection, registration failure,
+      user-workflow preservation, no-auto-downgrade, no-silent-torch-replace.
+    - `installer-cli.test.js` — 7 CLI smoke tests incl. a recursive
+      filesystem-hash snapshot proving `--dry-run` performs zero mutations /
+      zero downloads / zero process starts.
+    - `installer-security.test.js` — 8 tests: Worker Key / HF token absent
+      from logs, state, plan, result, verification and 401/403 error paths;
+      logger redaction; state secret-scrub; shared isolation; idempotent re-run.
+
+### Verified (this phase)
+
+- Phase 1 resolver: 26/26 · Phase 1 manifest: 24/24 · Phase 1.5 scenarios:
+  28/28 · Phase 2 engine: 20/20 · Phase 2.1 resume/safety: 11/11 ·
+  Phase 2.1 CLI: 7/7 · Phase 2.1 security: 8/8. Full backend mocha suite:
+  ~1620 passing; the only failures are the pre-existing, flaky
+  `TXT Import Ownership Dedup` tests (Postgres state contention, unrelated to
+  the installer — confirmed failing on a clean tree).
+
+### Blocked
+
+- **Real E2E acceptance** on a clean E2E Networks GPU instance is NOT yet run.
+  Blocker: this development host has no NVIDIA GPU (Virtio VGA only, no
+  `nvidia-smi`, no `/dev/nvidia*`) and the repo/env provides no E2E Networks
+  provisioning tooling or credentials to create a fresh instance. Per the
+  Phase 2.1 brief the result is not simulated; see
+  `docs/04-planning/private-worker-installer-e2e-acceptance.md`.
+
+---
+
 ## [Unreleased] — 2026-08-26
 
 ### Added

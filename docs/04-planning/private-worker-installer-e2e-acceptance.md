@@ -5,7 +5,41 @@
 This document defines the manual acceptance procedure for the Phase 2
 executable installation engine on a real clean GPU instance.
 
-**Status:** Not yet accepted — all items below must be verified on real hardware.
+**Status:** Not yet accepted — all automated tests pass (Phase 2.1), but the
+items below still must be verified on real hardware.
+
+## Phase 2.1 automated-test status (2026-08-27)
+
+All automated suites pass and are prerequisites for the real E2E below:
+
+| Suite | Result |
+|-------|--------|
+| Phase 1 resolver (`installer-resolver.test.js`) | 26/26 |
+| Phase 1 manifest (`install-manifest.test.js`) | 24/24 |
+| Phase 1.5 scenarios (`installer-phase15.test.js`) | 28/28 |
+| Phase 2 engine (`installer-engine.test.js`) | 20/20 |
+| Phase 2.1 resume / failure / safety (`installer-resume.test.js`) | 11/11 |
+| Phase 2.1 CLI smoke (`installer-cli.test.js`) | 7/7 |
+| Phase 2.1 security / shared / idempotency (`installer-security.test.js`) | 8/8 |
+
+The full backend mocha suite runs ~1620 passing; the only failures are the
+pre-existing, flaky `TXT Import Ownership Dedup` tests (Postgres state
+contention, unrelated to the installer — confirmed failing on a clean tree).
+
+## Real E2E blocker (2026-08-27)
+
+The real acceptance run below is **blocked**, not simulated:
+
+- This development host has **no NVIDIA GPU** — `nvidia-smi` is absent, there
+  is no `/dev/nvidia*`, and `lspci` shows only a virtualized `Virtio VGA`
+  display adapter.
+- The repository and environment provide **no E2E Networks provisioning
+  tooling or credentials** to create a fresh, clean GPU instance.
+
+Per the Phase 2.1 brief, the E2E result is therefore **not** fabricated. To
+unblock: provision a clean E2E Networks GPU instance (Ubuntu 22.04 + NVIDIA
+driver), then run the checklist in sections A–F below and record the data in
+section "E2E Data Collection".
 
 ## Prerequisites
 
@@ -80,3 +114,27 @@ executable installation engine on a real clean GPU instance.
 2. Check off each item
 3. Sign and date this document
 4. Commit with message: `accept: Phase 2 installer engine — E2E verified`
+
+## E2E Data Collection (fill in during the real run — NO secrets)
+
+Record more than "PASS". Capture the following for each profile tested
+(`image/qwen-image` first, then `video`, then `audio` separately):
+
+| Field | Value |
+|-------|-------|
+| OS (distro + version) | _pending_ |
+| GPU model | _pending_ |
+| VRAM (GB) | _pending_ |
+| NVIDIA driver version | _pending_ |
+| CUDA version | _pending_ |
+| Python version | _pending_ |
+| Torch version | _pending_ |
+| ComfyUI version/commit | _pending_ |
+| Installed custom nodes | _pending_ |
+| Model sources (HF/ModelScope ids) | _pending_ |
+| Install duration (per step + total) | _pending_ |
+| Worker registration result | _pending_ |
+| Verification result | _pending_ |
+
+> Do NOT record the Worker Key, HF token, or ModelScope token. Only key NAMES
+> and non-secret outcomes belong here.
