@@ -431,10 +431,10 @@
     <string name="generate_global_section">Общее</string>
     <string name="generate_all">Генерировать всё</string>
     <string name="stop_all">Стоп всё</string>
-    <string name="generate_section_vbook">VBook Agents: %1$d</string>
-    <string name="generate_section_audio">Audio Workers: %1$d</string>
-    <string name="generate_section_image">Image Workers: %1$d</string>
-    <string name="generate_section_video">Video Workers: %1$d</string>
+    <string name="generate_section_vbook">Агенты VBook: %1$d</string>
+    <string name="generate_section_audio">Воркеры аудио: %1$d</string>
+    <string name="generate_section_image">Воркеры изображений: %1$d</string>
+    <string name="generate_section_video">Воркеры видео: %1$d</string>
     <string name="generate_vbook">Генерировать VBook</string>
     <string name="generate_audio">Генерировать аудио</string>
     <string name="generate_images">Генерировать изображения</string>
@@ -463,7 +463,7 @@
     <string name="worker_settings_timeout_desc">Если генерация превышает это время, задача будет автоматически отправлена повторно</string>
     <string name="worker_settings_timeout_unit">мин</string>
     <string name="worker_settings_default">По умолчанию</string>
-    <string name="worker_settings_workers_title">Workers</string>
+    <string name="worker_settings_workers_title">Воркеры</string>
     <string name="worker_counts_fmt">%1$d доступно · %2$d активно</string>
     <string name="worker_counts_my_private">Мой приватный</string>
 
@@ -540,7 +540,6 @@
     <string name="worker_revoke">Отозвать</string>
     <string name="worker_revoke_confirm">Отозвать воркер? После этого он не сможет аутентифицироваться, забирать задачи или возвращать результаты. Действие необратимо.</string>
     <string name="worker_revoked">Воркер отозван</string>
-    <string name="worker_revoked_label">Отозван</string>
     <string name="worker_last_seen">Был активен:</string>
     <string name="worker_status_online">Online</string>
     <string name="worker_status_offline">Offline</string>
@@ -553,6 +552,90 @@
     <string name="worker_err_forbidden">Доступ запрещён</string>
     <string name="worker_err_not_found">Воркер не найден</string>
     <string name="worker_err_unavailable">Сервер недоступен, попробуйте позже</string>
+
+    <!-- Центр подключения GPU-воркера (Phase 3.1, web parity: i18n worker_setup_*).
+         Все факты (профили, версии, URL, контрольные суммы, инструкции) приходят
+         из Setup Contract API (/api/v1/private-worker/setup/*) — здесь только подписи. -->
+    <string name="worker_setup_center_title">Подключение GPU-воркера</string>
+    <string name="worker_setup_back">Назад</string>
+    <string name="worker_setup_next">Далее</string>
+    <string name="worker_setup_choose_profile">Выберите, что будет генерировать ваш GPU</string>
+    <string name="worker_setup_recommended">Рекомендуемый профиль</string>
+    <string name="worker_setup_set_up">Подключить</string>
+    <string name="worker_setup_disk_budget">Место на диске: ~%1$s</string>
+    <string name="worker_setup_draft_badge">Экспериментально</string>
+    <string name="worker_setup_mode_title">Как настроена ваша GPU-машина?</string>
+    <string name="worker_setup_mode_managed">Новая машина (managed)</string>
+    <string name="worker_setup_mode_managed_desc">Установщик развернёт ComfyUI и воркер с нуля.</string>
+    <string name="worker_setup_mode_managed_unavailable">Сейчас недоступен: установщик временно не опубликован.</string>
+    <string name="worker_setup_mode_existing">Существующий ComfyUI</string>
+    <string name="worker_setup_mode_existing_desc">Подключите уже установленный ComfyUI.</string>
+    <string name="worker_setup_mode_existing_unavailable">Сейчас недоступен: артефакты установки не опубликованы.</string>
+    <string name="worker_setup_existing_warning">Animastor проверит вашу существующую установку ComfyUI. Ваши workflow и модели не будут удалены — установщик добавит или изменит только компоненты, необходимые выбранному профилю.</string>
+    <string name="worker_setup_platform_title">Платформа</string>
+    <string name="worker_setup_platform_ready">Установщик доступен</string>
+    <string name="worker_setup_platform_existing_only">Только существующий ComfyUI (установщик временно недоступен)</string>
+    <string name="worker_setup_platform_no_installer">Установщик временно недоступен. Может быть доступен существующий ComfyUI.</string>
+    <string name="worker_setup_platform_soon">Скоро</string>
+    <string name="worker_setup_platform_unavailable">Временно недоступен</string>
+    <string name="worker_setup_create_title">Создание воркера</string>
+    <string name="worker_setup_create_body">Воркер создаётся в вашем рабочем пространстве. Ключ воркера показывается один раз — установщик на GPU-машине запросит его.</string>
+    <string name="worker_setup_key_title">Ключ воркера (показывается один раз)</string>
+    <string name="worker_setup_key_installer_note">Установщик запросит этот ключ на GPU-машине (скрытый ввод). Ключ не сохраняется в состоянии установщика и не передаётся через Setup Contract.</string>
+    <string name="worker_setup_installer_title">Установщик GPU-воркера Animastor</string>
+    <string name="worker_setup_version_fmt">Версия: %1$s</string>
+    <string name="worker_setup_download_installer">Скачать установщик</string>
+    <string name="worker_setup_installer_unavailable">Установщик временно недоступен. Попробуйте позже.</string>
+    <string name="worker_setup_installer_down_existing_hint">Установщик временно недоступен. Если у вас уже есть ComfyUI — подключение через runtime-бандл доступно ниже.</string>
+    <string name="worker_setup_bundle_title">Runtime-бандл воркера</string>
+    <string name="worker_setup_download_bundle">Скачать runtime-бандл</string>
+    <string name="worker_setup_bundle_note">Установщик сам развернёт runtime-бандл воркера (v%1$s) — вручную файлы раскладывать не нужно.</string>
+    <string name="worker_setup_workflows_title">Workflows</string>
+    <string name="worker_setup_workflow_download">Скачать workflow</string>
+    <string name="worker_setup_workflow_editable">Workflow можно открыть и изменить в ComfyUI — это отправная точка, а не read-only.</string>
+    <string name="worker_setup_workflow_unavailable">Файл workflow временно недоступен.</string>
+    <string name="worker_setup_instructions_title">Инструкция по установке</string>
+    <string name="worker_setup_checksum">SHA-256</string>
+    <string name="worker_setup_verify_hint">После завершения установки статус воркера станет Online в течение ~30 секунд.</string>
+    <string name="worker_setup_step_create_worker_title">Создайте воркер</string>
+    <string name="worker_setup_step_create_worker_body">Готово — показанный выше ключ воркера выпущен для этого воркера.</string>
+    <string name="worker_setup_step_prereq_title">Требования</string>
+    <string name="worker_setup_step_prereq_body">Установщик проверит их на вашей машине; проверка выполняется локально.</string>
+    <string name="worker_setup_step_download_title">Скачайте установщик</string>
+    <string name="worker_setup_step_download_body">Скачайте пакет установщика и проверьте его контрольную сумму.</string>
+    <string name="worker_setup_step_download_bundle_title">Скачайте runtime-бандл воркера</string>
+    <string name="worker_setup_step_download_bundle_body">Скачайте runtime-бандл одним архивом и проверьте контрольную сумму — файлы по отдельности скачивать не нужно.</string>
+    <string name="worker_setup_step_unpack_bundle_title">Распакуйте бандл</string>
+    <string name="worker_setup_step_unpack_bundle_body">Распакуйте архив на GPU-машине.</string>
+    <string name="worker_setup_step_configure_worker_title">Настройте окружение воркера</string>
+    <string name="worker_setup_step_configure_worker_body">Скопируйте шаблон .env и впишите ключ воркера (показан выше один раз). HUB_URL — адрес этого сайта + /gpu.</string>
+    <string name="worker_setup_step_start_worker_title">Запустите воркер</string>
+    <string name="worker_setup_step_start_worker_body">Запустите процесс и оставьте его работать (tmux/screen или systemd). Воркер проверит ключ, найдёт ваш ComfyUI и подключится к хабу.</string>
+    <string name="worker_setup_step_run_title">Запустите установщик</string>
+    <string name="worker_setup_step_run_body">Распакуйте пакет и запустите установщик для выбранных профиля и режима. Он запросит ключ воркера интерактивно.</string>
+    <string name="worker_setup_step_verify_title">Проверка</string>
+    <string name="worker_setup_step_verify_body">Вернитесь сюда: статус сменится на Online после первого heartbeat (до ~30 секунд).</string>
+    <string name="worker_setup_step_installer_unavailable_title">Установщик временно недоступен</string>
+    <string name="worker_setup_step_installer_unavailable_body">Установщик сейчас не отдаётся этим деплоем. Может быть доступен сценарий «Существующий ComfyUI»: runtime-бандл воркера доступен.</string>
+    <string name="worker_setup_step_planned_title">Пока недоступно</string>
+    <string name="worker_setup_step_planned_body">Эта платформа/сценарий пока не опубликованы. Загляните позже.</string>
+    <!-- Расширенная модель статусов воркера (адаптер Setup Contract) -->
+    <string name="worker_status_connecting">Подключается</string>
+    <string name="worker_status_error">Ошибка</string>
+    <string name="worker_status_installing">Устанавливается</string>
+    <string name="worker_status_not_configured">Не настроен</string>
+    <!-- Детали воркера (статус + возможности из Setup Contract) -->
+    <string name="worker_details_title">Детали</string>
+    <string name="worker_details_gpu">GPU</string>
+    <string name="worker_details_vram">VRAM</string>
+    <string name="worker_details_profiles">Профили</string>
+    <string name="worker_details_workflows">Workflows</string>
+    <string name="worker_details_capabilities_empty">Данные о возможностях ещё не получены — они появятся после подключения воркера.</string>
+    <string name="worker_details_uninstall">Удалить воркер Animastor</string>
+    <!-- Окончательное удаление отозванного воркера (web parity: purge) -->
+    <string name="worker_delete">Удалить</string>
+    <string name="worker_delete_confirm">Удалить отозванный воркер? Он будет окончательно удалён вместе со всеми связанными данными. Действие необратимо.</string>
+    <string name="worker_deleted">Воркер удалён</string>
 
     <!-- AI Provider configuration (Experimental Beta — Phase 4, web parity: i18n ai_provider_*) -->
     <string name="ai_provider_title">AI провайдер</string>

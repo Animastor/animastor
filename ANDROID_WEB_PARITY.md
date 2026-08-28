@@ -1,6 +1,110 @@
 # ANDROID ↔ WEB PARITY AUDIT
 
-> **Date:** 2026-08-24 · **Commits audited:** web `f81a807` .. `25796bb` / android `20e6df4`
+> **Checkpoint 2:** 2026-08-28 · **Commits audited:** web `25796bb` .. `101a802c` / android → this commit
+> **Checkpoint 1:** 2026-08-24 · **Commits audited:** web `f81a807` .. `25796bb` / android `20e6df4`
+
+---
+
+## Checkpoint 2 — Private Worker Setup Contract (Phase 3 / 3.1)
+
+Web commits audited since checkpoint 1 (all commits touching `frontends/app`):
+
+| Web commit | Change | Android status |
+|---|---|---|
+| `9b5861d0` | Worker visibility isolation (private workers ≠ global counts) | **PARITY** for counts model + settings rows (done in the same commit); **ANDROID GAP → FIXED** for Generate screen section totals (§B) |
+| `32c55a37` | Web UI aligned with Android button layout | **PARITY** (web moved toward Android; no Android work) |
+| `c51f33f2` | Web Setup Center (Setup Contract wizard, extended statuses, details modal) — "Android untouched" | **ANDROID GAP → FIXED** (§C) |
+| `7e102997` | Phase 3.1 completion — mode/platform gating, bundle-based existing flow | **ANDROID GAP → FIXED** (§C) |
+| `1aa63707` | Settings sections reorder (AI provider, private workers, VBook, content generation) | **ANDROID GAP → FIXED** (§D) |
+| `8117efc3` | Permanent delete (purge) for revoked workers + single status badge + Details button | **ANDROID GAP → FIXED** (§E) |
+| `661eb0ec` | ru localization 'worker' → «воркер» | **ANDROID GAP → FIXED** (§F) |
+| `aee8e78a` | ru 'VBook Agents' → «Агенты VBook» | **ANDROID GAP → FIXED** (§F) |
+
+Backend-only commits after checkpoint 1 (installer phases 1–3.4, TTL stale-lease,
+ghost-GENERATING fixes, CPU-only installer + uninstaller `101a802c`, etc.) change
+no client contract beyond what the Setup Contract already projects — both clients
+consume them through the same endpoints. **BACKEND-ONLY.**
+
+### §B: Generate screen section totals include own private workers
+
+**Problem:** Web `GeneratePage.sectionState` (9b5861d0) computes each section
+total/active as system/shared pool + the caller's OWN private workers
+(`c[type] + c.private_${type}`). Android's `GenerateFragment` polling loop used
+the global fields only — a user's own private worker did not light up their
+Generate screen.
+
+**Fix:** `GenerateFragment.updateSectionHeader` calls now pass
+`counts.X + counts.private_X` / `counts.active_X + counts.private_active_X`
+for audio/image/video (vbook has no private variant). Same buckets, same
+isolation: foreign private workers are in neither bucket.
+
+**Files:** `ui/GenerateFragment.kt`
+
+### §C: Private Worker Setup Center (Setup Contract)
+
+**Problem:** Web got the full Setup Center (c51f33f2 + 7e102997): a wizard
+`profile → mode → platform → create → install` driven entirely by the unified
+Setup Contract API (`/api/v1/private-worker/setup/*`), extended worker statuses,
+a details modal with capabilities, and a capability-gated uninstall action.
+Android still had the Phase-3 name+type dialog with the legacy single-file
+instructions.
+
+**Fix (Android-native UX, equivalent behavior/states/constraints):**
+
+| Contract surface | Android implementation |
+|---|---|
+| `GET setup/profiles` | `BackendApi.setupProfiles()` + `SetupProfile` model; wizard step 1 cards (one per worker type, recommended profile, disk budget, draft badge) |
+| `GET setup/methods` | `BackendApi.setupMethods()` + `SetupMethod`/`SetupArtifactInfo` models; platform options + mode gating |
+| `GET setup/artifacts` | `BackendApi.setupArtifacts()` (contract parity; the wizard uses `methods` like the web) |
+| `GET setup/workflows` | `BackendApi.setupWorkflows()`; install step lists baselines with download (ACTION_VIEW) or honest "unavailable" |
+| `GET setup/instructions` | `BackendApi.setupInstructions()`; install step renders API-driven steps (localized title/body via step-id mapping, commands/checksums VERBATIM from the API) |
+| `GET setup/workers/:id` | `BackendApi.setupWorkerStatus()` + `SetupWorkerDetail`; Details dialog with extended status + capabilities |
+| `POST setup/plan` | `BackendApi.setupPlan()` + models (contract parity; preview-only — the web UI also does not render it) |
+| worker create/setup | Wizard step 4 creates via `POST /workers` (type derived from the selected profile); one-time key disclosed in step 5 |
+| installation plan | preview-only endpoint wired (no UI — same as web) |
+| capabilities/status | Details dialog: extended model `NOT_CONFIGURED/INSTALLING/CONNECTING/ONLINE/OFFLINE/ERROR/REVOKED`, GPU/VRAM/profiles/workflows only when reported; empty state otherwise; unknown statuses degrade to offline |
+| unavailable/blocked states | Modes/platforms never actionable without real artifacts: `linuxModeAvailability` + `platformOptions` state keys (ready / existing-only / no-installer / soon / unavailable); installer-down shows honest hints, never fake links |
+| version/URL/SHA | All from the contract (`resolveArtifactUrl` against `BuildConfig.BASE_URL` — web parity: `location.origin`); null URL ⇒ no button |
+| managed/existing/shared/isolated | Wizard offers managed/existing exactly when the artifacts allow (web parity); shared/isolated remain backend/CLI modes (the web wizard also does not offer them) |
+| legacy single-file flow | Kept ONLY as compatibility fallback when `setup/instructions` fails (web parity: `LegacyInstructions`) |
+
+**Pure logic:** `ui/WorkerSetupHelpers.kt` mirrors `workerSetup.ts` helpers 1:1
+(resolveArtifactUrl, groupProfilesByType, platformOptions, platformSelectable,
+linuxModeAvailability, pickMethod, setupStatusKey/Tone, wizard state machine,
+stepTitle/BodyKey, formatDiskBudget, bundleIsPrimaryArtifact).
+
+**Security invariants kept:** the Worker Key is a ONE-TIME disclosure in
+transient fragment state; never persisted (prefs/files/instance-state bundle),
+never in a URL, never logged; dropped on wizard close/`onDestroyView`.
+
+**Files:** `repository/WorkerSetupModels.kt` (new), `ui/WorkerSetupHelpers.kt`
+(new), `ui/WorkerSetupWizardFragment.kt` (new), `repository/BackendApi.kt`,
+`ui/PrivateWorkersFragment.kt`, `res/values*/strings.xml` (~80 new strings EN+RU).
+
+### §D: Settings sections order
+
+Web (1aa63707): AI provider → private workers → VBook → content generation.
+Android `fragment_settings.xml` reordered to match (was VBook → generation →
+private → AI provider). Click handlers unchanged (view-id bound).
+
+### §E: Purge + single status badge + Details
+
+Web (8117efc3): revoked workers get a permanent **Delete**
+(`DELETE /workers/:id/purge` — backend hard-deletes row + auth mirror +
+heartbeat + hub registry; active workers 409), the duplicate 'Revoked' text
+label was removed (badge only), and every worker got a **Details** button.
+
+**Fix:** Android row now shows Details (all workers) + Rotate/Revoke (active)
+or Details + Delete (revoked, confirm dialog → purge → toast). The
+`revokedLabel` view and `worker_revoked_label` string are removed — the status
+pill is the single badge. `BackendApi.purgeWorker()` added.
+
+### §F: ru localization
+
+values-ru aligned with web ru dictionary: `worker_settings_workers_title`
+'Workers' → «Воркеры»; `generate_section_*` → «Воркеры аудио/изображений/видео»;
+`generate_section_vbook` → «Агенты VBook». New Setup Center strings added with
+the «воркер» wording from the start. EN dictionary unchanged (web parity).
 
 ---
 
@@ -104,8 +208,16 @@
 | `GET /api/v1/book/{id}/agent-status` | `GET /api/v1/book/{id}/agent-status` | ✓ | ✓ |
 | `POST /api/v1/book/{id}/regenerate` | `POST /api/v1/book/{id}/regenerate` | ✓ | ✓ |
 | `PUT /api/v1/book/{id}/layer-config` | `PUT /api/v1/book/{id}/layer-config` | ✓ | ✓ |
-| `GET /api/v1/worker/counts` | `GET /api/v1/worker/counts` | ✓ | ✓ |
+| `GET /api/v1/worker/counts` | `GET /api/v1/worker/counts` | ✓ | ✓ — incl. `private_*` fields; Generate totals = system + own private (§B) |
 | SSE `progress-stream` | SSE `progress-stream` | ✓ | ✓ — OkHttp SSE vs fetch SSE |
+| `GET /api/v1/private-worker/setup/profiles` | `GET /api/v1/private-worker/setup/profiles` | ✓ | ✓ — wizard step 1 (§C) |
+| `GET /api/v1/private-worker/setup/methods` | `GET /api/v1/private-worker/setup/methods` | ✓ | ✓ — mode/platform gating + uninstall capability |
+| `GET /api/v1/private-worker/setup/artifacts` | `GET /api/v1/private-worker/setup/artifacts` | ✓ | ✓ — contract parity |
+| `GET /api/v1/private-worker/setup/workflows` | `GET /api/v1/private-worker/setup/workflows` | ✓ | ✓ — install step baselines |
+| `GET /api/v1/private-worker/setup/instructions` | `GET /api/v1/private-worker/setup/instructions` | ✓ | ✓ — legacy fallback on failure |
+| `GET /api/v1/private-worker/setup/workers/:id` | `GET /api/v1/private-worker/setup/workers/:id` | ✓ | ✓ — Details dialog |
+| `POST /api/v1/private-worker/setup/plan` | `POST /api/v1/private-worker/setup/plan` | ✓ | ✓ — preview-only, no UI (same as web) |
+| `DELETE /api/v1/workers/:id/purge` | `DELETE /api/v1/workers/:id/purge` | ✓ | ✓ — revoked-only permanent delete (§E) |
 
 ---
 
@@ -132,6 +244,9 @@
 | Playback position | In-memory only (`SharedPositionManager`) | Position is not persisted to SharedPreferences; same as web (in-memory signals). Acceptable for both |
 | Process recreation | Book session survives via SharedPreferences + init{} re-read | Equivalent to web localStorage restore on page reload |
 | Filename test | `FileFragment.getFileName()` + temp copy uses original name | Verified intact; uses `OpenableColumns.DISPLAY_NAME` — Android-native approach to SAF filename resolution |
+| Setup Center UX | Full-screen step wizard fragment vs web modal wizard | Native Android navigation; behavior/states/constraints are equivalent (same contract, same gating, same one-time key lifecycle) |
+| Artifact downloads | `ACTION_VIEW` intent (browser/manager) vs `<a download>` | Native Android approach to downloading served artifacts |
+| Wizard rotation | Selections survive config change; a lost install step degrades to step 1 (the one-time key is never saved) | Matches the web reload semantic; persisting the key would violate the one-time disclosure invariant |
 
 ---
 
@@ -162,11 +277,18 @@
 
 | Suite | Count | Status |
 |---|---|---|
-| `BookSessionStoreTest` (NEW) | 14 | All passing |
-| `PlayerGateTest` (existing) | 16 | All passing |
-| `BetaSettingsHelpersTest` (existing) | 15 | All passing |
-| **Android unit tests total** | **45** | **All passing** |
-| Web vitest | 101 (12 files) | All passing |
-| Web typecheck (`tsc --noEmit`) | — | Clean |
-| Android compileDebug | — | BUILD SUCCESSFUL |
+| `BookSessionStoreTest` | 14 | All passing |
+| `PlayerGateTest` | 16 | All passing |
+| `BetaSettingsHelpersTest` | 15 | All passing |
+| `WorkerSetupHelpersTest` (NEW — checkpoint 2) | 22 | All passing |
+| **Android unit tests total** | **67** | **All passing** |
+| Web vitest | 130 (web suite at `7e102997`) | Untouched in checkpoint 2 |
+| Android compileDebugKotlin | — | BUILD SUCCESSFUL |
 | Android assembleDebug | — | BUILD SUCCESSFUL (`app-debug.apk`) |
+
+`WorkerSetupHelpersTest` mirrors `frontends/app/src/features/workers/workerSetup.test.ts`
+(same fixtures/assertions): profile grouping, platform options & states,
+capability independence (installer down + bundle served), mode gating,
+artifact URL resolution (no fake links), wizard state machine (no credential
+field), extended status mapping (unknown → offline), bundle-primary rule,
+instruction step i18n mapping, disk budget formatting, legacy fallback intact.

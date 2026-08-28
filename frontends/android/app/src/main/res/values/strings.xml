@@ -563,7 +563,6 @@
     <string name="worker_revoke">Revoke</string>
     <string name="worker_revoke_confirm">Revoke this worker? It will no longer authenticate, poll, or return results. This is irreversible.</string>
     <string name="worker_revoked">Worker revoked</string>
-    <string name="worker_revoked_label">Revoked</string>
     <string name="worker_last_seen">Last seen:</string>
     <string name="worker_status_online">Online</string>
     <string name="worker_status_offline">Offline</string>
@@ -576,6 +575,91 @@
     <string name="worker_err_forbidden">Access forbidden</string>
     <string name="worker_err_not_found">Worker not found</string>
     <string name="worker_err_unavailable">Server unavailable, try again later</string>
+
+    <!-- Private Worker Setup Center (Phase 3.1, web parity: i18n worker_setup_*).
+         All facts (profiles, versions, URLs, checksums, instructions) come from
+         the Setup Contract API (/api/v1/private-worker/setup/*) — nothing is
+         hardcoded here except the labels. -->
+    <string name="worker_setup_center_title">Set up a GPU worker</string>
+    <string name="worker_setup_back">Back</string>
+    <string name="worker_setup_next">Next</string>
+    <string name="worker_setup_choose_profile">Choose what your GPU will generate</string>
+    <string name="worker_setup_recommended">Recommended profile</string>
+    <string name="worker_setup_set_up">Set up</string>
+    <string name="worker_setup_disk_budget">Disk budget: ~%1$s</string>
+    <string name="worker_setup_draft_badge">Experimental</string>
+    <string name="worker_setup_mode_title">How is your GPU machine configured?</string>
+    <string name="worker_setup_mode_managed">New / managed machine</string>
+    <string name="worker_setup_mode_managed_desc">The installer sets up ComfyUI and the worker runtime from scratch.</string>
+    <string name="worker_setup_mode_managed_unavailable">Not available right now: the installer is temporarily not published.</string>
+    <string name="worker_setup_mode_existing">Existing ComfyUI</string>
+    <string name="worker_setup_mode_existing_desc">Connect an already installed ComfyUI.</string>
+    <string name="worker_setup_mode_existing_unavailable">Not available right now: no installation artifacts are published.</string>
+    <string name="worker_setup_existing_warning">Animastor will inspect your existing ComfyUI installation. Your existing workflows and models will not be removed — the installer only adds or changes the components required for the selected profile.</string>
+    <string name="worker_setup_platform_title">Platform</string>
+    <string name="worker_setup_platform_ready">Installer available</string>
+    <string name="worker_setup_platform_existing_only">Existing ComfyUI only (installer temporarily unavailable)</string>
+    <string name="worker_setup_platform_no_installer">Installer temporarily unavailable. Existing ComfyUI setup may still be available.</string>
+    <string name="worker_setup_platform_soon">Coming soon</string>
+    <string name="worker_setup_platform_unavailable">Temporarily unavailable</string>
+    <string name="worker_setup_create_title">Create the worker</string>
+    <string name="worker_setup_create_body">The worker record is created in your workspace. Its Worker Key is shown once — the installer on the GPU machine will ask for it.</string>
+    <string name="worker_setup_key_title">Worker Key (shown once)</string>
+    <string name="worker_setup_key_installer_note">The installer asks for this key on the GPU machine (hidden input). The key is never stored in installer state and never passes through the Setup Contract.</string>
+    <string name="worker_setup_installer_title">Animastor GPU Worker Installer</string>
+    <string name="worker_setup_version_fmt">Version: %1$s</string>
+    <string name="worker_setup_download_installer">Download Installer</string>
+    <string name="worker_setup_installer_unavailable">The installer is temporarily unavailable. Try again later.</string>
+    <string name="worker_setup_installer_down_existing_hint">The installer is temporarily unavailable. If you already have ComfyUI, connecting it via the runtime bundle is available below.</string>
+    <string name="worker_setup_bundle_title">Worker runtime bundle</string>
+    <string name="worker_setup_download_bundle">Download runtime bundle</string>
+    <string name="worker_setup_bundle_note">The installer sets up the worker runtime bundle (v%1$s) automatically — no manual file handling.</string>
+    <string name="worker_setup_workflows_title">Workflows</string>
+    <string name="worker_setup_workflow_download">Download workflow</string>
+    <string name="worker_setup_workflow_editable">You can open and edit this workflow in ComfyUI — it is a starting point, not read-only.</string>
+    <string name="worker_setup_workflow_unavailable">The workflow file is temporarily unavailable.</string>
+    <string name="worker_setup_instructions_title">Installation instructions</string>
+    <string name="worker_setup_checksum">SHA-256</string>
+    <string name="worker_setup_verify_hint">After the installer finishes, the worker status changes to Online within ~30 seconds.</string>
+    <string name="worker_setup_step_create_worker_title">Create the worker</string>
+    <string name="worker_setup_step_create_worker_body">Done — the Worker Key above was issued for this worker.</string>
+    <string name="worker_setup_step_prereq_title">Prerequisites</string>
+    <string name="worker_setup_step_prereq_body">The installer checks these on your machine; detection happens locally.</string>
+    <string name="worker_setup_step_download_title">Download the installer</string>
+    <string name="worker_setup_step_download_body">Download the installer package and verify its checksum.</string>
+    <string name="worker_setup_step_download_bundle_title">Download the worker runtime bundle</string>
+    <string name="worker_setup_step_download_bundle_body">Download the runtime bundle as a single archive and verify its checksum — no manual per-file downloads.</string>
+    <string name="worker_setup_step_unpack_bundle_title">Unpack the bundle</string>
+    <string name="worker_setup_step_unpack_bundle_body">Unpack the archive on the GPU machine.</string>
+    <string name="worker_setup_step_configure_worker_title">Configure the worker</string>
+    <string name="worker_setup_step_configure_worker_body">Copy the .env template and enter your Worker Key (shown once above). HUB_URL is this site address + /gpu.</string>
+    <string name="worker_setup_step_start_worker_title">Start the worker</string>
+    <string name="worker_setup_step_start_worker_body">Start the process and keep it running (tmux/screen or systemd). The worker verifies the key, finds your ComfyUI and connects to the hub.</string>
+    <string name="worker_setup_step_run_title">Run the installer</string>
+    <string name="worker_setup_step_run_body">Unpack the package and run the installer for the selected profile and mode. It asks for the Worker Key interactively.</string>
+    <string name="worker_setup_step_verify_title">Verify</string>
+    <string name="worker_setup_step_verify_body">Return here: the status changes to Online after the first heartbeat (within ~30 seconds).</string>
+    <string name="worker_setup_step_installer_unavailable_title">Installer temporarily unavailable</string>
+    <string name="worker_setup_step_installer_unavailable_body">The installer is temporarily unavailable in this deployment. The “Existing ComfyUI” flow may still be available: the worker runtime bundle is served.</string>
+    <string name="worker_setup_step_planned_title">Not available yet</string>
+    <string name="worker_setup_step_planned_body">This platform/flow is not published yet. Check back later.</string>
+    <!-- Extended worker status model (Setup Contract adapter) -->
+    <string name="worker_status_connecting">Connecting</string>
+    <string name="worker_status_error">Error</string>
+    <string name="worker_status_installing">Installing</string>
+    <string name="worker_status_not_configured">Not configured</string>
+    <!-- Worker details (Setup Contract status + capabilities) -->
+    <string name="worker_details_title">Details</string>
+    <string name="worker_details_gpu">GPU</string>
+    <string name="worker_details_vram">VRAM</string>
+    <string name="worker_details_profiles">Profiles</string>
+    <string name="worker_details_workflows">Workflows</string>
+    <string name="worker_details_capabilities_empty">No capability data yet — it appears once the worker connects.</string>
+    <string name="worker_details_uninstall">Uninstall Animastor worker</string>
+    <!-- Permanent delete of a revoked worker (web parity: purge) -->
+    <string name="worker_delete">Delete</string>
+    <string name="worker_delete_confirm">Delete the revoked worker? It will be permanently removed along with all related data. This is irreversible.</string>
+    <string name="worker_deleted">Worker deleted</string>
 
     <!-- AI Provider configuration (Experimental Beta — Phase 4, web parity: i18n ai_provider_*) -->
     <string name="ai_provider_title">AI Provider</string>

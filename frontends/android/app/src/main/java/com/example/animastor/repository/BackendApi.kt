@@ -647,4 +647,57 @@ interface BackendApi {
     suspend fun revokeWorker(
         @Path("workerId") workerId: String
     ): RevokeWorkerResponse
+
+    // Permanent delete of an ALREADY REVOKED worker (web parity: 8117efc3).
+    // Hard-deletes the registry row + every derived state (auth mirror,
+    // heartbeat, hub registry). Active workers are never purgeable (409).
+    @HTTP(method = "DELETE", path = "/api/v1/workers/{workerId}/purge", hasBody = false)
+    suspend fun purgeWorker(
+        @Path("workerId") workerId: String
+    ): PurgeWorkerResponse
+
+    // ======================================================
+    // Private Worker Setup Contract (Phase 3 / 3.1)
+    // ======================================================
+    // Web parity: frontends/app features/workers/workerSetup.ts — the SAME
+    // unified contract (/api/v1/private-worker/setup/*) serves both clients.
+    // Registered users only (guests 403, anonymous 401); workspace_id is
+    // server-resolved. The contract NEVER returns token/token_hash/secrets;
+    // download URLs are origin-relative constants authored by the backend.
+
+    @GET("/api/v1/private-worker/setup/profiles")
+    suspend fun setupProfiles(
+        @Query("type") type: String? = null
+    ): SetupProfilesResponse
+
+    @GET("/api/v1/private-worker/setup/methods")
+    suspend fun setupMethods(): SetupMethodsResponse
+
+    @GET("/api/v1/private-worker/setup/artifacts")
+    suspend fun setupArtifacts(
+        @Query("platform") platform: String = "linux"
+    ): SetupPlatformArtifacts
+
+    @GET("/api/v1/private-worker/setup/workflows")
+    suspend fun setupWorkflows(
+        @Query("profile_id") profileId: String? = null
+    ): SetupWorkflowsResponse
+
+    @GET("/api/v1/private-worker/setup/instructions")
+    suspend fun setupInstructions(
+        @Query("profile_id") profileId: String,
+        @Query("platform") platform: String,
+        @Query("mode") mode: String
+    ): SetupInstructions
+
+    @GET("/api/v1/private-worker/setup/workers/{workerId}")
+    suspend fun setupWorkerStatus(
+        @Path("workerId") workerId: String
+    ): SetupWorkerDetailResponse
+
+    // Preview-only installation plan — the backend NEVER executes it.
+    @POST("/api/v1/private-worker/setup/plan")
+    suspend fun setupPlan(
+        @Body request: SetupPlanRequest
+    ): SetupPlanResponse
 }

@@ -6,14 +6,10 @@ import android.content.Context
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
-import android.text.InputType
-import android.util.TypedValue
 import android.view.LayoutInflater
 import android.view.View
-import android.widget.ArrayAdapter
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -26,24 +22,25 @@ import com.example.animastor.network.RetrofitClient
 import com.example.animastor.repository.PrivateWorker
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
-import com.google.android.material.textfield.TextInputEditText
-import com.google.android.material.textfield.TextInputLayout
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import retrofit2.HttpException
 
 /**
- * Private Worker management (Experimental Beta — Phase 3). Web parity:
+ * Private Worker management (Experimental Beta — Phase 3 / 3.1). Web parity:
  * frontends/app /settings/private-workers (PrivateWorkersSection.tsx).
  *
- * List + create + rotate + revoke for the CALLER's workspace workers, served
- * by /api/v1/workers (server-resolves workspace_id — never from the client).
- * Registered users only: guests get 401/403 by design (a temporary workspace
- * must never own long-lived GPU credentials).
+ * List + details + rotate + revoke + purge (permanent delete of a revoked
+ * worker) for the CALLER's workspace workers, served by /api/v1/workers
+ * (server-resolves workspace_id — never from the client). Worker CREATION
+ * lives in the Setup Center wizard (WorkerSetupWizardFragment — web parity:
+ * SetupWizard), which drives the unified Setup Contract. Registered users
+ * only: guests get 401/403 by design (a temporary workspace must never own
+ * long-lived GPU credentials).
  *
  * SECURITY: the plaintext worker credential (token) is a ONE-TIME disclosure
- * from the server. It lives ONLY transiently in this fragment's memory while
- * the disclosure dialog is open and is NEVER written to SharedPreferences,
+ * from the server. It lives ONLY transiently in fragment memory while the
+ * disclosure dialog is open and is NEVER written to SharedPreferences,
  * files, URLs or logs. Closing the dialog drops it.
  */
 class PrivateWorkersFragment : Fragment(R.layout.fragment_private_workers) {
@@ -59,9 +56,21 @@ class PrivateWorkersFragment : Fragment(R.layout.fragment_private_workers) {
         b.toolbar.setNavigationOnClickListener {
             parentFragmentManager.popBackStack()
         }
-        b.addWorkerButton.setOnClickListener { showAddDialog() }
+        // Setup Center (Phase 3.1) — canonical onboarding flow. The wizard
+        // owns worker creation + one-time key disclosure + install artifacts.
+        b.addWorkerButton.setOnClickListener { openSetupCenter() }
 
         load()
+    }
+
+    private fun openSetupCenter() {
+        if (busy) return
+        val fragment = WorkerSetupWizardFragment()
+        fragment.onWizardDone = { load() }
+        parentFragmentManager.beginTransaction()
+            .add(R.id.nav_host_container, fragment, "WorkerSetupWizardFragment")
+            .addToBackStack(null)
+            .commit()
     }
 
     private fun load() {
@@ -101,14 +110,16 @@ class PrivateWorkersFragment : Fragment(R.layout.fragment_private_workers) {
         val status = row.findViewById<TextView>(R.id.workerStatus)
         val meta = row.findViewById<TextView>(R.id.workerMeta)
         val trouble = row.findViewById<TextView>(R.id.workerTrouble)
-        val actions = row.findViewById<LinearLayout>(R.id.workerActions)
+        val details = row.findViewById<MaterialButton>(R.id.detailsButton)
         val rotate = row.findViewById<MaterialButton>(R.id.rotateButton)
         val revoke = row.findViewById<MaterialButton>(R.id.revokeButton)
-        val revokedLabel = row.findViewById<TextView>(R.id.revokedLabel)
+        val delete = row.findViewById<MaterialButton>(R.id.deleteButton)
 
         name.text = w.name ?: ""
 
-        // Status pill — ONLINE green, OFFLINE muted, REVOKED error.
+        // Status pill — the SINGLE status badge (web parity 8117efc3: the
+        // duplicate 'Revoked' label is gone). ONLINE green, OFFLINE muted,
+        // REVOKED error.
         val statusText = when (w.status) {
             "ONLINE" -> getString(R.string.worker_status_online)
             "REVOKED" -> getString(R.string.worker_status_revoked)
@@ -144,9 +155,15 @@ class PrivateWorkersFragment : Fragment(R.layout.fragment_private_workers) {
             trouble.visibility = View.VISIBLE
         }
 
+        // Details for EVERY worker (extended Setup Contract status model +
+        // capabilities). Rotate/Revoke only while active; permanent Delete
+        // only once revoked (web parity 8117efc3).
+        details.setOnClickListener { showDetailsDialog(w) }
         if (w.status == "REVOKED") {
-            actions.visibility = View.GONE
-            revokedLabel.visibility = View.VISIBLE
+            rotate.visibility = View.GONE
+            revoke.visibility = View.GONE
+            delete.visibility = View.VISIBLE
+            delete.setOnClickListener { onDelete(w) }
         } else {
             rotate.setOnClickListener { onRotate(w) }
             revoke.setOnClickListener { onRevoke(w) }
@@ -154,110 +171,211 @@ class PrivateWorkersFragment : Fragment(R.layout.fragment_private_workers) {
         return row
     }
 
-    // ── Add worker dialog (name + type) ─────────────────────────────────
+    // ── Permanent delete of an ALREADY REVOKED worker (web parity 8117efc3) ──
+    // The backend hard-deletes the registry row and clears every derived state
+    // (auth mirror, heartbeat, hub GPU registry), so the worker can never
+    // resurface (reload/re-login). Active workers are never purgeable (409).
 
-    private fun showAddDialog() {
+    private fun onDelete(w: PrivateWorker) {
         if (busy) return
-        val activity = requireActivity()
-        fun dp(v: Int) = (v * resources.displayMetrics.density + 0.5f).toInt()
+        val workerId = w.worker_id ?: return
+        val ctx = requireContext()
 
-        val root = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
-        val nameLayout = TextInputLayout(
-            activity, null, com.google.android.material.R.attr.textInputOutlinedStyle
-        ).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-            hint = getString(R.string.worker_name)
-            addView(TextInputEditText(activity).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-                )
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                inputType = InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-                hint = getString(R.string.worker_name_hint)
-            })
-        }
-        val nameInput = nameLayout.editText as TextInputEditText
-
-        val typeLabel = TextView(activity).apply {
-            text = getString(R.string.worker_type_label)
-            textSize = 13f
-            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
-            setPadding(0, dp(12), 0, dp(4))
-        }
-        val typeSpinner = Spinner(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(40))
-            background = androidx.core.content.ContextCompat.getDrawable(activity, R.drawable.spinner_bg)
-        }
-        val typeOptions = BetaSettingsHelpers.VALID_WORKER_TYPES
-        val typeAdapter = ArrayAdapter(
-            activity, android.R.layout.simple_spinner_item,
-            typeOptions.map { wt ->
-                when (wt) {
-                    "audio" -> getString(R.string.layer_audio)
-                    "image" -> getString(R.string.layer_image)
-                    else -> getString(R.string.layer_video)
-                }
-            }
-        )
-        typeAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        typeSpinner.adapter = typeAdapter
-
-        val errorView = TextView(activity).apply {
-            textSize = 13f
-            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorError))
-            visibility = View.GONE
-            setPadding(0, dp(8), 0, 0)
-        }
-
-        root.addView(nameLayout)
-        root.addView(typeLabel)
-        root.addView(typeSpinner)
-        root.addView(errorView)
+        val notice = LayoutInflater.from(ctx).inflate(R.layout.dialog_delete_vbook, null)
+        notice.findViewById<TextView>(R.id.dialogMessage).text = getString(R.string.worker_delete_confirm)
 
         AppDialogs.action(
-            ctx = activity,
-            title = getString(R.string.worker_add),
-            content = root,
+            ctx = ctx,
+            title = getString(R.string.worker_delete),
+            content = notice,
             cancelText = getString(R.string.dialog_cancel),
-            actionText = getString(R.string.worker_create),
+            actionText = getString(android.R.string.ok),
+            destructive = true,
         ) { dlg ->
-            val name = (nameInput.text ?: "").toString()
-            val type = typeOptions.getOrElse(typeSpinner.selectedItemPosition) { "audio" }
-            val v = BetaSettingsHelpers.validateCreateInput(name, type)
-            if (!v.ok) {
-                errorView.text = getString(stringResForWorkerError(v.errorKey))
-                errorView.visibility = View.VISIBLE
-                return@action
-            }
             dlg.dismiss()
-            createWorker(v.name, v.workerType)
+            busy = true
+            setBusy(true)
+            lifecycleScope.launch {
+                try {
+                    RetrofitClient.api.purgeWorker(workerId)
+                    Toast.makeText(requireContext(), R.string.worker_deleted, Toast.LENGTH_SHORT).show()
+                    load()
+                } catch (e: Throwable) {
+                    showError(humanError(e))
+                } finally {
+                    busy = false
+                    setBusy(false)
+                }
+            }
         }.show()
     }
 
-    private fun createWorker(name: String, workerType: String) {
-        if (busy) return
-        busy = true
-        setBusy(true)
-        lifecycleScope.launch {
-            try {
-                val res = RetrofitClient.api.createWorker(
-                    com.example.animastor.repository.CreateWorkerRequest(name, workerType)
-                )
-                // Disclose the credential ONE time, then drop it on Done.
-                showCredentialDisclosure(res.token, res.worker)
-                load()
-            } catch (e: Throwable) {
-                showError(humanError(e))
-            } finally {
-                busy = false
-                setBusy(false)
-            }
+    // ── Worker details (Setup Contract extended status + capabilities) ────
+    // Web parity: WorkerDetailsModal — shows ONLY real backend fields from
+    // GET /private-worker/setup/workers/:id (extended status, last seen,
+    // GPU/VRAM/profiles/workflows when reported). Null data is never invented.
+    // The uninstall action exists ONLY if the backend reports the uninstaller
+    // artifact as actually available (Phase 3.1 §19 — no fake actions).
+
+    private fun showDetailsDialog(w: PrivateWorker) {
+        val workerId = w.worker_id ?: return
+        val activity = requireActivity()
+        fun dp(v: Int) = (v * resources.displayMetrics.density + 0.5f).toInt()
+
+        val root = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+
+        val statusView = TextView(activity).apply {
+            textSize = 13f
+            setTypeface(Typeface.DEFAULT_BOLD)
         }
+        val metaView = TextView(activity).apply {
+            textSize = 12f
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+            setPadding(0, dp(4), 0, 0)
+        }
+        val capsView = TextView(activity).apply {
+            textSize = 12f
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+            setLineSpacing(0f, 1.3f)
+            setPadding(0, dp(10), 0, 0)
+            visibility = View.GONE
+        }
+        val loadingView = TextView(activity).apply {
+            text = getString(R.string.play_loading)
+            textSize = 12f
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+            setPadding(0, dp(10), 0, 0)
+        }
+        val errorTextView = TextView(activity).apply {
+            textSize = 12f
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorError))
+            setPadding(0, dp(10), 0, 0)
+            visibility = View.GONE
+        }
+        val uninstallBtn = MaterialButton(activity, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(40)).apply { topMargin = dp(12) }
+            text = getString(R.string.worker_details_uninstall)
+            visibility = View.GONE
+        }
+
+        root.addView(statusView)
+        root.addView(metaView)
+        root.addView(loadingView)
+        root.addView(errorTextView)
+        root.addView(capsView)
+        root.addView(uninstallBtn)
+
+        val typeLabel = when (w.worker_type) {
+            "audio" -> getString(R.string.layer_audio)
+            "image" -> getString(R.string.layer_image)
+            else -> getString(R.string.layer_video)
+        }
+
+        fun renderBaseStatus(statusText: String, color: Int, lastSeen: Long?) {
+            statusView.text = statusText
+            statusView.setTextColor(color)
+            metaView.text = "$typeLabel \u00B7 ${getString(R.string.worker_last_seen)} ${BetaSettingsHelpers.formatLastSeen(lastSeen)}"
+        }
+        renderBaseStatus(
+            when (w.status) {
+                "ONLINE" -> getString(R.string.worker_status_online)
+                "REVOKED" -> getString(R.string.worker_status_revoked)
+                else -> getString(R.string.worker_status_offline)
+            },
+            when (w.status) {
+                "ONLINE" -> activity.getColor(R.color.cinema_success)
+                "REVOKED" -> MaterialColors.getColor(statusView, com.google.android.material.R.attr.colorError)
+                else -> MaterialColors.getColor(statusView, com.google.android.material.R.attr.colorOnSurfaceVariant)
+            },
+            w.last_seen
+        )
+
+        val dialog = AppDialogs.action(
+            ctx = activity,
+            title = getString(R.string.worker_details_title),
+            content = root,
+            cancelText = getString(R.string.dialog_cancel),
+            actionText = getString(R.string.worker_done),
+        ) { dlg -> dlg.dismiss() }
+
+        lifecycleScope.launch {
+            var detail: com.example.animastor.repository.SetupWorkerDetail? = null
+            try {
+                detail = RetrofitClient.api.setupWorkerStatus(workerId).worker
+            } catch (e: Throwable) {
+                if (isAdded) {
+                    errorTextView.text = humanError(e)
+                    errorTextView.visibility = View.VISIBLE
+                }
+            }
+            if (!isAdded) return@launch
+            loadingView.visibility = View.GONE
+            val d = detail
+            if (d != null) {
+                // Extended status model (CONNECTING/ERROR/INSTALLING/…) — the
+                // pill tone degrades to offline for anything unknown.
+                val extText = getString(stringResForSetupStatus(WorkerSetupHelpers.setupStatusKey(d.status)))
+                val extColor = when (WorkerSetupHelpers.setupStatusTone(d.status)) {
+                    "online" -> activity.getColor(R.color.cinema_success)
+                    "revoked" -> MaterialColors.getColor(statusView, com.google.android.material.R.attr.colorError)
+                    else -> MaterialColors.getColor(statusView, com.google.android.material.R.attr.colorOnSurfaceVariant)
+                }
+                renderBaseStatus(extText, extColor, d.last_seen)
+
+                val caps = d.capabilities
+                if (caps != null) {
+                    val lines = mutableListOf<String>()
+                    caps.gpu?.let { gpu ->
+                        if (gpu.name != null || gpu.vram_gb != null) {
+                            val vram = if (gpu.vram_gb != null) " \u00B7 ${getString(R.string.worker_details_vram)}: ${gpu.vram_gb} GB" else ""
+                            lines.add("${getString(R.string.worker_details_gpu)}: ${gpu.name ?: "\u2014"}$vram")
+                        }
+                    }
+                    if (!caps.profiles.isNullOrEmpty()) {
+                        lines.add("${getString(R.string.worker_details_profiles)}: ${caps.profiles.joinToString(", ")}")
+                    }
+                    if (!caps.workflows.isNullOrEmpty()) {
+                        lines.add("${getString(R.string.worker_details_workflows)}: ${caps.workflows.joinToString(", ")}")
+                    }
+                    capsView.text = if (lines.isEmpty()) getString(R.string.worker_details_capabilities_empty)
+                                    else lines.joinToString("\n")
+                    capsView.visibility = View.VISIBLE
+                } else {
+                    capsView.text = getString(R.string.worker_details_capabilities_empty)
+                    capsView.visibility = View.VISIBLE
+                }
+            }
+            // Uninstall action ONLY when the backend really serves the artifact.
+            try {
+                val methods = RetrofitClient.api.setupMethods().methods
+                val linux = methods.find { it.platform == "linux" }
+                if (isAdded && linux != null && linux.uninstaller.available) {
+                    val url = WorkerSetupHelpers.resolveArtifactUrl(linux.uninstaller.download_url, BuildConfig.BASE_URL)
+                    if (url != null) {
+                        uninstallBtn.setOnClickListener {
+                            try {
+                                startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
+                            } catch (_: Exception) {
+                                Toast.makeText(requireContext(), R.string.worker_copy_failed, Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        uninstallBtn.visibility = View.VISIBLE
+                    }
+                }
+            } catch (_: Throwable) { /* stay hidden — no fake actions */ }
+        }
+
+        dialog.show()
+    }
+
+    private fun stringResForSetupStatus(key: String): Int = when (key) {
+        "worker_status_online" -> R.string.worker_status_online
+        "worker_status_revoked" -> R.string.worker_status_revoked
+        "worker_status_connecting" -> R.string.worker_status_connecting
+        "worker_status_error" -> R.string.worker_status_error
+        "worker_status_installing" -> R.string.worker_status_installing
+        "worker_status_not_configured" -> R.string.worker_status_not_configured
+        else -> R.string.worker_status_offline
     }
 
     private fun onRotate(w: PrivateWorker) {
@@ -469,13 +587,6 @@ class PrivateWorkersFragment : Fragment(R.layout.fragment_private_workers) {
         val b = binding ?: return
         b.errorLabel.text = msg
         b.errorLabel.visibility = View.VISIBLE
-    }
-
-    private fun stringResForWorkerError(key: String?): Int = when (key) {
-        "worker_name_required" -> R.string.worker_name_required
-        "worker_name_too_long" -> R.string.worker_name_too_long
-        "worker_type_invalid" -> R.string.worker_type_invalid
-        else -> R.string.auth_error
     }
 
     /** Map an API error to a user-facing localized message (web parity:
