@@ -517,7 +517,7 @@ const dict = {
     generate_global_section: 'Общее',
     generate_all: 'Генерировать всё',
     stop_all: 'Стоп всё',
-    generate_section_vbook: 'VBook Agents: {0}',
+    generate_section_vbook: 'Агенты VBook: {0}',
     generate_section_audio: 'Воркеры аудио: {0}',
     generate_section_image: 'Воркеры изображений: {0}',
     generate_section_video: 'Воркеры видео: {0}',
