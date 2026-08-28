@@ -62,22 +62,29 @@ async function checkInFlightMarker(redis, inFlightKey, bookId, chapterId, sceneI
         return { inFlight: true, owner };
     }
 
-    // Stale: владелец мёртв. Удаляем compare-and-delete (значение могло
-    // смениться на конкурентный dispatch между GET и DEL).
+    // Stale: владелец мёртв. Удаляем АТОМАРНЫМ compare-and-delete (один Lua-
+    // шаг): между проверкой живости и удалением маркер мог быть пере-создан
+    // новым dispatch'ем — чужой маркер удалять нельзя.
+    let cas = { deleted: false, reason: 'missing' };
     try {
-        const current = await redis.get(inFlightKey);
-        if (current === owner) {
-            await redis.del(inFlightKey);
-        }
+        const dispatchEngine = require('../runtime/dispatch-engine');
+        cas = await dispatchEngine.compareAndDeleteMarker(redis, inFlightKey, owner);
     } catch (e) {
         helpers.warn(`[IU-IN-FLIGHT-STALE] Failed to clear stale marker ${inFlightKey}: ${e.message}`);
     }
-    try {
-        const runtimeMetrics = require('../runtime/runtime-metrics');
-        await runtimeMetrics.incrementCounter(redis, 'iuInFlightStaleCleared');
-    } catch (_) {}
-    helpers.log(`[IU-IN-FLIGHT-STALE] Cleared stale marker ${inFlightKey} (owner=${owner}, active_dispatch=${activeDispatchId || 'none'})`);
-    return { inFlight: false, staleCleared: true, owner };
+    if (!cas.deleted && cas.reason === 'owner_changed') {
+        // Маркер успел сменить владельца на живой dispatch — консервативно
+        // считаем IU in-flight (self-heal повторится на следующем dispatch).
+        return { inFlight: true, owner };
+    }
+    if (cas.deleted) {
+        try {
+            const runtimeMetrics = require('../runtime/runtime-metrics');
+            await runtimeMetrics.incrementCounter(redis, 'iuInFlightStaleCleared');
+        } catch (_) {}
+        helpers.log(`[IU-IN-FLIGHT-STALE] Cleared stale marker ${inFlightKey} (owner=${owner}, active_dispatch=${activeDispatchId || 'none'})`);
+    }
+    return { inFlight: false, staleCleared: cas.deleted, owner };
 }
 
 async function saveIUMetadata(buildId, bookId, chapterId, sceneId, unit, sceneDuration, fullText, sceneOrder) {

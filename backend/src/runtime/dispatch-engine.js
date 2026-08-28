@@ -306,9 +306,46 @@ async function unregisterInFlightMarker(redis, dispatchId, markerKey) {
 }
 
 /**
+ * Atomic compare-and-delete for an owned marker (single Lua step).
+ * GET+compare+DEL отдельными командами оставляли TOCTOU-окно: claim
+ * finalizeDispatch освобождает lease/metadata ДО очистки маркеров (шаг 2.5),
+ * поэтому конкурентный новый dispatch мог успеть пере-создать маркер между
+ * GET и DEL — и запоздалый cleanup старого dispatch'а удалил бы чужой маркер.
+ * Returns:
+ *   { deleted: true }                     — marker removed (we owned it)
+ *   { deleted: false, reason: 'missing' } — key already gone
+ *   { deleted: false, reason: 'owner_changed' } — re-owned by another dispatch
+ */
+const COMPARE_AND_DELETE_MARKER_SCRIPT = `
+    local key = KEYS[1]
+    local expected = ARGV[1]
+
+    local current = redis.call('GET', key)
+
+    if not current then
+        return 0
+    end
+
+    if current ~= ARGV[1] then
+        return -1
+    end
+
+    redis.call('DEL', KEYS[1])
+
+    return 1
+`;
+
+async function compareAndDeleteMarker(redis, markerKey, expectedOwner) {
+    const result = Number(await redis.eval(COMPARE_AND_DELETE_MARKER_SCRIPT, 1, markerKey, expectedOwner));
+    if (result === 1) return { deleted: true };
+    if (result === 0) return { deleted: false, reason: 'missing' };
+    return { deleted: false, reason: 'owner_changed' };
+}
+
+/**
  * Release all iu-in-flight markers still owned by a dispatch (i.e. markers
- * whose GPU job was NEVER actually sent). Compare-and-delete by dispatch_id:
- * a marker re-created by a newer dispatch is never touched.
+ * whose GPU job was NEVER actually sent). Atomic compare-and-delete by
+ * dispatch_id: a marker re-created by a newer dispatch is never touched.
  * Returns { removed, kept, errors } — errors MUST NOT be swallowed by callers.
  */
 async function releaseDispatchInFlightMarkers(redis, dispatchId) {
@@ -328,15 +365,14 @@ async function releaseDispatchInFlightMarkers(redis, dispatchId) {
     let kept = 0;
     for (const markerKey of members || []) {
         try {
-            const owner = await redis.get(markerKey);
-            if (owner === null) continue; // already gone (TTL/explicit cleanup)
-            if (owner !== dispatchId) {
+            const cas = await compareAndDeleteMarker(redis, markerKey, dispatchId);
+            if (cas.deleted) {
+                removed++;
+            } else if (cas.reason === 'owner_changed') {
                 // Re-owned by a newer dispatch — a job may really be running.
                 kept++;
-                continue;
             }
-            await redis.del(markerKey);
-            removed++;
+            // 'missing' — already gone (TTL/explicit cleanup), nothing to do
         } catch (err) {
             errors.push(`${markerKey}:${err.message}`);
         }
@@ -1502,6 +1538,7 @@ module.exports = {
     registerInFlightMarker,
     unregisterInFlightMarker,
     releaseDispatchInFlightMarkers,
+    compareAndDeleteMarker,
     IU_IN_FLIGHT_INDEX_PREFIX,
     IU_IN_FLIGHT_MARKER_TTL_S,
 
