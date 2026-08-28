@@ -400,19 +400,27 @@ async function logDispatchEvent(redis, bookId, chapterId, sceneId, eventType, st
 
 /**
  * Check if dispatch should be skipped (duplicate detection).
+ *
+ * Liveness uses the same canonical signal as reconciliation-engine: the
+ * lease's REMAINING TTL (kept pinned by renewal), never metadata.started_at.
+ * A live renewed lease — however old — is `lease_active` (skip, no duplicate);
+ * only a lease whose TTL decayed below target - grace (renewals stopped) is
+ * `stale_lease` and may be recovered. (audit c8b79f6: the started_at age
+ * heuristic here mirrored the reconciliation bug that re-dispatched live
+ * video jobs every ~28 min.)
  */
 async function shouldSkipDispatch(redis, bookId, chapterId, sceneId, stage) {
     const { leaseKey, token } = await getLeaseData(redis, bookId, chapterId, sceneId, stage);
 
     if (token) {
-        // Lease exists - check if it's stale
-        const meta = await getDispatchMetadata(redis, bookId, chapterId, sceneId, stage);
-        const leaseAge = token ? (Date.now() - (meta?.started_at || 0)) / 1000 : 0;
+        // Lease exists — decide liveness by remaining TTL, not started_at age.
+        const leaseTtlS = await redis.ttl(leaseKey);
 
-        if (leaseAge > LEASE_TTLS[stage] * 0.9) {
-            // Lease is approaching expiry - it's stale
-            warn(`STALE_LEASE: ${bookId}/${chapterId}/${sceneId}:${stage} (${Math.floor(leaseAge)}s old)`);
-            return { skip: true, reason: 'stale_lease', leaseKey };
+        if (leaseManager.isLeaseStale(leaseTtlS, stage)) {
+            // Renewals stopped and the TTL decayed past the grace window — the
+            // owner is gone. Surface the token so the caller can release it.
+            warn(`STALE_LEASE: ${bookId}/${chapterId}/${sceneId}:${stage} (ttl=${leaseTtlS}s, target=${leaseManager.getRenewalTargetTtlS(stage)}s)`);
+            return { skip: true, reason: 'stale_lease', leaseKey, currentToken: token };
         }
 
         return { skip: true, reason: 'lease_active', leaseKey, currentToken: token };
@@ -493,8 +501,11 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
         const shouldSkip = await shouldSkipDispatch(redis, bookId, chapterId, sceneId, stage);
         if (shouldSkip.skip) {
             if (shouldSkip.reason === 'stale_lease') {
-                // Try to recover stale lease
-                await releaseStageLease(redis, shouldSkip.leaseKey, shouldSkip.currentToken);
+                // Recover the stale lease through the canonical cancellation
+                // path (lease + owned quota + renewal timer + completion
+                // marker) instead of a bare lease delete — a bare delete would
+                // leak the quota slot and the in-memory renewal timer.
+                await cancelActiveDispatch(redis, bookId, chapterId, sceneId, stage, 'stale_lease_recovery');
                 // Fall through to create new lease
             } else {
                 await logDispatchEvent(redis, bookId, chapterId, sceneId, 'SKIPPED_DUPLICATE', stage, {
@@ -1365,7 +1376,9 @@ module.exports = {
 
     // Dispatch control
     dispatchStage,
+    shouldSkipDispatch,
     finalizeDispatch,
+    cancelActiveDispatch,
     markDispatchCompleted,
     markDispatchFailed,
 

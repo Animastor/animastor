@@ -530,6 +530,202 @@ describe('checkStaleLocks', () => {
 });
 
 // ======================================================
+// TESTS: checkStaleDispatchLeases — TTL-based liveness
+// ======================================================
+// Audit c8b79f6 (incident 2026-08-28): liveness is the lease's REMAINING TTL
+// (renewal keeps it pinned), never metadata.started_at age. A live renewed
+// video dispatch — however old — must NOT be flagged stale; a lease whose
+// renewals stopped must be flagged once its TTL decays past the grace window.
+
+describe('checkStaleDispatchLeases (audit c8b79f6: TTL-based liveness)', () => {
+    let redis;
+    afterEach(() => { delete require.cache[RECONCILE_PATH]; });
+
+    const dispatchEngine = require('../src/runtime/dispatch-engine');
+    const leaseManager = require('../src/runtime/lease-manager');
+
+    // Seed lease + metadata like dispatchStage does, with a controllable started_at.
+    async function seedDispatch(stage, dispatchId, startedAtAgoMs) {
+        const lease = await dispatchEngine.acquireStageLease(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, stage);
+        expect(lease.acquired).to.equal(true);
+        const metadata = dispatchEngine.createDispatchMetadata(dispatchId, stage, 'scheduler', {
+            leaseKey: lease.leaseKey,
+            leaseToken: lease.token,
+            quotaOwned: true,
+        });
+        metadata.started_at = Date.now() - startedAtAgoMs;
+        await dispatchEngine.setDispatchMetadata(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, stage, metadata);
+        return lease;
+    }
+
+    it('renewed video dispatch, started_at 28 min old → NOT stale', async () => {
+        redis = createMockRedis();
+        const engine = mockDeps(redis);
+        const lease = await seedDispatch('video', 'dispatch-alive', 28 * 60 * 1000);
+        // Renewal timer keeps the TTL pinned at the renewal target.
+        const renewed = await leaseManager.renewLeaseIfOwner(redis, lease.leaseKey, lease.token);
+        expect(renewed.renewed).to.equal(true);
+
+        expect(await engine.checkStaleDispatchLeases(redis, BOOK_ID, CHAPTER_ID, SCENE_ID)).to.be.null;
+    });
+
+    it('video job alive 45 min into a 60-min timeout (renewed) → NOT stale, no RELEASE_STALE_LEASE', async () => {
+        redis = createMockRedis();
+        const engine = mockDeps(redis);
+        const lease = await seedDispatch('video', 'dispatch-long', 45 * 60 * 1000);
+        await leaseManager.renewLeaseIfOwner(redis, lease.leaseKey, lease.token);
+
+        expect(await engine.checkStaleDispatchLeases(redis, BOOK_ID, CHAPTER_ID, SCENE_ID)).to.be.null;
+        // No stale issue → no RELEASE_STALE_LEASE recommendation.
+        const fixes = engine.getFixRecommendations([]);
+        expect(fixes.find(f => f.action === 'RELEASE_STALE_LEASE')).to.not.exist;
+    });
+
+    it('queued dispatch waiting for an offline GPU (renewed, hours old) → NOT stale', async () => {
+        // While the backend is alive the renewal timer runs regardless of worker
+        // availability, so a job waiting in the hub queue must not be re-dispatched
+        // into duplicate copies just because it has been waiting a long time.
+        redis = createMockRedis();
+        const engine = mockDeps(redis);
+        const lease = await seedDispatch('video', 'dispatch-queued', 3 * 60 * 60 * 1000);
+        await leaseManager.renewLeaseIfOwner(redis, lease.leaseKey, lease.token);
+
+        expect(await engine.checkStaleDispatchLeases(redis, BOOK_ID, CHAPTER_ID, SCENE_ID)).to.be.null;
+    });
+
+    it('freshly acquired lease (before first renewal) → NOT stale', async () => {
+        redis = createMockRedis();
+        const engine = mockDeps(redis);
+        await seedDispatch('video', 'dispatch-fresh', 0);
+
+        expect(await engine.checkStaleDispatchLeases(redis, BOOK_ID, CHAPTER_ID, SCENE_ID)).to.be.null;
+    });
+
+    it('renewals stopped → TTL decayed past grace → stale_dispatch_lease', async () => {
+        redis = createMockRedis();
+        const engine = mockDeps(redis);
+        const lease = await seedDispatch('video', 'dispatch-dead', 20 * 60 * 1000);
+        // Owner died: TTL decayed below (renewal target - grace).
+        const decayed = leaseManager.getRenewalTargetTtlS('video') - leaseManager.STALE_LEASE_GRACE_S - 60;
+        await redis.expire(lease.leaseKey, decayed);
+
+        const result = await engine.checkStaleDispatchLeases(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        expect(result).to.not.be.null;
+        const stale = result.find(r => r.type === 'stale_dispatch_lease' && r.stage === 'video');
+        expect(stale).to.exist;
+        expect(stale.recommendation).to.equal('release_lease_and_move_to_pending');
+    });
+
+    it('lease exists but metadata missing → orphan_dispatch_lease', async () => {
+        redis = createMockRedis();
+        const engine = mockDeps(redis);
+        const leaseKey = dispatchEngine.getLeaseKey(BOOK_ID, CHAPTER_ID, SCENE_ID, 'image');
+        await redis.set(leaseKey, 'dispatch-orphan-token', 'EX', 600);
+
+        const result = await engine.checkStaleDispatchLeases(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        expect(result).to.not.be.null;
+        expect(result.find(r => r.type === 'orphan_dispatch_lease' && r.stage === 'image')).to.exist;
+    });
+
+    it('no leases → null', async () => {
+        redis = createMockRedis();
+        const engine = mockDeps(redis);
+        expect(await engine.checkStaleDispatchLeases(redis, BOOK_ID, CHAPTER_ID, SCENE_ID)).to.be.null;
+    });
+});
+
+// ======================================================
+// TESTS: applyFix — RELEASE_STALE_LEASE (recovery + de-dup)
+// ======================================================
+
+describe('applyFix — RELEASE_STALE_LEASE (audit c8b79f6 recovery)', () => {
+    let redis;
+    afterEach(() => { delete require.cache[RECONCILE_PATH]; });
+
+    const dispatchEngine = require('../src/runtime/dispatch-engine');
+    const leaseManager = require('../src/runtime/lease-manager');
+
+    it('releases a truly stale lease, frees quota, marks scene dirty, re-activates it', async () => {
+        redis = createMockRedis();
+        const markDirtyCalls = [];
+        const engine = mockDeps(redis, {
+            markDirtyScene: async (r, bookId, chapterId, sceneId) => {
+                markDirtyCalls.push({ bookId, chapterId, sceneId });
+            },
+        });
+
+        // Stub the hub HTTP layer — unit test must not reach the real GPU hub.
+        const hubCalls = [];
+        const origFetch = globalThis.fetch;
+        globalThis.fetch = async (url, opts) => {
+            hubCalls.push({ url: String(url), method: opts && opts.method });
+            return { ok: true, status: 200, json: async () => ({}) };
+        };
+
+        try {
+            // Seed a video dispatch whose renewals stopped (TTL decayed past grace).
+            const lease = await dispatchEngine.acquireStageLease(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'video');
+            const metadata = dispatchEngine.createDispatchMetadata('dispatch-dead', 'video', 'scheduler', {
+                leaseKey: lease.leaseKey,
+                leaseToken: lease.token,
+                quotaOwned: true,
+            });
+            await dispatchEngine.setDispatchMetadata(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'video', metadata);
+            await dispatchEngine.acquireQuota(redis, 'video');
+            await redis.expire(lease.leaseKey, 60);
+
+            const counterBefore = await dispatchEngine.getActiveCounter(redis, 'video');
+            expect(counterBefore).to.equal(1);
+
+            const result = await engine.applyFix(redis, {
+                scene: { bookId: BOOK_ID, chapterId: CHAPTER_ID, sceneId: SCENE_ID },
+                action: 'RELEASE_STALE_LEASE',
+                reason: 'Stale dispatch lease detected',
+            });
+
+            expect(result.success).to.equal(true);
+            // Lease + metadata gone, quota slot returned.
+            expect(await redis.get(lease.leaseKey)).to.be.null;
+            expect(await dispatchEngine.getDispatchMetadata(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'video')).to.be.null;
+            expect(await dispatchEngine.getActiveCounter(redis, 'video')).to.equal(counterBefore - 1);
+            // Scene is dirty + back in the active index for a legitimate re-dispatch.
+            expect(markDirtyCalls.length).to.equal(1);
+            const active = await redis.smembers('animastor:active-scenes');
+            expect(active).to.include(`${BOOK_ID}:${CHAPTER_ID}:${SCENE_ID}`);
+            // The dead dispatch's hub copies are purged so they cannot accumulate.
+            expect(hubCalls.length).to.equal(1);
+            expect(hubCalls[0].url).to.include('/queue/clear');
+            expect(hubCalls[0].url).to.include('dispatch_id=dispatch-dead');
+        } finally {
+            globalThis.fetch = origFetch;
+        }
+    });
+
+    it('does not release a live renewed lease if applied (defense in depth)', async () => {
+        // Even if a stale_dispatch_lease fix were somehow produced for a live
+        // lease, cancellation goes through the ownership-checked path. Here we
+        // only assert the check itself never produces such a fix for a renewed
+        // lease (the root-cause guard).
+        redis = createMockRedis();
+        const engine = mockDeps(redis);
+        const lease = await dispatchEngine.acquireStageLease(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'video');
+        const metadata = dispatchEngine.createDispatchMetadata('dispatch-alive', 'video', 'scheduler', {
+            leaseKey: lease.leaseKey,
+            leaseToken: lease.token,
+            quotaOwned: true,
+        });
+        metadata.started_at = Date.now() - 40 * 60 * 1000;
+        await dispatchEngine.setDispatchMetadata(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'video', metadata);
+        await leaseManager.renewLeaseIfOwner(redis, lease.leaseKey, lease.token);
+
+        const stale = await engine.checkStaleDispatchLeases(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        expect(stale).to.be.null;
+        const fixes = engine.getFixRecommendations([]);
+        expect(fixes.find(f => f.action === 'RELEASE_STALE_LEASE')).to.not.exist;
+    });
+});
+
+// ======================================================
 // TESTS: getFixRecommendations
 // ======================================================
 

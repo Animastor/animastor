@@ -31,13 +31,54 @@ const RESTART_DELAY_MS = 5000;     // 5 seconds before first renewal
 const LEASE_RENEWAL_TTL_ADD = 180; // Add 3 minutes to TTL on renewal
 
 // Lease TTL extensions (total TTL after first acquire)
-// Must match LEASE_TTLS in dispatch-engine.js.
-// See dispatch-engine.js for rationale.
+// ЕДИНЫЙ источник — LEASE_TTL_S в config/runtime-config.js (тот же реестр,
+// что dispatch-engine использует при первоначальном acquire). Renewal
+// переставляет lease на LEASE_TOTAL_TTLS[stage] + LEASE_RENEWAL_TTL_ADD.
+const runtimeConfig = require('../config/runtime-config');
 const LEASE_TOTAL_TTLS = {
-    audio: 15 * 60,   // 15 minutes
-    image: 20 * 60,   // 20 minutes
-    video: 30 * 60    // 30 minutes
+    audio: runtimeConfig.LEASE_TTL_S.AUDIO,
+    image: runtimeConfig.LEASE_TTL_S.IMAGE,
+    video: runtimeConfig.LEASE_TTL_S.VIDEO
 };
+
+// ======================================================
+// STALE-LEASE SEMANTICS (audit c8b79f6, incident 2026-08-28)
+// ======================================================
+// Canonical liveness signal of a dispatch is the REMAINING TTL of its lease
+// key, NOT metadata.started_at. renewLeaseIfOwner re-pins the TTL to
+// getRenewalTargetTtlS(stage) every RENEWAL_INTERVAL_MS while the owner is
+// alive; started_at is written once at acquire and never refreshed, so any
+// age check based on it eventually flags a healthy renewed dispatch as stale
+// (video incident: 0.9×TTL threshold = 27 min < real 60-min job → ~86
+// duplicate dispatches in 14 h).
+//
+// A lease is stale only when its remaining TTL has dropped more than
+// STALE_LEASE_GRACE_S below the renewal target — i.e. NO renewal succeeded
+// for the whole grace window (20 intervals at the 30 s cadence). A live
+// owner cannot let that happen; a dead owner (crash/restart) is detected
+// within the grace window, and the lease auto-expires by its target TTL
+// regardless — no eternal lease after restart.
+
+const STALE_LEASE_GRACE_S = 10 * 60; // 10 min without a successful renewal
+
+/**
+ * TTL that renewal keeps the lease pinned to (seconds).
+ */
+function getRenewalTargetTtlS(stage) {
+    return LEASE_TOTAL_TTLS[stage] + LEASE_RENEWAL_TTL_ADD;
+}
+
+/**
+ * Decide whether a lease with the given remaining TTL is stale.
+ * @param {number|null} ttl — redis TTL() result: -2 key gone, -1 no expiry, else seconds
+ * @param {string} stage — 'audio'|'image'|'video'
+ */
+function isLeaseStale(ttl, stage) {
+    if (ttl === null || ttl === undefined) return false;
+    if (ttl <= -2) return false; // key gone → no lease to be stale
+    if (ttl === -1) return true; // lease without expiry — broken, recover it
+    return ttl < getRenewalTargetTtlS(stage) - STALE_LEASE_GRACE_S;
+}
 
 // Lease keys
 const LEASE_PREFIX = 'animastor:dispatch-lease';
@@ -487,6 +528,11 @@ module.exports = {
     RESTART_DELAY_MS,
     LEASE_TOTAL_TTLS,
     LEASE_RENEWAL_TTL_ADD,
+    STALE_LEASE_GRACE_S,
+
+    // Stale-lease semantics (audit c8b79f6)
+    getRenewalTargetTtlS,
+    isLeaseStale,
 
     // Key generation
     getLeaseKey,
@@ -497,6 +543,7 @@ module.exports = {
     activeLeaseRenewals,
     startLeaseRenewal,
     stopLeaseRenewal,
+    renewLeaseIfOwner,
     getActiveRenewalCount,
     getActiveRenewals,
     getRenewalCount,

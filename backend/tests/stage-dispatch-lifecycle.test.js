@@ -116,6 +116,25 @@ describe('stage dispatch lifecycle guard (video re-dispatch incident fix)', () =
             );
             expect(result.ok).to.equal(true);
         });
+
+        it('executor aborts a DIRTY video dispatch with zero GPU jobs sent', async () => {
+            // Scenario 16-18 (audit c8b79f6 old-fix regression): dirty→generating is
+            // an invalid transition, so the executor must abort BEFORE any GPU job.
+            await setState(redis, 'video', state.AssetState.DIRTY);
+
+            const result = await sceneOrchestrator.dispatchStage(
+                redis,
+                { book_id: B, chapter_id: C, scene_id: S },
+                null,           // loadedBook unused — abort happens before book load
+                'build-1',
+                'video',
+                'dispatch-dirty-abort'
+            );
+
+            expect(result.dispatched).to.equal(false);
+            expect(result.jobs).to.equal(0);
+            expect(result.reason).to.match(/^generating_transition_failed:/);
+        });
     });
 
     describe('CASE C: successful video callback must be SUCCESS, not FAILURE', () => {

@@ -16,6 +16,14 @@ function globToRegex(pattern) {
 
 function createMockRedis() {
     const store = new Map();
+    // Recorded TTLs (seconds) so ttl() can report them. Keys are NOT
+    // auto-expired — existing tests rely on keys persisting. Tests simulate
+    // renewal / decay by calling set(...,'EX',n) or expire(key, n).
+    const expiries = new Map();
+    const recordExpiry = (key, args) => {
+        const i = args.indexOf('EX');
+        if (i !== -1 && args[i + 1] !== undefined) expiries.set(key, Number(args[i + 1]));
+    };
     return {
         hset: async (key, field, value) => {
             if (field && typeof field === 'object' && !Array.isArray(field)) {
@@ -57,10 +65,20 @@ function createMockRedis() {
             const nx = args.includes('NX');
             if (nx && store.has(key)) return null;
             store.set(key, value);
+            recordExpiry(key, args);
             return 'OK';
         },
-        del: async (...keys) => { let n = 0; for (const k of keys) if (store.delete(k)) n++; return n; },
-        expire: async (key, ttl) => store.has(key) ? 1 : 0,
+        del: async (...keys) => { let n = 0; for (const k of keys) { expiries.delete(k); if (store.delete(k)) n++; } return n; },
+        expire: async (key, ttl) => {
+            if (!store.has(key)) return 0;
+            expiries.set(key, Number(ttl));
+            return 1;
+        },
+        // Mirrors ioredis: -2 if key missing, -1 if no expiry, else seconds.
+        ttl: async (key) => {
+            if (!store.has(key)) return -2;
+            return expiries.has(key) ? expiries.get(key) : -1;
+        },
         incr: async (key) => { const v = (parseInt(store.get(key) || '0', 10)) + 1; store.set(key, String(v)); return v; },
         decr: async (key) => { const v = Math.max(0, (parseInt(store.get(key) || '0', 10)) - 1); store.set(key, String(v)); return v; },
         exists: async (key) => store.has(key) ? 1 : 0,
@@ -103,13 +121,32 @@ function createMockRedis() {
 
                 store.set(completedKey, markerValue);
                 store.delete(metadataKey);
-                if (lease !== undefined && expectedLease) store.delete(leaseKey);
+                expiries.delete(metadataKey);
+                if (lease !== undefined && expectedLease) {
+                    store.delete(leaseKey);
+                    expiries.delete(leaseKey);
+                }
                 if (quotaOwned === '1') {
                     const current = Number(store.get(quotaKey) || 0);
                     if (current > 0) store.set(quotaKey, String(current - 1));
                 }
                 void markerTtl;
                 return 1;
+            }
+            // Lease renewal (lease-manager.renewLeaseIfOwner): compare-and-EXPIRE.
+            // KEYS=[leaseKey, metadataKey], ARGV=[expectedToken, ttl, now].
+            if (script.includes('ttl_add') && script.includes('EXPIRE')) {
+                const leaseKey = args[0];
+                const metadataKey = args[1];
+                const expected = args[keysCount];
+                const ttlAdd = Number(args[keysCount + 1]);
+                const now = args[keysCount + 2];
+                const current = store.get(leaseKey);
+                if (current === undefined) return ['false', 'no_lease'];
+                if (current !== expected) return ['false', 'token_mismatch', current];
+                expiries.set(leaseKey, ttlAdd);
+                if (store.has(metadataKey)) expiries.set(metadataKey, ttlAdd);
+                return ['true', 'renewed', String(now)];
             }
             if (script.includes("current ~= ARGV[1]") && script.includes("redis.call('DEL', KEYS[1])")) {
                 const key = args[0];
@@ -118,6 +155,7 @@ function createMockRedis() {
                 if (current === undefined) return 0;
                 if (current !== expected) return -1;
                 store.delete(key);
+                expiries.delete(key);
                 return 1;
             }
             if (script.includes("return redis.call('INCR', key)")) {

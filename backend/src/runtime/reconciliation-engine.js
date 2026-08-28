@@ -22,6 +22,7 @@ const journal = require('../orchestration/event-journal');
 const runtimeScheduler = require('./runtime-scheduler');
 const counterReconciliation = require('./counter-reconciliation');
 const dispatchEngine = require('./dispatch-engine');
+const leaseManager = require('./lease-manager');
 
 const logPrefix = '[RECONCILE]';
 
@@ -652,13 +653,21 @@ async function checkStaleLocks(redis, bookId, chapterId, sceneId) {
 
 /**
  * Check for stale dispatch leases.
+ *
+ * Liveness is decided by the lease key's REMAINING TTL — the canonical
+ * signal that renewal is still running — NOT by metadata.started_at.
+ * renewLeaseIfOwner re-pins the TTL to the renewal target every 30 s while
+ * the owner is alive, so a healthy long-running (even 60-min video) dispatch
+ * never goes stale, while a lease whose owner died (crash/restart) decays and
+ * is flagged once its TTL drops below target - STALE_LEASE_GRACE_S.
+ * (audit c8b79f6 / incident 2026-08-28: started_at-based age falsely killed
+ * live renewed video dispatches at 27 min → duplicate re-dispatch loop.)
  */
 async function checkStaleDispatchLeases(redis, bookId, chapterId, sceneId) {
     const staleLeases = [];
 
     // Check all stages for lease existence
     const stages = ['audio', 'image', 'video'];
-    const now = Date.now();
 
     for (const stage of stages) {
         const leaseKey = dispatchEngine.getLeaseKey(bookId, chapterId, sceneId, stage);
@@ -670,19 +679,19 @@ async function checkStaleDispatchLeases(redis, bookId, chapterId, sceneId) {
             const metadata = await redis.get(metaKey);
 
             if (metadata) {
-                const data = JSON.parse(metadata);
-                const ageSeconds = (now - data.started_at) / 1000;
-                const ttl = dispatchEngine.LEASE_TTLS[stage];
-                const threshold = ttl * 0.9; // 90% of TTL
+                // Remaining TTL is the source of truth for liveness. A lease
+                // being actively renewed keeps its TTL pinned near the renewal
+                // target regardless of how old started_at is.
+                const leaseTtlS = await redis.ttl(leaseKey);
 
-                if (ageSeconds > threshold) {
+                if (leaseManager.isLeaseStale(leaseTtlS, stage)) {
                     staleLeases.push({
                         type: 'stale_dispatch_lease',
                         stage,
                         leaseKey,
                         scene: { bookId, chapterId, sceneId },
-                        ageSeconds,
-                        threshold: threshold,
+                        leaseTtlS,
+                        renewalTargetS: leaseManager.getRenewalTargetTtlS(stage),
                         token,
                         recommendation: 'release_lease_and_move_to_pending'
                     });
@@ -966,24 +975,35 @@ async function applyFix(redis, fix) {
             case 'RELEASE_STALE_LEASE': {
                 const dispatchEngine = require('./dispatch-engine');
                 let removedCount = 0;
+                const clearedDispatchIds = [];
 
-                // Release all dispatch leases for this scene
+                // Release all dispatch leases for this scene through the
+                // canonical cancellation path (lease + owned quota + renewal
+                // timer + completion marker). A bare `del` would leak the
+                // quota slot and the in-memory renewal timer, and could race a
+                // concurrent re-acquire (no token check).
                 for (const stage of ['audio', 'image', 'video']) {
-                    const leaseKey = dispatchEngine.getLeaseKey(scene.bookId, scene.chapterId, scene.sceneId, stage);
-                    const token = await redis.get(leaseKey);
-
-                    if (token) {
-                        await redis.del(leaseKey);
+                    const result = await dispatchEngine.cancelActiveDispatch(
+                        redis, scene.bookId, scene.chapterId, scene.sceneId, stage,
+                        'stale_lease_recovery'
+                    );
+                    if (result.cancelled) {
                         removedCount++;
-
-                        // Release quota if leaked
-                        const counterKey = dispatchEngine.getActiveCounterKey(stage);
-                        await redis.decr(counterKey);
+                        if (result.dispatchId) clearedDispatchIds.push(result.dispatchId);
                     }
+                }
 
-                    // Delete dispatch metadata
-                    const metaKey = dispatchEngine.getDispatchMetaKey(scene.bookId, scene.chapterId, scene.sceneId, stage);
-                    await redis.del(metaKey);
+                // Defensive de-duplication (audit c8b79f6 §2): purge the hub
+                // queue/running copies owned by the cancelled dispatch(es) so a
+                // recovered scene cannot accumulate duplicate job copies that a
+                // worker would later drain. Best-effort — hub unavailability
+                // must not block state recovery.
+                if (clearedDispatchIds.length > 0) {
+                    try {
+                        await dispatchEngine.clearHubDispatches(clearedDispatchIds, { context: 'STALE_LEASE_RECOVERY' });
+                    } catch (hubErr) {
+                        warn(`RELEASE_STALE_LEASE hub cleanup failed (non-fatal): ${hubErr.message}`);
+                    }
                 }
 
                 // Mark per-asset states as DIRTY for redispatch
@@ -2098,6 +2118,7 @@ module.exports = {
     checkOrphanAssets,
     checkPartialBuilds,
     checkStaleLocks,
+    checkStaleDispatchLeases,
 
     getFixRecommendations,
     applyFix,
