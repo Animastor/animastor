@@ -632,6 +632,49 @@ describe('checkStaleDispatchLeases (audit c8b79f6: TTL-based liveness)', () => {
         const engine = mockDeps(redis);
         expect(await engine.checkStaleDispatchLeases(redis, BOOK_ID, CHAPTER_ID, SCENE_ID)).to.be.null;
     });
+
+    it('lease without expiry (TTL=-1) → stale_dispatch_lease (recovered, never eternal)', async () => {
+        redis = createMockRedis();
+        const engine = mockDeps(redis);
+        // Hand-craft lease + metadata with NO expiry (TTL=-1).
+        const leaseKey = dispatchEngine.getLeaseKey(BOOK_ID, CHAPTER_ID, SCENE_ID, 'video');
+        await redis.set(leaseKey, 'dispatch-noexpiry-token'); // no EX
+        const metadata = dispatchEngine.createDispatchMetadata('dispatch-noexpiry', 'video', 'scheduler', {
+            leaseKey, leaseToken: 'dispatch-noexpiry-token', quotaOwned: true,
+        });
+        await redis.set(dispatchEngine.getDispatchMetaKey(BOOK_ID, CHAPTER_ID, SCENE_ID, 'video'), JSON.stringify(metadata)); // no EX
+        expect(await redis.ttl(leaseKey)).to.equal(-1);
+
+        const result = await engine.checkStaleDispatchLeases(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        expect(result).to.not.be.null;
+        const stale = result.find(r => r.type === 'stale_dispatch_lease' && r.stage === 'video');
+        expect(stale).to.exist;
+        expect(stale.leaseTtlS).to.equal(-1);
+    });
+
+    it('agrees with shouldSkipDispatch for the same lease state (shared isLeaseStale)', async () => {
+        // Both entry points are call sites of the SAME predicate
+        // leaseManager.isLeaseStale(redis.ttl(leaseKey), stage) — they must
+        // never diverge, otherwise reconciliation and the dispatch gate would
+        // disagree about liveness.
+        redis = createMockRedis();
+        const engine = mockDeps(redis);
+
+        // (a) healthy renewed lease → neither flags stale.
+        const lease = await seedDispatch('video', 'dispatch-consistent', 40 * 60 * 1000);
+        await leaseManager.renewLeaseIfOwner(redis, lease.leaseKey, lease.token);
+        expect(await engine.checkStaleDispatchLeases(redis, BOOK_ID, CHAPTER_ID, SCENE_ID)).to.be.null;
+        expect((await dispatchEngine.shouldSkipDispatch(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'video')).reason)
+            .to.equal('lease_active');
+
+        // (b) TTL decayed past grace → both flag stale.
+        const decayed = leaseManager.getRenewalTargetTtlS('video') - leaseManager.STALE_LEASE_GRACE_S - 60;
+        await redis.expire(lease.leaseKey, decayed);
+        const staleList = await engine.checkStaleDispatchLeases(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        expect(staleList.find(r => r.type === 'stale_dispatch_lease' && r.stage === 'video')).to.exist;
+        expect((await dispatchEngine.shouldSkipDispatch(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'video')).reason)
+            .to.equal('stale_lease');
+    });
 });
 
 // ======================================================

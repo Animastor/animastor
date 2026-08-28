@@ -28,7 +28,12 @@ function error(msg) {
 
 const RENEWAL_INTERVAL_MS = 30000; // 30 seconds
 const RESTART_DELAY_MS = 5000;     // 5 seconds before first renewal
-const LEASE_RENEWAL_TTL_ADD = 180; // Add 3 minutes to TTL on renewal
+// НЕ "прибавка к текущему TTL". Renewal ПЕРЕСТАВЛЯЕТ (re-pin) TTL lease на
+// фиксированную цель LEASE_TOTAL_TTLS[stage] + LEASE_RENEWAL_TTL_ADD (Lua
+// EXPIRE key, target), а не добавляет 180s к остатку. Поэтому TTL ограничен
+// сверху (нет "вечного" lease) и не растёт с каждым renewal. 180s — буфер
+// сверх базового TTL, чтобы lease не истёк между двумя соседними renewal.
+const LEASE_RENEWAL_TTL_ADD = 180;
 
 // Lease TTL extensions (total TTL after first acquire)
 // ЕДИНЫЙ источник — LEASE_TTL_S в config/runtime-config.js (тот же реестр,
@@ -52,14 +57,41 @@ const LEASE_TOTAL_TTLS = {
 // (video incident: 0.9×TTL threshold = 27 min < real 60-min job → ~86
 // duplicate dispatches in 14 h).
 //
-// A lease is stale only when its remaining TTL has dropped more than
-// STALE_LEASE_GRACE_S below the renewal target — i.e. NO renewal succeeded
-// for the whole grace window (20 intervals at the 30 s cadence). A live
-// owner cannot let that happen; a dead owner (crash/restart) is detected
-// within the grace window, and the lease auto-expires by its target TTL
-// regardless — no eternal lease after restart.
+// ФОРМУЛА (единая для checkStaleDispatchLeases и shouldSkipDispatch):
+//   lease stale  ⇔  remainingTTL < getRenewalTargetTtlS(stage) - STALE_LEASE_GRACE_S
+// где getRenewalTargetTtlS(stage) = LEASE_TOTAL_TTLS[stage] + LEASE_RENEWAL_TTL_ADD.
+//
+// Что это означает на практике (6 случаев):
+//  1. HEALTHY при нормальном renewal: renewal каждые 30s переставляет TTL на
+//     target, поэтому остаток всегда в [target-30, target] и НИКОГДА не
+//     опускается ниже target-grace → lease не stale сколь угодно долго
+//     (даже 60-минутное видео). started_at не влияет.
+//  2. ПОСЛЕ ПОТЕРИ renewal (владелец умер ПОСЛЕ хотя бы одного renewal):
+//     TTL затухает от target; stale ровно когда остаток упадёт ниже
+//     target-grace, т.е. через STALE_LEASE_GRACE_S (600s ≈ 10 мин) после
+//     последнего успешного renewal (±30s из-за фазы цикла renewal).
+//  3. BACKEND RESTART: in-memory таймеры renewal теряются, renewal больше нет,
+//     TTL затухает и lease либо детектится stale в пределах grace, либо
+//     авто-истекает по TTL. "Вечного" lease нет — TTL всегда конечен.
+//  4. РЕАЛЬНО ЗАВИСШИЙ dispatch (backend жив, renewal тикает, но GPU-джоб
+//     стоит): lease остаётся HEALTHY — renewal привязан к живости backend-
+//     процесса, а не к прогрессу джоба. Это ОСОЗНАННО: зависший джоб ловит
+//     отдельный stall-failsafe (checkStalledAudio/VideoScenes по last_chunk/
+//     last_group_at), а не lease TTL.
+//  5. TTL = -1 (ключ есть, но без expiry): считается stale — это сломанный
+//     lease, который никогда бы не истёк (вечный), поэтому его принудительно
+//     восстанавливаем. В норме не возникает: acquire/renewal всегда ставят EX.
+//  6. TTL = -2 (ключа нет): НЕ stale — восстанавливать нечего; вызывающий код
+//     трактует это как отсутствие lease и диспатчит заново.
+//
+// ВАЖНО про "10 мин": STALE_LEASE_GRACE_S = 600s означает ровно 10 мин БЕЗ
+// успешного renewal только ПОСЛЕ первого успешного renewal (когда TTL был
+// поднят до target). Если владелец умер ДО первого renewal (TTL ещё равен
+// базовому LEASE_TOTAL_TTLS = target - LEASE_RENEWAL_TTL_ADD), детекция
+// происходит через grace - LEASE_RENEWAL_TTL_ADD = 420s (7 мин). Это не баг,
+// а следствие того, что acquire ставит базовый TTL, а не target.
 
-const STALE_LEASE_GRACE_S = 10 * 60; // 10 min without a successful renewal
+const STALE_LEASE_GRACE_S = 10 * 60; // 600s без успешного renewal (после 1-го renewal)
 
 /**
  * TTL that renewal keeps the lease pinned to (seconds).
@@ -245,7 +277,7 @@ async function renewLeaseIfOwner(redis, leaseKey, expectedToken) {
         );
 
         if (result[0] === 'true') {
-            log(`RENEWED: ${leaseKey} (ttl extended by ${LEASE_RENEWAL_TTL_ADD}s)`);
+            log(`RENEWED: ${leaseKey} (ttl re-pinned to ${getRenewalTargetTtlS(getStageFromKey(leaseKey))}s)`);
             return { renewed: true, reason: 'success' };
         }
 

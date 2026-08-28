@@ -174,4 +174,122 @@ describe('stale-lease semantics (audit c8b79f6 fix)', () => {
             }
         });
     });
+
+    // ── Healthy renewed lease at real job durations (30 / 60 min) ────────
+    describe('healthy renewed video lease at real job durations', () => {
+        let redis;
+        beforeEach(() => { redis = createMockRedis(); });
+
+        for (const minutes of [30, 60]) {
+            it(`renewed video lease ${minutes} min old → NOT stale (lease_active)`, async () => {
+                const lease = await seedDispatch(redis, 'video', `dispatch-${minutes}m`, minutes * 60 * 1000);
+                // Renewal timer keeps the TTL pinned regardless of started_at age.
+                const renewed = await leaseManager.renewLeaseIfOwner(redis, lease.leaseKey, lease.token);
+                expect(renewed.renewed).to.equal(true);
+
+                const ttl = await redis.ttl(lease.leaseKey);
+                expect(leaseManager.isLeaseStale(ttl, 'video')).to.equal(false);
+
+                const verdict = await dispatchEngine.shouldSkipDispatch(redis, B, C, S, 'video');
+                expect(verdict.skip).to.equal(true);
+                expect(verdict.reason).to.equal('lease_active');
+            });
+        }
+    });
+
+    // ── Exact stale-window boundary, all stages ──────────────────────────
+    describe('exact stale-window boundary (audio/image/video)', () => {
+        for (const stage of ['audio', 'image', 'video']) {
+            it(`${stage}: stale exactly when TTL < target - grace (strict)`, () => {
+                const target = leaseManager.getRenewalTargetTtlS(stage);
+                const grace = leaseManager.STALE_LEASE_GRACE_S;
+
+                // Exactly at the boundary (target - grace): NOT stale (strict <).
+                expect(leaseManager.isLeaseStale(target - grace, stage)).to.equal(false);
+                // One second below the boundary: stale.
+                expect(leaseManager.isLeaseStale(target - grace - 1, stage)).to.equal(true);
+                // Healthy pinned lease (just renewed / mid-cycle): not stale.
+                expect(leaseManager.isLeaseStale(target, stage)).to.equal(false);
+                expect(leaseManager.isLeaseStale(target - 30, stage)).to.equal(false);
+            });
+        }
+    });
+
+    // ── All stages: healthy renewed vs renewals-stopped (no video-only fix) ─
+    describe('audio/image parity — the video fix must not regress other stages', () => {
+        let redis;
+        beforeEach(() => { redis = createMockRedis(); });
+
+        for (const stage of ['audio', 'image']) {
+            it(`${stage}: renewed lease (old started_at) → lease_active`, async () => {
+                const lease = await seedDispatch(redis, stage, `dispatch-${stage}-alive`, 40 * 60 * 1000);
+                await leaseManager.renewLeaseIfOwner(redis, lease.leaseKey, lease.token);
+                const verdict = await dispatchEngine.shouldSkipDispatch(redis, B, C, S, stage);
+                expect(verdict.reason).to.equal('lease_active');
+            });
+
+            it(`${stage}: renewals stopped → TTL decayed → stale_lease`, async () => {
+                const lease = await seedDispatch(redis, stage, `dispatch-${stage}-dead`, 5 * 60 * 1000);
+                const decayed = leaseManager.getRenewalTargetTtlS(stage) - leaseManager.STALE_LEASE_GRACE_S - 60;
+                await redis.expire(lease.leaseKey, decayed);
+                const verdict = await dispatchEngine.shouldSkipDispatch(redis, B, C, S, stage);
+                expect(verdict.reason).to.equal('stale_lease');
+                expect(verdict.currentToken).to.equal(lease.token);
+            });
+        }
+    });
+
+    // ── Backend restart → lease never becomes eternal ────────────────────
+    describe('backend restart → lease never becomes eternal', () => {
+        let redis;
+        beforeEach(() => { redis = createMockRedis(); });
+
+        it('renewal re-pins to a BOUNDED constant: TTL does not grow across renewals', async () => {
+            const lease = await seedDispatch(redis, 'video', 'dispatch-bounded', 0);
+            const target = leaseManager.getRenewalTargetTtlS('video');
+            for (let i = 0; i < 50; i++) {
+                const r = await leaseManager.renewLeaseIfOwner(redis, lease.leaseKey, lease.token);
+                expect(r.renewed).to.equal(true);
+                // Re-pinned to the SAME constant every time — never accumulates,
+                // so a lease can never be extended into an "eternal" one.
+                expect(await redis.ttl(lease.leaseKey)).to.equal(target);
+            }
+        });
+
+        it('after acquire and after renewal the lease TTL is finite (Redis auto-expires it)', async () => {
+            const lease = await seedDispatch(redis, 'video', 'dispatch-finite', 0);
+            expect(await redis.ttl(lease.leaseKey)).to.be.above(0); // not -1
+            await leaseManager.renewLeaseIfOwner(redis, lease.leaseKey, lease.token);
+            expect(await redis.ttl(lease.leaseKey)).to.be.above(0); // still finite
+        });
+
+        it('owner gone after restart: TTL decays past grace → detected stale (finite TTL then expires)', async () => {
+            const lease = await seedDispatch(redis, 'video', 'dispatch-restart', 0);
+            await leaseManager.renewLeaseIfOwner(redis, lease.leaseKey, lease.token);
+            const target = leaseManager.getRenewalTargetTtlS('video');
+            // Restart kills the in-memory renewal timer; TTL decays past grace.
+            await redis.expire(lease.leaseKey, target - leaseManager.STALE_LEASE_GRACE_S - 1);
+            const ttl = await redis.ttl(lease.leaseKey);
+            expect(ttl).to.be.above(0);                              // finite → will auto-expire
+            expect(leaseManager.isLeaseStale(ttl, 'video')).to.equal(true); // detected stale
+        });
+    });
+
+    // ── TTL = -1 (lease without expiry) policy ───────────────────────────
+    describe('TTL = -1 (lease without expiry) is recovered as stale', () => {
+        let redis;
+        beforeEach(() => { redis = createMockRedis(); });
+
+        it('shouldSkipDispatch flags a no-expiry lease as stale_lease', async () => {
+            // Hand-craft a lease with NO expiry (TTL=-1): a broken state that
+            // would never auto-expire, so it must be surfaced for recovery.
+            const leaseKey = dispatchEngine.getLeaseKey(B, C, S, 'video');
+            await redis.set(leaseKey, 'dispatch-noexpiry-token'); // no EX → TTL=-1
+            expect(await redis.ttl(leaseKey)).to.equal(-1);
+
+            const verdict = await dispatchEngine.shouldSkipDispatch(redis, B, C, S, 'video');
+            expect(verdict.skip).to.equal(true);
+            expect(verdict.reason).to.equal('stale_lease');
+        });
+    });
 });
