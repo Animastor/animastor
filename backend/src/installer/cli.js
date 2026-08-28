@@ -60,7 +60,7 @@ function parseArgs(argv) {
         const a = args[i];
         if (a.startsWith('--')) {
             const key = a.slice(2);
-            if (['yes', 'dry-run', 'resume', 'start-comfy', 'all'].includes(key)) {
+            if (['yes', 'dry-run', 'resume', 'start-comfy', 'all', 'accept-reference-runtime', 'accept-runtime-change'].includes(key)) {
                 parsed.flags[key] = true;
             } else {
                 const val = args[++i];
@@ -124,33 +124,40 @@ function createPrompt() {
             });
         },
         async secret(question) {
+            // TTY: hidden raw-mode input (no echo). Non-TTY (piped input /
+            // automation): plain line input. In BOTH cases the value is never
+            // echoed to the output stream, never logged, never stored in
+            // state, never passed via argv.
+            if (process.stdin.isTTY && typeof process.stdin.setRawMode === 'function') {
+                return new Promise((resolve) => {
+                    process.stdout.write(`${question}: `);
+                    let value = '';
+                    process.stdin.setRawMode(true);
+                    process.stdin.resume();
+                    const onData = (ch) => {
+                        const c = ch.toString();
+                        if (c === '\n' || c === '\r') {
+                            process.stdin.setRawMode(false);
+                            process.stdin.pause();
+                            process.stdin.removeListener('data', onData);
+                            process.stdout.write('\n');
+                            resolve(value || null);
+                        } else if (c === '\u0003') { // Ctrl+C
+                            process.stdin.setRawMode(false);
+                            process.stdin.pause();
+                            process.stdin.removeListener('data', onData);
+                            resolve(null);
+                        } else if (c === '\u007F' || c === '\b') {
+                            if (value.length > 0) value = value.slice(0, -1);
+                        } else {
+                            value += c;
+                        }
+                    };
+                    process.stdin.on('data', onData);
+                });
+            }
             return new Promise((resolve) => {
-                process.stdout.write(`${question}: `);
-                const rl2 = readline.createInterface({ input: process.stdin, output: process.stdout });
-                // suppress echo by reading raw
-                let value = '';
-                process.stdin.setRawMode(true);
-                process.stdin.resume();
-                const onData = (ch) => {
-                    const c = ch.toString();
-                    if (c === '\n' || c === '\r') {
-                        process.stdin.setRawMode(false);
-                        process.stdin.pause();
-                        process.stdin.removeListener('data', onData);
-                        process.stdout.write('\n');
-                        resolve(value);
-                    } else if (c === '\u0003') { // Ctrl+C
-                        process.stdin.setRawMode(false);
-                        process.stdin.pause();
-                        process.stdin.removeListener('data', onData);
-                        resolve(null);
-                    } else if (c === '\u007F' || c === '\b') {
-                        if (value.length > 0) value = value.slice(0, -1);
-                    } else {
-                        value += c;
-                    }
-                };
-                process.stdin.on('data', onData);
+                rl.question(`${question}: `, (answer) => resolve(answer ? String(answer) : null));
             });
         },
         close() { rl.close(); },
@@ -160,6 +167,26 @@ function createPrompt() {
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
+
+/**
+ * Resolve the environment against the manifests and build the install plan —
+ * the ONLY call shape that produces a plan in the CLI. The plan is ALWAYS
+ * built from a freshly resolved report passed under the `report` key, so
+ * buildInstallPlan can never be invoked with a missing/undefined report.
+ * The plan is re-derived after the interactive prompts because decisions
+ * change it; the report is re-resolved at the same time (single source).
+ */
+function resolveAndPlan({ manifests, env, mode, decisions }) {
+    const report = resolver.resolveInstallation({ manifests, environment: env, mode });
+    const plan = buildInstallPlan({ report, manifests, decisions });
+    return { report, plan };
+}
+
+/** Secret values collected interactively — memory-only, never persisted. */
+function makeSecretProvider(secrets) {
+    if (!secrets || Object.keys(secrets).length === 0) return null;
+    return async (name) => (Object.prototype.hasOwnProperty.call(secrets, name) ? secrets[name] : null);
+}
 
 async function cmdDetect(flags) {
     const root = resolveRoot(flags);
@@ -184,8 +211,7 @@ async function cmdPlan(flags) {
 
     const loadedManifests = flags.profiles.map((p) => manifest.loadManifest(p));
     const mode = flags.mode || (env.comfyui && env.comfyui.present ? 'existing' : 'managed');
-    const report = resolver.resolveInstallation({ manifests: loadedManifests, environment: env, mode });
-    const plan = buildInstallPlan({ report, manifests: loadedManifests, decisions: {} });
+    const { plan } = resolveAndPlan({ manifests: loadedManifests, env, mode, decisions: {} });
     console.log(plan.plan_text);
 }
 
@@ -219,8 +245,7 @@ async function cmdInstall(flags) {
     // accidental mutation throws "dry-run violation" instead of executing.
     const io = dryRun ? createDryRunIo(realIo) : realIo;
 
-    const report = resolver.resolveInstallation({ manifests: loadedManifests, environment: env, mode });
-    const plan = buildInstallPlan({ report, manifests: loadedManifests, decisions: {} });
+    const { plan } = resolveAndPlan({ manifests: loadedManifests, env, mode, decisions: {} });
 
     console.log(plan.plan_text);
 
@@ -258,9 +283,39 @@ async function cmdInstall(flags) {
     if (plan.awaiting_decisions.length > 0 && !yes) {
         const prompt = createPrompt();
         const decisions = {};
+        // Explicit consent flags apply to interactive runs exactly as they do
+        // to --yes runs (parity): without them a reference-grade ComfyUI
+        // source (manifest basis=unknown, D1) can never be accepted here.
+        if (flags['accept-reference-runtime']) decisions.accept_reference_runtime = true;
+        if (flags['accept-runtime-change']) decisions.accept_runtime_change = true;
+        // Secret VALUES live only in this closure — never in decisions, logs,
+        // state, or argv. The engine receives them via secretProvider.
+        const secrets = {};
         for (const stepId of plan.awaiting_decisions) {
             const step = plan.steps.find((s) => s.id === stepId);
             if (!step || !step.prompt) continue;
+            if (stepId === 'worker-key' && decisions.worker_setup === false) {
+                // worker setup was declined — the key prompt is skipped too
+                decisions.worker_key_provided = false;
+                continue;
+            }
+            if (step.kind === 'secret-prompt') {
+                // Worker Key step: real hidden input (never a Yes/No confirm —
+                // a typed token must not be misread as an answer). Only the
+                // boolean fact "provided" enters the decisions; the value
+                // itself is handed to the engine through secretProvider.
+                let provided = false;
+                for (const key of step.secret_keys || []) {
+                    const value = await prompt.secret(`Enter ${key} (hidden input)`);
+                    if (value) {
+                        secrets[key] = value;
+                        logger.registerSecret(value); // redact from ALL further output
+                        provided = true;
+                    }
+                }
+                decisions.worker_key_provided = provided;
+                continue;
+            }
             const answer = await prompt.confirm(step.prompt.question);
             if (stepId === 'comfyui-update') decisions.comfyui_update = answer ? 'yes' : 'no';
             else if (stepId === 'custom-nodes') decisions.install_custom_nodes = answer;
@@ -271,9 +326,9 @@ async function cmdInstall(flags) {
         }
         prompt.close();
 
-        // Re-run with decisions
-        const report2 = resolver.resolveInstallation({ manifests: loadedManifests, environment: env, mode });
-        const plan2 = buildInstallPlan({ report2, manifests: loadedManifests, decisions });
+        // Re-resolve and rebuild the plan with the recorded decisions — one
+        // call shape, so the rebuilt plan always has a resolution report.
+        const { plan: plan2 } = resolveAndPlan({ manifests: loadedManifests, env, mode, decisions });
 
         if (plan2.awaiting_decisions.length > 0) {
             console.error('\nStill awaiting decisions after prompts — cannot proceed');
@@ -287,7 +342,8 @@ async function cmdInstall(flags) {
         const result = await runInstallation({
             manifests: loadedManifests, mode, io,
             roots: { comfyuiRoot: root, workerDir, statePath, repoRoot, hubUrl },
-            decisions, logger, crypto, env, dryRun, options: installOptions(flags),
+            decisions, secretProvider: makeSecretProvider(secrets),
+            logger, crypto, env, dryRun, options: installOptions(flags),
         });
         printResult(result);
     } else {
@@ -366,11 +422,17 @@ async function cmdResume(flags) {
         workerType: loadedManifests.length === 1 ? (loadedManifests[0].worker_bundle || {}).worker_type : null,
     });
 
+    // restored non-secret decisions from state; CLI --yes can still widen them.
+    // Explicit consent flags keep their parity with `install` on resume too —
+    // a blocked runtime/reference decision must be resolvable via resume.
+    const decisions = { ...(st.decisions || {}), ...(flags.yes ? yesDecisions() : {}) };
+    if (flags['accept-reference-runtime']) decisions.accept_reference_runtime = true;
+    if (flags['accept-runtime-change']) decisions.accept_runtime_change = true;
+
     const result = await runInstallation({
         manifests: loadedManifests, mode, io,
         roots: { comfyuiRoot: root, workerDir, statePath, repoRoot, hubUrl },
-        // restored non-secret decisions from state; CLI --yes can still widen them
-        decisions: { ...(st.decisions || {}), ...(flags.yes ? yesDecisions() : {}) },
+        decisions,
         secretProvider: null, // secrets are never persisted; enter them via a fresh `install` if truly required
         logger, crypto, env, initialState: st,
         options: installOptions(flags),
@@ -673,4 +735,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseArgs, cmdDetect, cmdPlan, cmdInstall, cmdVerify, cmdValidateManifests, cmdResume, cmdUninstall };
+module.exports = { parseArgs, cmdDetect, cmdPlan, cmdInstall, cmdVerify, cmdValidateManifests, cmdResume, cmdUninstall, resolveAndPlan, makeSecretProvider };

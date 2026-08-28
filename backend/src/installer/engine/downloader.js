@@ -222,7 +222,10 @@ function modelscopeStrategy(dep) {
 
 /**
  * ModelScope REST API base for file operations.
- * Pattern: /api/v1/models/{owner}/{name}/repo?Revision={rev}&FilePath={path}
+ * Listing:  /api/v1/models/{owner}/{name}/repo/files?Revision={rev}[&Root={dir}]
+ *           → { Code, Data: { Files: [{ Name, Path, Type: 'tree'|'blob', Size, Sha256 }] } }
+ *           ('tree' entries are subdirectories — list them via Root=Path)
+ * Download: /api/v1/models/{owner}/{name}/repo?Revision={rev}&FilePath={path}
  */
 const MODELSCOPE_API_BASE = 'https://modelscope.cn/api/v1/models';
 
@@ -239,37 +242,72 @@ function modelscopeFileUrl(repository, filePath, revision = 'master') {
 }
 
 /**
- * List all files in a ModelScope repository via the REST API.
+ * List ALL files in a ModelScope repository via the REST API.
+ *
+ * The files endpoint lists ONE directory level at a time; subdirectories
+ * (Type='tree') are recursed via the Root parameter, so nested files like
+ * `speech_tokenizer/model.safetensors` are included with their full path.
  *
  * @param {object} io io adapter (io.http.fetchJson)
  * @param {string} repository e.g. "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
  * @param {string} [revision] git revision (default: master)
  * @param {string} [token] MODELSCOPE_API_TOKEN (optional, public repos work without)
- * @returns {{ ok: boolean, files?: Array<{Path, Size}>, error?: string }}
+ * @returns {{ ok: boolean, files?: Array<{Path, Size, Sha256}>, error?: string }}
  */
 async function listModelScopeFiles(io, repository, revision = 'master', token = null) {
-    const url = `${MODELSCOPE_API_BASE}/${repository}/repo?Revision=${encodeURIComponent(revision)}`;
     const headers = {};
     if (token) headers.Authorization = `Bearer ${token}`;
 
-    try {
+    const listDir = async (rootPath) => {
+        let url = `${MODELSCOPE_API_BASE}/${repository}/repo/files?Revision=${encodeURIComponent(revision)}`;
+        if (rootPath) url += `&Root=${encodeURIComponent(rootPath)}`;
         const { status, json } = await io.http.fetchJson(url, { headers });
-        if (status === 200 && json) {
-            // ModelScope API returns { Data: { Items: [{Path, Size, ...}] } }
-            // or a flat array of {Path, Size} objects
-            const items = json.Data && json.Data.Items ? json.Data.Items : (Array.isArray(json) ? json : []);
-            const files = items.map((item) => ({
-                Path: item.Path || item.path || item.FilePath || '',
-                Size: typeof item.Size === 'number' ? item.Size : (typeof item.size === 'number' ? item.size : 0),
-            })).filter((f) => f.Path && !f.Path.endsWith('/'));
-            return { ok: true, files };
-        }
         if (status === 401 || status === 403) {
-            return { ok: false, error: `HTTP ${status} — authentication required (private/gated ModelScope repo?)` };
+            throw new Error(`HTTP ${status} — authentication required (private/gated ModelScope repo?)`);
         }
-        return { ok: false, error: `HTTP ${status} listing ModelScope repo ${repository}` };
+        if (status !== 200 || !json) {
+            throw new Error(`HTTP ${status} listing ModelScope repo ${repository}${rootPath ? ` (at ${rootPath})` : ''}`);
+        }
+        // Real API shape: { Data: { Files: [...] } }; keep tolerant fallbacks
+        // for legacy/flat shapes.
+        if (json.Data && Array.isArray(json.Data.Files)) return json.Data.Files;
+        if (json.Data && Array.isArray(json.Data.Items)) return json.Data.Items;
+        if (Array.isArray(json)) return json;
+        return [];
+    };
+
+    try {
+        const files = [];
+        const seenFiles = new Set();
+        const seenDirs = new Set();
+        const queue = [''];
+        while (queue.length > 0) {
+            const dir = queue.shift();
+            if (seenDirs.has(dir)) continue;
+            seenDirs.add(dir);
+            const items = await listDir(dir);
+            for (const item of items) {
+                const p = normPath(item.Path || item.path || item.Name || item.name || '');
+                if (!p) continue;
+                const isDir = item.Type === 'tree' || item.type === 'tree' || item.Mode === '16384' || p.endsWith('/');
+                if (isDir) {
+                    queue.push(p.replace(/\/+$/, ''));
+                    continue;
+                }
+                if (seenFiles.has(p)) continue; // never double-list a file
+                seenFiles.add(p);
+                files.push({
+                    Path: p,
+                    Size: typeof item.Size === 'number' ? item.Size : (typeof item.size === 'number' ? item.size : 0),
+                    Sha256: item.Sha256 || item.sha256 || null,
+                });
+            }
+        }
+        return { ok: true, files };
     } catch (err) {
-        return { ok: false, error: `failed to list ModelScope repo ${repository}: ${err.message}` };
+        return { ok: false, error: err.message.startsWith('HTTP') || err.message.includes('listing ModelScope')
+            ? err.message
+            : `failed to list ModelScope repo ${repository}: ${err.message}` };
     }
 }
 
@@ -347,8 +385,11 @@ async function downloadModelScopeRepo(io, spec, opts = {}) {
         const absFile = `${absTargetDir}/${filePath}`;
         const absPart = `${absFile}.part`;
 
-        // Checksum for this specific file (if provided)
-        const fileChecksum = checksums && checksums[filePath] ? checksums[filePath] : null;
+        // Checksum for this specific file: manifest-provided first; otherwise
+        // the registry's own sha256 from the listing (real API data, never
+        // invented) — empty registry sha256 falls back to size verification.
+        const fileChecksum = (checksums && checksums[filePath])
+            || (file.Sha256 ? { algo: 'sha256', value: file.Sha256 } : null);
 
         // Idempotency: verify existing file
         const existing = await verifyFile(io, absFile, { checksum: fileChecksum || null, sizeBytesApprox: file.Size || null });

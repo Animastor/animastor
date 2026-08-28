@@ -51,7 +51,9 @@ function createIo({ files = {}, http = {} } = {}) {
         async hashFile(absPath) {
             calls.http.push({ op: 'hashFile', absPath });
             try {
-                const content = fs.readFileSync(absPath);
+                // hash RAW BYTES (like the real streaming hashFile) — never the
+                // utf8-decoded string readFileSync would return for binary data
+                const content = fs.readBufferSync ? fs.readBufferSync(absPath) : fs.readFileSync(absPath);
                 const crypto = require('crypto');
                 return crypto.createHash('sha256').update(content).digest('hex');
             } catch (_) {
@@ -82,14 +84,26 @@ describe('ModelScope download — MS1: listModelScopeFiles', () => {
     it('returns file list from ModelScope REST API', async () => {
         const io = createIo({
             http: {
-                'https://modelscope.cn/api/v1/models/Qwen/Qwen3-TTS/repo?Revision=master': () => ({
+                'https://modelscope.cn/api/v1/models/Qwen/Qwen3-TTS/repo/files?Revision=master': () => ({
                     status: 200,
                     json: {
+                        Code: 200,
                         Data: {
-                            Items: [
-                                { Path: 'model.safetensors', Size: 1024 },
-                                { Path: 'speech_tokenizer/model.safetensors', Size: 512 },
-                                { Path: 'config.json', Size: 64 },
+                            Files: [
+                                { Name: 'model.safetensors', Path: 'model.safetensors', Type: 'blob', Size: 1024, Sha256: 'a1' },
+                                { Name: 'speech_tokenizer', Path: 'speech_tokenizer', Type: 'tree', Size: 0, Sha256: '' },
+                                { Name: 'config.json', Path: 'config.json', Type: 'blob', Size: 64, Sha256: 'b2' },
+                            ],
+                        },
+                    },
+                }),
+                'https://modelscope.cn/api/v1/models/Qwen/Qwen3-TTS/repo/files?Revision=master&Root=speech_tokenizer': () => ({
+                    status: 200,
+                    json: {
+                        Code: 200,
+                        Data: {
+                            Files: [
+                                { Name: 'model.safetensors', Path: 'speech_tokenizer/model.safetensors', Type: 'blob', Size: 512, Sha256: 'c3' },
                             ],
                         },
                     },
@@ -98,24 +112,35 @@ describe('ModelScope download — MS1: listModelScopeFiles', () => {
         });
 
         const result = await downloader.listModelScopeFiles(io, 'Qwen/Qwen3-TTS', 'master', null);
-        assert.ok(result.ok);
+        assert.ok(result.ok, result.error);
         assert.strictEqual(result.files.length, 3);
-        assert.strictEqual(result.files[0].Path, 'model.safetensors');
-        assert.strictEqual(result.files[0].Size, 1024);
-        assert.strictEqual(result.files[1].Path, 'speech_tokenizer/model.safetensors');
-        assert.strictEqual(result.files[2].Path, 'config.json');
+        const byPath = Object.fromEntries(result.files.map((f) => [f.Path, f]));
+        assert.strictEqual(byPath['model.safetensors'].Size, 1024);
+        assert.strictEqual(byPath['speech_tokenizer/model.safetensors'].Size, 512);
+        assert.strictEqual(byPath['config.json'].Size, 64);
+        assert.strictEqual(byPath['config.json'].Sha256, 'b2');
     });
 
-    it('filters out directories (trailing slash)', async () => {
+    it('recurses into subdirectories (tree entries) instead of listing them as files', async () => {
         const io = createIo({
             http: {
-                'https://modelscope.cn/api/v1/models/Qwen/test/repo?Revision=master': () => ({
+                'https://modelscope.cn/api/v1/models/Qwen/test/repo/files?Revision=master': () => ({
                     status: 200,
                     json: {
                         Data: {
-                            Items: [
-                                { Path: 'subdir/', Size: 0 },
-                                { Path: 'subdir/file.bin', Size: 100 },
+                            Files: [
+                                { Name: 'subdir', Path: 'subdir', Type: 'tree', Size: 0 },
+                                { Name: 'file.bin', Path: 'file.bin', Type: 'blob', Size: 100 },
+                            ],
+                        },
+                    },
+                }),
+                'https://modelscope.cn/api/v1/models/Qwen/test/repo/files?Revision=master&Root=subdir': () => ({
+                    status: 200,
+                    json: {
+                        Data: {
+                            Files: [
+                                { Name: 'file.bin', Path: 'subdir/file.bin', Type: 'blob', Size: 50 },
                             ],
                         },
                     },
@@ -124,15 +149,16 @@ describe('ModelScope download — MS1: listModelScopeFiles', () => {
         });
 
         const result = await downloader.listModelScopeFiles(io, 'Qwen/test', 'master', null);
-        assert.ok(result.ok);
-        assert.strictEqual(result.files.length, 1);
-        assert.strictEqual(result.files[0].Path, 'subdir/file.bin');
+        assert.ok(result.ok, result.error);
+        assert.strictEqual(result.files.length, 2);
+        const paths = result.files.map((f) => f.Path).sort();
+        assert.deepStrictEqual(paths, ['file.bin', 'subdir/file.bin']);
     });
 
     it('returns error for HTTP 401', async () => {
         const io = createIo({
             http: {
-                'https://modelscope.cn/api/v1/models/private/repo/repo?Revision=master': () => ({
+                'https://modelscope.cn/api/v1/models/private/repo/repo/files?Revision=master': () => ({
                     status: 401,
                     json: null,
                 }),
@@ -147,17 +173,17 @@ describe('ModelScope download — MS1: listModelScopeFiles', () => {
     it('handles flat array response format', async () => {
         const io = createIo({
             http: {
-                'https://modelscope.cn/api/v1/models/Qwen/flat/repo?Revision=master': () => ({
+                'https://modelscope.cn/api/v1/models/Qwen/flat/repo/files?Revision=master': () => ({
                     status: 200,
                     json: [
-                        { Path: 'model.bin', Size: 256 },
+                        { Path: 'model.bin', Type: 'blob', Size: 256 },
                     ],
                 }),
             },
         });
 
         const result = await downloader.listModelScopeFiles(io, 'Qwen/flat', 'master', null);
-        assert.ok(result.ok);
+        assert.ok(result.ok, result.error);
         assert.strictEqual(result.files.length, 1);
         assert.strictEqual(result.files[0].Path, 'model.bin');
     });
@@ -170,13 +196,23 @@ describe('ModelScope download — MS2: downloadModelScopeRepo', () => {
     it('downloads all files from a ModelScope repo', async () => {
         const io = createIo({
             http: {
-                'https://modelscope.cn/api/v1/models/Qwen/Qwen3-TTS/repo?Revision=master': () => ({
+                'https://modelscope.cn/api/v1/models/Qwen/Qwen3-TTS/repo/files?Revision=master': () => ({
                     status: 200,
                     json: {
                         Data: {
-                            Items: [
-                                { Path: 'model.safetensors', Size: 100 },
-                                { Path: 'speech_tokenizer/model.safetensors', Size: 50 },
+                            Files: [
+                                { Name: 'model.safetensors', Path: 'model.safetensors', Type: 'blob', Size: 100 },
+                                { Name: 'speech_tokenizer', Path: 'speech_tokenizer', Type: 'tree', Size: 0 },
+                            ],
+                        },
+                    },
+                }),
+                'https://modelscope.cn/api/v1/models/Qwen/Qwen3-TTS/repo/files?Revision=master&Root=speech_tokenizer': () => ({
+                    status: 200,
+                    json: {
+                        Data: {
+                            Files: [
+                                { Name: 'model.safetensors', Path: 'speech_tokenizer/model.safetensors', Type: 'blob', Size: 50 },
                             ],
                         },
                     },
@@ -237,12 +273,12 @@ describe('ModelScope download — MS3: idempotency', () => {
                 '/comfyui/models/TTS/test/model.safetensors': content,
             },
             http: {
-                'https://modelscope.cn/api/v1/models/Qwen/test/repo?Revision=master': () => ({
+                'https://modelscope.cn/api/v1/models/Qwen/test/repo/files?Revision=master': () => ({
                     status: 200,
                     json: {
                         Data: {
-                            Items: [
-                                { Path: 'model.safetensors', Size: 1024 },
+                            Files: [
+                                { Path: 'model.safetensors', Type: 'blob', Size: 1024 },
                             ],
                         },
                     },
@@ -284,12 +320,12 @@ describe('ModelScope download — MS4: size mismatch triggers re-download', () =
                 '/comfyui/models/TTS/test/model.safetensors': Buffer.alloc(10, 0xff),
             },
             http: {
-                'https://modelscope.cn/api/v1/models/Qwen/test/repo?Revision=master': () => ({
+                'https://modelscope.cn/api/v1/models/Qwen/test/repo/files?Revision=master': () => ({
                     status: 200,
                     json: {
                         Data: {
-                            Items: [
-                                { Path: 'model.safetensors', Size: 1024 },
+                            Files: [
+                                { Path: 'model.safetensors', Type: 'blob', Size: 1024 },
                             ],
                         },
                     },
@@ -325,20 +361,88 @@ describe('ModelScope download — MS4: size mismatch triggers re-download', () =
 });
 
 // ---------------------------------------------------------------------------
+// MS4b: registry-provided sha256 from the listing is used for verification
+// ---------------------------------------------------------------------------
+describe('ModelScope download — MS4b: registry sha256 verification', () => {
+    const crypto = require('crypto');
+    const content = Buffer.alloc(8, 0xab);
+    const goodSha = crypto.createHash('sha256').update(content).digest('hex');
+
+    function ioWithSha(sha) {
+        const io = createIo({
+            http: {
+                'https://modelscope.cn/api/v1/models/Qwen/sha/repo/files?Revision=master': () => ({
+                    status: 200,
+                    json: {
+                        Data: {
+                            Files: [
+                                { Path: 'model.bin', Type: 'blob', Size: content.length, Sha256: sha },
+                            ],
+                        },
+                    },
+                }),
+            },
+        });
+        io.http.download = async ({ dest }) => {
+            io.fs.writeFileSync(dest, content);
+            return { status: 200, resumed: false };
+        };
+        return io;
+    }
+
+    const spec = {
+        id: 'model-repo:sha',
+        kind: 'modelscope',
+        repository: 'Qwen/sha',
+        revision: 'master',
+        target_path: 'models/TTS/sha',
+        ready: true,
+    };
+
+    it('verifies downloaded bytes against the registry sha256', async () => {
+        const io = ioWithSha(goodSha);
+        const result = await downloader.downloadModelScopeRepo(io, { ...spec }, {
+            root: '/comfyui', getHeader: makeHeader(), retries: 1, retryDelayMs: 0,
+        });
+        assert.strictEqual(result.status, 'downloaded', JSON.stringify(result));
+        assert.strictEqual(result.files[0].grade, 'checksum-verified');
+    });
+
+    it('fails (never publishes) when the registry sha256 does not match', async () => {
+        const io = ioWithSha('0'.repeat(64));
+        const result = await downloader.downloadModelScopeRepo(io, { ...spec }, {
+            root: '/comfyui', getHeader: makeHeader(), retries: 2, retryDelayMs: 0,
+        });
+        assert.strictEqual(result.status, 'failed', JSON.stringify(result));
+        assert.ok(!io.fs.existsSync('/comfyui/models/TTS/sha/model.bin'), 'corrupt file must not be published');
+    });
+});
+
+// ---------------------------------------------------------------------------
 // MS5: expected_files filter
 // ---------------------------------------------------------------------------
 describe('ModelScope download — MS5: expected_files filter', () => {
     it('only downloads files matching expected_files list', async () => {
         const io = createIo({
             http: {
-                'https://modelscope.cn/api/v1/models/Qwen/test/repo?Revision=master': () => ({
+                'https://modelscope.cn/api/v1/models/Qwen/test/repo/files?Revision=master': () => ({
                     status: 200,
                     json: {
                         Data: {
-                            Items: [
-                                { Path: 'model.safetensors', Size: 100 },
-                                { Path: 'speech_tokenizer/model.safetensors', Size: 50 },
-                                { Path: 'README.md', Size: 20 },
+                            Files: [
+                                { Path: 'model.safetensors', Type: 'blob', Size: 100 },
+                                { Path: 'speech_tokenizer', Type: 'tree', Size: 0 },
+                                { Path: 'README.md', Type: 'blob', Size: 20 },
+                            ],
+                        },
+                    },
+                }),
+                'https://modelscope.cn/api/v1/models/Qwen/test/repo/files?Revision=master&Root=speech_tokenizer': () => ({
+                    status: 200,
+                    json: {
+                        Data: {
+                            Files: [
+                                { Path: 'speech_tokenizer/model.safetensors', Type: 'blob', Size: 50 },
                             ],
                         },
                     },
@@ -383,12 +487,22 @@ describe('ModelScope download — MS6: subdirectory creation', () => {
     it('creates subdirectories for nested file paths', async () => {
         const io = createIo({
             http: {
-                'https://modelscope.cn/api/v1/models/Qwen/test/repo?Revision=master': () => ({
+                'https://modelscope.cn/api/v1/models/Qwen/test/repo/files?Revision=master': () => ({
                     status: 200,
                     json: {
                         Data: {
-                            Items: [
-                                { Path: 'tokenizer/config.json', Size: 10 },
+                            Files: [
+                                { Path: 'tokenizer', Type: 'tree', Size: 0 },
+                            ],
+                        },
+                    },
+                }),
+                'https://modelscope.cn/api/v1/models/Qwen/test/repo/files?Revision=master&Root=tokenizer': () => ({
+                    status: 200,
+                    json: {
+                        Data: {
+                            Files: [
+                                { Path: 'tokenizer/config.json', Type: 'blob', Size: 10 },
                             ],
                         },
                     },
@@ -427,7 +541,7 @@ describe('ModelScope download — MS7: API error', () => {
     it('returns clear failure for listing error', async () => {
         const io = createIo({
             http: {
-                'https://modelscope.cn/api/v1/models/Qwen/bad/repo?Revision=master': () => ({
+                'https://modelscope.cn/api/v1/models/Qwen/bad/repo/files?Revision=master': () => ({
                     status: 500,
                     json: null,
                 }),
@@ -460,9 +574,9 @@ describe('ModelScope download — MS8: empty repo', () => {
     it('returns failure for repo with no files', async () => {
         const io = createIo({
             http: {
-                'https://modelscope.cn/api/v1/models/Qwen/empty/repo?Revision=master': () => ({
+                'https://modelscope.cn/api/v1/models/Qwen/empty/repo/files?Revision=master': () => ({
                     status: 200,
-                    json: { Data: { Items: [] } },
+                    json: { Data: { Files: [] } },
                 }),
             },
         });

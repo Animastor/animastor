@@ -10,12 +10,19 @@
  *   C1  detect            → exit 0, prints a detection summary
  *   C2  plan              → exit 0, prints a plan for the profile
  *   C3  plan (no profile) → exit 1, clear error
+ *   C3b REGRESSION: boolean consent flags (--accept-reference-runtime,
+ *                           --accept-runtime-change) must not swallow the
+ *                           following flag (e.g. --comfy-port)
  *   C4  install --dry-run → exit 0, ZERO filesystem mutations (snapshot equal),
  *                           zero downloads, zero process starts, marker printed
  *   C5  verify            → exit 0, prints a verification report
  *   C6  resume (no state) → exact "No resumable installation state found."
  *                           message, non-zero exit, does NOT start an install
  *   C7  unknown command   → exit 1, usage printed
+ *   C8  REGRESSION: interactive CPU install (audio/qwen-tts, managed) — the
+ *                           real VPS scenario: prompts answered, Worker Key
+ *                           typed; the post-prompt plan rebuild keeps its
+ *                           resolution report and execution is reached
  *
  * Dry-run proof: the snapshot captures every file/dir under the scratch root.
  * If the dry-run path performed ANY mkdir/write/download/clone it would change
@@ -25,7 +32,7 @@
  */
 
 const assert = require('assert');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
@@ -105,6 +112,17 @@ t('C3: plan without --profile exits 1 with a clear error', () => {
     assert.ok(/--profile is required/.test(r.stderr), 'error names the missing flag');
 });
 
+t('C3b: REGRESSION parseArgs — boolean consent flags never swallow the next flag', () => {
+    const { parseArgs } = require('../src/installer/cli');
+    const parsed = parseArgs(['node', 'cli.js', 'install', '--profile', 'audio/qwen-tts',
+        '--accept-reference-runtime', '--comfy-port', '8199', '--accept-runtime-change', '--mode', 'managed']);
+    assert.strictEqual(parsed.flags['accept-reference-runtime'], true, 'consent flag is boolean true');
+    assert.strictEqual(parsed.flags['accept-runtime-change'], true, 'runtime-change flag is boolean true');
+    assert.strictEqual(parsed.flags['comfy-port'], '8199', '--comfy-port keeps its value (not swallowed)');
+    assert.strictEqual(parsed.flags.mode, 'managed', '--mode keeps its value');
+    assert.deepStrictEqual(parsed.profiles, ['audio/qwen-tts']);
+});
+
 t('C4: install --dry-run performs ZERO filesystem mutations / downloads / process starts', () => {
     const root = mkTempDir('dryrun');
     const comfyRoot = path.join(root, 'ComfyUI');
@@ -160,6 +178,118 @@ t('C7: unknown command exits 1 and prints usage', () => {
     const r = runCli(['frobnicate']);
     assert.strictEqual(r.status, 1);
     assert.ok(/Usage: animastor-installer/.test(r.stderr), 'usage printed');
+});
+
+/**
+ * C8 — REGRESSION for the real CPU-only VPS incident:
+ *   node cli.js install --profile audio/qwen-tts --mode managed
+ * answered interactively (CPU confirm, nodes yes, models yes, workflows no,
+ * worker yes, Worker Key typed at the hidden prompt) crashed AFTER the
+ * prompts with:
+ *   fatal: buildInstallPlan requires a resolution report
+ * because the post-prompt plan rebuild passed the freshly resolved report
+ * under the wrong property name (`report2` shorthand instead of `report`),
+ * so buildInstallPlan saw `report === undefined`.
+ *
+ * The test drives the REAL CLI with the exact prompt sequence and proves:
+ *   - the crash is gone (no "requires a resolution report");
+ *   - every interactive decision is consumed (no "Still awaiting decisions");
+ *   - the engine reaches its execution phase (install-state.json is written
+ *     BEFORE any component install);
+ *   - the CPU device and ALL user selections survive the plan rebuild;
+ *   - the typed Worker Key value never appears in output or state.
+ * The child is killed as soon as the state file exists, so the test performs
+ * no real component installation (no network beyond an aborted git clone).
+ */
+t('C8: REGRESSION interactive CPU install (audio/qwen-tts, managed) rebuilds the plan with a report and reaches execution', async () => {
+    const root = mkTempDir('cpu-install');
+    const comfyRoot = path.join(root, 'ComfyUI');
+    const workerDir = path.join(root, 'worker');
+    const statePath = path.join(comfyRoot, '.animastor-installer', 'install-state.json');
+
+    // Force CPU detection even on a GPU dev host: a failing nvidia-smi shim
+    // first in PATH. (An AMD sysfs detection also maps to device=cpu, so no
+    // shim is needed for that branch.)
+    const shimDir = path.join(root, 'shimbin');
+    fs.mkdirSync(shimDir, { recursive: true });
+    fs.writeFileSync(path.join(shimDir, 'nvidia-smi'), '#!/bin/sh\nexit 1\n');
+    fs.chmodSync(path.join(shimDir, 'nvidia-smi'), 0o755);
+
+    const TOKEN = 'pw.regression.dummy-token';
+    const child = spawn(process.execPath, [
+        CLI, 'install', '--profile', 'audio/qwen-tts', '--mode', 'managed',
+        '--root', comfyRoot, '--worker-dir', workerDir,
+        '--hub-url', 'http://127.0.0.1:9', // unreachable on purpose
+    ], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        detached: true,
+        env: { ...process.env, PATH: `${shimDir}${path.delimiter}${process.env.PATH}` },
+    });
+
+    let out = '';
+    let tail = '';
+    let idx = 0;
+    // Real readline prompts carry the "[Yes/No] " suffix (the plan text
+    // renders questions with "[Yes] [No]" — never matched here). The hidden
+    // secret prompt ends with ": ". Answers are consumed strictly in order.
+    const answers = [
+        [/Continue with the CPU-only installation\? \[Yes\/No\]/, 'yes'],
+        [/component\(s\) missing\. Install\?[\s\S]*?\[Yes\/No\]/, 'yes'], // custom nodes
+        [/component\(s\) missing\. Install\?[\s\S]*?\[Yes\/No\]/, 'yes'], // models
+        [/Which baseline workflows to download\?[\s\S]*?\[Yes\/No\]/, 'no'],
+        [/Worker setup:[\s\S]*?\[Yes\/No\]/, 'yes'],
+        [/Enter ANIMASTOR_WORKER_TOKEN \(hidden input\): /, TOKEN],
+    ];
+    child.stdout.on('data', (d) => {
+        const s = d.toString();
+        out += s;
+        tail += s;
+        while (idx < answers.length) {
+            const [re, ans] = answers[idx];
+            if (re.test(tail.slice(-4000))) {
+                child.stdin.write(`${ans}\n`);
+                tail = '';
+                idx += 1;
+            } else break;
+        }
+    });
+    child.stderr.on('data', (d) => { out += d.toString(); });
+
+    // install-state.json is written at the very start of the engine execution
+    // phase — BEFORE any component install. Its existence proves the plan was
+    // rebuilt with a valid resolution report and execution began.
+    const deadline = Date.now() + 40000;
+    while (!fs.existsSync(statePath) && Date.now() < deadline) {
+        if (child.exitCode !== null) break; // crashed — assertions below report it
+        await new Promise((r) => setTimeout(r, 100));
+    }
+    try { process.kill(-child.pid, 'SIGKILL'); } catch (_) {
+        try { child.kill('SIGKILL'); } catch (__) { /* already gone */ }
+    }
+    await new Promise((r) => { child.on('close', r); });
+
+    assert.ok(!/buildInstallPlan requires a resolution report/.test(out),
+        `plan rebuild must never lose the resolution report; output tail: ${out.slice(-1200)}`);
+    assert.ok(!/Still awaiting decisions after prompts/.test(out),
+        `all interactive decisions must be consumed; output tail: ${out.slice(-1200)}`);
+    assert.ok(fs.existsSync(statePath),
+        `engine execution must be reached (state file written); output tail: ${out.slice(-1500)}`);
+
+    const st = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    assert.strictEqual(st.device, 'cpu', 'CPU device recorded in install state');
+    assert.deepStrictEqual(st.profiles, ['audio/qwen-tts']);
+    assert.strictEqual(st.mode, 'managed');
+    // User selections survive the post-prompt plan rebuild
+    assert.strictEqual(st.decisions.install_custom_nodes, true, 'custom nodes selection kept');
+    assert.strictEqual(st.decisions.install_models, true, 'models selection kept');
+    assert.strictEqual(st.decisions.workflows, 'none', 'workflows decline kept');
+    assert.strictEqual(st.decisions.worker_setup, true, 'worker selection kept');
+    assert.strictEqual(st.decisions.worker_key_provided, true, 'typed token counts as provided');
+    // Secret hygiene: the typed value never appears in output or state
+    assert.ok(!out.includes(TOKEN), 'token value must never be printed');
+    assert.ok(!fs.readFileSync(statePath, 'utf8').includes(TOKEN), 'token value must never be persisted in state');
+
+    fs.rmSync(root, { recursive: true, force: true });
 });
 
 // ---------------------------------------------------------------------------

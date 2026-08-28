@@ -36,6 +36,9 @@ function installComfyUI(io, { root, source, log }) {
     const repo = source.repository;
     const ref = source.commit || source.tag;
     if (!repo) throw new Error('ComfyUI install source has no repository');
+    const metaDir = path.join(root, '.animastor-installer');
+    const metaStash = `${root}.animastor-installer.stash-${Date.now()}`;
+    let stashed = false;
     if (io.fs.existsSync(root)) {
         // The engine writes its install state into <root>/.animastor-installer/
         // BEFORE cloning (resume support). That directory is installer-owned
@@ -44,13 +47,35 @@ function installComfyUI(io, { root, source, log }) {
         if (entries.length > 0) {
             throw new Error(`target root ${root} is not empty — refusing to touch it`);
         }
+        // git clone still refuses ANY non-empty destination, so the metadata
+        // is stashed aside for the duration of the clone and restored after.
+        if (io.fs.existsSync(metaDir)) {
+            io.fs.renameSync(metaDir, metaStash);
+            io.fs.rmdirSync(root);
+            stashed = true;
+        }
     }
+    const restoreMeta = () => {
+        if (!stashed) return;
+        stashed = false;
+        try {
+            if (!io.fs.existsSync(root)) io.fs.mkdirSync(root, { recursive: true });
+            io.fs.renameSync(metaStash, metaDir);
+        } catch (_) { /* stash stays beside the root; next save() rewrites state */ }
+    };
     let r = io.exec('git', ['clone', repo, root]);
-    if (r.code !== 0) throw new Error(`git clone failed: ${r.stderr || r.error}`);
+    if (r.code !== 0) {
+        restoreMeta();
+        throw new Error(`git clone failed: ${r.stderr || r.error}`);
+    }
     if (ref) {
         r = io.exec('git', ['-C', root, 'checkout', ref]);
-        if (r.code !== 0) throw new Error(`git checkout ${ref} failed: ${r.stderr || r.error}`);
+        if (r.code !== 0) {
+            restoreMeta();
+            throw new Error(`git checkout ${ref} failed: ${r.stderr || r.error}`);
+        }
     }
+    restoreMeta();
     if (log) log.info(`ComfyUI installed at ${root} (${ref || 'HEAD'})`);
     return { root, ref };
 }
@@ -91,6 +116,18 @@ function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log }) {
         venvCreated = true;
     }
 
+    // Some distributions (notably Ubuntu/Debian VPS without python3-pip)
+    // create venvs WITHOUT pip — every later `python -m pip` would fail.
+    // The managed venv must have pip before torch/requirements installs.
+    const pipCheck = io.exec(py, ['-m', 'pip', '--version']);
+    if (pipCheck.code !== 0) {
+        const boot = io.exec(py, ['-m', 'ensurepip', '--upgrade']);
+        if (boot.code !== 0) {
+            throw new Error(`pip is unavailable in the venv and ensurepip failed (code ${boot.code}): ${String(boot.stderr || boot.stdout || '').slice(-500)} — install the host package providing python3 venv+pip (e.g. python3-venv / python3-pip) and re-run`);
+        }
+        if (log) log.info('pip bootstrapped into the venv via ensurepip');
+    }
+
     // Torch is installed BEFORE requirements.txt: pip then sees the pinned
     // (CUDA- or CPU-flavored) build as satisfied instead of pulling the
     // default PyPI wheel first (a multi-GB CUDA download on CPU-only hosts).
@@ -106,7 +143,21 @@ function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log }) {
 
     const req = path.join(root, 'requirements.txt');
     if (io.fs.existsSync(req)) {
-        const r = io.exec(py, ['-m', 'pip', 'install', '-r', req], { timeout: 30 * 60 * 1000 });
+        const args = ['-m', 'pip', 'install', '-r', req];
+        if (torchSpec && torchSpec.pin) {
+            // requirements.txt typically carries UNPINNED torch/torchvision/
+            // torchaudio; without a constraint their dependency edges make pip
+            // REPLACE the pinned torch (e.g. with the latest CUDA build from
+            // PyPI). Constrain torch to the manifest pin and prefer the pin's
+            // index so matching torchvision/torchaudio builds are selected.
+            const constraintFile = path.join(root, 'venv', '.animastor-torch-constraints.txt');
+            io.fs.writeFileSync(constraintFile, `torch==${String(torchSpec.pin).split('+')[0]}\n`);
+            args.push('-c', constraintFile);
+            if (torchSpec.index_url) {
+                args.push('--index-url', torchSpec.index_url, '--extra-index-url', 'https://pypi.org/simple');
+            }
+        }
+        const r = io.exec(py, args, { timeout: 30 * 60 * 1000 });
         if (r.code !== 0) throw new Error(`pip install -r requirements.txt failed: ${String(r.stderr).slice(-500)}`);
         if (log) log.info('ComfyUI requirements installed');
     }

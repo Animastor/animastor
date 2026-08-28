@@ -101,9 +101,9 @@ function createRealIo() {
                     const m = /\/(\d+)$/.exec(String(totalHeader));
                     total = m ? Number(m[1]) : Number(totalHeader) + (resumed ? appendFrom : 0);
                 }
+                let received = resumed ? appendFrom : 0;
                 await new Promise((resolve, reject) => {
                     const out = fs.createWriteStream(dest, { flags: resumed ? 'a' : 'w' });
-                    let received = resumed ? appendFrom : 0;
                     (async () => {
                         try {
                             const reader = res.body.getReader();
@@ -203,11 +203,35 @@ function createMemoryFs(initial = {}) {
             dirs.add(target);
         },
         renameSync: (a, b) => {
-            const f = files.get(norm(a));
-            if (!f) throw Object.assign(new Error(`ENOENT: ${a}`), { code: 'ENOENT' });
-            assertParent(b);
-            files.set(norm(b), f);
-            files.delete(norm(a));
+            const na = norm(a);
+            const nb = norm(b);
+            const f = files.get(na);
+            if (f) {
+                assertParent(b);
+                files.set(nb, f);
+                files.delete(na);
+                return;
+            }
+            // directory rename (real-fs semantics): move the dir and every
+            // entry beneath it
+            if (dirs.has(na)) {
+                assertParent(b);
+                const prefix = `${na}/`;
+                for (const key of [...files.keys()]) {
+                    if (key.startsWith(prefix)) {
+                        files.set(nb + key.slice(na.length), files.get(key));
+                        files.delete(key);
+                    }
+                }
+                for (const key of [...dirs]) {
+                    if (key === na || key.startsWith(prefix)) {
+                        dirs.add(nb + key.slice(na.length));
+                        dirs.delete(key);
+                    }
+                }
+                return;
+            }
+            throw Object.assign(new Error(`ENOENT: ${a}`), { code: 'ENOENT' });
         },
         unlinkSync: (p) => {
             if (!files.has(norm(p))) throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });

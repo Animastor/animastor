@@ -562,9 +562,14 @@ function checkModelRepo(dep, env, profiles) {
         const have = new Set(matches.map((m) => normPath(m.path)));
         const missingFiles = dep.expected_files.filter((f) => !have.has(`${prefix}/${normPath(f)}`));
         if (missingFiles.length > 0) {
+            // Partially present: status stays 'missing' (with reason
+            // 'incomplete') so plan/engine treat it as installable — the
+            // downloader is idempotent and resumes .part files, it never
+            // re-downloads a verified file. 'incompatible' would park it as a
+            // review item and an interrupted download could never resume.
             return {
                 ...base,
-                status: 'incompatible',
+                status: 'missing',
                 reason: 'incomplete',
                 action: 'install',
                 found: { files: Array.from(have) },
