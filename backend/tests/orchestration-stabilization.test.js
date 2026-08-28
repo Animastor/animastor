@@ -227,7 +227,7 @@ describe('orchestration stabilization: executor acceptance', () => {
     }
 
     function installCommonStubs(overrides = {}) {
-        const calls = { pending: [], generating: [] };
+        const calls = { pending: [], generating: [], rollback: [] };
         const sceneData = {
             book_id: BOOK_ID,
             chapter_id: CHAPTER_ID,
@@ -275,6 +275,7 @@ describe('orchestration stabilization: executor acceptance', () => {
             failStage: async () => {},
             setScenePending: async (...args) => { calls.pending.push(args); return { changed: true }; },
             setSceneGenerating: async (...args) => { calls.generating.push(args); return { changed: true }; },
+            rollbackStageToPending: async (...args) => { calls.rollback.push(args); return { changed: true }; },
         });
         stub('../src/storage/postgres/repositories/scene-assets-repo', {
             getDirtyUnitIds: async () => [],
@@ -339,7 +340,9 @@ describe('orchestration stabilization: executor acceptance', () => {
             dispatchId: 'dispatch-video',
         });
         expect(videoCalls[0][4]).to.equal('dispatch-video');
-        expect(calls.pending).to.have.length(1);
+        // no-jobs abort rolls the stage back through the facade rollback
+        // (FSM-valid generating→dirty→pending), not a bare setScenePending
+        expect(calls.rollback).to.have.length(1);
     });
 });
 

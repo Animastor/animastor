@@ -80,6 +80,7 @@ function createMockRedis() {
             return expiries.has(key) ? expiries.get(key) : -1;
         },
         incr: async (key) => { const v = (parseInt(store.get(key) || '0', 10)) + 1; store.set(key, String(v)); return v; },
+        incrby: async (key, increment) => { const v = (parseInt(store.get(key) || '0', 10)) + Number(increment || 0); store.set(key, String(v)); return v; },
         decr: async (key) => { const v = Math.max(0, (parseInt(store.get(key) || '0', 10)) - 1); store.set(key, String(v)); return v; },
         exists: async (key) => store.has(key) ? 1 : 0,
         scan: async (cursor, ...args) => {

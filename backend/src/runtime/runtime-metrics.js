@@ -82,6 +82,8 @@ const METRIC_DEFS = {
     recoveryActions: { type: 'counter', description: 'Total recovery actions' },
     staleLeaseRecoveries: { type: 'counter', description: 'Stale lease recoveries' },
     counterDriftCorrections: { type: 'counter', description: 'Counter drift corrections' },
+    stateRollbackFailures: { type: 'counter', description: 'Failed FSM rollbacks after jobless dispatch cancellation (ghost GENERATING risk)' },
+    iuInFlightStaleCleared: { type: 'counter', description: 'Stale iu-in-flight markers cleared by ownership self-heal' },
 
     // Event metrics
     callbackDuplicates: { type: 'counter', description: 'Duplicate callback events' },
@@ -417,6 +419,7 @@ module.exports = {
     recordStuckScene,
 
     // Counters
+    incrementCounter,
     getCounterMetric,
 
     // Helper

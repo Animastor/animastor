@@ -525,7 +525,21 @@ async function dispatchStage(redis, scene, loadedBook, buildId, overrideStage, d
 
     result = result || { dispatched: false, reason: 'no_result', jobs: 0 };
     if (!result.dispatched && !result.completed) {
-        await setScenePending(redis, bookId, chapterId, sceneId, overrideStage, buildId);
+        // FSM-валидный rollback (GENERATING → DIRTY → PENDING). Прямой
+        // generating→pending запрещён FSM; раньше здесь вызывался setScenePending,
+        // rejection молча проглатывался — и сцена навсегда оставалась в GENERATING
+        // (ghost, forensic audit 6929ba5: no_jobs_sent → cancelled → вечный skip).
+        const rollback = await orchestrator.rollbackStageToPending(
+            redis, bookId, chapterId, sceneId, overrideStage, buildId,
+            result.reason || 'dispatch_cancelled'
+        );
+        if (!rollback.changed && !rollback.alreadyPending && rollback.reason !== 'already_ready') {
+            // Ошибка rollback не глотается: явный лог + флаг в результате
+            // (метрику/journal пишет сам rollbackStageToPending).
+            warn(`DISPATCH_ROLLBACK_FAILED: ${bookId}/${chapterId}/${sceneId} ${overrideStage}: ${rollback.reason} — stage may be stuck in GENERATING`);
+            result.rollbackFailed = true;
+            result.rollbackReason = rollback.reason;
+        }
     }
     result.dispatchId = dispatchId; // T4: привязываем dispatchId к результату
     log(`DISPATCH_RESULT: ${bookId}/${chapterId}/${sceneId} ${overrideStage}: dispatched=${result.dispatched}, jobs=${result.jobs}, reason=${result.reason || 'ok'}`);

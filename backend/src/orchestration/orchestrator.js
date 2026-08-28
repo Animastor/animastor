@@ -377,6 +377,75 @@ async function setScenePending(redis, bookId, chapterId, sceneId, asset, buildId
     return { changed: true };
 }
 
+// ── rollbackStageToPending ───────────────────────────
+// FSM-валидный откат стадии в PENDING после dispatch, который НЕ отправил
+// ни одного GPU job (no_jobs_sent / cancelled / dispatch_error).
+//
+// Прямой переход generating→pending ЗАПРЕЩЁН FSM (scene-state.js), поэтому
+// GENERATING откатывается двухшаговым штатным путём:
+//   GENERATING → DIRTY → PENDING
+// (PLACEHOLDER → DIRTY → PENDING — аналогично; NEW/DIRTY/FAILED → PENDING
+// напрямую). READY не трогаем — результат уже принят.
+//
+// Ошибки rollback НЕ проглатываются: error-лог + TRANSITION_FAILED в journal
+// + счётчик stateRollbackFailures. Иначе сцена навсегда остаётся в GENERATING
+// (ghost, forensic audit 6929ba5: no_jobs_sent → setScenePending rejected →
+// rejection проглочен → вечный GENERATING).
+async function rollbackStageToPending(redis, bookId, chapterId, sceneId, asset, buildId = null, reason = 'dispatch_cancelled') {
+    const state = require('../state');
+    const journal = require('./event-journal');
+    const { log, error } = require('./scene-utils');
+
+    const states = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    const current = states?.[asset];
+
+    if (current === state.AssetState.PENDING) {
+        return { changed: false, alreadyPending: true, reason: 'already_pending' };
+    }
+    if (current === state.AssetState.READY) {
+        // Результат уже принят — откат повредил бы завершённую работу.
+        log(`[ROLLBACK] ${bookId}/${chapterId}/${sceneId} ${asset}: already READY — rollback skipped (reason=${reason})`);
+        return { changed: false, reason: 'already_ready' };
+    }
+
+    // Только FSM-валидные рёбра (AssetTransitions):
+    //   GENERATING/PLACEHOLDER → DIRTY → PENDING
+    //   NEW/DIRTY/FAILED → PENDING
+    const path = (current === state.AssetState.GENERATING || current === state.AssetState.PLACEHOLDER)
+        ? [state.AssetState.DIRTY, state.AssetState.PENDING]
+        : [state.AssetState.PENDING];
+
+    try {
+        let from = current;
+        for (const next of path) {
+            const check = state.validateAssetTransition(from, next);
+            if (!check.valid) {
+                throw new Error(`invalid_transition:${from}->${next}`);
+            }
+            await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, asset, next);
+            from = next;
+        }
+        log(`[ROLLBACK] ${bookId}/${chapterId}/${sceneId} ${asset}: ${current} → ${path.join(' → ')} (reason=${reason})`);
+        await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
+            journal.EventType.SCENE_PENDING, state.AssetState.PENDING,
+            { asset, buildId, rollback: true, via: path.join('->'), reason }).catch(() => {});
+        return { changed: true, from: current, path };
+    } catch (err) {
+        // НЕ глотаем: без явной диагностики сцена останется в GENERATING навсегда.
+        error(`[ROLLBACK] FAILED ${bookId}/${chapterId}/${sceneId} ${asset}: ${current} → pending (reason=${reason}): ${err.message} — stage may be stuck in GENERATING`);
+        try {
+            await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
+                journal.EventType.TRANSITION_FAILED, current,
+                { asset, attempted: 'rollback_to_pending', via: path.join('->'), reason, error: err.message });
+        } catch (_) {}
+        try {
+            const runtimeMetrics = require('../runtime/runtime-metrics');
+            await runtimeMetrics.incrementCounter(redis, 'stateRollbackFailures');
+        } catch (_) {}
+        return { changed: false, reason: `rollback_failed:${err.message}` };
+    }
+}
+
 // ── setSceneAllReady ─────────────────────────────────
 // Set all three assets to READY. R1: validateAssetTransition + journal event.
 // Used by scene-window when valid content found on disk (cache hit).
@@ -675,6 +744,7 @@ module.exports = {
     setSceneGenerating,
     setSceneAllReady,
     setScenePlaceholder,
+    rollbackStageToPending,
     reconcile,
     resetScenes,
 };

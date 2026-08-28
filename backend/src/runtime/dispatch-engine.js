@@ -65,6 +65,18 @@ const DISPATCH_META_PREFIX = 'animastor:dispatch-meta';
 const DISPATCH_COMPLETED_PREFIX = 'animastor:dispatch-completed';
 const ACTIVE_STAGE_PREFIX = 'animastor:runtime:active';
 
+// IU in-flight markers (image stage): iu-processor создаёт маркер
+// animastor:iu-in-flight:* ДО gpu.send и регистрирует его в per-dispatch
+// индексе. Значение маркера = dispatch_id владельца. Как только GPU job
+// реально отправлен, маркер снимается с индекса (с этого момента job живёт
+// сам по себе, маркер очищает completion callback). Всё, что осталось в
+// индексе на момент финализации dispatch — маркеры НЕотправленных jobs:
+// их безопасно удалять compare-and-delete по dispatch_id (forensic audit
+// 6929ba5: stale маркеры сорванного dispatch блокировали следующий dispatch
+// → no_jobs_sent → ghost GENERATING).
+const IU_IN_FLIGHT_INDEX_PREFIX = 'animastor:iu-in-flight-index';
+const IU_IN_FLIGHT_MARKER_TTL_S = runtimeConfig.TIMEOUTS.IU_IN_FLIGHT_TTL_S;
+
 const SCHEDULER_TICK_LOCK = 'animastor:runtime:scheduler-lock';
 const SCHEDULER_TICK_LOCK_TTL = 30; // 30 seconds
 
@@ -256,6 +268,86 @@ async function verifyDispatchIdentity(redis, bookId, chapterId, sceneId, stage, 
 async function deleteDispatchMetadata(redis, bookId, chapterId, sceneId, stage) {
     const key = getDispatchMetaKey(bookId, chapterId, sceneId, stage);
     await redis.del(key);
+}
+
+// ======================================================
+// IU IN-FLIGHT MARKER OWNERSHIP (image stage)
+// ======================================================
+
+/**
+ * Per-dispatch index key of iu-in-flight markers created by this dispatch.
+ */
+function getInFlightIndexKey(dispatchId) {
+    return `${IU_IN_FLIGHT_INDEX_PREFIX}:${dispatchId}`;
+}
+
+/**
+ * Register an iu-in-flight marker under the owning dispatch (iu-processor
+ * calls this right after creating the marker, BEFORE gpu.send).
+ */
+async function registerInFlightMarker(redis, dispatchId, markerKey) {
+    if (!dispatchId || typeof dispatchId !== 'string') return;
+    const indexKey = getInFlightIndexKey(dispatchId);
+    await redis.sadd(indexKey, markerKey);
+    await redis.expire(indexKey, IU_IN_FLIGHT_MARKER_TTL_S);
+}
+
+/**
+ * Remove a marker from the owning dispatch index WITHOUT deleting the marker
+ * itself. Called after gpu.send:
+ *  - sent:true  → the GPU job is really running; the marker now belongs to
+ *                 the job lifecycle (completion callback clears it) and must
+ *                 NOT be touched by dispatch cancellation;
+ *  - sent:false → the caller deletes the marker itself (job never existed).
+ */
+async function unregisterInFlightMarker(redis, dispatchId, markerKey) {
+    if (!dispatchId || typeof dispatchId !== 'string') return;
+    await redis.srem(getInFlightIndexKey(dispatchId), markerKey);
+}
+
+/**
+ * Release all iu-in-flight markers still owned by a dispatch (i.e. markers
+ * whose GPU job was NEVER actually sent). Compare-and-delete by dispatch_id:
+ * a marker re-created by a newer dispatch is never touched.
+ * Returns { removed, kept, errors } — errors MUST NOT be swallowed by callers.
+ */
+async function releaseDispatchInFlightMarkers(redis, dispatchId) {
+    if (!dispatchId || typeof dispatchId !== 'string') {
+        return { removed: 0, kept: 0, errors: [] };
+    }
+    const indexKey = getInFlightIndexKey(dispatchId);
+    const errors = [];
+    let members = [];
+    try {
+        members = await redis.smembers(indexKey);
+    } catch (err) {
+        errors.push(`index_read:${err.message}`);
+    }
+
+    let removed = 0;
+    let kept = 0;
+    for (const markerKey of members || []) {
+        try {
+            const owner = await redis.get(markerKey);
+            if (owner === null) continue; // already gone (TTL/explicit cleanup)
+            if (owner !== dispatchId) {
+                // Re-owned by a newer dispatch — a job may really be running.
+                kept++;
+                continue;
+            }
+            await redis.del(markerKey);
+            removed++;
+        } catch (err) {
+            errors.push(`${markerKey}:${err.message}`);
+        }
+    }
+
+    try {
+        await redis.del(indexKey);
+    } catch (err) {
+        errors.push(`index_del:${err.message}`);
+    }
+    return { removed, kept, errors };
 }
 
 // ======================================================
@@ -610,6 +702,11 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
                         dispatchId,
                         reason: result.reason || 'executor_sent_no_jobs'
                     });
+                    // Rollback состояния выполняет executor (scene-orchestrator);
+                    // если он не удался — не глотаем, явный error-лог.
+                    if (result.rollbackFailed) {
+                        error(`STATE_ROLLBACK_FAILED: ${bookId}/${chapterId}/${sceneId}:${stage}: ${result.rollbackReason || 'unknown'} — stage may be stuck in GENERATING`);
+                    }
                 }
                 // Cancelled finalize does not touch the circuit breaker — release
                 // the test permit here so a half-open circuit can keep recovering.
@@ -633,6 +730,23 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
             dispatchId,
             error: err.message
         });
+        // FSM-валидный rollback состояния: executor мог перевести стадию в
+        // GENERATING до throw. Без rollback сцена осталась бы в GENERATING
+        // навсегда (ghost, forensic audit 6929ba5). Ошибка rollback не
+        // глотается — явный error-лог (rollbackStageToPending дополнительно
+        // пишет journal + метрику).
+        try {
+            const orchestratorFacade = require('../orchestration/orchestrator');
+            const rollback = await orchestratorFacade.rollbackStageToPending(
+                redis, bookId, chapterId, sceneId, stage, buildId,
+                `dispatch_error:${err.message}`
+            );
+            if (!rollback.changed && !rollback.alreadyPending && rollback.reason !== 'already_ready') {
+                error(`STATE_ROLLBACK_FAILED: ${bookId}/${chapterId}/${sceneId}:${stage}: ${rollback.reason} — stage may be stuck in GENERATING`);
+            }
+        } catch (rollbackErr) {
+            error(`STATE_ROLLBACK_FAILED: ${bookId}/${chapterId}/${sceneId}:${stage}: ${rollbackErr.message} — stage may be stuck in GENERATING`);
+        }
         await finalizeDispatch(redis, bookId, chapterId, sceneId, stage, {
             outcome: 'cancelled',
             dispatchId,
@@ -841,6 +955,28 @@ async function finalizeDispatch(redis, bookId, chapterId, sceneId, stage, option
     stopDispatchRenewal(bookId, chapterId, sceneId, stage);
 
     const cleanupErrors = [];
+
+    // ── 2.5. Release iu-in-flight markers owned by this dispatch ──
+    // Только для cancelled/failure и только маркеры НЕотправленных jobs
+    // (отправленный job снимается с индекса сразу после gpu.send, его маркер
+    // трогать нельзя — job реально выполняется). Для success очистку делает
+    // completion callback по всему scene-prefix. Ошибки не глотаем — в
+    // cleanupErrors и в лог.
+    if (outcome === 'cancelled' || outcome === 'failure') {
+        try {
+            const markerCleanup = await releaseDispatchInFlightMarkers(redis, dispatchId);
+            if (markerCleanup.removed > 0 || markerCleanup.kept > 0) {
+                log(`IU_IN_FLIGHT_CLEANUP: ${bookId}/${chapterId}/${sceneId}:${stage} dispatch=${dispatchId.slice(0, 24)}... removed=${markerCleanup.removed} kept_running=${markerCleanup.kept}`);
+            }
+            if (markerCleanup.errors.length > 0) {
+                cleanupErrors.push(...markerCleanup.errors.map(e => `iu_in_flight:${e}`));
+                warn(`IU_IN_FLIGHT_CLEANUP_ERRORS: ${bookId}/${chapterId}/${sceneId}:${stage} dispatch=${dispatchId.slice(0, 24)}...: ${markerCleanup.errors.join('; ')}`);
+            }
+        } catch (cleanupErr) {
+            cleanupErrors.push(`iu_in_flight:${cleanupErr.message}`);
+            warn(`IU_IN_FLIGHT_CLEANUP_FAILED: ${bookId}/${chapterId}/${sceneId}:${stage} dispatch=${dispatchId.slice(0, 24)}...: ${cleanupErr.message}`);
+        }
+    }
 
     // ── 3-4. Circuit breaker + retry budget согласно outcome ──
     if (outcome === 'success') {
@@ -1360,6 +1496,14 @@ module.exports = {
     getDispatchMetadata,
     verifyDispatchIdentity,
     deleteDispatchMetadata,
+
+    // IU in-flight marker ownership (image stage)
+    getInFlightIndexKey,
+    registerInFlightMarker,
+    unregisterInFlightMarker,
+    releaseDispatchInFlightMarkers,
+    IU_IN_FLIGHT_INDEX_PREFIX,
+    IU_IN_FLIGHT_MARKER_TTL_S,
 
     // Active counters (backpressure)
     incrementActiveCounter,

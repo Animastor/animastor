@@ -183,6 +183,12 @@ const TIMEOUTS = {
 
     // Флаг форсированного диспатча при регенерации (generation-routes)
     FORCE_DISPATCH_TTL_S: 120,
+
+    // TTL маркера animastor:iu-in-flight:* (iu-processor ставит ДО gpu.send)
+    // и per-dispatch индекса animastor:iu-in-flight-index:* (dispatch-engine).
+    // Маркер переживает backend restart; очистка привязана к dispatch ownership
+    // (forensic audit 6929ba5: no_jobs_sent ghost).
+    IU_IN_FLIGHT_TTL_S: 1200,
 };
 
 // ======================================================

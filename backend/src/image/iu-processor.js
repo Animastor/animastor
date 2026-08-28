@@ -17,6 +17,69 @@ const registry = require('./registry');
 const { applyImageValue, resolveImageProfileName } = require('./connector-utils');
 const { collectSceneUnits } = require('./registry');
 
+// TTL маркера animastor:iu-in-flight:* — ЕДИНЫЙ источник: runtime-config
+// (используется также per-dispatch индексом в dispatch-engine).
+const IU_IN_FLIGHT_TTL_S = config.TIMEOUTS.IU_IN_FLIGHT_TTL_S;
+
+/**
+ * Check an iu-in-flight marker with stale-marker self-heal.
+ *
+ * Значение маркера = dispatch_id владельца (legacy-маркеры: '1'). Маркер
+ * уважается только пока владеющий dispatch остаётся АКТИВНЫМ dispatch'ем
+ * image-стадии этой сцены (dispatch metadata). Если владелец мёртв
+ * (finalized/crashed/restart — metadata нет или принадлежит другому
+ * dispatch'у), маркер stale: его job либо не был отправлен, либо его
+ * dispatch уже не существует, и маркер удаляется compare-and-delete,
+ * чтобы текущий dispatch мог отправить IU заново.
+ *
+ * Это гарантирует idempotency повторного dispatch после no_jobs_sent /
+ * backend restart (forensic audit 6929ba5): stale маркеры не блокируют
+ * новый dispatch бесконечно.
+ *
+ * @returns {Promise<{inFlight: boolean, staleCleared?: boolean, owner?: string|null}>}
+ */
+async function checkInFlightMarker(redis, inFlightKey, bookId, chapterId, sceneId, dispatchId) {
+    const owner = await redis.get(inFlightKey);
+    if (!owner) return { inFlight: false, owner: null };
+    if (dispatchId && owner === dispatchId) {
+        // Собственный маркер текущего dispatch — реально in-flight.
+        return { inFlight: true, owner };
+    }
+
+    let activeDispatchId = null;
+    try {
+        // Lazy require: dispatch-engine лениво требует orchestration,
+        // избегаем циклического require на верхнем уровне модуля.
+        const dispatchEngine = require('../runtime/dispatch-engine');
+        const metadata = await dispatchEngine.getDispatchMetadata(redis, bookId, chapterId, sceneId, 'image');
+        activeDispatchId = metadata?.dispatch_id || null;
+    } catch (e) {
+        activeDispatchId = null;
+    }
+
+    if (activeDispatchId && activeDispatchId === owner) {
+        // Владеющий dispatch всё ещё активен — job может реально выполняться.
+        return { inFlight: true, owner };
+    }
+
+    // Stale: владелец мёртв. Удаляем compare-and-delete (значение могло
+    // смениться на конкурентный dispatch между GET и DEL).
+    try {
+        const current = await redis.get(inFlightKey);
+        if (current === owner) {
+            await redis.del(inFlightKey);
+        }
+    } catch (e) {
+        helpers.warn(`[IU-IN-FLIGHT-STALE] Failed to clear stale marker ${inFlightKey}: ${e.message}`);
+    }
+    try {
+        const runtimeMetrics = require('../runtime/runtime-metrics');
+        await runtimeMetrics.incrementCounter(redis, 'iuInFlightStaleCleared');
+    } catch (_) {}
+    helpers.log(`[IU-IN-FLIGHT-STALE] Cleared stale marker ${inFlightKey} (owner=${owner}, active_dispatch=${activeDispatchId || 'none'})`);
+    return { inFlight: false, staleCleared: true, owner };
+}
+
 async function saveIUMetadata(buildId, bookId, chapterId, sceneId, unit, sceneDuration, fullText, sceneOrder) {
     // IMPORTANT: always use unit.text (full text with speech markers for dialogue units),
     // NOT unit.audio?.text (bare dialogue, e.g. "Дайте нарзану" instead of
@@ -105,9 +168,9 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
 
     const force = dirtyUnitIds.size > 0 && dirtyUnitIds.has(canonicalUnitId);
     if (!force) {
-        const alreadyInFlight = await redis.get(inFlightKey);
-        if (alreadyInFlight) {
-            helpers.log(`[IU-ALREADY-IN-FLIGHT] Skipping ${imageIUId} — already dispatched (marker exists)`);
+        const flight = await checkInFlightMarker(redis, inFlightKey, bookId, chapterId, sceneId, dispatchId);
+        if (flight.inFlight) {
+            helpers.log(`[IU-ALREADY-IN-FLIGHT] Skipping ${imageIUId} — already dispatched (marker owner=${flight.owner})`);
             return { sent: false, cached: false, skipped: true };
         }
         const cachedIU = registry.probeIUImage(imageIUId, buildId, config.OUTPUT_DIR);
@@ -125,9 +188,9 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
         helpers.log(`[DIRTY-UNIT-REGEN] Force-regenerating ${imageIUId} — this unit was modified`);
         const oldPng = path.join(config.OUTPUT_DIR, buildId, `${imageIUId}.png`);
 
-        const alreadyInFlight = await redis.get(inFlightKey);
-        if (alreadyInFlight) {
-            helpers.log(`[IU-ALREADY-IN-FLIGHT] Skipping ${imageIUId} — already dispatched (marker exists)`);
+        const flight = await checkInFlightMarker(redis, inFlightKey, bookId, chapterId, sceneId, dispatchId);
+        if (flight.inFlight) {
+            helpers.log(`[IU-ALREADY-IN-FLIGHT] Skipping ${imageIUId} — already dispatched (marker owner=${flight.owner})`);
             return { sent: false, cached: false, skipped: true };
         }
 
@@ -187,7 +250,12 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
     applyImageValue(wfImg, 'negativePrompt', customNegative ? `${customNegative}, ${baseNegative}` : baseNegative);
 
     try {
-        await redis.set(inFlightKey, '1', 'EX', 1200);
+        // Маркер = dispatch_id владельца: по нему finalizeDispatch чистит
+        // маркеры НЕотправленных jobs при cancellation/failure, а следующий
+        // dispatch отличает stale-маркер мёртвого dispatch от живого.
+        await redis.set(inFlightKey, dispatchId || 'unknown', 'EX', IU_IN_FLIGHT_TTL_S);
+        const dispatchEngine = require('../runtime/dispatch-engine');
+        await dispatchEngine.registerInFlightMarker(redis, dispatchId, inFlightKey);
     } catch (e) {
         helpers.warn(`[IU-IN-FLIGHT] Failed to set marker for ${imageIUId}: ${e.message}`);
     }
@@ -207,6 +275,17 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
         buildId,
         dispatchId
     );
+    try {
+        const dispatchEngine = require('../runtime/dispatch-engine');
+        // Маркер снимается с dispatch-индекса в обоих случаях:
+        //  - sent:true  → job реально выполняется, маркер больше не входит в
+        //                 abort-scope dispatch'а (его очистит completion
+        //                 callback); cancellation НЕ должна его удалять;
+        //  - sent:false → job не существует, маркер удаляется сразу ниже.
+        await dispatchEngine.unregisterInFlightMarker(redis, dispatchId, inFlightKey);
+    } catch (e) {
+        helpers.warn(`[IU-IN-FLIGHT] Failed to unregister marker for ${imageIUId}: ${e.message}`);
+    }
     if (!sendResult.sent) {
         await redis.del(inFlightKey).catch(() => {});
         helpers.warn(`IMAGE (IU) enqueue failed for ${imageIUId}: ${sendResult.error || 'unknown'}`);
@@ -265,4 +344,6 @@ module.exports = {
     getSceneDuration,
     processSingleIU,
     generateSceneIUImages,
+    checkInFlightMarker,
+    IU_IN_FLIGHT_TTL_S,
 };
