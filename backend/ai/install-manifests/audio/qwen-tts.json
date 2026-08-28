@@ -65,6 +65,15 @@
       "index_url": null,
       "cuda_tier": null,
       "basis": "unknown",
+      "cpu": {
+        "pin": "2.10.0",
+        "index_url": "https://download.pytorch.org/whl/cpu",
+        "basis": "known_working",
+        "notes": [
+          "CPU-only fallback branch (no GPU / no supported GPU runtime): CPU wheel index, no CUDA-specific build.",
+          "Intended for the TTS/audio profile test scenario on CPU-only VPS; NOT a target environment for image/video profiles."
+        ]
+      },
       "known_working_reference": {
         "version": "2.10.0+cu128",
         "cuda_tier": "12.8",

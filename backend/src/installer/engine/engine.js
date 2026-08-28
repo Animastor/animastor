@@ -35,11 +35,46 @@ const downloader = require('./downloader');
 const worker = require('./worker');
 const { buildVerificationReport } = require('../verification-report');
 
+const CPU_TORCH_INDEX_URL = 'https://download.pytorch.org/whl/cpu';
+const CPU_MODE_WARNING = 'CPU-only mode: no supported GPU runtime detected — a CPU build of PyTorch will be installed and ComfyUI will run with --cpu. Performance will be SIGNIFICANTLY lower; this mode is intended for the TTS/audio profile, not for image/video generation.';
+
 function stepById(plan, id) {
     return plan.steps.find((s) => s.id === id) || null;
 }
 
-function pickTorchSpec(manifests, decisions, warnings) {
+/**
+ * Pick the torch spec for the detected device branch.
+ *   device='cuda' (default) — canonical pin, or known-working reference with
+ *   explicit consent (unchanged Phase 2 behaviour).
+ *   device='cpu' — the manifest's dedicated CPU build (spec.cpu) is a
+ *   first-class branch; without one, a CPU spec is derived from the existing
+ *   pin/reference by stripping the CUDA local tag (explicitly warned, never
+ *   silent).
+ */
+function pickTorchSpec(manifests, decisions, warnings, device = null) {
+    if (device === 'cpu') {
+        for (const m of manifests) {
+            const spec = (m.runtime_requirements || {}).torch || {};
+            if (spec.cpu && spec.cpu.pin) {
+                return {
+                    spec: { pin: spec.cpu.pin, index_url: spec.cpu.index_url || CPU_TORCH_INDEX_URL },
+                    grade: 'cpu-canonical',
+                };
+            }
+        }
+        for (const m of manifests) {
+            const spec = (m.runtime_requirements || {}).torch || {};
+            const raw = spec.pin
+                || (spec.known_working_reference && spec.known_working_reference.version)
+                || null;
+            if (raw) {
+                const base = String(raw).split('+')[0];
+                warnings.push(`manifest has no dedicated CPU torch build — deriving CPU spec from ${raw}: installing torch ${base} from ${CPU_TORCH_INDEX_URL}`);
+                return { spec: { pin: base, index_url: CPU_TORCH_INDEX_URL }, grade: 'cpu-derived' };
+            }
+        }
+        return null;
+    }
     for (const m of manifests) {
         const spec = (m.runtime_requirements || {}).torch || {};
         if (spec.pin) return { spec, grade: 'canonical' };
@@ -151,12 +186,19 @@ async function runInstallation(args) {
     // ── 1. detect ─────────────────────────────────────────────────────────
     // In dry-run mode, skip probing (io.exec is guarded) — use provided env or minimal.
     const env = preEnv || (dryRun
-        ? { gpu: null, comfyui: null, python: null, torch: null, nodejs: null, custom_nodes: [], models: [], workflows: [], worker: null }
+        ? { gpu: null, device: 'cpu', comfyui: null, python: null, torch: null, nodejs: null, custom_nodes: [], models: [], workflows: [], worker: null }
         : probe.probeEnvironment(io, {
             root: comfyuiRoot, workerDir, crypto,
             workerType: manifests.length === 1 ? (manifests[0].worker_bundle || {}).worker_type : null,
         })
     );
+    const device = env.device || (env.gpu ? 'cuda' : 'cpu');
+    if (device === 'cpu') {
+        result.warnings.push(CPU_MODE_WARNING);
+        if (env.gpu && env.gpu.vendor === 'amd') {
+            result.warnings.push('AMD GPU detected, but the installer provides no ROCm/accelerated runtime branch yet — falling back to CPU-only mode.');
+        }
+    }
 
     // ── 2. resolve ────────────────────────────────────────────────────────
     const report = resolver.resolveInstallation({
@@ -190,7 +232,9 @@ async function runInstallation(args) {
     const st = initialState
         || state.loadState(io, statePath)
         || state.emptyState({ mode, profiles: report.profiles, root: comfyuiRoot });
+    state.normalizeState(st);
     st.profiles = report.profiles;
+    st.device = device;
     if (!dryRun) {
         // persist the (non-secret) decisions so `resume` does not re-prompt
         st.decisions = { ...(st.decisions || {}), ...sanitizeDecisions(decisions) };
@@ -223,6 +267,11 @@ async function runInstallation(args) {
                 const r = await log.step('install ComfyUI', async () => comfyui.installComfyUI(io, { root: comfyuiRoot, source: src.source, log }));
                 result.results.comfyui = r.ok ? { op, grade: src.grade, ...r.value } : { op, failed: String(r.error && r.error.message) };
                 if (!r.ok) result.warnings.push(`ComfyUI install failed: ${r.error && r.error.message}`);
+                // installComfyUI refuses non-empty targets — success ⇒ the
+                // installer created this root and owns it.
+                st.components.comfyui = r.ok
+                    ? { owned: true, path: comfyuiRoot, ref: src.source.commit || src.source.tag || null }
+                    : st.components.comfyui;
                 state.setArtifact(st, 'comfyui', r.ok ? 'installed' : 'failed', { ref: src.source.commit || src.source.tag });
                 save();
             }
@@ -234,6 +283,11 @@ async function runInstallation(args) {
                 const target = pickUpdateTarget(manifests[0]);
                 const r = await log.step(`${op} ComfyUI`, async () => comfyui.updateComfyUI(io, { root: comfyuiRoot, target, state: st, log }));
                 result.results.comfyui = r.ok ? { op, ...r.value } : { op, failed: String(r.error && r.error.message) };
+                // An updated/downgraded ComfyUI pre-existed — record ownership
+                // honestly so the uninstaller never removes it wholesale.
+                if (r.ok && !st.components.comfyui) {
+                    st.components.comfyui = { owned: false, path: comfyuiRoot };
+                }
                 if (r.ok) save();
             }
         }
@@ -241,24 +295,35 @@ async function runInstallation(args) {
     if (comfyStep && comfyStep.continue_at_own_risk) {
         result.warnings.push('continuing with a ComfyUI newer than the tested maximum — at the user\'s own risk (recorded)');
     }
+    if (!st.components.comfyui && env.comfyui && env.comfyui.present) {
+        st.components.comfyui = { owned: false, path: comfyuiRoot };
+        save();
+    }
 
     // 4.2 Python runtime / torch (managed, or when missing) ------------------
     // Never touch an EXISTING working Python/Torch/CUDA setup without an
-    // explicit user decision: `accept_runtime_change`.
+    // explicit user decision: `accept_runtime_change`. An incompatible
+    // runtime OUTSIDE the managed venv (system python) does not block: the
+    // installer creates an ISOLATED venv and never modifies the system
+    // runtime. Only replacing an already-present venv needs consent.
     const torchEntry = report.entries.find((e) => e.id === 'runtime:torch');
     const pythonEntry = report.entries.find((e) => e.id === 'runtime:python');
     const needRuntime = [torchEntry, pythonEntry].some((e) => e && (e.status === 'missing' || e.status === 'incompatible'));
     if (needRuntime && io.fs.existsSync(comfyuiRoot)) {
+        const hasManagedVenv = io.fs.existsSync(path.join(comfyuiRoot, 'venv', 'bin', 'python'));
         const presentRuntime = [torchEntry, pythonEntry].some((e) => e && e.status === 'incompatible');
-        if (presentRuntime && decisions.accept_runtime_change !== true) {
+        if (presentRuntime && hasManagedVenv && decisions.accept_runtime_change !== true) {
             result.blocked.push({
                 step: 'runtime',
-                reason: 'existing Python/Torch runtime does not match the profile requirements. The installer will NOT replace it without an explicit accept_runtime_change decision.',
+                reason: 'the managed venv runtime does not match the profile requirements. The installer will NOT replace it without an explicit accept_runtime_change decision.',
             });
             state.setArtifact(st, 'runtime', 'failed', { reason: 'runtime change not accepted' });
             save();
         } else {
-            const torchSpec = pickTorchSpec(manifests, decisions, result.warnings);
+            if (presentRuntime && !hasManagedVenv) {
+                result.warnings.push(`the system Python/Torch runtime (outside the managed venv) does not match the profile requirement — the installer creates an isolated venv and does NOT modify the system runtime`);
+            }
+            const torchSpec = pickTorchSpec(manifests, decisions, result.warnings, device);
             if (torchEntry && torchEntry.status === 'missing' && !torchSpec) {
                 result.blocked.push({ step: 'runtime', reason: 'torch requirement cannot be satisfied: no canonical pin and reference not accepted' });
             } else {
@@ -267,7 +332,14 @@ async function runInstallation(args) {
                     torchSpec: torchSpec ? torchSpec.spec : null,
                     log,
                 }));
-                result.results.runtime = r.ok ? { grade: torchSpec ? torchSpec.grade : null, ...r.value } : { failed: String(r.error && r.error.message) };
+                result.results.runtime = r.ok ? { device, grade: torchSpec ? torchSpec.grade : null, ...r.value } : { failed: String(r.error && r.error.message) };
+                if (r.ok) {
+                    // The venv under the ComfyUI root is created by this
+                    // installer run — always ours (even inside a pre-existing
+                    // root), so the uninstaller may remove it precisely.
+                    st.components.venv = { owned: true, path: r.value.venv, created: r.value.venv_created };
+                    if (torchSpec) st.torch = { device, grade: torchSpec.grade, pin: torchSpec.spec.pin };
+                }
                 state.setArtifact(st, 'runtime', r.ok ? 'installed' : 'failed', {});
                 if (!r.ok) result.warnings.push(`python runtime preparation failed: ${r.error && r.error.message}`);
                 save();
@@ -285,6 +357,10 @@ async function runInstallation(args) {
         }));
         result.results.custom_nodes = r.ok ? r.value : [{ status: 'failed', reason: String(r.error && r.error.message) }];
         for (const item of result.results.custom_nodes) {
+            // Only directories the installer actually created are ours.
+            if (item.status === 'installed' && item.origin === 'installed' && item.directory) {
+                state.addOwnedComponent(st, 'custom_nodes', { id: item.id, path: path.join(comfyuiRoot, 'custom_nodes', item.directory) });
+            }
             state.setArtifact(st, item.id, item.status === 'installed' ? 'installed' : item.status === 'failed' ? 'failed' : 'missing', { reason: item.reason });
         }
         save();
@@ -299,6 +375,8 @@ async function runInstallation(args) {
         const specs = manifests.flatMap((m) => planModelDownloads(m, missingIds, { hasHfToken }));
         for (const spec of specs) {
             const dep = findModelDep(manifests, spec.id);
+            const absTarget = path.join(comfyuiRoot, spec.target_path);
+            const existedBefore = io.fs.existsSync(absTarget);
             if (dep && dep.kind === 'model_repo' && dep.source && dep.source.kind === 'modelscope') {
                 const strategy = downloader.modelscopeStrategy(dep);
                 if (strategy.mechanism === 'node_auto_download') {
@@ -321,6 +399,14 @@ async function runInstallation(args) {
                     const res = r.ok ? r.value : { status: 'failed', reason: String(r.error && r.error.message) };
                     const status = res.status === 'failed' ? 'failed' : res.status === 'skipped' ? 'verified' : 'installed';
                     result.results.models.push({ id: spec.id, ...res });
+                    if (status === 'installed') {
+                        state.addOwnedComponent(st, 'models', {
+                            id: spec.id,
+                            path: absTarget,
+                            created: !existedBefore,
+                            files: (res.files || []).map((f) => f.path),
+                        });
+                    }
                     state.setArtifact(st, spec.id, status, { reason: res.reason });
                     save();
                     continue; // skip the generic downloadArtifact below
@@ -339,6 +425,13 @@ async function runInstallation(args) {
             }));
             const res = r.ok ? r.value : { status: 'failed', reason: String(r.error && r.error.message) };
             result.results.models.push({ id: spec.id, ...res });
+            if (res.status === 'downloaded' || res.status === 'resumed') {
+                state.addOwnedComponent(st, 'models', {
+                    id: spec.id,
+                    path: absTarget,
+                    created: !existedBefore,
+                });
+            }
             state.setArtifact(st, spec.id, res.status === 'failed' ? 'failed'
                 : res.status === 'blocked' ? 'missing'
                     : res.status === 'skipped' ? 'verified'
@@ -362,6 +455,11 @@ async function runInstallation(args) {
         }));
         result.results.workflows = r.ok ? r.value : [{ status: 'failed', reason: String(r.error && r.error.message) }];
         for (const item of result.results.workflows) {
+            // Fresh copies written by the installer are ours; 'kept' files are
+            // the user's — never registered, never removed.
+            if ((item.status === 'installed' || item.status === 'fresh-copy-installed') && item.target_path) {
+                state.addOwnedComponent(st, 'workflows', { id: item.id, path: path.join(comfyuiRoot, item.target_path) });
+            }
             state.setArtifact(st, item.id, item.status === 'installed' || item.status === 'fresh-copy-installed' ? 'verified' : item.status === 'kept' ? 'verified' : 'missing', { path: item.target_path, reason: item.reason });
         }
         save();
@@ -377,6 +475,17 @@ async function runInstallation(args) {
                 httpFetchText: null,
             }));
             result.results.worker.push({ id: w.id, bundle: bundleRes.ok ? bundleRes.value : { status: 'failed', reason: String(bundleRes.error && bundleRes.message) } });
+            if (bundleRes.ok && bundleRes.value.status === 'installed') {
+                // Ownership is per-file: a pre-existing worker dir keeps its
+                // own files; only what the installer copied is registered.
+                st.components.worker = {
+                    owned: bundleRes.value.dir_created === true,
+                    dir: workerDir,
+                    files_installed: bundleRes.value.files_installed || [],
+                    files_kept: bundleRes.value.files_kept || [],
+                    env_created: null, // finalized by the .env step below
+                };
+            }
             state.setArtifact(st, w.id, bundleRes.ok && bundleRes.value.status === 'installed' ? 'installed' : 'failed');
             save();
         }
@@ -406,6 +515,14 @@ async function runInstallation(args) {
         }
         const cfg = await log.step('configure worker .env', async () => worker.configureEnv(io, { workerDir, manifest, values, log }));
         result.results.worker.push({ id: 'env', config: cfg.ok ? cfg.value : { status: 'failed', reason: String(cfg.error && cfg.error.message) } });
+        if (cfg.ok && st.components.worker) {
+            st.components.worker.env_created = cfg.value.created === true;
+        } else if (cfg.ok) {
+            st.components.worker = {
+                owned: false, dir: workerDir, files_installed: [], files_kept: [],
+                env_created: cfg.value.created === true,
+            };
+        }
         state.setArtifact(st, 'env', cfg.ok && cfg.value.status === 'configured' ? 'installed' : 'partial', {});
         save();
     }
@@ -415,6 +532,7 @@ async function runInstallation(args) {
         io, manifests, roots: { comfyuiRoot, workerDir, hubUrl },
         options, log, crypto,
         tokenValue,
+        device,
         onEvent: (kind, value) => { result.results[kind] = value; },
     });
     result.verification = ver;
@@ -455,7 +573,7 @@ function defaultEnvValue(key, { hubUrl, manifests }) {
 // Verification (live checks where possible)
 // ---------------------------------------------------------------------------
 
-async function runVerification({ io, manifests, roots, options, log, crypto, tokenValue = null, onEvent = null }) {
+async function runVerification({ io, manifests, roots, options, log, crypto, tokenValue = null, device = null, onEvent = null }) {
     const emit = (kind, value) => { if (onEvent) onEvent(kind, value); };
     const { comfyuiRoot, workerDir, hubUrl } = roots;
     const live = {};
@@ -467,7 +585,7 @@ async function runVerification({ io, manifests, roots, options, log, crypto, tok
     let stats = await comfyui.systemStats(io, baseUrl);
     if (!stats && options.startComfyui && io.fs.existsSync(comfyuiRoot)) {
         const started = await log.step('start ComfyUI', async () => {
-            const { pid } = comfyui.startComfyUI(io, { root: comfyuiRoot, port });
+            const { pid } = comfyui.startComfyUI(io, { root: comfyuiRoot, port, device });
             const up = await comfyui.waitForApi(io, baseUrl, { timeoutMs: options.verifyTimeoutMs || 120000, intervalMs: options.pollIntervalMs || 2000 });
             return { pid, up };
         });
@@ -556,8 +674,10 @@ function readEnvValueLocal(io, workerDir, key) {
 module.exports = {
     runInstallation,
     runVerification,
+    pickTorchSpec,
     readEnvValueLocal,
     loadResumableState,
     renderResumeSummary,
     sanitizeDecisions,
+    CPU_MODE_WARNING,
 };

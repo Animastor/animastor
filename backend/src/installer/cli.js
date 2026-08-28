@@ -5,11 +5,12 @@
  * Animastor GPU Worker Installer CLI — Phase 2.
  *
  * Usage:
- *   animastor-installer detect   [--root PATH] [--worker-dir PATH]
- *   animastor-installer plan     --profile P[,P2] [--mode managed|existing|shared] [--root PATH]
- *   animastor-installer install  --profile P[,P2] [--mode ...] [--root PATH] [--yes] [--dry-run] [--worker-dir PATH] [--hub-url URL]
- *   animastor-installer verify   [--profile P[,P2]] [--root PATH] [--worker-dir PATH] [--hub-url URL]
+ *   animastor-installer detect     [--root PATH] [--worker-dir PATH]
+ *   animastor-installer plan       --profile P[,P2] [--mode managed|existing|shared] [--root PATH]
+ *   animastor-installer install    --profile P[,P2] [--mode ...] [--root PATH] [--yes] [--dry-run] [--worker-dir PATH] [--hub-url URL]
+ *   animastor-installer verify     [--profile P[,P2]] [--root PATH] [--worker-dir PATH] [--hub-url URL]
  *   animastor-installer resume
+ *   animastor-installer uninstall  [--all] [--yes] [--dry-run] [--state PATH] [--home PATH]
  *
  * Flags:
  *   --profile P        Generation profile id (repeatable or comma-separated)
@@ -21,6 +22,7 @@
  *   --state PATH       Install state file path
  *   --yes              Auto-confirm all prompts
  *   --dry-run          Show plan only; never perform real changes
+ *   --all              uninstall: full uninstall (everything recorded in the manifest)
  */
 
 const fs = require('fs');
@@ -34,6 +36,7 @@ const { runInstallation, loadResumableState, renderResumeSummary } = require('./
 const resolver = require('./compatibility-resolver');
 const { buildInstallPlan, renderPlanText } = require('./install-plan');
 const manifest = require('./install-manifest');
+const uninstaller = require('./uninstaller');
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -57,7 +60,7 @@ function parseArgs(argv) {
         const a = args[i];
         if (a.startsWith('--')) {
             const key = a.slice(2);
-            if (['yes', 'dry-run', 'resume', 'start-comfy'].includes(key)) {
+            if (['yes', 'dry-run', 'resume', 'start-comfy', 'all'].includes(key)) {
                 parsed.flags[key] = true;
             } else {
                 const val = args[++i];
@@ -221,6 +224,27 @@ async function cmdInstall(flags) {
 
     console.log(plan.plan_text);
 
+    // CPU-only mode is always announced explicitly and confirmed before any
+    // change: the user must see that performance will be significantly lower.
+    const device = env.device || (env.gpu ? 'cuda' : 'cpu');
+    if (device === 'cpu' && !dryRun) {
+        console.log('\n=========================================================================');
+        console.log('  CPU-ONLY MODE: no supported GPU was detected.');
+        console.log('  A CPU build of PyTorch will be installed and ComfyUI will run');
+        console.log('  with --cpu. Performance will be SIGNIFICANTLY lower.');
+        console.log('  This mode is intended for the TTS/audio profile test scenario.');
+        console.log('=========================================================================');
+        if (!yes) {
+            const prompt = createPrompt();
+            const proceed = await prompt.confirm('Continue with the CPU-only installation?');
+            prompt.close();
+            if (!proceed) {
+                console.log('Aborted — nothing was changed.');
+                process.exit(0);
+            }
+        }
+    }
+
     if (dryRun) {
         console.log('\n[dry-run] zero mutations performed');
         return;
@@ -363,6 +387,104 @@ function yesDecisions() {
         worker_setup: true,
         worker_key_provided: true,
     };
+}
+
+/**
+ * uninstall — remove what the Animastor installer installed, guided by the
+ * installation state/manifest. Components that existed before the installer
+ * ran are recorded as not-owned and are never removed.
+ *
+ * Interactive: full-uninstall or per-group Да/Нет questions, with a summary
+ * of the exact deletion list shown before anything is removed.
+ */
+async function cmdUninstall(flags) {
+    const io = createRealIo();
+    const statePath = resolveStatePath(flags);
+    const home = flags.home || process.env.HOME || null;
+    const dryRun = flags['dry-run'] || false;
+    const yes = flags.yes || false;
+    const full = flags.all || false;
+
+    const record = uninstaller.loadInstallRecord(io, statePath);
+    if (!record) {
+        console.log(`No Animastor installation state found at ${statePath}.`);
+        console.log('Without the install manifest the uninstaller cannot determine');
+        console.log('what was installed by Animastor — and will not guess or delete');
+        console.log('anything by name. Remove leftover directories manually if needed.');
+        process.exit(1);
+    }
+    if (record.corrupt) {
+        console.error(`Install state at ${statePath} is unreadable (${record.error}).`);
+        console.error('Refusing to uninstall without a valid manifest — nothing was removed.');
+        process.exit(1);
+    }
+
+    const plan = uninstaller.buildUninstallPlan(io, { state: record, statePath, home });
+    console.log(uninstaller.renderUninstallPlan(plan, { state: record }));
+    console.log('');
+
+    if (plan.removable_count === 0) {
+        console.log('Nothing recorded as installed by Animastor was found on disk — nothing to remove.');
+        process.exit(0);
+    }
+
+    const answers = {};
+    const prompt = createPrompt();
+    if (full || yes) {
+        for (const g of uninstaller.GROUPS) answers[g.key] = true;
+        console.log(full ? 'Mode: FULL uninstall — every removable component listed above will be deleted.' : 'Mode: auto-confirmed (--yes) — every removable component will be deleted.');
+    } else {
+        const mode = await prompt.select(
+            'Choose uninstall mode:',
+            [
+                'Full uninstall — remove EVERYTHING installed by Animastor',
+                'Selective — decide per component',
+            ],
+        );
+        if (mode.startsWith('Full')) {
+            for (const g of uninstaller.GROUPS) answers[g.key] = true;
+        } else {
+            for (const g of uninstaller.GROUPS) {
+                // only ask about groups that actually have removable items
+                const group = plan.groups.find((x) => x.key === g.key);
+                if (!group || !group.items.some((i) => i.removable)) continue;
+                answers[g.key] = await prompt.confirm(`Remove ${g.title}?`);
+            }
+        }
+    }
+
+    // Final confirmation: show exactly what will be removed
+    const willRemove = [];
+    for (const g of plan.groups) {
+        if (answers[g.key] !== true) continue;
+        for (const it of g.items) {
+            if (it.removable) willRemove.push(it.path);
+        }
+    }
+    if (willRemove.length === 0) {
+        console.log('\nNothing selected for removal — exiting.');
+        prompt.close();
+        process.exit(0);
+    }
+    console.log('\nThe following paths will be REMOVED:');
+    for (const p of willRemove) console.log(`  - ${p}`);
+    if (!yes) {
+        const proceed = await prompt.confirm('\nExecute the uninstall now?');
+        if (!proceed) {
+            console.log('Aborted — nothing was removed.');
+            prompt.close();
+            process.exit(0);
+        }
+    }
+    prompt.close();
+
+    const outcome = uninstaller.runUninstallation(io, {
+        plan, answers, statePath, dryRun,
+        log: createLogger({ io }),
+    });
+    console.log('');
+    console.log(uninstaller.renderUninstallResult(outcome));
+    process.exit(outcome.failed > 0 ? 1 : 0);
 }
 
 async function cmdVerify(flags) {
@@ -525,8 +647,11 @@ async function main() {
         case 'resume':
             await cmdResume(args.flags);
             break;
+        case 'uninstall':
+            await cmdUninstall(args.flags);
+            break;
         default:
-            console.error('Usage: animastor-installer <detect|plan|install|verify|validate|resume> [options]');
+            console.error('Usage: animastor-installer <detect|plan|install|verify|validate|resume|uninstall> [options]');
             console.error('  --profile P[,P2]   Generation profile id');
             console.error('  --mode MODE        managed | existing | shared');
             console.error('  --root PATH        ComfyUI root (default: ~/ComfyUI)');
@@ -534,6 +659,9 @@ async function main() {
             console.error('  --hub-url URL      GPU Hub URL');
             console.error('  --yes              Auto-confirm all prompts');
             console.error('  --dry-run          Show plan only; zero mutations');
+            console.error('  uninstall flags:');
+            console.error('    --all            Full uninstall (remove everything recorded as installed by Animastor)');
+            console.error('    --state PATH     Install state file path');
             process.exit(1);
     }
 }
@@ -545,4 +673,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseArgs, cmdDetect, cmdPlan, cmdInstall, cmdVerify, cmdValidateManifests, cmdResume };
+module.exports = { parseArgs, cmdDetect, cmdPlan, cmdInstall, cmdVerify, cmdValidateManifests, cmdResume, cmdUninstall };

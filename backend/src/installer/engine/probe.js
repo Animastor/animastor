@@ -25,23 +25,93 @@ const MODEL_DIRS = [
 
 const WORKFLOW_SCAN_ROOT = 'user/default/workflows';
 
+/**
+ * Device kinds for env.device:
+ *   cuda — NVIDIA GPU verified through the driver runtime (nvidia-smi query);
+ *   cpu  — no supported GPU: CPU-only mode (ComfyUI --cpu, CPU PyTorch).
+ * An AMD GPU is detected and reported, but the installer provides no ROCm
+ * runtime branch yet — such machines fall back to cpu with an explicit note
+ * (never a silent degradation).
+ */
+const DEVICE_KINDS = Object.freeze(['cuda', 'cpu']);
+
 function firstLine(s) {
     return String(s || '').split('\n').map((x) => x.trim()).find(Boolean) || '';
 }
 
-function probeGpu(io) {
+/**
+ * NVIDIA GPU detection — runtime check, not just command presence:
+ * nvidia-smi must succeed AND report at least one GPU row.
+ */
+function probeNvidiaGpu(io) {
     const r = io.exec('nvidia-smi', [
         '--query-gpu=name,memory.total,driver_version', '--format=csv,noheader,nounits',
     ]);
     if (r.code !== 0) return null;
     const line = firstLine(r.stdout);
-    if (!line) return null;
+    if (!line || /^\[?n?a$/i.test(line)) return null;
     const [name, mib, driver] = line.split(',').map((x) => x.trim());
+    if (!name) return null;
     return {
-        name: name || null,
+        vendor: 'nvidia',
+        name,
         vram_mib: mib ? Number(mib) : null,
         driver_version: driver || null,
     };
+}
+
+/**
+ * AMD GPU detection with positive evidence only:
+ *   1. rocm-smi runtime (Card series: …), or
+ *   2. kernel drm sysfs vendor 0x1002 (amdgpu), name via lspci when available.
+ * Empty/unknown output is treated as "not detected" — never guessed.
+ */
+function probeAmdGpu(io) {
+    const rocm = io.exec('rocm-smi', ['--showproductname']);
+    if (rocm.code === 0) {
+        const m = /Card series:\s*(.+)/.exec(rocm.stdout);
+        if (m && m[1].trim()) {
+            return { vendor: 'amd', name: m[1].trim(), vram_mib: null, driver_version: null, detection: 'rocm-smi' };
+        }
+    }
+    try {
+        const drm = '/sys/class/drm';
+        if (io.fs.isDirectory(drm)) {
+            for (const entry of io.fs.readdirSync(drm)) {
+                if (!/^card\d+$/.test(entry)) continue;
+                const vendorPath = `${drm}/${entry}/device/vendor`;
+                if (!io.fs.existsSync(vendorPath)) continue;
+                const vendor = String(io.fs.readFileSync(vendorPath, 'utf8')).trim().toLowerCase();
+                if (vendor !== '0x1002') continue;
+                let name = null;
+                const productPath = `${drm}/${entry}/device/product_name`;
+                if (io.fs.existsSync(productPath)) {
+                    name = String(io.fs.readFileSync(productPath, 'utf8')).trim() || null;
+                }
+                if (!name) {
+                    const lspci = io.exec('lspci', []);
+                    if (lspci.code === 0) {
+                        const m = /VGA compatible controller[^\n]*\[AMD\/ATI\][^\n]*/.exec(lspci.stdout)
+                            || /Display controller[^\n]*\[AMD\/ATI\][^\n]*/.exec(lspci.stdout);
+                        if (m) {
+                            const chip = m[0].split(':').slice(2).join(':').trim();
+                            if (chip) name = chip;
+                        }
+                    }
+                }
+                return { vendor: 'amd', name: name || 'AMD GPU', vram_mib: null, driver_version: null, detection: 'sysfs-vendor' };
+            }
+        }
+    } catch (_) { /* sysfs unavailable — not detected */ }
+    return null;
+}
+
+function probeGpu(io) {
+    const nvidia = probeNvidiaGpu(io);
+    if (nvidia) return nvidia;
+    const amd = probeAmdGpu(io);
+    if (amd) return amd;
+    return null;
 }
 
 function probeCuda(io) {
@@ -187,8 +257,10 @@ function parseEnvKeys(text) {
 
 function probeWorker(io, workerDir) {
     if (!workerDir || !io.fs.isDirectory(workerDir)) return null;
+    // '.env' is excluded on purpose (secret values are never probed); other
+    // dotfiles (e.g. '.env.example' from the bundle manifest) are visible.
     let files = [];
-    try { files = io.fs.readdirSync(workerDir).filter((f) => !f.startsWith('.')); } catch (_) { files = []; }
+    try { files = io.fs.readdirSync(workerDir).filter((f) => f !== '.env'); } catch (_) { files = []; }
     const envPath = path.join(workerDir, '.env');
     let env = null;
     if (io.fs.existsSync(envPath)) {
@@ -215,6 +287,7 @@ function probeEnvironment(io, { root = null, workerDir = null, crypto = null, wo
         torch: undefined,
         nodejs: undefined,
         gpu: undefined,
+        device: undefined,
         custom_nodes: undefined,
         models: undefined,
         python_packages: undefined,
@@ -223,6 +296,8 @@ function probeEnvironment(io, { root = null, workerDir = null, crypto = null, wo
     };
 
     env.gpu = probeGpu(io);
+    env.cuda = probeCuda(io);
+    env.device = env.gpu && env.gpu.vendor === 'nvidia' ? 'cuda' : 'cpu';
     env.nodejs = probeNodejs(io);
     env.comfyui = probeComfyui(io, root);
     env.python = probePython(io, root);
@@ -248,16 +323,26 @@ function probeEnvironment(io, { root = null, workerDir = null, crypto = null, wo
         env.worker = null;
     }
 
-    env.cuda = probeCuda(io);
     return env;
 }
 
 /** Human-readable detection summary (for `detect` / existing-mode display). */
 function renderDetection(env) {
     const lines = [];
-    lines.push(env.gpu && env.gpu.name
-        ? `GPU: ${env.gpu.name}${env.gpu.vram_mib ? ` (${Math.round(env.gpu.vram_mib / 1024)} GB VRAM)` : ''}`
-        : 'GPU: not detected');
+    if (env.gpu && env.gpu.name) {
+        lines.push(`GPU: ${env.gpu.name}${env.gpu.vram_mib ? ` (${Math.round(env.gpu.vram_mib / 1024)} GB VRAM)` : ''} [${env.gpu.vendor}]`);
+    } else {
+        lines.push('GPU: not detected');
+    }
+    if (env.device === 'cpu') {
+        lines.push('Device: CPU-only mode');
+        if (env.gpu && env.gpu.vendor === 'amd') {
+            lines.push('  Note: an AMD GPU was detected, but the installer provides no ROCm/accelerated runtime branch yet — CPU mode will be used.');
+        }
+        lines.push('  Warning: performance will be SIGNIFICANTLY lower than GPU. Suitable for the TTS/audio profile test, not for image/video generation.');
+    } else {
+        lines.push('Device: CUDA (NVIDIA GPU acceleration)');
+    }
     if (env.cuda) lines.push(`CUDA: ${env.cuda}`);
     if (env.comfyui && env.comfyui.present) {
         lines.push(`ComfyUI: detected at ${env.root}`);
@@ -285,8 +370,11 @@ function renderDetection(env) {
 
 module.exports = {
     MODEL_DIRS,
+    DEVICE_KINDS,
     probeEnvironment,
     probeGpu,
+    probeNvidiaGpu,
+    probeAmdGpu,
     probeComfyui,
     probeWorker,
     parseEnvKeys,

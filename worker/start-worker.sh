@@ -62,14 +62,17 @@ fi
 # ======================================================
 # 2. GPU CHECK
 # ======================================================
+# A missing NVIDIA GPU is no longer fatal: the worker can serve a ComfyUI
+# running in CPU mode (--cpu; TTS/audio profile test scenario on CPU-only
+# VPS). GPU machines behave exactly as before.
 
 if ! command -v nvidia-smi >/dev/null 2>&1; then
-  echo "ERROR: GPU not detected"
-  exit 1
+  echo "⚠️ NVIDIA GPU not detected — continuing in CPU mode"
+  echo "   (performance will be significantly lower; suitable for the TTS/audio profile)"
+else
+  echo "GPU:"
+  nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 fi
-
-echo "GPU:"
-nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
 # ======================================================
 # 3. NODEJS

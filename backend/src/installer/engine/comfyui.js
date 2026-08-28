@@ -36,8 +36,14 @@ function installComfyUI(io, { root, source, log }) {
     const repo = source.repository;
     const ref = source.commit || source.tag;
     if (!repo) throw new Error('ComfyUI install source has no repository');
-    if (io.fs.existsSync(root) && io.fs.readdirSync(root).length > 0) {
-        throw new Error(`target root ${root} is not empty — refusing to touch it`);
+    if (io.fs.existsSync(root)) {
+        // The engine writes its install state into <root>/.animastor-installer/
+        // BEFORE cloning (resume support). That directory is installer-owned
+        // metadata, not user content — it does not make the target "occupied".
+        const entries = io.fs.readdirSync(root).filter((n) => n !== '.animastor-installer');
+        if (entries.length > 0) {
+            throw new Error(`target root ${root} is not empty — refusing to touch it`);
+        }
     }
     let r = io.exec('git', ['clone', repo, root]);
     if (r.code !== 0) throw new Error(`git clone failed: ${r.stderr || r.error}`);
@@ -77,10 +83,25 @@ function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log }) {
     const venvDir = path.join(root, 'venv');
     const py = path.join(venvDir, 'bin', 'python');
 
+    let venvCreated = false;
     if (!io.fs.existsSync(py)) {
         let r = io.exec('python3', ['-m', 'venv', venvDir]);
         if (r.code !== 0) throw new Error(`python3 -m venv failed (code ${r.code}): ${String(r.stderr || r.stdout || r.error || 'no output').slice(-500)}`);
         if (log) log.info(`venv created at ${venvDir}`);
+        venvCreated = true;
+    }
+
+    // Torch is installed BEFORE requirements.txt: pip then sees the pinned
+    // (CUDA- or CPU-flavored) build as satisfied instead of pulling the
+    // default PyPI wheel first (a multi-GB CUDA download on CPU-only hosts).
+    if (torchSpec && torchSpec.pin) {
+        const pin = String(torchSpec.pin);
+        const version = pin.split('+')[0];
+        const args = ['-m', 'pip', 'install', `torch==${version}`];
+        if (torchSpec.index_url) args.push('--index-url', torchSpec.index_url);
+        const r = io.exec(py, args, { timeout: 60 * 60 * 1000 });
+        if (r.code !== 0) throw new Error(`pip install torch==${version} failed: ${String(r.stderr).slice(-500)}`);
+        if (log) log.info(`torch ${pin} installed${torchSpec.index_url ? ` (from ${torchSpec.index_url})` : ''}`);
     }
 
     const req = path.join(root, 'requirements.txt');
@@ -90,26 +111,23 @@ function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log }) {
         if (log) log.info('ComfyUI requirements installed');
     }
 
-    if (torchSpec && torchSpec.pin) {
-        const pin = String(torchSpec.pin);
-        const version = pin.split('+')[0];
-        const args = ['-m', 'pip', 'install', `torch==${version}`];
-        if (torchSpec.index_url) args.push('--index-url', torchSpec.index_url);
-        const r = io.exec(py, args, { timeout: 60 * 60 * 1000 });
-        if (r.code !== 0) throw new Error(`pip install torch==${version} failed: ${String(r.stderr).slice(-500)}`);
-        if (log) log.info(`torch ${pin} installed`);
-    }
-    return { venv: venvDir, python: py };
+    return { venv: venvDir, python: py, venv_created: venvCreated };
 }
 
-function startComfyUI(io, { root, port = 8188, logFile = null }) {
+/**
+ * Start ComfyUI. In CPU-only mode the `--cpu` flag forces the CPU execution
+ * path (ComfyUI's own device selector) — required on hosts without a GPU.
+ */
+function startComfyUI(io, { root, port = 8188, logFile = null, device = null }) {
     const py = path.join(root, 'venv', 'bin', 'python');
     const python = io.fs.existsSync(py) ? py : 'python3';
-    const pid = io.spawnDaemon(python, ['main.py', '--listen', '127.0.0.1', '--port', String(port)], {
+    const args = ['main.py', '--listen', '127.0.0.1', '--port', String(port)];
+    if (device === 'cpu') args.push('--cpu');
+    const pid = io.spawnDaemon(python, args, {
         cwd: root,
         logFile: logFile || path.join(root, 'comfyui-installer.log'),
     });
-    return { pid, port };
+    return { pid, port, args };
 }
 
 async function waitForApi(io, baseUrl, { timeoutMs = 120000, intervalMs = 2000 } = {}) {

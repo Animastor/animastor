@@ -25,21 +25,26 @@ function findWorkerManifest(manifests, workerEntryId) {
  * Deploy the worker bundle into workerDir.
  * Source order (never invented): repo checkout `worker/worker/` first, then
  * the hub's GET /worker-source (serves worker.cjs only).
- * @returns {{ status, files, reason? }}
+ * Ownership details are returned for the uninstall manifest: dir_created,
+ * files the installer actually copied (files_installed) vs files that were
+ * already on disk and were kept (files_kept).
+ * @returns {{ status, files, files_installed, files_kept, dir_created, reason? }}
  */
 function installWorkerBundle(io, { workerDir, manifest, repoRoot = null, hubUrl = null, httpFetchText = null, log = null }) {
     const wb = manifest.worker_bundle || {};
     const files = wb.files || [];
-    if (!io.fs.existsSync(workerDir)) io.fs.mkdirSync(workerDir, { recursive: true });
+    const dirCreated = !io.fs.existsSync(workerDir);
+    if (dirCreated) io.fs.mkdirSync(workerDir, { recursive: true });
 
     const repoBundleDir = repoRoot ? path.join(repoRoot, 'worker', 'worker') : null;
     const fromRepo = repoBundleDir && io.fs.isDirectory(repoBundleDir);
     const installed = [];
+    const kept = [];
     const failed = [];
 
     for (const f of files) {
         const dest = path.join(workerDir, f);
-        if (io.fs.existsSync(dest)) { installed.push(f); continue; }
+        if (io.fs.existsSync(dest)) { kept.push(f); continue; }
         if (fromRepo && io.fs.existsSync(path.join(repoBundleDir, f))) {
             io.fs.copyFileSync(path.join(repoBundleDir, f), dest);
             installed.push(f);
@@ -58,7 +63,7 @@ function installWorkerBundle(io, { workerDir, manifest, repoRoot = null, hubUrl 
     }
 
     if (failed.length > 0) {
-        return { status: 'failed', files: installed, reason: `could not obtain bundle files: ${failed.join(', ')} (no repo checkout and hub unreachable)` };
+        return { status: 'failed', files: installed, files_installed: installed, files_kept: kept, dir_created: dirCreated, reason: `could not obtain bundle files: ${failed.join(', ')} (no repo checkout and hub unreachable)` };
     }
 
     // npm dependencies (node-fetch etc.) — best effort, offline-tolerant
@@ -70,7 +75,7 @@ function installWorkerBundle(io, { workerDir, manifest, repoRoot = null, hubUrl 
     }
 
     if (log) log.info(`worker bundle deployed at ${workerDir} (${installed.length} files)`);
-    return { status: 'installed', files: installed };
+    return { status: 'installed', files: installed, files_installed: installed, files_kept: kept, dir_created: dirCreated };
 }
 
 /** Serialize KEY=value lines. Values are written as given — never logged. */
@@ -116,6 +121,7 @@ function configureEnv(io, { workerDir, manifest, values = {}, log = null }) {
 
     const missingAfter = required.filter((k) => !existingKeys.includes(k) && values[k] === undefined);
 
+    const envCreated = !io.fs.existsSync(envPath);
     let text = existingText;
     if (additions.length > 0) {
         if (text && !text.endsWith('\n')) text += '\n';
@@ -125,7 +131,7 @@ function configureEnv(io, { workerDir, manifest, values = {}, log = null }) {
     io.fs.chmodSync(envPath, 0o600);
 
     if (log) log.info(`.env configured: ${preserved.length} key(s) preserved, ${additions.length} added, ${missingAfter.length} still missing`);
-    return { status: missingAfter.length === 0 ? 'configured' : 'incomplete', missing_after: missingAfter, preserved };
+    return { status: missingAfter.length === 0 ? 'configured' : 'incomplete', missing_after: missingAfter, preserved, created: envCreated };
 }
 
 /** Derive the backend API base from HUB_URL (…/gpu → …/api/v1). */

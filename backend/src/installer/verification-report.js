@@ -86,14 +86,16 @@ function buildVerificationReport({ report, live = {} }) {
 
     // --- Machine -----------------------------------------------------------
     const hw = report.hardware || {};
-    if (hw.gpu && hw.gpu.name) {
+    if (hw.device === 'cpu') {
+        push(null, 'GPU', 'not detected — CPU-only mode (ComfyUI runs with --cpu; performance significantly lower; intended for the TTS/audio profile)');
+    } else if (hw.gpu && hw.gpu.name) {
         push(true, 'GPU', `${hw.gpu.name}${typeof hw.gpu.vram_mib === 'number' ? `, ${Math.round(hw.gpu.vram_mib / 1024)} GB VRAM` : ''}`);
     } else {
         push(false, 'GPU', 'no GPU detected');
     }
-    if (hw.sufficient_vram === false) {
+    if (hw.device !== 'cpu' && hw.sufficient_vram === false) {
         push(false, 'VRAM', (hw.notes || []).join('; ') || 'below manifest minimum');
-    } else if (hw.sufficient_vram === null) {
+    } else if (hw.device !== 'cpu' && hw.sufficient_vram === null) {
         push(null, 'VRAM', 'minimum unknown — not verified');
     }
 

@@ -21,6 +21,13 @@ const STATE_VERSION = 1;
 
 const ARTIFACT_STATUSES = Object.freeze(['missing', 'partial', 'installed', 'verified', 'failed']);
 
+/**
+ * Ownership registry kinds (uninstaller input). Each entry records a path the
+ * installer actually created — the uninstaller must never guess and never
+ * delete anything that is not registered here.
+ */
+const COMPONENT_KINDS = Object.freeze(['custom_nodes', 'models', 'workflows', 'services']);
+
 const { isSecretName } = require('../safety-rules');
 
 /** Defensive scrub: never persist values under secret-looking names. */
@@ -44,12 +51,57 @@ function emptyState({ mode = null, profiles = [], root = null } = {}) {
         mode,
         profiles,
         root,
+        // hardware branch chosen by the installer: 'cuda' | 'cpu'
+        device: null,
         // non-secret user decisions (comfyui_update, install_models, …).
         // Recorded so `resume` continues without re-prompting.
         decisions: {},
         artifacts: {},
+        // Installation manifest for the uninstaller: what THIS installer run
+        // created (and therefore owns). `null` = not touched/unknown.
+        //   comfyui: { owned, path, ref? }        — owned=true only when the
+        //                                            installer created the dir
+        //   venv:    { owned, path, created }
+        //   worker:  { owned, dir, files_installed[], files_kept[], env_created }
+        //   custom_nodes/models/workflows/services: [{ id, path, created?, files? }]
+        components: {
+            comfyui: null,
+            venv: null,
+            worker: null,
+            custom_nodes: [],
+            models: [],
+            workflows: [],
+            services: [],
+        },
         checkpoints: [],
     };
+}
+
+/**
+ * Normalize a state loaded from disk (older states lack the components
+ * registry and the device field — additively restored, version stays 1).
+ */
+function normalizeState(state) {
+    if (!state || typeof state !== 'object') return state;
+    if (state.device === undefined) state.device = null;
+    const empty = emptyState();
+    state.components = { ...empty.components, ...(state.components || {}) };
+    return state;
+}
+
+/**
+ * Register an installer-created component (idempotent per path).
+ * @param {string} kind one of COMPONENT_KINDS
+ * @param {object} entry { id, path, created?, files? }
+ */
+function addOwnedComponent(state, kind, entry) {
+    if (!COMPONENT_KINDS.includes(kind)) {
+        throw new Error(`internal error: unknown component kind "${kind}"`);
+    }
+    if (!entry || !entry.path) return;
+    const list = state.components[kind];
+    if (list.some((e) => e.path === entry.path)) return;
+    list.push({ id: entry.id || null, path: entry.path, ...(entry.created !== undefined ? { created: entry.created } : {}), ...(entry.files ? { files: entry.files } : {}) });
 }
 
 function loadState(io, statePath) {
@@ -57,7 +109,7 @@ function loadState(io, statePath) {
     try {
         const parsed = JSON.parse(io.fs.readFileSync(statePath, 'utf8'));
         if (!parsed || parsed.state_version !== STATE_VERSION) return null;
-        return parsed;
+        return normalizeState(parsed);
     } catch (_) {
         return null; // corrupt state — start fresh, truth is the disk
     }
@@ -99,10 +151,13 @@ function addCheckpoint(state, checkpoint) {
 module.exports = {
     STATE_VERSION,
     ARTIFACT_STATUSES,
+    COMPONENT_KINDS,
     emptyState,
+    normalizeState,
     loadState,
     saveState,
     setArtifact,
     artifactStatus,
     addCheckpoint,
+    addOwnedComponent,
 };

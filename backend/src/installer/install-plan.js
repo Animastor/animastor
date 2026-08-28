@@ -417,6 +417,7 @@ function buildInstallPlan({ report, manifests = [], decisions = {} }) {
     const blocked = [];
 
     // 1–3: detection
+    const hwDevice = report.hardware ? report.hardware.device : null;
     steps.push({
         id: 'detect-gpu',
         title: 'Detect GPU',
@@ -424,6 +425,7 @@ function buildInstallPlan({ report, manifests = [], decisions = {} }) {
         automatic: true,
         result: {
             gpu: report.hardware ? report.hardware.gpu : null,
+            device: hwDevice,
             sufficient_vram: report.hardware ? report.hardware.sufficient_vram : null,
             notes: report.hardware ? report.hardware.notes : [],
         },
@@ -571,8 +573,23 @@ function renderPlanText(plan, report) {
     lines.push(`Mode: ${plan.mode}`);
     lines.push('');
 
-    const detected = [];
     const hw = report.hardware || {};
+    if (hw.device === 'cpu') {
+        lines.push('=========================================================');
+        lines.push('  CPU-ONLY MODE DETECTED');
+        lines.push('  No supported GPU runtime was found on this machine.');
+        lines.push('  A CPU build of PyTorch will be installed and ComfyUI');
+        lines.push('  will run with --cpu. Performance will be SIGNIFICANTLY');
+        lines.push('  lower than GPU. This mode is intended for the');
+        lines.push('  TTS/audio profile — NOT for image/video generation.');
+        if (hw.gpu && hw.gpu.vendor === 'amd') {
+            lines.push('  Note: an AMD GPU was detected, but the installer');
+            lines.push('  provides no ROCm/accelerated runtime branch yet.');
+        }
+        lines.push('=========================================================');
+        lines.push('');
+    }
+    const detected = [];
     if (hw.gpu && hw.gpu.name) {
         detected.push(`\u2713 ${hw.gpu.name}${typeof hw.gpu.vram_mib === 'number' ? ` (${Math.round(hw.gpu.vram_mib / 1024)} GB VRAM)` : ''}`);
     }

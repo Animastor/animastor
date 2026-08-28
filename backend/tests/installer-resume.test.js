@@ -24,6 +24,7 @@
  */
 
 const assert = require('assert');
+const path = require('path');
 const crypto = require('crypto');
 const { createMemoryFs } = require('../src/installer/engine/io');
 const { createLogger } = require('../src/installer/engine/logger');
@@ -121,6 +122,10 @@ function createIo({ files = {}, preDirs = [], exec = {}, execHandlers = {}, http
             if (cmd === 'git' && args[0] === 'clone' && args[2]) {
                 self.fs.mkdirSync(args[2], { recursive: true });
                 self.fs.writeFileSync(`${args[2]}/index.js`, '// stub node');
+            }
+            if (cmd === 'python3' && args[0] === '-m' && args[1] === 'venv' && args[2]) {
+                self.fs.mkdirSync(path.join(args[2], 'bin'), { recursive: true });
+                self.fs.writeFileSync(path.join(args[2], 'bin', 'python'), '#!/bin/sh\n');
             }
             return exec[key] || exec[cmd] || { code: 0, stdout: '', stderr: '' };
         },
@@ -557,10 +562,18 @@ t('S2: above-max ComfyUI kept without explicit downgrade decision (no checkout e
 // S3 — existing runtime never silently replaced
 // ---------------------------------------------------------------------------
 
-t('S3: mismatched Torch is BLOCKED without accept_runtime_change; pip torch never executed', async () => {
-    const exec = EXEC_BASE();
-    exec['python3 -c import torch; print(torch.__version__)'] = { code: 0, stdout: '2.4.0' }; // != pinned 2.6.0
-    const io = createIo({ files: { '/comfy/main.py': '' }, preDirs: ['/comfy/.git'], exec });
+t('S3: mismatched Torch in managed venv is BLOCKED without accept_runtime_change; pip torch never executed', async () => {
+    // Create a managed venv directory (as if a previous install created it)
+    // so the engine treats this as "replace existing venv runtime".
+    const io = createIo({
+        files: { '/comfy/main.py': '', '/comfy/venv/bin/python': '#!/bin/sh' },
+        preDirs: ['/comfy/.git'],
+        exec: {
+            ...EXEC_BASE(),
+            'python3 -c import torch; print(torch.__version__)': { code: 0, stdout: '2.4.0' },
+            '/comfy/venv/bin/python -c import torch; print(torch.__version__)': { code: 0, stdout: '2.4.0' },
+        },
+    });
     const log = createLogger({ io: io, quiet: true });
     const result = await runInstallation({
         manifests: [baseManifest()], mode: 'existing', io,
@@ -573,6 +586,32 @@ t('S3: mismatched Torch is BLOCKED without accept_runtime_change; pip torch neve
     assert.ok(result.blocked.some((b) => b.reason.includes('accept_runtime_change')),
         'clear blocked reason naming the required decision');
     assert.strictEqual(result.status, 'blocked');
+});
+
+t('S3b: mismatched system Torch without managed venv proceeds (isolated venv created, system runtime untouched)', async () => {
+    // No managed venv exists — installer creates an isolated venv and does NOT
+    // touch the system torch.
+    const io = createIo({
+        files: { '/comfy/main.py': '' },
+        preDirs: ['/comfy/.git'],
+        exec: {
+            ...EXEC_BASE(),
+            'python3 -c import torch; print(torch.__version__)': { code: 0, stdout: '2.4.0' },
+        },
+    });
+    const log = createLogger({ io: io, quiet: true });
+    const result = await runInstallation({
+        manifests: [baseManifest()], mode: 'existing', io,
+        roots: { comfyuiRoot: '/comfy', workerDir: '/worker', statePath: '/state/install-state.json', repoRoot: '/repo', hubUrl: null },
+        decisions: ALL_YES, logger: log, crypto, options: { startComfyui: false },
+    });
+    assert.notStrictEqual(result.status, 'blocked', 'install proceeds when no managed venv exists');
+    // torch was installed INTO the venv (not the system)
+    const venvPipTorch = io.calls.exec.filter((c) => {
+        const full = c.cmd + ' ' + c.args.join(' ');
+        return full.includes('/comfy/venv/bin/python') && full.includes('torch==');
+    });
+    assert.ok(venvPipTorch.length > 0, 'torch installed into managed venv');
 });
 
 // ---------------------------------------------------------------------------

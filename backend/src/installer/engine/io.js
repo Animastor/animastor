@@ -31,6 +31,9 @@ function createRealIo() {
             mkdirSync: (p, opts) => fs.mkdirSync(p, opts),
             renameSync: (a, b) => fs.renameSync(a, b),
             unlinkSync: (p) => fs.unlinkSync(p),
+            /** Recursive directory/file removal (uninstaller). */
+            rmSync: (p, opts = { recursive: true, force: true }) => fs.rmSync(p, opts),
+            rmdirSync: (p) => fs.rmdirSync(p),
             copyFileSync: (a, b) => fs.copyFileSync(a, b),
             chmodSync: (p, mode) => fs.chmodSync(p, mode),
             statSync: (p) => {
@@ -210,6 +213,35 @@ function createMemoryFs(initial = {}) {
             if (!files.has(norm(p))) throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
             files.delete(norm(p));
         },
+        /** Recursive removal: deletes a dir and everything under it. */
+        rmSync: (p, opts = {}) => {
+            const target = norm(p);
+            const isDir = dirs.has(target);
+            const isFile = files.has(target);
+            if (!isDir && !isFile) {
+                if (opts && opts.force) return;
+                throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+            }
+            const prefix = target === '/' ? '/' : `${target}/`;
+            for (const key of [...files.keys()]) {
+                if (key === target || key.startsWith(prefix)) files.delete(key);
+            }
+            if (isDir) {
+                for (const key of [...dirs]) {
+                    if (key === target || key.startsWith(prefix)) dirs.delete(key);
+                }
+            } else if (opts && opts.force) {
+                // nothing else to do for a file
+            }
+        },
+        rmdirSync: (p) => {
+            const target = norm(p);
+            if (!dirs.has(target)) throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+            const prefix = `${target}/`;
+            const hasChildren = [...files.keys(), ...dirs].some((k) => k !== target && k.startsWith(prefix));
+            if (hasChildren) throw Object.assign(new Error(`ENOTEMPTY: ${p}`), { code: 'ENOTEMPTY' });
+            dirs.delete(target);
+        },
         copyFileSync: (a, b) => {
             const f = files.get(norm(a));
             if (!f) throw Object.assign(new Error(`ENOENT: ${a}`), { code: 'ENOENT' });
@@ -262,6 +294,8 @@ function createDryRunIo(io) {
             mkdirSync: guard('fs.mkdirSync'),
             renameSync: guard('fs.renameSync'),
             unlinkSync: guard('fs.unlinkSync'),
+            rmSync: guard('fs.rmSync'),
+            rmdirSync: guard('fs.rmdirSync'),
             copyFileSync: guard('fs.copyFileSync'),
             chmodSync: guard('fs.chmodSync'),
         },

@@ -267,12 +267,38 @@ function checkComfyuiAgainst(spec, comfyEnv) {
     return { status: 'unknown', action: 'review', notes: ['manifest has neither a canonical pin nor a known-working reference'] };
 }
 
-function checkTorchAgainst(spec, torchEnv) {
+/** Base version without the local build tag: "2.10.0+cu128" → "2.10.0". */
+function torchBaseVersion(v) {
+    return String(v || '').trim().split('+')[0].toLowerCase();
+}
+
+/** Local build tag: "2.10.0+cpu" → "cpu"; "2.10.0" → "". */
+function torchLocalTag(v) {
+    const parts = String(v || '').trim().split('+');
+    return parts.length > 1 ? parts[1].toLowerCase() : '';
+}
+
+function checkTorchAgainst(spec, torchEnv, device = null) {
     if (torchEnv === undefined) {
         return { status: 'required', action: 'review', notes: ['environment not probed for torch'] };
     }
     if (!torchEnv || !torchEnv.version) {
         return { status: 'missing', action: 'install', notes: [] };
+    }
+    // CPU-only machine: the manifest may declare a dedicated CPU build (pin +
+    // CPU wheel index). "+cpu" local tags and the untagged pin are equivalent.
+    if (device === 'cpu' && spec.cpu && spec.cpu.pin) {
+        const found = String(torchEnv.version);
+        if (torchBaseVersion(found) === torchBaseVersion(spec.cpu.pin)
+            && ['', 'cpu'].includes(torchLocalTag(found))) {
+            return { status: 'installed', grade: 'cpu-canonical', action: 'skip', notes: [`CPU build ${found} matches the manifest CPU pin ${spec.cpu.pin}`] };
+        }
+        return {
+            status: 'incompatible',
+            reason: 'version_mismatch',
+            action: 'review',
+            notes: [`found ${torchEnv.version}, manifest pins CPU torch ${spec.cpu.pin}; CPU torch is NEVER auto-replaced — user decision required`],
+        };
     }
     const found = String(torchEnv.version).toLowerCase();
     if (spec.pin) {
@@ -953,8 +979,24 @@ function resolveSharedRuntime(manifests) {
 // Main resolution entry point
 // ---------------------------------------------------------------------------
 
+const CPU_ONLY_NOTE = 'CPU-only mode: no supported GPU runtime detected — CPU PyTorch will be installed and ComfyUI will run with --cpu. Performance will be SIGNIFICANTLY lower; this mode is intended for the TTS/audio profile, not for image/video generation.';
+const AMD_FALLBACK_NOTE = 'AMD GPU detected, but the installer provides no ROCm/accelerated runtime branch yet — falling back to CPU-only mode (explicit fallback, not a silent degradation).';
+
 function summarizeHardware(env, manifests) {
-    const info = { gpu: env.gpu || null, notes: [] };
+    // env.device comes from the probe; the fallback covers legacy/synthetic
+    // environments (a detected GPU without vendor info is treated as CUDA).
+    const device = env.device || (env.gpu ? 'cuda' : 'cpu');
+    const info = {
+        gpu: env.gpu || null,
+        device,
+        notes: [],
+    };
+    if (device === 'cpu') {
+        if (env.gpu && env.gpu.vendor === 'amd') info.notes.push(AMD_FALLBACK_NOTE);
+        info.notes.push(CPU_ONLY_NOTE);
+        info.sufficient_vram = null; // VRAM is irrelevant in CPU-only mode
+        return info;
+    }
     const mins = manifests.map((m) => (m.hardware || {}).gpu_min_vram_gb).filter((v) => typeof v === 'number');
     if (mins.length > 0 && env.gpu && typeof env.gpu.vram_mib === 'number') {
         const need = Math.max(...mins);
@@ -1012,10 +1054,10 @@ function resolveInstallation({ manifests, environment = null, mode = 'existing',
     for (const component of RUNTIME_ORDER) {
         const perManifest = list.map((m) => {
             const spec = (m.runtime_requirements || {})[component] || {};
-            let verdict;
-            if (component === 'comfyui') verdict = checkComfyuiAgainst(spec, env.comfyui);
-            else if (component === 'torch') verdict = checkTorchAgainst(spec, env.torch);
-            else verdict = checkMinimumAgainst(component, spec, env[component]);
+        let verdict;
+        if (component === 'comfyui') verdict = checkComfyuiAgainst(spec, env.comfyui);
+        else if (component === 'torch') verdict = checkTorchAgainst(spec, env.torch, env.device || null);
+        else verdict = checkMinimumAgainst(component, spec, env[component]);
             return { profile: m.profile.id, verdict, basis: spec.basis };
         });
         const combined = list.length === 1 ? perManifest[0].verdict : combineRuntimeVerdicts(perManifest);
@@ -1221,4 +1263,7 @@ module.exports = {
     planIsolatedEnvironments,
     checkWorkflow,
     checkWorker,
+    checkTorchAgainst,
+    summarizeHardware,
+    CPU_ONLY_NOTE,
 };

@@ -19,6 +19,7 @@ const plan = require('./install-plan');
 const safety = require('./safety-rules');
 const verification = require('./verification-report');
 const engine = require('./engine/engine');
+const uninstaller = require('./uninstaller');
 
 module.exports = {
     manifest,
@@ -29,4 +30,5 @@ module.exports = {
     safety,
     verification,
     engine,
+    uninstaller,
 };

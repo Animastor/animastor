@@ -75,6 +75,15 @@
       "index_url": "https://download.pytorch.org/whl/cu124",
       "cuda_tier": "12.4",
       "basis": "known_working",
+      "cpu": {
+        "pin": "2.6.0",
+        "index_url": "https://download.pytorch.org/whl/cpu",
+        "basis": "known_working",
+        "notes": [
+          "CPU-only fallback branch (no GPU / no supported GPU runtime): CPU wheel index, no CUDA-specific build.",
+          "Video generation on CPU is not a supported production scenario — CPU branch exists for environment bring-up/testing only."
+        ]
+      },
       "known_working_reference": {
         "version": "2.6.0+cu124",
         "cuda_tier": "12.4",

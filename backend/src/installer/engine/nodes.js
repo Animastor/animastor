@@ -27,7 +27,10 @@ function findManifestDep(manifests, depId) {
 
 /**
  * Install one missing custom node.
- * @returns {{ status: 'installed'|'blocked'|'failed', reason?, directory? }}
+ * `origin` distinguishes what the installer actually created ('installed')
+ * from what was already on disk ('pre-existing') — the uninstaller removes
+ * only 'installed' directories.
+ * @returns {{ status: 'installed'|'blocked'|'failed', origin?, reason?, directory? }}
  */
 function installCustomNode(io, { root, dep, python = null, log = null }) {
     const src = (dep.install && dep.install.source) || {};
@@ -44,7 +47,7 @@ function installCustomNode(io, { root, dep, python = null, log = null }) {
     if (io.fs.existsSync(target)) {
         // present — the resolver decides compatibility; the engine does not
         // replace an existing node automatically.
-        return { status: 'installed', directory: dirName, reason: 'already present — kept as-is' };
+        return { status: 'installed', origin: 'pre-existing', directory: dirName, reason: 'already present — kept as-is' };
     }
 
     let r = io.exec('git', ['clone', src.repository, target]);
@@ -64,7 +67,7 @@ function installCustomNode(io, { root, dep, python = null, log = null }) {
         r = io.exec(python, ['-m', 'pip', 'install', '-r', req], { timeout: 30 * 60 * 1000 });
         if (r.code !== 0) {
             if (log) log.warn(`${dep.id}: pip install requirements failed (node cloned, deps incomplete): ${String(r.stderr).slice(-300)}`);
-            return { status: 'installed', directory: dirName, reason: 'cloned; python dependencies incomplete — see warnings' };
+            return { status: 'installed', origin: 'installed', directory: dirName, reason: 'cloned; python dependencies incomplete — see warnings' };
         }
     }
 
@@ -72,7 +75,7 @@ function installCustomNode(io, { root, dep, python = null, log = null }) {
         return { status: 'failed', reason: 'clone reported success but the directory is missing' };
     }
     if (log) log.info(`custom node installed: ${dirName}${src.commit ? ` @ ${src.commit}` : ''}`);
-    return { status: 'installed', directory: dirName };
+    return { status: 'installed', origin: 'installed', directory: dirName };
 }
 
 /**
