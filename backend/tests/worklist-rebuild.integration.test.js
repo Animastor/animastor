@@ -291,7 +291,14 @@ describe('Option E — WORK_TO_DO rebuild through real reconcileCycle (real PG +
         await insertScene('wl-gen');
         await insertAsset('wl-gen', 'audio', { status: 'ready' });
         // Simulate a worker mid-flight: image = GENERATING, no file on disk yet.
+        // A real dispatch always holds lease + metadata from dispatch to
+        // finalization (dispatch order: acquireLease → setDispatchMetadata →
+        // markGenerating) — that evidence is what protects a live generation
+        // from the orphan-GENERATING repair (audit d9d67a3).
         await redis.hset('animastor:asset-state:wl-gen:ch-000001:sc-000001', 'image', 'generating');
+        await redis.set('animastor:dispatch-lease:wl-gen:ch-000001:sc-000001:image', 'tok-live', 'EX', 3600);
+        await redis.set('animastor:dispatch-meta:wl-gen:ch-000001:sc-000001:image',
+            JSON.stringify({ dispatch_id: 'wl-gen-live', stage: 'image', lease_token: 'tok-live' }));
 
         const result = await reconciliation.reconcileCycle(redis, {}, { startup: true });
 

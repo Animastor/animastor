@@ -97,6 +97,24 @@ async function cancelActiveTasksForBook(bookId, error = 'Cancelled by user') {
     return result.rowCount || 0;
 }
 
+/**
+ * True if the scene+stage still has an active (queued/running) generation
+ * task row. Used by orphan-GENERATING self-heal (audit d9d67a3) as a
+ * fail-safe: an active task row proves the generation may still be driven,
+ * so the state must NOT be rolled back.
+ */
+async function hasActiveTaskForScene(bookId, sceneId, taskType) {
+    const result = await query(`
+        SELECT 1 FROM generation_tasks
+        WHERE book_id = $1
+          AND COALESCE(scene_id, '') = COALESCE($2, '')
+          AND task_type = $3
+          AND status IN ('queued', 'running')
+        LIMIT 1
+    `, [bookId, sceneId || null, taskType]);
+    return result.rows.length > 0;
+}
+
 module.exports = {
     createTask,
     recordTaskClaim,
@@ -106,4 +124,5 @@ module.exports = {
     getFailedTasks,
     getSceneTasks,
     cancelActiveTasksForBook,
+    hasActiveTaskForScene,
 };

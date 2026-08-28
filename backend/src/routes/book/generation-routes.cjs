@@ -249,6 +249,24 @@ module.exports = function(app, redis, deps) {
 
             await dispatchEngine.clearAllLeasesForBook(redis, bookId);
 
+            // Orphan GENERATING sweep (audit d9d67a3): clearAllLeasesForBook
+            // rolls back only lease-backed dispatches. A GENERATING state
+            // whose dispatch/lease already died (crash/restart/TTL expiry)
+            // would otherwise survive Stop All forever and keep synthesizing
+            // a ghost progress row. Roll such orphans back through the
+            // FSM-safe path GENERATING → DIRTY → PENDING. Live stages (lease/
+            // dispatch-meta/in-flight marker present) are never touched.
+            try {
+                const orphanRepair = await dispatchEngine.repairOrphanGeneratingStates(redis, bookId, {
+                    reason: 'stop_all_orphan_repair'
+                });
+                if (orphanRepair.repaired.length > 0) {
+                    log(`[CANCEL-GENERATION] ${bookId}: ${orphanRepair.repaired.length} orphan GENERATING state(s) rolled back (GENERATING → DIRTY → PENDING)`);
+                }
+            } catch (orphanErr) {
+                console.warn(`[CANCEL-GENERATION] Orphan GENERATING sweep failed for ${bookId}: ${orphanErr.message}`);
+            }
+
             // Clear per-worker cancel tracking (if any was set)
             await redis.del(`animastor:cancelled-workers:${bookId}`);
             await generationProgress.clear(redis, bookId);

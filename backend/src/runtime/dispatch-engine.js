@@ -387,6 +387,117 @@ async function releaseDispatchInFlightMarkers(redis, dispatchId) {
 }
 
 // ======================================================
+// ORPHAN GENERATING DETECTION & REPAIR (audit d9d67a3)
+// ======================================================
+// GENERATING without ANY evidence of a live generation is an orphan: the
+// dispatch died (crash/restart/TTL expiry) and no rollback ever ran, so the
+// scene is stuck in GENERATING forever (UI ghost "0/9", Stop All powerless).
+//
+// Evidence of a LIVE generation (any one is enough):
+//   - dispatch lease            (held + renewed from dispatch to finalization)
+//   - dispatch metadata         (same TTL as the lease, owns the dispatch_id)
+//   - iu-in-flight marker       (image only: a GPU job may still be running)
+//
+// A stage is only ever set GENERATING AFTER lease+metadata exist (dispatch
+// order: acquireLease → setDispatchMetadata → executor markGenerating), so
+// the absence of ALL evidence proves the generation is dead. Age alone is
+// NEVER a reason to repair — live long jobs keep their lease renewed.
+
+const IU_IN_FLIGHT_KEY_PREFIX = 'animastor:iu-in-flight';
+
+/**
+ * Check whether a stage's generation is still alive.
+ * @returns {Promise<{alive: boolean, reason: string}>}
+ */
+async function getDispatchEvidence(redis, bookId, chapterId, sceneId, stage) {
+    const leaseToken = await redis.get(getLeaseKey(bookId, chapterId, sceneId, stage));
+    if (leaseToken) {
+        return { alive: true, reason: 'lease_present' };
+    }
+
+    const metadata = await getDispatchMetadata(redis, bookId, chapterId, sceneId, stage);
+    if (metadata) {
+        return { alive: true, reason: 'dispatch_meta_present' };
+    }
+
+    if (stage === 'image') {
+        // Marker key: animastor:iu-in-flight:{bookId}_{chapterId}_{sceneId}_{unitId}
+        const pattern = `${IU_IN_FLIGHT_KEY_PREFIX}:${bookId}_${chapterId}_${sceneId}_*`;
+        let cursor = '0';
+        do {
+            const [next, keys] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
+            cursor = next;
+            if (keys && keys.length > 0) {
+                return { alive: true, reason: 'iu_in_flight_present' };
+            }
+        } while (cursor !== '0');
+    }
+
+    return { alive: false, reason: 'no_evidence' };
+}
+
+/**
+ * Repair orphan GENERATING states for a whole book.
+ *
+ * Every per-asset state stuck in GENERATING with NO live-generation evidence
+ * (lease/dispatch-meta/in-flight marker) is rolled back through the FSM-safe
+ * path GENERATING → DIRTY → PENDING (orchestrator.rollbackStageToPending —
+ * a direct GENERATING → PENDING is forbidden by the FSM).
+ *
+ * Used by Stop All (cancel-generation) after clearAllLeasesForBook: that
+ * call only cancels lease-backed dispatches; a GENERATING state whose
+ * dispatch/lease already died would otherwise survive the cancel forever.
+ *
+ * Never touches a live GENERATING (any evidence → skip). Does NOT dispatch
+ * anything and does not require workers.
+ *
+ * @param {Object} redis
+ * @param {string} bookId
+ * @param {{reason?: string}} [opts]
+ * @returns {Promise<{repaired: Array<{chapterId, sceneId, stage, path}>}>}
+ */
+async function repairOrphanGeneratingStates(redis, bookId, opts = {}) {
+    const stateModule = require('../state');
+    const orchestrator = require('../orchestration/orchestrator');
+    const reason = opts.reason || 'orphan_generating_repair';
+    const repaired = [];
+
+    const pattern = `${stateModule.ASSET_STATE_KEY_PREFIX}:${bookId}:*`;
+    const seen = new Set();
+    let cursor = '0';
+    do {
+        const [next, keys] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
+        cursor = next;
+        for (const key of keys || []) {
+            // animastor:asset-state:{bookId}:{chapterId}:{sceneId}
+            // (bookId/chapterId/sceneId never contain ':')
+            const parts = key.split(':');
+            if (parts.length < 5) continue;
+            const chapterId = parts[3];
+            const sceneId = parts[4];
+            const sceneKey = `${chapterId}:${sceneId}`;
+            if (seen.has(sceneKey)) continue;
+            seen.add(sceneKey);
+
+            const states = await stateModule.getAssetStates(redis, bookId, chapterId, sceneId);
+            for (const stage of ['audio', 'image', 'video']) {
+                if (states[stage] !== stateModule.AssetState.GENERATING) continue;
+                const evidence = await getDispatchEvidence(redis, bookId, chapterId, sceneId, stage);
+                if (evidence.alive) continue;
+                const rollback = await orchestrator.rollbackStageToPending(
+                    redis, bookId, chapterId, sceneId, stage, null, reason
+                );
+                if (rollback.changed) {
+                    repaired.push({ chapterId, sceneId, stage, path: rollback.path });
+                }
+            }
+        }
+    } while (cursor !== '0');
+
+    return { repaired };
+}
+
+// ======================================================
 // ACTIVE COUNTERS (for backpressure)
 // ======================================================
 
@@ -1541,6 +1652,10 @@ module.exports = {
     compareAndDeleteMarker,
     IU_IN_FLIGHT_INDEX_PREFIX,
     IU_IN_FLIGHT_MARKER_TTL_S,
+
+    // Orphan GENERATING detection & repair (audit d9d67a3)
+    getDispatchEvidence,
+    repairOrphanGeneratingStates,
 
     // Active counters (backpressure)
     incrementActiveCounter,

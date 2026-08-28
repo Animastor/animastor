@@ -72,6 +72,22 @@ class ReconciliationReport {
 // ======================================================
 
 /**
+ * Canonical build identity of a book (audit d9d67a3): the SAME source the
+ * rest of the runtime uses (rebuildWorkList, generate-next, dispatch) —
+ * book.json manifest.build_id. The former hardcoded 'default' produced
+ * false orphan detections for every book with a real build directory.
+ */
+function resolveBookBuildId(bookId) {
+    try {
+        const bookModule = require('../book');
+        const loadedBook = bookModule.loadBook(bookId);
+        return loadedBook?.manifest?.build_id || 'default';
+    } catch (_) {
+        return 'default';
+    }
+}
+
+/**
  * Check for VIDEO_READY state but no video file.
  * T8: использует per-asset state (video=ready) вместо линейного.
  */
@@ -84,7 +100,7 @@ async function checkOrphanVideoState(redis, bookId, chapterId, sceneId) {
         return null;
     }
 
-    const buildId = 'default';
+    const buildId = resolveBookBuildId(bookId);
     const videoPath = `/data/output/${buildId}/${bookId}_${chapterId}_${sceneId}.mp4`;
 
     try {
@@ -115,8 +131,8 @@ async function checkOrphanImageState(redis, bookId, chapterId, sceneId) {
     }
 
     // Note: build_id is read from manifest, not from scene-state (which no longer exists after T8).
-    // Default is used here as the orphan-check is advisory/diagnostic only.
-    const buildId = 'default';
+    // Orphan-check uses the canonical book build identity (audit d9d67a3).
+    const buildId = resolveBookBuildId(bookId);
     const imageModule = require('../image');
     const imageInfo = imageModule.resolveCanonicalSceneImage(
         '/data/output',
@@ -152,8 +168,9 @@ async function checkOrphanAudioState(redis, bookId, chapterId, sceneId) {
         return null;
     }
 
-    // Get build_id from scene state (stale is OK for read-only diagnostic)
-    const buildId = 'default';
+    // Canonical book build identity (audit d9d67a3) — the former hardcoded
+    // 'default' false-flagged every book with a real build directory.
+    const buildId = resolveBookBuildId(bookId);
 
     const audioPath = storage.filesystem.getSceneAudioPath(
         config.OUTPUT_DIR,
@@ -230,6 +247,73 @@ async function checkOrphanAssets(redis, bookId, chapterId, sceneId) {
     }
 
     return orphanAssets.length > 0 ? orphanAssets : null;
+}
+
+// ======================================================
+// ORPHAN GENERATING CHECK (audit d9d67a3)
+// ======================================================
+
+/**
+ * Cancellation precedence helper: true if the user explicitly cancelled
+ * generation for this book (Redis cancel flag and/or PG tombstone).
+ * Reconciliation must never resurrect a cancelled book.
+ */
+async function isBookGenerationCancelled(redis, bookId) {
+    try {
+        const sceneWindow = require('./scene-window');
+        if (await sceneWindow.isCancelled(redis, bookId)) return true;
+    } catch (_) { /* flag unreadable — fall through to tombstone */ }
+    try {
+        const generationCancelRepo = require('../storage/postgres/repositories/generation-cancel-repo');
+        return await generationCancelRepo.isCancelled(bookId);
+    } catch (_) {
+        return false;
+    }
+}
+
+/**
+ * Check for orphan GENERATING states: a per-asset state stuck in GENERATING
+ * with NO evidence of a live generation — no dispatch lease, no dispatch
+ * metadata, no iu-in-flight marker (image), no active PG generation task.
+ *
+ * A live dispatch always holds lease+metadata from dispatch to finalization
+ * (dispatch order: acquireLease → setDispatchMetadata → markGenerating), so
+ * the absence of ALL evidence proves the generation is dead (crash/restart/
+ * TTL expiry with the rollback swallowed). A live job is NEVER repaired —
+ * age alone is not a reason (long video jobs keep their lease renewed).
+ *
+ * Fail-safe: if PG is unavailable the active-task check is treated as
+ * "task exists" and the state is NOT repaired.
+ */
+async function checkOrphanGeneratingState(redis, bookId, chapterId, sceneId) {
+    const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    const orphans = [];
+
+    for (const stage of ['audio', 'image', 'video']) {
+        if (assetStates[stage] !== state.AssetState.GENERATING) continue;
+
+        const evidence = await dispatchEngine.getDispatchEvidence(redis, bookId, chapterId, sceneId, stage);
+        if (evidence.alive) continue;
+
+        let hasActiveTask = false;
+        try {
+            const taskRepo = require('../storage/postgres/repositories/task-repo');
+            hasActiveTask = await taskRepo.hasActiveTaskForScene(bookId, sceneId, stage);
+        } catch (_) {
+            hasActiveTask = true; // PG unavailable — fail safe, do NOT repair
+        }
+        if (hasActiveTask) continue;
+
+        orphans.push({
+            type: 'orphan_generating',
+            stage,
+            scene: { bookId, chapterId, sceneId },
+            state: 'generating',
+            recommendation: 'rollback_to_pending'
+        });
+    }
+
+    return orphans.length > 0 ? orphans : null;
 }
 
 // ======================================================
@@ -768,6 +852,21 @@ async function reconcileScene(redis, bookId, chapterId, sceneId) {
             }
         }
 
+        // Check orphan GENERATING states (audit d9d67a3). Pushed BEFORE the
+        // partial-build checks: those de-duplicate by sceneId, and the orphan
+        // repair must win over a PROGRESS_TO_* resurrection attempt.
+        const orphanGenerating = await checkOrphanGeneratingState(redis, bookId, chapterId, sceneId);
+        if (orphanGenerating) {
+            report.orphanStates.push(...orphanGenerating);
+            for (const o of orphanGenerating) {
+                report.inconsistentScenes.push({
+                    scene: { bookId, chapterId, sceneId },
+                    stage: o.stage,
+                    issue: 'orphan_generating'
+                });
+            }
+        }
+
         // Check partial builds
         const partial = await checkPartialBuilds(redis, bookId, chapterId, sceneId);
         if (partial) {
@@ -905,6 +1004,18 @@ function getFixRecommendations(inconsistentScenes) {
                     reason: `Stuck in ${item.state} for ${item.ageMinutes} minutes`,
                     safeToExecute: true
                 };
+            case 'orphan_generating':
+                // Audit d9d67a3: GENERATING with no lease/dispatch-meta/
+                // in-flight marker/active PG task — the generation is proven
+                // dead. Stage-scoped MOVE_TO_PENDING performs the strict
+                // FSM-safe repair GENERATING → DIRTY → PENDING.
+                return {
+                    scene,
+                    stage: item.stage,
+                    action: 'MOVE_TO_PENDING',
+                    reason: `Orphan GENERATING (${item.stage}): no lease/dispatch/in-flight/PG task`,
+                    safeToExecute: true
+                };
             case 'counter_drift':
                 return {
                     scene,
@@ -932,6 +1043,20 @@ function getFixRecommendations(inconsistentScenes) {
 }
 
 /**
+ * Fix actions that resurrect work (re-add a scene to the active index /
+ * re-mark stages for generation). Audit d9d67a3: they must NEVER run for a
+ * book the user explicitly cancelled — the cancellation tombstone / cancel
+ * flag takes precedence over any reconciliation recommendation.
+ */
+const RESURRECTION_ACTIONS = new Set([
+    'REGENERATE_MISSING_ASSET',
+    'PROGRESS_TO_IMAGE',
+    'PROGRESS_TO_VIDEO',
+    'RECOVER_ORPHAN_ASSETS',
+    'RELEASE_STALE_LEASE',
+]);
+
+/**
  * Apply a fix recommendation.
  * Returns { success: boolean, action, scene, details }
  */
@@ -939,11 +1064,81 @@ async function applyFix(redis, fix) {
     const { scene, action } = fix;
 
     try {
+        // Cancellation precedence (audit d9d67a3): a fresh tombstone/cancel
+        // flag blocks every resurrection path. State-hygiene repairs that do
+        // NOT re-add the scene to the active index (stage-scoped
+        // MOVE_TO_PENDING) are still allowed — they remove a ghost, not
+        // resurrect work.
+        if (RESURRECTION_ACTIONS.has(action) &&
+            await isBookGenerationCancelled(redis, scene.bookId)) {
+            return {
+                success: false,
+                action,
+                scene,
+                details: 'skipped: book generation cancelled (tombstone/cancel flag precedence)'
+            };
+        }
+
         switch (action) {
             case 'MOVE_TO_PENDING': {
+                const orchestrator = require('../orchestration/orchestrator');
+
+                // ── Stage-scoped orphan GENERATING repair (audit d9d67a3) ──
+                if (fix.stage) {
+                    // Strict re-verification right before the write (TOCTOU):
+                    // a concurrent dispatch may have acquired the stage
+                    // between detection and fix. A live stage is NEVER
+                    // rolled back.
+                    const evidence = await dispatchEngine.getDispatchEvidence(
+                        redis, scene.bookId, scene.chapterId, scene.sceneId, fix.stage);
+                    if (evidence.alive) {
+                        return {
+                            success: false, action, scene,
+                            details: `repair aborted: generation alive (${evidence.reason})`
+                        };
+                    }
+                    const currentStates = await state.getAssetStates(
+                        redis, scene.bookId, scene.chapterId, scene.sceneId);
+                    if (currentStates[fix.stage] !== state.AssetState.GENERATING) {
+                        return {
+                            success: false, action, scene,
+                            details: `repair aborted: state now ${currentStates[fix.stage]}`
+                        };
+                    }
+
+                    // FSM-safe path GENERATING → DIRTY → PENDING (a direct
+                    // GENERATING → PENDING is forbidden). Errors are NOT
+                    // swallowed (rollbackStageToPending logs + journals +
+                    // counts failures itself).
+                    const rollback = await orchestrator.rollbackStageToPending(
+                        redis, scene.bookId, scene.chapterId, scene.sceneId,
+                        fix.stage, null, 'orphan_generating_repair');
+                    if (!rollback.changed) {
+                        return { success: false, action, scene, details: rollback.reason || 'rollback_failed' };
+                    }
+
+                    await journal.appendSceneEvent(redis, scene.bookId, scene.chapterId, scene.sceneId,
+                        'AUTO_RECOVER', 'PENDING',
+                        { stage: fix.stage, fromState: 'generating', recoveredBy: 'reconciliation-engine' }
+                    ).catch(() => {});
+
+                    // Make the repaired stage dispatchable again — but never
+                    // for a cancelled book (tombstone/cancel flag precedence:
+                    // only an explicit new generation clears them).
+                    if (!(await isBookGenerationCancelled(redis, scene.bookId))) {
+                        await runtimeScheduler.addSceneToActiveIndex(
+                            redis, scene.bookId, scene.chapterId, scene.sceneId);
+                    }
+
+                    return {
+                        success: true, action, scene,
+                        details: `${fix.stage}: GENERATING → DIRTY → PENDING (orphan repair)`
+                    };
+                }
+
+                // ── Legacy stuck_state path: whole-scene DIRTY ──
                 // Mark all per-asset states as DIRTY for redispatch
                 // M5: Route through orchestrator.markDirtyScene instead of direct state.setAssetState
-                const orchestrator = require('../orchestration/orchestrator');
                 await orchestrator.markDirtyScene(redis, scene.bookId, scene.chapterId, scene.sceneId);
 
                 // Remove from active index to avoid immediate re-scheduling
@@ -2116,9 +2311,13 @@ module.exports = {
     checkOrphanImageState,
     checkOrphanAudioState,
     checkOrphanAssets,
+    checkOrphanGeneratingState,
     checkPartialBuilds,
     checkStaleLocks,
     checkStaleDispatchLeases,
+
+    isBookGenerationCancelled,
+    resolveBookBuildId,
 
     getFixRecommendations,
     applyFix,
