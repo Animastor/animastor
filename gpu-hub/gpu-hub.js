@@ -1382,8 +1382,9 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     const a = dirFingerprint(INSTALLER_SRC_DIR);
     const b = dirFingerprint(INSTALLER_MANIFESTS_DIR);
     const c = dirFingerprint(WORKER_BUNDLE_DIR, isServableBundleFile);
+    const d = dirFingerprint(INSTALLER_WORKFLOWS_DIR);
     const meta = installerMeta();
-    return a && b && meta.version ? `${meta.version}|${a}|${b}|${c || "no-worker-bundle"}` : null;
+    return a && b && meta.version ? `${meta.version}|${a}|${b}|${c || "no-worker-bundle"}|${d || "no-workflows"}` : null;
   }
 
   app.get("/installer", (req, res) => {
