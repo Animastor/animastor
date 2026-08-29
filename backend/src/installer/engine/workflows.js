@@ -30,7 +30,7 @@ function findWorkflowArtifact(manifests, wfId) {
     return null;
 }
 
-function readCanonicalContent(io, { wf, repoRoot, hubUrl, httpFetchText }) {
+async function readCanonicalContent(io, { wf, repoRoot, hubUrl, httpFetchText }) {
     if (wf.source && wf.source.repository_path && repoRoot) {
         const abs = path.join(repoRoot, wf.source.repository_path);
         if (io.fs.existsSync(abs)) {
@@ -39,7 +39,7 @@ function readCanonicalContent(io, { wf, repoRoot, hubUrl, httpFetchText }) {
     }
     if (wf.source && wf.source.endpoint && hubUrl && httpFetchText) {
         const url = wf.source.endpoint.replace('{HUB_URL}', hubUrl.replace(/\/$/, ''));
-        const res = httpFetchText(url);
+        const res = await httpFetchText(url);
         if (res && res.status === 200 && res.text) {
             return { content: res.text, origin: url };
         }
@@ -53,7 +53,7 @@ function readCanonicalContent(io, { wf, repoRoot, hubUrl, httpFetchText }) {
  * @param {object} opts { root, manifests, planStep, repoRoot, hubUrl, crypto, log }
  * @returns array of per-workflow results
  */
-function installWorkflows(io, opts) {
+async function installWorkflows(io, opts) {
     const { root, manifests, planStep, repoRoot = null, hubUrl = null, crypto = null, log = null } = opts;
     const results = [];
     const items = (planStep.action && planStep.action.items) || [];
@@ -77,7 +77,7 @@ function installWorkflows(io, opts) {
             continue;
         }
 
-        const canonical = readCanonicalContent(io, { wf, repoRoot, hubUrl, httpFetchText: opts.httpFetchText });
+        const canonical = await readCanonicalContent(io, { wf, repoRoot, hubUrl, httpFetchText: opts.httpFetchText });
         if (!canonical) {
             results.push({
                 id: item.id,

@@ -647,11 +647,9 @@ async function runInstallation(args) {
         // 4.5 Baseline workflows ------------------------------------------------------
         const wfStep = stepById(plan, 'workflows');
         if (wfStep && wfStep.action && wfStep.action.items && wfStep.action.items.length > 0) {
-            const hubFetchText = hubUrl ? (url) => {
-                // hub GET /workflow/<id> is not yet implemented (open item);
-                // return null for now — the installer uses repo path as primary source.
-                return null;
-            } : null;
+            const hubFetchText = hubUrl && io.http && io.http.fetchText
+                ? (url) => io.http.fetchText(url)
+                : null;
             const r = await log.step('install baseline workflows', async () => workflowsInstall.installWorkflows(io, {
                 root: comfyuiRoot, manifests, planStep: wfStep,
                 repoRoot, hubUrl, crypto, log,

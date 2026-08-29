@@ -1085,6 +1085,8 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   const INSTALLER_SRC_DIR = config.INSTALLER_SRC_DIR || "/app/installer-src";
   const INSTALLER_MANIFESTS_DIR =
     config.INSTALLER_MANIFESTS_DIR || "/app/install-manifests";
+  const INSTALLER_WORKFLOWS_DIR =
+    config.INSTALLER_WORKFLOWS_DIR || "/app/workflows";
 
   // Versions have ONE canonical source each (no manual duplication):
   //   worker bundle → worker/worker/package.json (mounted as WORKER_BUNDLE_DIR)
@@ -1302,6 +1304,17 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
       entries.push({
         name: `animastor-installer/ai/install-manifests/${f}`,
         data: fs.readFileSync(path.join(INSTALLER_MANIFESTS_DIR, f)),
+      });
+    }
+    // Baseline workflows — the installer reads them from <repo>/backend/ai/workflows/.
+    // Including them in the tarball lets the repo_path source work even when the
+    // installer runs on a machine without a full Animastor checkout.
+    let workflowFiles = [];
+    try { workflowFiles = walkDir(fs, INSTALLER_WORKFLOWS_DIR).sort(); } catch (_) { /* dir may not exist in test */ }
+    for (const f of workflowFiles) {
+      entries.push({
+        name: `animastor-installer/backend/ai/workflows/${f}`,
+        data: fs.readFileSync(path.join(INSTALLER_WORKFLOWS_DIR, f)),
       });
     }
     // The engine deploys the worker bundle from <installer>/worker/worker/
