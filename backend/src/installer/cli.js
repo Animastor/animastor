@@ -772,6 +772,8 @@ async function cmdValidateManifests(flags) {
 
 async function main() {
     const args = parseArgs(process.argv);
+    const pkg = require('./package.json');
+    console.log(`animastor-installer v${pkg.version}`);
     switch (args.command) {
         case 'detect':
             await cmdDetect(args.flags);

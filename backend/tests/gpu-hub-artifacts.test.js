@@ -315,7 +315,7 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
             const res = await fetch(`${hub.base}/installer`);
             expect(res.status).to.equal(200);
             expect(res.headers.get('content-type')).to.contain('application/gzip');
-            expect(res.headers.get('x-animastor-artifact-version')).to.equal('1.0.0');
+            expect(res.headers.get('x-animastor-artifact-version')).to.equal(require('../src/installer/package.json').version);
             const buf = Buffer.from(await res.arrayBuffer());
             const names = parseTar(zlib.gunzipSync(buf)).map((e) => e.name);
             expect(names).to.include('animastor-installer/src/installer/cli.js');
@@ -333,7 +333,7 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
             const buf = Buffer.from(await (await fetch(`${hub.base}/installer`)).arrayBuffer());
             const meta = await (await fetch(`${hub.base}/installer/sha256`)).json();
             expect(meta.artifact).to.equal('installer');
-            expect(meta.version).to.equal('1.0.0');
+            expect(meta.version).to.equal(require('../src/installer/package.json').version);
             expect(meta.sha256).to.equal(sha256(buf));
             expect(meta.signature).to.equal(null);
         });
