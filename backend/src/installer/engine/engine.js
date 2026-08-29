@@ -490,9 +490,13 @@ async function runInstallation(args) {
             // Runtime looks complete (torch+python already present — e.g. an
             // ADOPTED ComfyUI), so the full prepare step was skipped. The fork's
             // own requirements may still be missing from the old venv (the
-            // ComfyUI process crashes on import otherwise). Idempotent sync:
-            // pip skips everything already satisfied; torch stays pinned.
-            const r = await log.step('sync ComfyUI requirements', async () => comfyui.syncComfyUIRequirements(io, { root: comfyuiRoot, log }));
+            // ComfyUI process crashes on import otherwise) — and unpinned
+            // torchvision/torchaudio edges must not drift off the installed
+            // torch ABI. Idempotent sync constrained to the torch family.
+            const torchSpec = pickTorchSpec(manifests, decisions, result.warnings, device);
+            const r = await log.step('sync ComfyUI requirements', async () => comfyui.syncComfyUIRequirements(io, {
+                root: comfyuiRoot, torchSpec: torchSpec ? torchSpec.spec : null, log,
+            }));
             if (!r.ok) result.warnings.push(`ComfyUI requirements sync failed: ${r.error && r.error.message}`);
         }
 

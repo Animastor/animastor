@@ -516,6 +516,52 @@ describe('engine: broken/incomplete existing venv', () => {
         );
     });
 
+    it('V2b: syncComfyUIRequirements constrains the whole torch family to the installed ABI', () => {
+        const { io, calls, fs } = createMockIo({
+            files: {
+                '/tmp/comfy/main.py': '# comfy',
+                '/tmp/comfy/requirements.txt': 'sqlalchemy\ntorchvision\n',
+                '/tmp/comfy/venv/bin/python': '#!/bin/sh',
+            },
+            preDirs: ['/tmp/comfy/venv/bin'],
+            execResults: {
+                '/tmp/comfy/venv/bin/python -m pip install -r /tmp/comfy/requirements.txt -c /tmp/comfy/venv/.animastor-torch-constraints.txt --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple': { code: 0, stdout: '', stderr: '' },
+            },
+        });
+        const r = comfyui.syncComfyUIRequirements(io, {
+            root: '/tmp/comfy',
+            torchSpec: { pin: '2.10.0+cpu', index_url: 'https://download.pytorch.org/whl/cpu' },
+            log: null,
+        });
+        assert.strictEqual(r.skipped, false);
+        const constraints = fs.readFileSync('/tmp/comfy/venv/.animastor-torch-constraints.txt', 'utf8');
+        assert.ok(constraints.includes('torch==2.10.0'), `torch pin missing: ${constraints}`);
+        assert.ok(constraints.includes('torchvision>=0.25,<0.26'), `torchvision range missing: ${constraints}`);
+        assert.ok(constraints.includes('torchaudio>=2.10,<2.11'), `torchaudio range missing: ${constraints}`);
+        const pipCalls = calls.exec.filter((c) => c.args && c.args.includes('-m') && c.args.includes('install'));
+        assert.strictEqual(pipCalls.length, 1);
+        assert.ok(pipCalls[0].args.includes('--index-url'), 'CPU index must be passed so +cpu builds win');
+    });
+
+    it('V2c: syncComfyUIRequirements without torchSpec adds no constraint file and runs plain pip', () => {
+        const { io, calls, fs } = createMockIo({
+            files: {
+                '/tmp/comfy/main.py': '# comfy',
+                '/tmp/comfy/requirements.txt': 'sqlalchemy\n',
+                '/tmp/comfy/venv/bin/python': '#!/bin/sh',
+            },
+            preDirs: ['/tmp/comfy/venv/bin'],
+            execResults: {
+                '/tmp/comfy/venv/bin/python -m pip install -r /tmp/comfy/requirements.txt': { code: 0, stdout: '', stderr: '' },
+            },
+        });
+        comfyui.syncComfyUIRequirements(io, { root: '/tmp/comfy', torchSpec: null, log: null });
+        assert.strictEqual(fs.existsSync('/tmp/comfy/venv/.animastor-torch-constraints.txt'), false);
+        const pipCalls = calls.exec.filter((c) => c.args && c.args.includes('-m') && c.args.includes('install'));
+        assert.strictEqual(pipCalls.length, 1);
+        assert.ok(!pipCalls[0].args.includes('-c'), 'no constraint expected without a torch spec');
+    });
+
     it('V3: PrerequisiteError from the runtime step carries the remediation into the result', async () => {
         const { io } = createMockIo(baseMockOpts({
             execResults: {

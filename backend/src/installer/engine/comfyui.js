@@ -260,28 +260,42 @@ function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log }) {
 
 /**
  * Ensure ComfyUI's own requirements.txt dependencies are present in the venv
- * WITHOUT replacing the pinned torch. An ADOPTED ComfyUI (pre-existing venv
- * with torch+python already working) skips the full runtime step — but the
- * fork may carry extra deps the old venv never got (e.g. SQLAlchemy). This
- * runs `pip install -r requirements.txt` constrained to the INSTALLED torch
- * version; pip skips satisfied deps in seconds, so it is safe on every run.
+ * WITHOUT breaking the pinned torch family. An ADOPTED ComfyUI (pre-existing
+ * venv with torch+python already working) skips the full runtime step — but
+ * the fork may carry extra deps the old venv never got (e.g. SQLAlchemy).
+ * requirements.txt typically lists UNPINNED torch/torchvision/torchaudio:
+ * without constraints pip pulls the latest PyPI builds, which are compiled
+ * against a DIFFERENT torch ABI ("operator torchvision::nms does not exist").
+ * The constraint pins the whole torch family to the installed version's
+ * minor; the CPU index supplies ABI-matched +cpu builds when available.
+ * pip skips satisfied deps in seconds, so this is safe on every run.
  * @returns {{ skipped: boolean }}
  */
-function syncComfyUIRequirements(io, { root, log }) {
+function syncComfyUIRequirements(io, { root, torchSpec = null, log }) {
     const py = path.join(root, 'venv', 'bin', 'python');
     const req = path.join(root, 'requirements.txt');
     if (!io.fs.existsSync(py) || !io.fs.existsSync(req)) return { skipped: true };
 
-    // Constrain torch to the INSTALLED version so unpinned torch edges in
-    // requirements.txt can never pull a different (e.g. CUDA) build.
-    const constraintFile = path.join(root, 'venv', '.animastor-torch-constraints.txt');
-    const v = io.exec(py, ['-c', 'import torch; print(torch.__version__)']);
-    if (v.code === 0) {
-        const ver = String(v.stdout).trim().split('+')[0];
-        if (/^\d+\.\d+\.\d+$/.test(ver)) io.fs.writeFileSync(constraintFile, `torch==${ver}\n`);
+    let args = ['-m', 'pip', 'install', '-r', req];
+    const pin = torchSpec && torchSpec.pin ? String(torchSpec.pin).split('+')[0] : null;
+    if (pin && /^\d+\.\d+\.\d+$/.test(pin)) {
+        // torch 2.N ↔ torchvision 0.(N+15) ↔ torchaudio 2.N (holds across 2.x;
+        // range-pins keep patch releases available, forbid minor drift)
+        const minor = Number(pin.split('.')[1]);
+        if (Number.isFinite(minor)) {
+            const constraints = [
+                `torch==${pin}`,
+                `torchvision>=0.${minor + 15},<0.${minor + 16}`,
+                `torchaudio>=${pin.split('.')[0]}.${minor},<${pin.split('.')[0]}.${minor + 1}`,
+            ].join('\n') + '\n';
+            const constraintFile = path.join(root, 'venv', '.animastor-torch-constraints.txt');
+            io.fs.writeFileSync(constraintFile, constraints);
+            args.push('-c', constraintFile);
+        }
+        if (torchSpec.index_url) {
+            args.push('--index-url', torchSpec.index_url, '--extra-index-url', 'https://pypi.org/simple');
+        }
     }
-    const args = ['-m', 'pip', 'install', '-r', req];
-    if (io.fs.existsSync(constraintFile)) args.push('-c', constraintFile);
     const r = io.exec(py, args, { timeout: 30 * 60 * 1000 });
     if (r.code !== 0) throw new Error(`pip install -r requirements.txt failed: ${String(r.stderr).slice(-500)}`);
     if (log) log.info('ComfyUI requirements synced');
