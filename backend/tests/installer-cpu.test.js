@@ -1072,6 +1072,45 @@ test('20c. startWorker detects an already-running worker for this dir — no dou
     assert.strictEqual(spawned.length, 0, 'no second worker spawned');
 });
 
+test('20d. startWorker restarts a running worker whose .env changed after its start', () => {
+    const workerMod = require('../src/installer/engine/worker');
+    const spawned = [];
+    const killed = [];
+    const { io, fs } = createMockIo({
+        files: {
+            '/tmp/wdir/worker.cjs': '// worker',
+            '/tmp/wdir/package.json': '{}',
+            '/tmp/wdir/.env': 'HUB_URL=https://animastor.in/gpu\nCOMFY_PORT=8288\n',
+            '/proc/222': 'proc-entry',
+        },
+        preDirs: ['/tmp/wdir'],
+    });
+    // the running worker started BEFORE .env was last modified → stale
+    const baseStat = fs.statSync;
+    fs.statSync = (p) => {
+        const st = baseStat(p);
+        if (p === '/proc/222') return { ...st, mtimeMs: 1000 };
+        if (p === '/tmp/wdir/.env') return { ...st, mtimeMs: 5000 };
+        return st;
+    };
+    io.spawnDaemon = (cmd, args, opts) => { spawned.push(args); return 777; };
+    io.exec = (cmd, args) => {
+        if (cmd === 'kill') { killed.push(args[0]); return { code: 0, stdout: '', stderr: '' }; }
+        if (cmd === 'pgrep') return { code: 0, stdout: '222\n', stderr: '' };
+        if (cmd === 'readlink') return { code: 0, stdout: '/tmp/wdir\n', stderr: '' };
+        if (cmd === 'node' && args[0] === '--check') return { code: 0, stdout: '', stderr: '' };
+        if (cmd === 'node' && args[0] === '-e') return { code: 0, stdout: '/tmp/wdir', stderr: '' };
+        if (cmd === 'sleep') return { code: 0, stdout: '', stderr: '' };
+        if (cmd === 'ps') return { code: 0, stdout: 'node worker.cjs', stderr: '' };
+        return { code: 0, stdout: '', stderr: '' };
+    };
+    const result = workerMod.startWorker(io, { workerDir: '/tmp/wdir' });
+    assert.deepStrictEqual(killed, ['222'], 'stale worker killed');
+    assert.strictEqual(spawned.length, 1, 'fresh worker spawned with the new env');
+    assert.strictEqual(result.alive, true, 'fresh worker alive');
+    assert.strictEqual(result.already_running, undefined, 'not reported as already_running');
+});
+
 // ========================== 21. COMFY_PORT in .env =======================
 test('21. engine passes COMFY_PORT to .env when --comfy-port is given', async () => {
     const manifestMod = require('../src/installer/install-manifest');

@@ -269,6 +269,22 @@ function findRunningWorkerPid(io, workerDir) {
 }
 
 /**
+ * True when .env was modified AFTER the worker process started: the running
+ * worker loaded the OLD configuration (its process.env is fixed at startup)
+ * and would keep the stale wiring (e.g. the pre-COMFY_PORT default port)
+ * forever. /proc/<pid> mtime is the process start time on Linux.
+ */
+function workerEnvIsNewer(io, { workerDir, pid }) {
+    try {
+        const envM = io.fs.statSync(path.join(workerDir, '.env')).mtimeMs;
+        const procM = io.fs.statSync(`/proc/${pid}`).mtimeMs;
+        return envM > procM + 1000; // 1s tolerance for same-second writes
+    } catch (_) {
+        return false;
+    }
+}
+
+/**
  * Start the installed worker as a detached daemon (node worker.cjs). The
  * worker loads its own .env (worker-env.cjs), so no secrets pass through
  * the environment or argv here. Returns whether the process is still alive
@@ -279,8 +295,15 @@ function startWorker(io, { workerDir, logFile = null, graceMs = 3000, sleep = nu
     const can = checkWorkerCanStart(io, { workerDir });
     if (!can.ok) return { started: false, alive: false, reason: can.reason };
     const existing = findRunningWorkerPid(io, workerDir);
-    if (existing) {
+    if (existing && !workerEnvIsNewer(io, { workerDir, pid: existing })) {
         return { started: true, already_running: true, pid: existing, alive: true, reason: null };
+    }
+    if (existing) {
+        // .env changed after this worker started — it is running on the OLD
+        // configuration (its env is fixed at process start). Restart it so
+        // re-runs with a new --comfy-port etc. actually take effect.
+        io.exec('kill', [String(existing)]);
+        io.exec(sleep || 'sleep', ['1']);
     }
     const pid = io.spawnDaemon('node', ['worker.cjs'], {
         cwd: workerDir,
@@ -298,6 +321,7 @@ module.exports = {
     fetchHubWorkerBundle,
     startWorker,
     findRunningWorkerPid,
+    workerEnvIsNewer,
     configureEnv,
     apiBaseFromHubUrl,
     verifyRegistration,
