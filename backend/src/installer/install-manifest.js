@@ -299,7 +299,10 @@ function manifestPath(profileId) {
 function loadManifest(profileId, opts = {}) {
     const file = manifestPath(profileId);
     if (!fs.existsSync(file)) {
-        throw new Error(`Install manifest not found for profile "${profileId}" (${file})`);
+        throw new Error(`Install manifest not found for profile "${profileId}" (${file})`
+            + (profileId.includes('/')
+                ? ''
+                : ` — profile ids are "<category>/<name>", e.g. audio/qwen-tts. Available: ${listProfileIds().join(', ') || 'none'}`));
     }
     let manifest;
     try {
@@ -333,6 +336,23 @@ function loadAllManifests(opts = {}) {
     return result;
 }
 
+/**
+ * List available profile ids ("<category>/<name>") without loading/validating
+ * the manifests — used for error hints.
+ */
+function listProfileIds() {
+    const ids = [];
+    if (!fs.existsSync(MANIFEST_ROOT)) return ids;
+    for (const type of fs.readdirSync(MANIFEST_ROOT).sort()) {
+        const typeDir = path.join(MANIFEST_ROOT, type);
+        if (!fs.statSync(typeDir).isDirectory()) continue;
+        for (const file of fs.readdirSync(typeDir).sort()) {
+            if (file.endsWith('.json')) ids.push(`${type}/${path.basename(file, '.json')}`);
+        }
+    }
+    return ids;
+}
+
 module.exports = {
     MANIFEST_SCHEMA_VERSION,
     MANIFEST_ROOT,
@@ -347,4 +367,5 @@ module.exports = {
     manifestPath,
     loadManifest,
     loadAllManifests,
+    listProfileIds,
 };
