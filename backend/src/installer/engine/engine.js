@@ -302,6 +302,26 @@ async function runInstallation(args) {
         // persist the (non-secret) decisions so `resume` does not re-prompt
         st.decisions = { ...(st.decisions || {}), ...sanitizeDecisions(decisions) };
     }
+    // Remembered settings: the flags that wire and start the services
+    // (--comfy-port / --start-comfy / --start-worker) are persisted after a
+    // successful decision and REUSED on re-runs. Users keep re-running the
+    // bare command; silently reverting to defaults (port 8188, start nothing)
+    // would rewire the worker to a foreign ComfyUI or leave services dead.
+    // Explicit CLI flags always win over remembered values.
+    if (!dryRun) {
+        const saved = st.installer_options || {};
+        for (const k of ['comfyPort', 'startComfyui', 'startWorker']) {
+            if (options[k] === undefined && saved[k] !== undefined) {
+                options[k] = saved[k];
+                log.info(`reusing remembered setting: ${k}=${saved[k]}`);
+            }
+        }
+        st.installer_options = {
+            comfyPort: options.comfyPort ?? saved.comfyPort ?? null,
+            startComfyui: options.startComfyui ?? saved.startComfyui ?? false,
+            startWorker: options.startWorker ?? saved.startWorker ?? false,
+        };
+    }
     const save = () => state.saveState(io, statePath, st, io.now);
     if (initialState) {
         for (const line of renderResumeSummary(st)) log.info(line);

@@ -90,6 +90,8 @@ function normalizeState(state) {
     if (state.owner_uid === undefined) state.owner_uid = null;
     const empty = emptyState();
     state.components = { ...empty.components, ...(state.components || {}) };
+    // legacy cleanup: older builds could persist a literal "undefined" key
+    if (state.artifacts && state.artifacts.undefined) delete state.artifacts.undefined;
     return state;
 }
 
@@ -131,6 +133,7 @@ function saveState(io, statePath, state, now) {
 }
 
 function setArtifact(state, id, status, detail = {}) {
+    if (!id) return; // defensive: a missing id must never create an "undefined" key
     if (!ARTIFACT_STATUSES.includes(status)) {
         throw new Error(`internal error: unknown artifact status "${status}"`);
     }

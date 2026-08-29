@@ -1138,6 +1138,40 @@ test('21. engine passes COMFY_PORT to .env when --comfy-port is given', async ()
     assert.ok(!envText.includes('COMFY_PORT=8188'), 'COMFY_PORT not defaulted to 8188');
 });
 
+test('21b. a bare re-run inherits remembered --comfy-port/--start flags from state', async () => {
+    const manifestMod = require('../src/installer/install-manifest');
+    const manifests = [manifestMod.loadManifest('audio/qwen-tts')];
+    const roots = {
+        comfyuiRoot: '/tmp/comfy', workerDir: '/tmp/animastor/worker',
+        statePath: '/tmp/comfy/.animastor-installer/install-state.json',
+        repoRoot: '/tmp/repo', hubUrl: 'https://animastor.in/gpu',
+    };
+    const decisions = {
+        comfyui_update: 'yes', install_custom_nodes: true, install_models: true,
+        workflows: 'all', worker_setup: true, worker_key_provided: true,
+        accept_reference_runtime: true,
+    };
+    const base = { manifests, mode: 'managed', roots, decisions, secretProvider: async () => 'wrk.test-token', crypto: require('crypto') };
+
+    // Run 1: explicit flags → settings remembered in state
+    const io1 = createRealManifestEngineIo();
+    const log1 = createMockLogger();
+    await runInstallation({ ...base, io: io1.io, logger: log1, options: { comfyPort: 8288, startComfyui: true, startWorker: true } });
+    const st = JSON.parse(io1.fs.readFileSync(roots.statePath, 'utf8'));
+    assert.deepStrictEqual(st.installer_options, { comfyPort: 8288, startComfyui: true, startWorker: true }, `options persisted: ${JSON.stringify(st.installer_options)}`);
+
+    // Run 2: bare (no options) → remembered values apply; .env keeps the port
+    const io2 = createRealManifestEngineIo();
+    // pre-seed the state from run 1 into the fresh io
+    io2.fs.mkdirSync('/tmp/comfy/.animastor-installer', { recursive: true });
+    io2.fs.writeFileSync(roots.statePath, JSON.stringify(st));
+    const log2 = createMockLogger();
+    await runInstallation({ ...base, io: io2.io, logger: log2, options: {} });
+    assert.ok(log2.lines.some((l) => l.includes('reusing remembered setting: comfyPort=8288')), `log: ${log2.lines.join('\n')}`);
+    const envText = io2.fs.readFileSync('/tmp/animastor/worker/.env', 'utf8');
+    assert.ok(envText.includes('COMFY_PORT=8288'), `.env still wired to 8288\n${envText}`);
+});
+
 // ========================== 22. nodes retryDeps ==========================
 test('22. installCustomNode retries pip install for existing nodes with incomplete deps', () => {
     const nodesMod = require('../src/installer/engine/nodes');
