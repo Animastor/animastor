@@ -783,6 +783,7 @@ async function runInstallation(args) {
             result.results.worker.push({ id: 'worker-process', ...res });
             if (res.started && res.alive) {
                 startedWorkerPid = res.pid;
+                if (res.already_running) log.info(`worker already running (pid ${res.pid}) — not spawning a second instance`);
                 state.setArtifact(st, 'worker-process', 'installed', { pid: res.pid });
             } else {
                 state.setArtifact(st, 'worker-process', 'failed', { reason: res.reason || null });

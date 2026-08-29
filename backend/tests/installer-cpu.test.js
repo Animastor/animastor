@@ -1047,6 +1047,31 @@ test('20b. startWorker returns alive=false when process dies immediately', () =>
     assert.ok(result.reason.includes('exited immediately'), `reason: ${result.reason}`);
 });
 
+test('20c. startWorker detects an already-running worker for this dir — no double spawn', () => {
+    const workerMod = require('../src/installer/engine/worker');
+    const spawned = [];
+    const { io } = createMockIo({
+        files: {
+            '/tmp/wdir/worker.cjs': '// worker',
+            '/tmp/wdir/package.json': '{}',
+        },
+    });
+    io.spawnDaemon = (cmd, args, opts) => { spawned.push({ cmd, args, opts }); return 424242; };
+    io.exec = (cmd, args) => {
+        if (cmd === 'pgrep') return { code: 0, stdout: '111\n222\n', stderr: '' };
+        if (cmd === 'readlink' && args[0] === '/proc/111/cwd') return { code: 0, stdout: '/other/worker/dir\n', stderr: '' };
+        if (cmd === 'readlink' && args[0] === '/proc/222/cwd') return { code: 0, stdout: '/tmp/wdir\n', stderr: '' };
+        if (cmd === 'node') return { code: 0, stdout: '', stderr: '' };
+        return { code: 0, stdout: '', stderr: '' };
+    };
+    const result = workerMod.startWorker(io, { workerDir: '/tmp/wdir' });
+    assert.strictEqual(result.started, true, 'started');
+    assert.strictEqual(result.already_running, true, 'detected as already running');
+    assert.strictEqual(result.pid, 222, 'pid of the worker whose cwd is this workerDir');
+    assert.strictEqual(result.alive, true, 'alive');
+    assert.strictEqual(spawned.length, 0, 'no second worker spawned');
+});
+
 // ========================== 21. COMFY_PORT in .env =======================
 test('21. engine passes COMFY_PORT to .env when --comfy-port is given', async () => {
     const manifestMod = require('../src/installer/install-manifest');

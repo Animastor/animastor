@@ -299,6 +299,30 @@ function syncComfyUIRequirements(io, { root, torchSpec = null, log }) {
     const r = io.exec(py, args, { timeout: 30 * 60 * 1000 });
     if (r.code !== 0) throw new Error(`pip install -r requirements.txt failed: ${String(r.stderr).slice(-500)}`);
     if (log) log.info('ComfyUI requirements synced');
+
+    // Build provenance repair: a version range cannot distinguish a
+    // same-version wheel built for a DIFFERENT torch ABI (the generic PyPI
+    // torchvision 0.25.0 vs the ABI-matched 0.25.0+cpu) — the local version
+    // tag can. torch "2.10.0+cpu" + torchvision "0.25.0" (no local tag) means
+    // the generic build sneaked in ("operator torchvision::nms does not
+    // exist") → force the +cpu wheel from the torch pin's index.
+    const distVersion = (dist) => {
+        const q = io.exec(py, ['-c', `from importlib.metadata import version; print(version("${dist}"))`]);
+        return (q && q.code === 0 && q.stdout) ? String(q.stdout).trim() : null;
+    };
+    const torchVer = distVersion('torch');
+    const torchLocal = torchVer && torchVer.includes('+') ? torchVer.split('+')[1] : null;
+    if (torchLocal && torchSpec && torchSpec.index_url) {
+        for (const dist of ['torchvision', 'torchaudio']) {
+            const v = distVersion(dist);
+            if (v && !v.includes('+')) {
+                const fix = io.exec(py, ['-m', 'pip', 'install', '--force-reinstall', '--no-deps',
+                    `${dist}==${v.split('+')[0]}`, '--index-url', torchSpec.index_url], { timeout: 30 * 60 * 1000 });
+                if (fix.code !== 0) throw new Error(`pip install --force-reinstall ${dist} failed: ${String(fix.stderr).slice(-500)}`);
+                if (log) log.info(`${dist} reinstalled from ${torchSpec.index_url} (ABI-matched ${torchLocal} build)`);
+            }
+        }
+    }
     return { skipped: false };
 }
 

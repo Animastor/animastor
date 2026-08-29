@@ -248,14 +248,40 @@ async function fetchHubWorkerBundle(io, { hubUrl, tmpRoot = null }) {
 }
 
 /**
+ * Find a RUNNING worker process for this exact workerDir. `pgrep -f worker.cjs`
+ * matches every worker on the host (several users may run one), so each
+ * candidate pid is confirmed via /proc/<pid>/cwd — the worker always runs with
+ * cwd=workerDir (both the installer spawn and a manual `node worker.cjs`).
+ * @returns {number|null} pid of the running worker in this dir
+ */
+function findRunningWorkerPid(io, workerDir) {
+    const out = io.exec('pgrep', ['-f', 'worker\\.cjs']);
+    if (!out || out.code !== 0 || !out.stdout) return null;
+    for (const line of String(out.stdout).split('\n')) {
+        const pid = Number(line.trim());
+        if (!Number.isFinite(pid) || pid <= 0) continue;
+        const cwd = io.exec('readlink', [`/proc/${pid}/cwd`]);
+        if (cwd && cwd.code === 0 && path.resolve(String(cwd.stdout).trim()) === path.resolve(workerDir)) {
+            return pid;
+        }
+    }
+    return null;
+}
+
+/**
  * Start the installed worker as a detached daemon (node worker.cjs). The
  * worker loads its own .env (worker-env.cjs), so no secrets pass through
  * the environment or argv here. Returns whether the process is still alive
- * after a short grace period.
+ * after a short grace period. Idempotent: a worker already running for this
+ * directory is left alone (re-runs must never spawn a second instance).
  */
 function startWorker(io, { workerDir, logFile = null, graceMs = 3000, sleep = null }) {
     const can = checkWorkerCanStart(io, { workerDir });
     if (!can.ok) return { started: false, alive: false, reason: can.reason };
+    const existing = findRunningWorkerPid(io, workerDir);
+    if (existing) {
+        return { started: true, already_running: true, pid: existing, alive: true, reason: null };
+    }
     const pid = io.spawnDaemon('node', ['worker.cjs'], {
         cwd: workerDir,
         logFile: logFile || path.join(workerDir, 'worker-installer.log'),
@@ -271,6 +297,7 @@ module.exports = {
     installWorkerBundle,
     fetchHubWorkerBundle,
     startWorker,
+    findRunningWorkerPid,
     configureEnv,
     apiBaseFromHubUrl,
     verifyRegistration,

@@ -562,6 +562,34 @@ describe('engine: broken/incomplete existing venv', () => {
         assert.ok(!pipCalls[0].args.includes('-c'), 'no constraint expected without a torch spec');
     });
 
+    it('V2d: syncComfyUIRequirements force-reinstalls same-version tv/ta wheels lacking the torch local tag', () => {
+        const metaFor = (d) => `from importlib.metadata import version; print(version("${d}"))`;
+        const { io, calls } = createMockIo({
+            files: {
+                '/tmp/comfy/main.py': '# comfy',
+                '/tmp/comfy/requirements.txt': 'torchvision\n',
+                '/tmp/comfy/venv/bin/python': '#!/bin/sh',
+            },
+            preDirs: ['/tmp/comfy/venv/bin'],
+            execResults: {
+                [`/tmp/comfy/venv/bin/python -c ${metaFor('torch')}`]: { code: 0, stdout: '2.10.0+cpu\n', stderr: '' },
+                [`/tmp/comfy/venv/bin/python -c ${metaFor('torchvision')}`]: { code: 0, stdout: '0.25.0\n', stderr: '' },
+                [`/tmp/comfy/venv/bin/python -c ${metaFor('torchaudio')}`]: { code: 0, stdout: '2.10.0+cpu\n', stderr: '' },
+                '/tmp/comfy/venv/bin/python -m pip install -r /tmp/comfy/requirements.txt -c /tmp/comfy/venv/.animastor-torch-constraints.txt --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple': { code: 0, stdout: '', stderr: '' },
+                '/tmp/comfy/venv/bin/python -m pip install --force-reinstall --no-deps torchvision==0.25.0 --index-url https://download.pytorch.org/whl/cpu': { code: 0, stdout: '', stderr: '' },
+            },
+        });
+        comfyui.syncComfyUIRequirements(io, {
+            root: '/tmp/comfy',
+            torchSpec: { pin: '2.10.0+cpu', index_url: 'https://download.pytorch.org/whl/cpu' },
+            log: null,
+        });
+        const reinstall = calls.exec.filter((c) => c.args && c.args.includes('--force-reinstall'));
+        assert.strictEqual(reinstall.length, 1, `only the generic-build wheel is reinstalled: ${JSON.stringify(reinstall.map((c) => c.args))}`);
+        assert.ok(reinstall[0].args.some((a) => a === 'torchvision==0.25.0'));
+        assert.ok(reinstall[0].args.includes('--no-deps'), 'torch itself must not be touched');
+    });
+
     it('V3: PrerequisiteError from the runtime step carries the remediation into the result', async () => {
         const { io } = createMockIo(baseMockOpts({
             execResults: {
