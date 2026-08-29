@@ -30,18 +30,36 @@ function findWorkflowArtifact(manifests, wfId) {
     return null;
 }
 
-async function readCanonicalContent(io, { wf, repoRoot, hubUrl, httpFetchText }) {
+async function readCanonicalContent(io, { wf, repoRoot, hubUrl, httpFetchText, log = null }) {
     if (wf.source && wf.source.repository_path && repoRoot) {
-        const abs = path.join(repoRoot, wf.source.repository_path);
-        if (io.fs.existsSync(abs)) {
-            return { content: io.fs.readFileSync(abs, 'utf8'), origin: `repository ${wf.source.repository_path}` };
+        // Two layouts carry the canonical workflows:
+        //   dev checkout —  <repoRoot>/backend/ai/workflows/...
+        //   tarball      —  <repoRoot>/animastor-installer/backend/ai/workflows/...
+        // (REPO_ROOT resolves to the extraction PARENT when cli.js runs from
+        // <extract>/animastor-installer/src/installer — hence the second candidate)
+        for (const abs of [
+            path.join(repoRoot, wf.source.repository_path),
+            path.join(repoRoot, 'animastor-installer', wf.source.repository_path),
+        ]) {
+            if (io.fs.existsSync(abs)) {
+                return { content: io.fs.readFileSync(abs, 'utf8'), origin: `repository ${path.relative(repoRoot, abs)}` };
+            }
         }
     }
     if (wf.source && wf.source.endpoint && hubUrl && httpFetchText) {
-        const url = wf.source.endpoint.replace('{HUB_URL}', hubUrl.replace(/\/$/, ''));
-        const res = await httpFetchText(url);
-        if (res && res.status === 200 && res.text) {
-            return { content: res.text, origin: url };
+        // Manifest endpoints carry an HTTP method prefix ("GET {HUB_URL}/workflow/x");
+        // fetch() needs the bare URL. Strip it, substitute {HUB_URL}, and never let a
+        // network failure crash the whole workflow step — fall through to "blocked".
+        let url = String(wf.source.endpoint).replace(/^[A-Za-z]+\s+/, '');
+        url = url.replace('{HUB_URL}', hubUrl.replace(/\/$/, ''));
+        try {
+            const res = await httpFetchText(url);
+            if (res && res.status === 200 && res.text) {
+                return { content: res.text, origin: url };
+            }
+            if (log) log.warn(`hub workflow endpoint ${url} returned status ${res ? res.status : 'no response'}`);
+        } catch (err) {
+            if (log) log.warn(`hub workflow endpoint ${url} unreachable: ${err.message}`);
         }
     }
     return null;
@@ -77,7 +95,7 @@ async function installWorkflows(io, opts) {
             continue;
         }
 
-        const canonical = await readCanonicalContent(io, { wf, repoRoot, hubUrl, httpFetchText: opts.httpFetchText });
+        const canonical = await readCanonicalContent(io, { wf, repoRoot, hubUrl, httpFetchText: opts.httpFetchText, log });
         if (!canonical) {
             results.push({
                 id: item.id,
