@@ -1172,6 +1172,79 @@ test('21b. a bare re-run inherits remembered --comfy-port/--start flags from sta
     assert.ok(envText.includes('COMFY_PORT=8288'), `.env still wired to 8288\n${envText}`);
 });
 
+// ================= 21c. managed mode: services auto-start, port auto-pick ==
+test('21c. bare managed run: foreign 8188 avoided, services start by default', async () => {
+    const engine = require('../src/installer/engine/engine');
+    const manifestMod = require('../src/installer/install-manifest');
+    const manifests = [manifestMod.loadManifest('audio/qwen-tts')];
+    const spawnCalls = [];
+    const { io, fs, calls } = createRealManifestEngineIo({
+        // foreign ComfyUI occupies 8188; managed range is free
+        'http://127.0.0.1:8188/system_stats': { status: 200, json: () => ({ system: {} }) },
+        'http://127.0.0.1:8288/system_stats': () => { throw new Error('ECONNREFUSED'); },
+        'http://127.0.0.1:8289/system_stats': () => { throw new Error('ECONNREFUSED'); },
+    });
+    io.spawnDaemon = (cmd, args, opts) => { spawnCalls.push({ cmd, args, opts }); return 555; };
+    const log = createMockLogger();
+    const result = await runInstallation({
+        manifests, mode: 'managed', io,
+        roots: {
+            comfyuiRoot: '/tmp/comfy', workerDir: '/tmp/animastor/worker',
+            statePath: '/tmp/comfy/.animastor-installer/install-state.json',
+            repoRoot: '/tmp/repo', hubUrl: 'https://animastor.in/gpu',
+        },
+        decisions: {
+            comfyui_update: 'yes', install_custom_nodes: true, install_models: true,
+            workflows: 'all', worker_setup: true, worker_key_provided: true,
+            accept_reference_runtime: true,
+        },
+        secretProvider: async () => 'wrk.test-token',
+        logger: log, crypto: require('crypto'),
+        options: { verifyTimeoutMs: 300 },
+    });
+    const envText = fs.readFileSync('/tmp/animastor/worker/.env', 'utf8');
+    assert.ok(envText.includes('COMFY_PORT=8288'), `port auto-picked to 8288\n${envText}`);
+    assert.ok(!envText.includes('COMFY_PORT=8188'), 'foreign 8188 never used');
+    const st = JSON.parse(fs.readFileSync('/tmp/comfy/.animastor-installer/install-state.json', 'utf8'));
+    assert.deepStrictEqual(st.installer_options, { comfyPort: 8288, startComfyui: true, startWorker: true }, `persisted: ${JSON.stringify(st.installer_options)}`);
+    const comfySpawn = spawnCalls.find((s) => s.args && s.args[0] === 'main.py');
+    assert.ok(comfySpawn, 'ComfyUI spawned');
+    assert.ok(comfySpawn.args.includes('8288'), 'ComfyUI spawned on the auto-picked port');
+    assert.ok(st.comfyui_runtime && st.comfyui_runtime.port === 8288, 'runtime recorded for future re-runs');
+});
+
+test('21d. autoPickComfyPort: runtime-alive > free default > managed range; existing mode trusts 8188', async () => {
+    const engine = require('../src/installer/engine/engine');
+    const mk = (handlers) => createMockIo({ httpResults: handlers }).io;
+    const refused = () => { throw new Error('ECONNREFUSED'); };
+    const foreign = { status: 200, json: () => ({}) };                 // answers, not ComfyUI
+    const comfy = { status: 200, json: () => ({ system: {} }) };       // ComfyUI API
+
+    // foreign service on 8188 → managed range
+    let io = mk({ 'http://127.0.0.1:8188/system_stats': foreign, 'http://127.0.0.1:8288/system_stats': refused });
+    assert.strictEqual(await engine.autoPickComfyPort(io, { st: {}, mode: 'managed', log: null }), 8288);
+
+    // everything free → default 8188
+    io = mk({ 'http://127.0.0.1:8188/system_stats': refused });
+    assert.strictEqual(await engine.autoPickComfyPort(io, { st: {}, mode: 'managed', log: null }), 8188);
+
+    // previous runtime still alive → keep it (even with foreign 8188)
+    io = mk({ 'http://127.0.0.1:8188/system_stats': foreign, 'http://127.0.0.1:8288/system_stats': comfy });
+    assert.strictEqual(await engine.autoPickComfyPort(io, { st: { comfyui_runtime: { port: 8288 } }, mode: 'managed', log: null }), 8288);
+
+    // existing mode: the user's own ComfyUI on 8188 IS the target
+    io = mk({ 'http://127.0.0.1:8188/system_stats': comfy });
+    assert.strictEqual(await engine.autoPickComfyPort(io, { st: {}, mode: 'existing', log: null }), 8188);
+
+    // portState classification
+    io = mk({ 'http://127.0.0.1:9000/system_stats': foreign });
+    assert.strictEqual(await engine.comfyPortState(io, 9000), 'foreign');
+    io = mk({ 'http://127.0.0.1:9000/system_stats': comfy });
+    assert.strictEqual(await engine.comfyPortState(io, 9000), 'comfyui');
+    io = mk({ 'http://127.0.0.1:9000/system_stats': refused });
+    assert.strictEqual(await engine.comfyPortState(io, 9000), 'free');
+});
+
 // ========================== 22. nodes retryDeps ==========================
 test('22. installCustomNode retries pip install for existing nodes with incomplete deps', () => {
     const nodesMod = require('../src/installer/engine/nodes');

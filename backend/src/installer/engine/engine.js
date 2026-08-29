@@ -302,12 +302,11 @@ async function runInstallation(args) {
         // persist the (non-secret) decisions so `resume` does not re-prompt
         st.decisions = { ...(st.decisions || {}), ...sanitizeDecisions(decisions) };
     }
-    // Remembered settings: the flags that wire and start the services
-    // (--comfy-port / --start-comfy / --start-worker) are persisted after a
-    // successful decision and REUSED on re-runs. Users keep re-running the
-    // bare command; silently reverting to defaults (port 8188, start nothing)
-    // would rewire the worker to a foreign ComfyUI or leave services dead.
-    // Explicit CLI flags always win over remembered values.
+    // Managed mode owns the whole stack: services start by default (opt out
+    // with --no-start-comfy / --no-start-worker), 'existing' mode leaves the
+    // user's own ComfyUI alone but still runs OUR worker. The flags are also
+    // remembered across re-runs — a bare re-run keeps the same wiring instead
+    // of silently reverting to defaults. Explicit CLI flags always win.
     if (!dryRun) {
         const saved = st.installer_options || {};
         for (const k of ['comfyPort', 'startComfyui', 'startWorker']) {
@@ -316,10 +315,24 @@ async function runInstallation(args) {
                 log.info(`reusing remembered setting: ${k}=${saved[k]}`);
             }
         }
+        if (options.startComfyui === undefined) options.startComfyui = (mode === 'managed');
+        if (options.startWorker === undefined) options.startWorker = (mode !== 'existing') && (decisions.worker_setup !== false);
+        // Never wire this install to a FOREIGN service on the default port.
+        if (options.comfyPort !== undefined) {
+            const ours = st.comfyui_runtime && st.comfyui_runtime.port === options.comfyPort;
+            const s = await comfyPortState(io, options.comfyPort);
+            if (s === 'foreign' && !ours) {
+                log.info(`remembered port ${options.comfyPort} is now used by another service — picking a new one`);
+                options.comfyPort = undefined;
+            }
+        }
+        if (options.comfyPort === undefined) {
+            options.comfyPort = await autoPickComfyPort(io, { st, mode, log });
+        }
         st.installer_options = {
-            comfyPort: options.comfyPort ?? saved.comfyPort ?? null,
-            startComfyui: options.startComfyui ?? saved.startComfyui ?? false,
-            startWorker: options.startWorker ?? saved.startWorker ?? false,
+            comfyPort: options.comfyPort ?? null,
+            startComfyui: !!options.startComfyui,
+            startWorker: !!options.startWorker,
         };
     }
     const save = () => state.saveState(io, statePath, st, io.now);
@@ -792,12 +805,12 @@ async function runInstallation(args) {
             save();
         }
 
-        // 4.8 Worker start (--start-worker) ---------------------------------------------
-        // The installer never starts background services unprompted; this step
-        // runs only on an explicit opt-in. The worker loads its own .env
-        // (worker-env.cjs) — no secret values pass through argv or environment.
+        // 4.8 Worker start (managed-mode default / --start-worker) --------
+        // A fatal runtime failure leaves the install unrecoverable — every
+        // dependent step (including daemon starts) is SKIPPED, never ploughed
+        // through behind a broken ComfyUI.
         let startedWorkerPid = null;
-        if (options.startWorker && workerDir) {
+        if (options.startWorker && workerDir && !runtimeFatal) {
             const r = await log.step('start worker', async () => worker.startWorker(io, { workerDir }));
             const res = r.ok ? r.value : { started: false, alive: false, reason: String(r.error && r.error.message) };
             result.results.worker.push({ id: 'worker-process', ...res });
@@ -888,6 +901,8 @@ async function runVerification({ io, manifests, roots, options, log, crypto, tok
         });
         if (started.ok && started.value.up.ok) {
             stats = started.value.up.system_stats;
+            st.comfyui_runtime = { port, pid: started.value.pid, started_at: io.now() };
+            save();
             emit('comfyui_started', { pid: started.value.pid, port });
         } else {
             live.comfyui = { running: false, api_reachable: false };
@@ -977,6 +992,50 @@ function readEnvValueLocal(io, workerDir, key) {
     return null;
 }
 
+// ---------------------------------------------------------------------------
+// Service autostart + port selection (managed mode owns the whole stack)
+// ---------------------------------------------------------------------------
+
+/**
+ * Classify what listens on 127.0.0.1:<port>:
+ *   'free'    — nothing answers (connection refused / timeout)
+ *   'comfyui' — a ComfyUI API (/system_stats → JSON with .system)
+ *   'foreign' — something else answers
+ * A FOREIGN service on the default port must never receive this install's
+ * worker: shared hosts routinely run several users' ComfyUI instances.
+ */
+async function comfyPortState(io, port) {
+    try {
+        const res = await io.http.fetchJson(`http://127.0.0.1:${port}/system_stats`, { signal: AbortSignal.timeout(2000) });
+        if (res && res.status === 200 && res.json && res.json.system) return 'comfyui';
+        return 'foreign';
+    } catch (_) {
+        return 'free';
+    }
+}
+
+/**
+ * Pick the ComfyUI port for this install:
+ *   1. a ComfyUI this installer started previously and still alive → keep it
+ *   2. default 8188 when free → take it
+ *   3. non-managed mode: the user's own ComfyUI on 8188 IS the target → use it
+ *   4. otherwise the first free port in the managed range (8288+)
+ */
+async function autoPickComfyPort(io, { st, mode, log }) {
+    const rt = st.comfyui_runtime;
+    if (rt && rt.port && await comfyPortState(io, rt.port) === 'comfyui') return rt.port;
+    const s8188 = await comfyPortState(io, 8188);
+    if (s8188 === 'free') return 8188;
+    if (mode !== 'managed' && s8188 === 'comfyui') return 8188;
+    for (const p of [8288, 8289, 8290, 8291]) {
+        if (await comfyPortState(io, p) === 'free') {
+            if (log) log.info(`port 8188 is occupied (${s8188}) — this install's ComfyUI will use port ${p}`);
+            return p;
+        }
+    }
+    return 8188;
+}
+
 module.exports = {
     runInstallation,
     runVerification,
@@ -986,5 +1045,7 @@ module.exports = {
     renderResumeSummary,
     sanitizeDecisions,
     createInterruptGuard,
+    comfyPortState,
+    autoPickComfyPort,
     CPU_MODE_WARNING,
 };

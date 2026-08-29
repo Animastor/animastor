@@ -874,8 +874,9 @@ describe('interrupt handling (Ctrl+C)', () => {
                 options: { prereqTmpRoot: PROBE_TMP, interruptGuard: true }, // SIGINT guard ENABLED
             });
             const t0 = Date.now();
-            while (calls.http.length === 0 && Date.now() - t0 < 2000) await new Promise((r) => setTimeout(r, 10));
-            assert.ok(calls.http.length > 0, 'download started');
+            // the settings/probe phase also issues http calls — wait for the DOWNLOAD itself
+            while (!calls.http.some((c) => c.op === 'download') && Date.now() - t0 < 2000) await new Promise((r) => setTimeout(r, 10));
+            assert.ok(calls.http.some((c) => c.op === 'download'), 'download started');
             assert.ok(process.listenerCount('SIGINT') > sigintBefore, 'SIGINT guard registered');
             assert.throws(() => process.emit('SIGINT'), /__exit__/);
         } finally {

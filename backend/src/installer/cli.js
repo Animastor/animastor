@@ -63,7 +63,7 @@ function parseArgs(argv) {
         const a = args[i];
         if (a.startsWith('--')) {
             const key = a.slice(2);
-            if (['yes', 'dry-run', 'resume', 'start-comfy', 'start-worker', 'all', 'accept-reference-runtime', 'accept-runtime-change'].includes(key)) {
+            if (['yes', 'dry-run', 'resume', 'start-comfy', 'start-worker', 'no-start-comfy', 'no-start-worker', 'all', 'accept-reference-runtime', 'accept-runtime-change'].includes(key)) {
                 parsed.flags[key] = true;
             } else {
                 const val = args[++i];
@@ -417,16 +417,16 @@ async function cmdInstall(flags) {
 
 function installOptions(flags) {
     return {
-        // Verification uses an already-running ComfyUI if present. Pass
-        // --start-comfy to let the installer start one for the live check.
-        startComfyui: flags['start-comfy'] === true,
+        // Managed mode starts services by default (engine); these flags only
+        // carry an explicit ON (--start-comfy) or OFF (--no-start-comfy).
+        startComfyui: flags['start-comfy'] === true ? true : flags['no-start-comfy'] === true ? false : undefined,
         comfyPort: flags['comfy-port'] ? Number(flags['comfy-port']) : undefined,
         verifyTimeoutMs: flags['verify-timeout-ms'] ? Number(flags['verify-timeout-ms']) : undefined,
         // --start-worker: launch the installed worker (node worker.cjs) as a
         // detached daemon after the bundle+.env steps and check it is alive
         // during verification. Without it the worker stays stopped (the
         // installer never starts background services unprompted).
-        startWorker: flags['start-worker'] === true,
+        startWorker: flags['start-worker'] === true ? true : flags['no-start-worker'] === true ? false : undefined,
     };
 }
 
@@ -805,6 +805,9 @@ async function main() {
             console.error('  --hub-url URL      GPU Hub URL');
             console.error('  --yes              Auto-confirm all prompts');
             console.error('  --dry-run          Show plan only; zero mutations');
+            console.error('  managed mode starts ComfyUI + worker automatically and picks');
+            console.error('  a free port when 8188 is taken; opt out:');
+            console.error('    --no-start-comfy  --no-start-worker  --comfy-port N');
             console.error('  uninstall flags:');
             console.error('    --all            Full uninstall (remove everything recorded as installed by Animastor)');
             console.error('    --state PATH     Install state file path');
