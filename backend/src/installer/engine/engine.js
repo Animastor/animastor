@@ -486,6 +486,14 @@ async function runInstallation(args) {
                     save();
                 }
             }
+        } else if (!runtimeFatal && io.fs.existsSync(path.join(comfyuiRoot, 'venv', 'bin', 'python'))) {
+            // Runtime looks complete (torch+python already present — e.g. an
+            // ADOPTED ComfyUI), so the full prepare step was skipped. The fork's
+            // own requirements may still be missing from the old venv (the
+            // ComfyUI process crashes on import otherwise). Idempotent sync:
+            // pip skips everything already satisfied; torch stays pinned.
+            const r = await log.step('sync ComfyUI requirements', async () => comfyui.syncComfyUIRequirements(io, { root: comfyuiRoot, log }));
+            if (!r.ok) result.warnings.push(`ComfyUI requirements sync failed: ${r.error && r.error.message}`);
         }
 
         // Dependent-step gating: a failed runtime stops everything that needs it.

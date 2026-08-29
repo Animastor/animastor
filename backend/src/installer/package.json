@@ -1,6 +1,6 @@
 {
   "name": "animastor-installer",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "private": true,
   "description": "Animastor Private GPU Worker installer — canonical version source for the setup contract (hub packaging and backend metadata both read this file; do not duplicate the version elsewhere).",
   "main": "index.js",

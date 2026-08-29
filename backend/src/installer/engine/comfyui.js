@@ -259,6 +259,36 @@ function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log }) {
 }
 
 /**
+ * Ensure ComfyUI's own requirements.txt dependencies are present in the venv
+ * WITHOUT replacing the pinned torch. An ADOPTED ComfyUI (pre-existing venv
+ * with torch+python already working) skips the full runtime step — but the
+ * fork may carry extra deps the old venv never got (e.g. SQLAlchemy). This
+ * runs `pip install -r requirements.txt` constrained to the INSTALLED torch
+ * version; pip skips satisfied deps in seconds, so it is safe on every run.
+ * @returns {{ skipped: boolean }}
+ */
+function syncComfyUIRequirements(io, { root, log }) {
+    const py = path.join(root, 'venv', 'bin', 'python');
+    const req = path.join(root, 'requirements.txt');
+    if (!io.fs.existsSync(py) || !io.fs.existsSync(req)) return { skipped: true };
+
+    // Constrain torch to the INSTALLED version so unpinned torch edges in
+    // requirements.txt can never pull a different (e.g. CUDA) build.
+    const constraintFile = path.join(root, 'venv', '.animastor-torch-constraints.txt');
+    const v = io.exec(py, ['-c', 'import torch; print(torch.__version__)']);
+    if (v.code === 0) {
+        const ver = String(v.stdout).trim().split('+')[0];
+        if (/^\d+\.\d+\.\d+$/.test(ver)) io.fs.writeFileSync(constraintFile, `torch==${ver}\n`);
+    }
+    const args = ['-m', 'pip', 'install', '-r', req];
+    if (io.fs.existsSync(constraintFile)) args.push('-c', constraintFile);
+    const r = io.exec(py, args, { timeout: 30 * 60 * 1000 });
+    if (r.code !== 0) throw new Error(`pip install -r requirements.txt failed: ${String(r.stderr).slice(-500)}`);
+    if (log) log.info('ComfyUI requirements synced');
+    return { skipped: false };
+}
+
+/**
  * Start ComfyUI. In CPU-only mode the `--cpu` flag forces the CPU execution
  * path (ComfyUI's own device selector) — required on hosts without a GPU.
  */
@@ -348,6 +378,7 @@ module.exports = {
     adoptComfyUI,
     updateComfyUI,
     preparePythonRuntime,
+    syncComfyUIRequirements,
     startComfyUI,
     waitForApi,
     systemStats,
