@@ -234,6 +234,7 @@ t('C8: REGRESSION interactive CPU install (audio/qwen-tts, managed) rebuilds the
     // secret prompt ends with ": ". Answers are consumed strictly in order.
     const answers = [
         [/Continue with the CPU-only installation\? \[Yes\/No\]/, 'yes'],
+        [/Install this reference ComfyUI\? \[Yes\/No\]/, 'yes'], // D1 consent
         [/component\(s\) missing\. Install\?[\s\S]*?\[Yes\/No\]/, 'yes'], // custom nodes
         [/component\(s\) missing\. Install\?[\s\S]*?\[Yes\/No\]/, 'yes'], // models
         [/Which baseline workflows to download\?[\s\S]*?\[Yes\/No\]/, 'no'],

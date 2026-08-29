@@ -8,6 +8,8 @@
  *   animastor-installer detect     [--root PATH] [--worker-dir PATH]
  *   animastor-installer plan       --profile P[,P2] [--mode managed|existing|shared] [--root PATH]
  *   animastor-installer install    --profile P[,P2] [--mode ...] [--root PATH] [--yes] [--dry-run] [--worker-dir PATH] [--hub-url URL]
+ *                                  [--start-comfy] [--comfy-port N] [--start-worker]
+ *                                  [--accept-reference-runtime]
  *   animastor-installer verify     [--profile P[,P2]] [--root PATH] [--worker-dir PATH] [--hub-url URL]
  *   animastor-installer resume
  *   animastor-installer uninstall  [--all] [--yes] [--dry-run] [--state PATH] [--home PATH]
@@ -61,7 +63,7 @@ function parseArgs(argv) {
         const a = args[i];
         if (a.startsWith('--')) {
             const key = a.slice(2);
-            if (['yes', 'dry-run', 'resume', 'start-comfy', 'all', 'accept-reference-runtime', 'accept-runtime-change'].includes(key)) {
+            if (['yes', 'dry-run', 'resume', 'start-comfy', 'start-worker', 'all', 'accept-reference-runtime', 'accept-runtime-change'].includes(key)) {
                 parsed.flags[key] = true;
             } else {
                 const val = args[++i];
@@ -358,6 +360,10 @@ async function cmdInstall(flags) {
                 continue;
             }
             const answer = await prompt.confirm(step.prompt.question);
+            if (step.consent === 'accept_reference_runtime') {
+                decisions.accept_reference_runtime = answer;
+                continue;
+            }
             if (stepId === 'comfyui-update') decisions.comfyui_update = answer ? 'yes' : 'no';
             else if (stepId === 'custom-nodes') decisions.install_custom_nodes = answer;
             else if (stepId === 'models') decisions.install_models = answer;
@@ -416,6 +422,11 @@ function installOptions(flags) {
         startComfyui: flags['start-comfy'] === true,
         comfyPort: flags['comfy-port'] ? Number(flags['comfy-port']) : undefined,
         verifyTimeoutMs: flags['verify-timeout-ms'] ? Number(flags['verify-timeout-ms']) : undefined,
+        // --start-worker: launch the installed worker (node worker.cjs) as a
+        // detached daemon after the bundle+.env steps and check it is alive
+        // during verification. Without it the worker stays stopped (the
+        // installer never starts background services unprompted).
+        startWorker: flags['start-worker'] === true,
     };
 }
 

@@ -27,6 +27,7 @@
 const { confirmationGate } = require('./safety-rules');
 const { planWorkflowDownloads, summarizeWorkflowState } = require('./workflow-artifacts');
 const { planModelDownloads, estimateMissingBytes } = require('./download-planner');
+const { pickInstallSource } = require('./engine/comfyui');
 
 function formatBytes(bytes) {
     if (typeof bytes !== 'number' || bytes === 0) return '0 B';
@@ -101,7 +102,7 @@ function foundLabel(e) {
 // Step builders
 // ---------------------------------------------------------------------------
 
-function buildComfyuiStep(report, decisions) {
+function buildComfyuiStep(report, decisions, manifests = []) {
     const comfy = entryById(report, 'runtime:comfyui');
     const step = {
         id: 'comfyui-update',
@@ -122,6 +123,32 @@ function buildComfyuiStep(report, decisions) {
     }
 
     if (comfy.status === 'missing') {
+        // Managed install of the manifest source. When the manifest carries no
+        // canonical pin (decision D1 open) the only installable source is the
+        // known-working reference — and a reference is EVIDENCE, not a rule:
+        // it requires an explicit user decision (never silent, never automatic).
+        const src = manifests.length > 0 ? pickInstallSource(manifests[0]) : null;
+        if (src && src.needs_consent) {
+            const ref = src.source;
+            step.consent = 'accept_reference_runtime';
+            step.prompt = {
+                question: `The canonical ComfyUI version is not pinned yet (decision D1).\nThe known-working reference is ${ref.repository} @ ${ref.commit || ref.tag}.\nInstall this reference ComfyUI?`,
+                options: ['Yes', 'No'],
+            };
+            if (decisions.accept_reference_runtime === true) {
+                step.decision = 'yes';
+                step.action = { op: 'install_comfyui', destructive: false, requires_confirmation: false };
+                step.result = 'user accepted the known-working reference ComfyUI (recorded)';
+            } else if (decisions.accept_reference_runtime === false) {
+                step.decision = 'no';
+                step.abort = true;
+                step.abort_reason = 'user declined the reference ComfyUI — nothing can be installed (canonical pin is unknown, D1); nothing was changed';
+                step.result = 'keep the machine without ComfyUI; abort (fail-closed)';
+            } else {
+                step.awaiting_decision = true;
+            }
+            return step;
+        }
         step.kind = 'action';
         step.action = { op: 'install_comfyui', destructive: false, requires_confirmation: false };
         step.result = 'ComfyUI absent — installer will clone the manifest version (managed environment)';
@@ -400,6 +427,8 @@ function buildWorkerSteps({ report, manifests, decisions }) {
  *   (needed for workflow/model download planning and worker secret names)
  * @param {object} [args.decisions] - recorded user decisions:
  *   comfyui_update: 'yes'|'no'|'keep'|'downgrade'|...
+ *   accept_reference_runtime: true|false — consent to install the manifest's
+ *     known-working reference ComfyUI when no canonical pin exists (D1)
  *   install_custom_nodes: true|false
  *   install_models: true|false
  *   workflows: 'all'|'none'|[ids]
@@ -483,7 +512,7 @@ function buildInstallPlan({ report, manifests = [], decisions = {} }) {
     });
 
     // 6: ComfyUI update policy
-    const comfyStep = buildComfyuiStep(report, decisions);
+    const comfyStep = buildComfyuiStep(report, decisions, manifests);
     steps.push(comfyStep);
     if (comfyStep.abort) {
         blocked.push({ step: 'comfyui-update', reason: comfyStep.abort_reason });

@@ -24,13 +24,15 @@ function findWorkerManifest(manifests, workerEntryId) {
 /**
  * Deploy the worker bundle into workerDir.
  * Source order (never invented): repo checkout `worker/worker/` first, then
- * the hub's GET /worker-source (serves worker.cjs only).
+ * an explicit `bundleDir` (a verified hub worker-bundle tarball the engine
+ * extracted beforehand), then the hub's GET /worker-source (worker.cjs only;
+ * deprecated single-file channel).
  * Ownership details are returned for the uninstall manifest: dir_created,
  * files the installer actually copied (files_installed) vs files that were
  * already on disk and were kept (files_kept).
  * @returns {{ status, files, files_installed, files_kept, dir_created, reason? }}
  */
-function installWorkerBundle(io, { workerDir, manifest, repoRoot = null, hubUrl = null, httpFetchText = null, log = null }) {
+function installWorkerBundle(io, { workerDir, manifest, repoRoot = null, bundleDir = null, hubUrl = null, httpFetchText = null, log = null }) {
     const wb = manifest.worker_bundle || {};
     const files = wb.files || [];
     const dirCreated = !io.fs.existsSync(workerDir);
@@ -50,6 +52,11 @@ function installWorkerBundle(io, { workerDir, manifest, repoRoot = null, hubUrl 
             installed.push(f);
             continue;
         }
+        if (bundleDir && io.fs.existsSync(path.join(bundleDir, f))) {
+            io.fs.copyFileSync(path.join(bundleDir, f), dest);
+            installed.push(f);
+            continue;
+        }
         if (f === 'worker.cjs' && hubUrl && httpFetchText) {
             const url = `${hubUrl.replace(/\/$/, '')}/worker-source`;
             const res = httpFetchText(url);
@@ -63,7 +70,7 @@ function installWorkerBundle(io, { workerDir, manifest, repoRoot = null, hubUrl 
     }
 
     if (failed.length > 0) {
-        return { status: 'failed', files: installed, files_installed: installed, files_kept: kept, dir_created: dirCreated, reason: `could not obtain bundle files: ${failed.join(', ')} (no repo checkout and hub unreachable)` };
+        return { status: 'failed', files: installed, files_installed: installed, files_kept: kept, dir_created: dirCreated, reason: `could not obtain bundle files: ${failed.join(', ')} (no repo checkout, no hub bundle)` };
     }
 
     // npm dependencies (node-fetch etc.) — best effort, offline-tolerant
@@ -193,8 +200,77 @@ function checkWorkerCanStart(io, { workerDir }) {
     return { ok: true };
 }
 
+/**
+ * Download + verify + extract the hub's full worker bundle (GET
+ * /worker-bundle, sha256 published at /worker-bundle/sha256). Returns the
+ * extraction dir (`animastor-worker/`) as a copy source for
+ * installWorkerBundle — used when the installer runs without a repo
+ * checkout (the distributed installer package may not carry bundle files).
+ * The caller owns the returned tmpDir and must clean it up.
+ * @returns {{ bundleDir, tmpDir } | { bundleDir: null, reason }}
+ */
+async function fetchHubWorkerBundle(io, { hubUrl, tmpRoot = null }) {
+    if (!hubUrl) return { bundleDir: null, reason: 'no hub URL' };
+    if (!io.http || !io.http.download || !io.http.fetchJson || !io.hashFile) {
+        return { bundleDir: null, reason: 'io layer cannot download the hub bundle' };
+    }
+    const base = hubUrl.replace(/\/$/, '');
+    const os = require('os');
+    const tmpDir = path.join(tmpRoot || os.tmpdir(), `animastor-worker-bundle-${Date.now()}`);
+    const tarPath = path.join(tmpDir, 'worker-bundle.tar.gz');
+    try {
+        const shaRes = await io.http.fetchJson(`${base}/worker-bundle/sha256`);
+        io.fs.mkdirSync(tmpDir, { recursive: true });
+        const dl = await io.http.download({ url: `${base}/worker-bundle`, dest: tarPath });
+        if (dl.status !== 200) {
+            return { bundleDir: null, reason: `worker-bundle download failed (HTTP ${dl.status})` };
+        }
+        if (shaRes.status === 200 && shaRes.json && shaRes.json.sha256) {
+            const actual = await io.hashFile(tarPath);
+            if (actual !== shaRes.json.sha256) {
+                return { bundleDir: null, reason: 'worker-bundle sha256 mismatch — download refused (integrity)' };
+            }
+        }
+        const r = io.exec('tar', ['-xzf', tarPath, '-C', tmpDir]);
+        if (r.code !== 0) {
+            return { bundleDir: null, reason: `tar extraction failed: ${String(r.stderr || r.error).slice(-200)}` };
+        }
+        const srcDir = path.join(tmpDir, 'animastor-worker');
+        if (!io.fs.isDirectory(srcDir)) {
+            return { bundleDir: null, reason: 'worker-bundle layout unexpected (animastor-worker/ missing)' };
+        }
+        return { bundleDir: srcDir, tmpDir };
+    } catch (err) {
+        return { bundleDir: null, reason: `worker-bundle fetch failed: ${err && err.message ? err.message : err}` };
+    } finally {
+        try { if (io.fs.existsSync(tarPath)) io.fs.unlinkSync(tarPath); } catch (_) { /* best effort */ }
+    }
+}
+
+/**
+ * Start the installed worker as a detached daemon (node worker.cjs). The
+ * worker loads its own .env (worker-env.cjs), so no secrets pass through
+ * the environment or argv here. Returns whether the process is still alive
+ * after a short grace period.
+ */
+function startWorker(io, { workerDir, logFile = null, graceMs = 3000, sleep = null }) {
+    const can = checkWorkerCanStart(io, { workerDir });
+    if (!can.ok) return { started: false, alive: false, reason: can.reason };
+    const pid = io.spawnDaemon('node', ['worker.cjs'], {
+        cwd: workerDir,
+        logFile: logFile || path.join(workerDir, 'worker-installer.log'),
+    });
+    // sync grace pause (installer is already a synchronous-step CLI)
+    io.exec(sleep || 'sleep', [String(Math.max(1, Math.ceil(graceMs / 1000)))]);
+    const chk = io.exec('ps', ['-p', String(pid), '-o', 'args=']);
+    const alive = chk.code === 0 && /worker\.cjs/.test(chk.stdout);
+    return { started: true, pid, alive, reason: alive ? null : 'worker exited immediately — see the log file' };
+}
+
 module.exports = {
     installWorkerBundle,
+    fetchHubWorkerBundle,
+    startWorker,
     configureEnv,
     apiBaseFromHubUrl,
     verifyRegistration,

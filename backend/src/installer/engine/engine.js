@@ -514,9 +514,20 @@ async function runInstallation(args) {
         const nodesStep = stepById(plan, 'custom-nodes');
         if (!runtimeFatal && nodesStep && nodesStep.action && nodesStep.decision === 'yes') {
             const python = path.join(comfyuiRoot, 'venv', 'bin', 'python');
+            // Nodes an earlier run left with "python dependencies incomplete"
+            // get an idempotent pip retry — the resolver keys node presence off
+            // the directory, so without this the broken state would never heal.
+            const retryDeps = (nodesStep.missing || []).map((x) => x.id)
+                .filter((id) => {
+                    const a = st.artifacts[id];
+                    return !!(a && a.detail && /python dependencies incomplete/.test(a.detail.reason || ''));
+                });
+            const nodeTorchSpec = pickTorchSpec(manifests, decisions, result.warnings, device);
             const r = await log.step('install custom nodes', async () => nodes.installCustomNodes(io, {
                 root: comfyuiRoot, manifests, planStep: nodesStep,
-                python: io.fs.existsSync(python) ? python : null, log,
+                python: io.fs.existsSync(python) ? python : null,
+                torchSpec: nodeTorchSpec ? nodeTorchSpec.spec : null,
+                retryDeps, log,
             }));
             result.results.custom_nodes = r.ok ? r.value : [{ status: 'failed', reason: String(r.error && r.error.message) }];
             for (const item of result.results.custom_nodes) {
@@ -524,7 +535,7 @@ async function runInstallation(args) {
                 if (item.status === 'installed' && item.origin === 'installed' && item.directory) {
                     state.addOwnedComponent(st, 'custom_nodes', { id: item.id, path: path.join(comfyuiRoot, 'custom_nodes', item.directory) });
                 }
-                state.setArtifact(st, item.id, item.status === 'installed' ? 'installed' : item.status === 'failed' ? 'failed' : 'missing', { reason: item.reason });
+                state.setArtifact(st, item.id, item.status === 'installed' ? 'installed' : item.status === 'failed' ? 'failed' : 'missing', { reason: item.reason || null });
             }
             save();
         }
@@ -648,11 +659,38 @@ async function runInstallation(args) {
         if (workerStep && workerStep.action && workerStep.decision === 'yes') {
             for (const w of workerStep.workers || []) {
                 const manifest = manifests.find((m) => `worker:${m.profile.id}` === w.id) || manifests[0];
-                const bundleRes = await log.step(`install worker bundle (${w.worker_type})`, async () => worker.installWorkerBundle(io, {
-                    workerDir, manifest, repoRoot, hubUrl, log,
-                    httpFetchText: null,
-                }));
-                result.results.worker.push({ id: w.id, bundle: bundleRes.ok ? bundleRes.value : { status: 'failed', reason: String(bundleRes.error && bundleRes.message) } });
+                const bundleRes = await log.step(`install worker bundle (${w.worker_type})`, async () => {
+                    // The distributed installer package may not carry the
+                    // worker bundle files. When the repo checkout is missing
+                    // any of them, fetch the hub's sha256-verified worker
+                    // bundle (GET /worker-bundle) and use it as copy source.
+                    const wbFiles = ((manifest.worker_bundle || {}).files) || [];
+                    const repoBundleDir = repoRoot ? path.join(repoRoot, 'worker', 'worker') : null;
+                    const missingFromRepo = wbFiles.filter((f) => !(repoBundleDir && io.fs.existsSync(path.join(repoBundleDir, f))));
+                    let bundleDir = null;
+                    let bundleTmp = null;
+                    if (missingFromRepo.length > 0 && hubUrl) {
+                        const fetched = await worker.fetchHubWorkerBundle(io, { hubUrl });
+                        if (fetched.bundleDir) {
+                            bundleDir = fetched.bundleDir;
+                            bundleTmp = fetched.tmpDir;
+                            log.info(`worker bundle files missing from the installer package — fetched from ${hubUrl}/worker-bundle (${missingFromRepo.length} file(s))`);
+                        } else {
+                            log.warn(`worker bundle fetch failed: ${fetched.reason}`);
+                        }
+                    }
+                    try {
+                        return worker.installWorkerBundle(io, {
+                            workerDir, manifest, repoRoot, bundleDir, hubUrl,
+                            httpFetchText: null, log,
+                        });
+                    } finally {
+                        if (bundleTmp) {
+                            try { io.fs.rmSync(bundleTmp, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+                        }
+                    }
+                });
+                result.results.worker.push({ id: w.id, bundle: bundleRes.ok ? bundleRes.value : { status: 'failed', reason: String(bundleRes.error && bundleRes.error.message) } });
                 if (bundleRes.ok && bundleRes.value.status === 'installed') {
                     // Ownership is per-file: a pre-existing worker dir keeps its
                     // own files; only what the installer copied is registered.
@@ -691,6 +729,10 @@ async function runInstallation(args) {
                     values[key] = defaultEnvValue(key, { hubUrl, manifests });
                 }
             }
+            // Point the worker at the ComfyUI port chosen for this install
+            // (--comfy-port). Shared hosts often run several ComfyUI
+            // instances; the default 8188 may belong to a different one.
+            if (options.comfyPort) values.COMFY_PORT = String(options.comfyPort);
             const cfg = await log.step('configure worker .env', async () => worker.configureEnv(io, { workerDir, manifest, values, log }));
             result.results.worker.push({ id: 'env', config: cfg.ok ? cfg.value : { status: 'failed', reason: String(cfg.error && cfg.error.message) } });
             if (cfg.ok && st.components.worker) {
@@ -705,7 +747,26 @@ async function runInstallation(args) {
             save();
         }
 
-        // 4.8 Verification --------------------------------------------------------------
+        // 4.8 Worker start (--start-worker) ---------------------------------------------
+        // The installer never starts background services unprompted; this step
+        // runs only on an explicit opt-in. The worker loads its own .env
+        // (worker-env.cjs) — no secret values pass through argv or environment.
+        let startedWorkerPid = null;
+        if (options.startWorker && workerDir) {
+            const r = await log.step('start worker', async () => worker.startWorker(io, { workerDir }));
+            const res = r.ok ? r.value : { started: false, alive: false, reason: String(r.error && r.error.message) };
+            result.results.worker.push({ id: 'worker-process', ...res });
+            if (res.started && res.alive) {
+                startedWorkerPid = res.pid;
+                state.setArtifact(st, 'worker-process', 'installed', { pid: res.pid });
+            } else {
+                state.setArtifact(st, 'worker-process', 'failed', { reason: res.reason || null });
+                result.warnings.push(`worker did not start: ${res.reason || 'unknown reason'}`);
+            }
+            save();
+        }
+
+        // 4.9 Verification --------------------------------------------------------------
         // A fatal runtime failure means ComfyUI cannot start — skip the live
         // start step entirely (it would only spawn a doomed process).
         const ver = await runVerification({
@@ -714,6 +775,7 @@ async function runInstallation(args) {
             log, crypto,
             tokenValue,
             device,
+            workerPid: startedWorkerPid,
             onEvent: (kind, value) => { result.results[kind] = value; },
         });
         result.verification = ver;
@@ -762,7 +824,7 @@ function defaultEnvValue(key, { hubUrl, manifests }) {
 // Verification (live checks where possible)
 // ---------------------------------------------------------------------------
 
-async function runVerification({ io, manifests, roots, options, log, crypto, tokenValue = null, device = null, onEvent = null }) {
+async function runVerification({ io, manifests, roots, options, log, crypto, tokenValue = null, device = null, workerPid = null, onEvent = null }) {
     const emit = (kind, value) => { if (onEvent) onEvent(kind, value); };
     const { comfyuiRoot, workerDir, hubUrl } = roots;
     const live = {};
@@ -836,6 +898,15 @@ async function runVerification({ io, manifests, roots, options, log, crypto, tok
     } else {
         const canStart = workerDir ? worker.checkWorkerCanStart(io, { workerDir }) : { ok: false, reason: 'worker dir missing' };
         live.worker = { process_alive: null, registered: null, can_start: canStart.ok };
+    }
+    // A worker started by this run is checked for real — a pid that died
+    // before verification is a FAIL, never a silent pass.
+    if (workerPid) {
+        const chk = io.exec('ps', ['-p', String(workerPid), '-o', 'args=']);
+        const alive = chk.code === 0 && /worker\.cjs/.test(chk.stdout);
+        live.worker = live.worker || {};
+        live.worker.process_alive = alive;
+        if (!alive) log.warn(`worker process (pid ${workerPid}) is not running — see the worker log`);
     }
 
     // Re-probe disk state for the final report

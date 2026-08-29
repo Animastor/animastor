@@ -33,6 +33,43 @@ function pickInstallSource(manifest) {
     return null;
 }
 
+/**
+ * Adopt an installer-created partial root in place: init+fetch+checkout
+ * without touching existing content (venv, models, custom_nodes). git
+ * refuses to overwrite untracked files, so a conflict fails loudly instead
+ * of destroying anything. Used when a previous run populated the root but
+ * ComfyUI itself was never cloned (state file present, main.py missing).
+ */
+function adoptComfyUI(io, { root, source, log }) {
+    const repo = source.repository;
+    const ref = source.commit || source.tag;
+    let r = io.exec('git', ['-C', root, 'init']);
+    if (r.code !== 0) throw new Error(`git init failed: ${r.stderr || r.error}`);
+    r = io.exec('git', ['-C', root, 'remote', 'add', 'origin', repo]);
+    if (r.code !== 0) {
+        // remote already exists (previous adopt attempt) — idempotent update
+        r = io.exec('git', ['-C', root, 'remote', 'set-url', 'origin', repo]);
+    }
+    if (r.code !== 0) throw new Error(`git remote add failed: ${r.stderr || r.error}`);
+    r = io.exec('git', ['-C', root, 'fetch', '--tags', 'origin'], { timeout: 30 * 60 * 1000 });
+    if (r.code !== 0) throw new Error(`git fetch failed: ${r.stderr || r.error}`);
+    r = io.exec('git', ['-C', root, 'checkout', ref]);
+    if (r.code !== 0) throw new Error(`git checkout ${ref} failed: ${r.stderr || r.error}`);
+    // installer metadata is local-only: never tracked, never committed
+    try {
+        const exclude = path.join(root, '.git', 'info', 'exclude');
+        let text = io.fs.existsSync(exclude) ? io.fs.readFileSync(exclude, 'utf8') : '';
+        for (const entry of ['.animastor-installer/', 'comfyui-installer.log']) {
+            if (!text.split('\n').map((l) => l.trim()).includes(entry)) {
+                text += `${text && !text.endsWith('\n') ? '\n' : ''}${entry}\n`;
+            }
+        }
+        io.fs.writeFileSync(exclude, text);
+    } catch (_) { /* best effort */ }
+    if (log) log.info(`ComfyUI adopted in place at ${root} (${ref || 'HEAD'})`);
+    return { root, ref, adopted: true };
+}
+
 function installComfyUI(io, { root, source, log }) {
     const repo = source.repository;
     const ref = source.commit || source.tag;
@@ -46,6 +83,14 @@ function installComfyUI(io, { root, source, log }) {
         // metadata, not user content — it does not make the target "occupied".
         const entries = io.fs.readdirSync(root).filter((n) => n !== '.animastor-installer');
         if (entries.length > 0) {
+            // A non-empty root is normally refused. Exception: a partial
+            // install created by an earlier installer run (its state file is
+            // here, but ComfyUI itself is missing) is ADOPTED in place —
+            // re-cloning from scratch would throw away the already-installed
+            // venv/models/custom_nodes.
+            if (io.fs.existsSync(path.join(metaDir, 'install-state.json'))) {
+                return adoptComfyUI(io, { root, source, log });
+            }
             throw new Error(`target root ${root} is not empty — refusing to touch it`);
         }
         // git clone still refuses ANY non-empty destination, so the metadata
@@ -300,6 +345,7 @@ function validateWorkflowStatic(workflowJson, { availableClasses = null, modelPa
 module.exports = {
     pickInstallSource,
     installComfyUI,
+    adoptComfyUI,
     updateComfyUI,
     preparePythonRuntime,
     startComfyUI,

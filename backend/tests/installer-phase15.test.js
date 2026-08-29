@@ -663,6 +663,7 @@ describe('Phase 1.5 — installer scenarios', () => {
                 report: r,
                 manifests: [m],
                 decisions: {
+                    accept_reference_runtime: true,
                     install_custom_nodes: true,
                     install_models: true,
                     workflows: 'all',

@@ -1280,11 +1280,12 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   });
 
   // Installer package — self-contained: installer sources + canonical
-  // install manifests + generated root package.json/README. Layout mirrors
-  // the repo (src/installer/*, ai/install-manifests/*) so
-  // install-manifest.js resolves its manifests without modification. The
-  // version comes from the canonical backend/src/installer/package.json —
-  // never hardcoded here. No Worker Key, no .env, no credentials.
+  // install manifests + the full worker bundle + generated root
+  // package.json/README. Layout mirrors the repo (src/installer/*,
+  // ai/install-manifests/*, worker/worker/*) so install-manifest.js and the
+  // engine resolve their inputs without modification. The version comes
+  // from the canonical backend/src/installer/package.json — never hardcoded
+  // here. No Worker Key, no .env, no credentials.
   function buildInstallerArtifact() {
     const meta = installerMeta();
     if (!meta.version) return null; // no canonical version → not publishable
@@ -1301,6 +1302,19 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
       entries.push({
         name: `animastor-installer/ai/install-manifests/${f}`,
         data: fs.readFileSync(path.join(INSTALLER_MANIFESTS_DIR, f)),
+      });
+    }
+    // The engine deploys the worker bundle from <installer>/worker/worker/
+    // (manifest worker_bundle.files). Without these files a distributed
+    // installer could never install the worker offline — the install on the
+    // GPU machine would always fail with "could not obtain bundle files".
+    const workerFiles = walkDir(fs, WORKER_BUNDLE_DIR)
+      .filter(isServableBundleFile)
+      .sort();
+    for (const f of workerFiles) {
+      entries.push({
+        name: `animastor-installer/worker/worker/${f}`,
+        data: fs.readFileSync(path.join(WORKER_BUNDLE_DIR, f)),
       });
     }
     entries.push({
@@ -1326,8 +1340,14 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
         "",
         "Usage:",
         "  node src/installer/cli.js detect",
-        "  node src/installer/cli.js plan --profile image/qwen-image",
-        "  node src/installer/cli.js install --profile image/qwen-image --mode managed",
+        "  node src/installer/cli.js plan --profile audio/qwen-tts",
+        "  node src/installer/cli.js install --profile audio/qwen-tts --mode managed \\",
+        "      --accept-reference-runtime --yes --start-comfy --comfy-port 8188 --start-worker",
+        "",
+        "  --accept-reference-runtime  install the manifest's known-working reference",
+        "                              ComfyUI while the canonical pin is open (D1)",
+        "  --comfy-port N              run ComfyUI on port N (default 8188)",
+        "  --start-worker              start the worker daemon after installation",
         "",
         "The Worker Key is asked interactively on this machine (hidden input).",
         "It is never logged, never stored in installer state, never passed via argv.",
@@ -1348,8 +1368,9 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   function installerFingerprint() {
     const a = dirFingerprint(INSTALLER_SRC_DIR);
     const b = dirFingerprint(INSTALLER_MANIFESTS_DIR);
+    const c = dirFingerprint(WORKER_BUNDLE_DIR, isServableBundleFile);
     const meta = installerMeta();
-    return a && b && meta.version ? `${meta.version}|${a}|${b}` : null;
+    return a && b && meta.version ? `${meta.version}|${a}|${b}|${c || "no-worker-bundle"}` : null;
   }
 
   app.get("/installer", (req, res) => {

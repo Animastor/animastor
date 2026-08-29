@@ -699,7 +699,7 @@ function createRealManifestEngineIo() {
 }
 
 // ========================== 16b. D1 consent gate =======================
-collectAsync('16b. engine: real manifest WITHOUT accept_reference_runtime → blocked, nothing cloned', async () => {
+collectAsync('16b. engine: real manifest WITHOUT accept_reference_runtime → awaiting decisions (consent not given)', async () => {
     const manifestMod = require('../src/installer/install-manifest');
     const manifests = [manifestMod.loadManifest('audio/qwen-tts')];
     const { io, calls } = createRealManifestEngineIo();
@@ -714,15 +714,15 @@ collectAsync('16b. engine: real manifest WITHOUT accept_reference_runtime → bl
         decisions: {
             install_custom_nodes: false, install_models: false, workflows: 'none',
             worker_setup: false, worker_key_provided: false,
+            // accept_reference_runtime deliberately omitted
         },
         logger: log, crypto: require('crypto'),
         options: {},
     });
-    assert.strictEqual(result.status, 'blocked', `expected blocked, got ${result.status}`);
-    const d1 = result.blocked.find((b) => b.step === 'comfyui-update');
-    assert.ok(d1, 'comfyui step blocked');
-    assert.ok(d1.reason.includes('accept_reference_runtime'), `D1 reason names the consent decision: ${d1.reason}`);
-    assert.ok(d1.reason.includes('rajsingh1-dev'), 'D1 reason names the reference source');
+    // Without consent the plan has an unresolved comfyui-update prompt;
+    // the engine returns 'awaiting_decisions' (not 'blocked' — the user is
+    // asked, not told no).
+    assert.strictEqual(result.status, 'awaiting_decisions', `expected awaiting_decisions, got ${result.status}`);
     assert.ok(!calls.exec.some((c) => c.cmd === 'git' && c.args[0] === 'clone' && String(c.args[1]).includes('rajsingh1-dev')), 'reference ComfyUI was NOT cloned without consent');
 });
 
@@ -864,7 +864,448 @@ test('16d. installComfyUI restores metadata to the original root when the clone 
     assert.ok(fs.existsSync('/tmp/comfy/.animastor-installer/install-state.json'), 'install state restored after the failed clone (resume still possible)');
 });
 
-// ---------------------------------------------------------------------------
+// ========================== 17. installComfyUI adopt partial root ===========
+// When the installer root already contains venv/models/custom_nodes from an
+// earlier run but ComfyUI was never cloned (main.py missing), installComfyUI
+// must ADOPT the root in place (git init + fetch + checkout) instead of
+// refusing to touch a non-empty directory.
+test('17a. installComfyUI adopts a partial installer root (no main.py, state file present)', () => {
+    const comfy = require('../src/installer/engine/comfyui');
+    const { io, fs } = createMockIo({
+        files: {
+            '/tmp/comfy/.animastor-installer/install-state.json': '{"state_version":1}',
+            '/tmp/comfy/venv/bin/python': '#!/bin/sh',
+        },
+        execResults: {
+            'git -C /tmp/comfy init': { code: 0, stdout: 'Initialized empty Git repository', stderr: '' },
+            'git -C /tmp/comfy remote add origin https://github.com/x/ComfyUI.git': { code: 0, stdout: '', stderr: '' },
+            'git -C /tmp/comfy fetch --tags origin': { code: 0, stdout: ' * [new branch]', stderr: '' },
+            'git -C /tmp/comfy checkout abc123': ({ fs: mfs }) => {
+                mfs.writeFileSync('/tmp/comfy/main.py', '# comfy fork');
+                mfs.mkdirSync('/tmp/comfy/.git/info', { recursive: true });
+                return { code: 0, stdout: '', stderr: '' };
+            },
+        },
+    });
+    const res = comfy.installComfyUI(io, { root: '/tmp/comfy', source: { repository: 'https://github.com/x/ComfyUI.git', commit: 'abc123' } });
+    assert.strictEqual(res.ref, 'abc123');
+    assert.strictEqual(res.adopted, true, 'adopted flag set');
+    assert.ok(fs.existsSync('/tmp/comfy/main.py'), 'main.py created by checkout');
+    // existing venv preserved
+    assert.ok(fs.existsSync('/tmp/comfy/venv/bin/python'), 'pre-existing venv untouched');
+    // .git/info/exclude should contain installer metadata
+    const exclude = fs.readFileSync('/tmp/comfy/.git/info/exclude', 'utf8');
+    assert.ok(exclude.includes('.animastor-installer/'), 'installer metadata excluded from git');
+});
+
+test('17b. installComfyUI adopt fails when git checkout conflicts with existing content', () => {
+    const comfy = require('../src/installer/engine/comfyui');
+    const { io, fs } = createMockIo({
+        files: {
+            '/tmp/comfy/.animastor-installer/install-state.json': '{"state_version":1}',
+        },
+        execResults: {
+            'git -C /tmp/comfy init': { code: 0, stdout: '', stderr: '' },
+            'git -C /tmp/comfy remote add origin https://github.com/x/ComfyUI.git': { code: 0, stdout: '', stderr: '' },
+            'git -C /tmp/comfy fetch --tags origin': { code: 0, stdout: '', stderr: '' },
+            // checkout fails because repo tracks a file at the same path as an existing file
+            'git -C /tmp/comfy checkout abc123': { code: 128, stdout: '', stderr: 'error: The following untracked working tree files would be overwritten by merge: main.py' },
+        },
+    });
+    assert.throws(
+        () => comfy.installComfyUI(io, { root: '/tmp/comfy', source: { repository: 'https://github.com/x/ComfyUI.git', commit: 'abc123' } }),
+        /git checkout abc123 failed/,
+    );
+});
+
+test('17c. installComfyUI still refuses a non-empty root WITHOUT installer state (not an installer partial)', () => {
+    const comfy = require('../src/installer/engine/comfyui');
+    const { io } = createMockIo({
+        files: { '/tmp/comfy/venv/bin/python': '#!/bin/sh' },
+    });
+    assert.throws(
+        () => comfy.installComfyUI(io, { root: '/tmp/comfy', source: { repository: 'https://github.com/x/ComfyUI.git', commit: 'abc123' } }),
+        /not empty/,
+    );
+});
+
+// ========================== 18. fetchHubWorkerBundle =====================
+collectAsync('18a. fetchHubWorkerBundle downloads, verifies sha256, and extracts the hub bundle', async () => {
+    const workerMod = require('../src/installer/engine/worker');
+    const tarGzContent = Buffer.from('mock-tarball');
+    const fakeSha = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+    const { io, fs } = createMockIo({
+        files: { '/tmp/wdir/.env': 'HUB_URL=https://x\n' },
+        httpResults: {
+            'https://animastor.in/gpu/worker-bundle/sha256': { status: 200, json: () => ({ sha256: fakeSha }) },
+            'https://animastor.in/gpu/worker-bundle': async ({ dest }) => {
+                fs.writeFileSync(dest, tarGzContent);
+                return { status: 200, bytes: 1024, total: 1024, resumed: false };
+            },
+        },
+    });
+    // Override http.download and hashFile to use the real-mock fs
+    io.http.download = async ({ url, dest }) => {
+        fs.writeFileSync(dest, tarGzContent);
+        return { status: 200, bytes: 1024, total: 1024, resumed: false };
+    };
+    io.hashFile = async () => fakeSha;
+    io.exec = (cmd, args) => {
+        if (cmd === 'tar' && args[0] === '-xzf' && args[2] === '-C') {
+            const extractDir = args[3] || '/tmp/bundle-test';
+            const workerDir = `${extractDir}/animastor-worker`;
+            fs.mkdirSync(workerDir, { recursive: true });
+            for (const f of ['worker.cjs', 'worker-env.cjs', 'worker-cleanup.cjs', 'worker-cleanup-journal.cjs', 'package.json', 'package-lock.json', '.env.example']) {
+                fs.writeFileSync(`${workerDir}/${f}`, `// ${f}`);
+            }
+            return { code: 0, stdout: '', stderr: '' };
+        }
+        return { code: 0, stdout: '', stderr: '' };
+    };
+    const result = await workerMod.fetchHubWorkerBundle(io, { hubUrl: 'https://animastor.in/gpu', tmpRoot: '/tmp/bundle-test' });
+    assert.ok(result.bundleDir, `bundleDir set: ${result.reason || 'ok'}`);
+    assert.ok(result.bundleDir.includes('animastor-worker'), `bundleDir contains animastor-worker: ${result.bundleDir}`);
+    assert.ok(fs.existsSync(`${result.bundleDir}/worker.cjs`), 'extracted files present');
+});
+
+collectAsync('18b. fetchHubWorkerBundle returns failure reason when hub sha256 mismatches', async () => {
+    const workerMod = require('../src/installer/engine/worker');
+    const { io, fs } = createMockIo({ files: {} });
+    io.http = {
+        async download({ dest }) { fs.writeFileSync(dest, 'data'); return { status: 200, bytes: 4, total: 4, resumed: false }; },
+        async fetchJson(url) { if (url.includes('sha256')) return { status: 200, json: { sha256: 'wronghash' } }; return { status: 200, json: {} }; },
+    };
+    io.hashFile = async () => 'correcthash';
+    const result = await workerMod.fetchHubWorkerBundle(io, { hubUrl: 'https://x', tmpRoot: '/tmp/bundle-test2' });
+    assert.ok(!result.bundleDir, 'no bundleDir on sha256 mismatch');
+    assert.ok(result.reason.includes('sha256 mismatch'), `reason: ${result.reason}`);
+});
+
+// ========================== 19. installWorkerBundle with bundleDir =========
+test('19. installWorkerBundle uses bundleDir when repo bundle dir is empty', () => {
+    const workerMod = require('../src/installer/engine/worker');
+    const manifest = {
+        worker_bundle: { files: ['worker.cjs', 'package.json', '.env.example'] },
+    };
+    const bundleDir = '/tmp/extracted-bundle/animastor-worker';
+    const { io, fs } = createMockIo({
+        files: {
+            [`${bundleDir}/worker.cjs`]: '// worker v2.0.0',
+            [`${bundleDir}/package.json`]: '{"name":"animastor-worker"}',
+            [`${bundleDir}/.env.example`]: 'HUB_URL=\n',
+        },
+    });
+    const result = workerMod.installWorkerBundle(io, {
+        workerDir: '/tmp/wdir', manifest, repoRoot: '/tmp/nonexistent-repo',
+        bundleDir, hubUrl: 'https://x', httpFetchText: null,
+    });
+    assert.strictEqual(result.status, 'installed', `status: ${result.status} ${result.reason || ''}`);
+    assert.ok(result.files_installed.includes('worker.cjs'), 'worker.cjs installed from bundleDir');
+    assert.ok(fs.existsSync('/tmp/wdir/worker.cjs'), 'worker.cjs on disk');
+});
+
+// ========================== 20. startWorker ==============================
+test('20a. startWorker returns alive=true when process is running', () => {
+    const workerMod = require('../src/installer/engine/worker');
+    const { io, fs } = createMockIo({
+        files: {
+            '/tmp/wdir/worker.cjs': '// worker',
+            '/tmp/wdir/package.json': '{}',
+        },
+    });
+    // Make syntax check succeed
+    io.exec = (cmd, args, opts) => {
+        if (cmd === 'node' && args[0] === '--check') return { code: 0, stdout: '', stderr: '' };
+        if (cmd === 'node' && args[0] === '-e') return { code: 0, stdout: '/tmp/wdir', stderr: '' };
+        if (cmd === 'sleep') return { code: 0, stdout: '', stderr: '' };
+        if (cmd === 'ps') return { code: 0, stdout: 'node worker.cjs', stderr: '' };
+        return { code: 0, stdout: '', stderr: '' };
+    };
+    const result = workerMod.startWorker(io, { workerDir: '/tmp/wdir' });
+    assert.strictEqual(result.started, true, 'started');
+    assert.strictEqual(result.alive, true, 'alive after grace period');
+});
+
+test('20b. startWorker returns alive=false when process dies immediately', () => {
+    const workerMod = require('../src/installer/engine/worker');
+    const { io, fs } = createMockIo({
+        files: {
+            '/tmp/wdir/worker.cjs': '// worker',
+            '/tmp/wdir/package.json': '{}',
+        },
+    });
+    io.exec = (cmd, args) => {
+        if (cmd === 'node' && args[0] === '--check') return { code: 0, stdout: '', stderr: '' };
+        if (cmd === 'node' && args[0] === '-e') return { code: 0, stdout: '/tmp/wdir', stderr: '' };
+        if (cmd === 'sleep') return { code: 0, stdout: '', stderr: '' };
+        if (cmd === 'ps') return { code: 1, stdout: '', stderr: 'no such process' };
+        return { code: 0, stdout: '', stderr: '' };
+    };
+    const result = workerMod.startWorker(io, { workerDir: '/tmp/wdir' });
+    assert.strictEqual(result.started, true, 'started');
+    assert.strictEqual(result.alive, false, 'not alive');
+    assert.ok(result.reason.includes('exited immediately'), `reason: ${result.reason}`);
+});
+
+// ========================== 21. COMFY_PORT in .env =======================
+test('21. engine passes COMFY_PORT to .env when --comfy-port is given', async () => {
+    const manifestMod = require('../src/installer/install-manifest');
+    const manifests = [manifestMod.loadManifest('audio/qwen-tts')];
+    const { io, fs } = createRealManifestEngineIo();
+    const log = createMockLogger();
+    const result = await runInstallation({
+        manifests, mode: 'managed', io,
+        roots: {
+            comfyuiRoot: '/tmp/comfy', workerDir: '/tmp/animastor/worker',
+            statePath: '/tmp/comfy/.animastor-installer/install-state.json',
+            repoRoot: '/tmp/repo', hubUrl: 'https://animastor.in/gpu',
+        },
+        decisions: {
+            comfyui_update: 'yes', install_custom_nodes: true, install_models: true,
+            workflows: 'all', worker_setup: true, worker_key_provided: true,
+            accept_reference_runtime: true,
+        },
+        secretProvider: async () => 'wrk.test-token',
+        logger: log, crypto: require('crypto'),
+        options: { comfyPort: 8288 },
+    });
+    const envText = fs.readFileSync('/tmp/animastor/worker/.env', 'utf8');
+    assert.ok(envText.includes('COMFY_PORT=8288'), `.env contains COMFY_PORT=8288\n${envText}`);
+    assert.ok(!envText.includes('COMFY_PORT=8188'), 'COMFY_PORT not defaulted to 8188');
+});
+
+// ========================== 22. nodes retryDeps ==========================
+test('22. installCustomNode retries pip install for existing nodes with incomplete deps', () => {
+    const nodesMod = require('../src/installer/engine/nodes');
+    const { io, fs } = createMockIo({
+        files: {
+            '/tmp/comfy/venv/bin/python': '#!/bin/sh',
+            '/tmp/comfy/custom_nodes/qwen3-tts/requirements.txt': 'transformers\n',
+        },
+        execResults: {
+            // pip install succeeds
+            '/tmp/comfy/venv/bin/python -m pip install -r /tmp/comfy/custom_nodes/qwen3-tts/requirements.txt -c /tmp/comfy/venv/.animastor-torch-constraints.txt': { code: 0, stdout: '', stderr: '' },
+        },
+    });
+    const dep = { id: 'custom-node:comfyui-qwen3-tts', install: { directory: 'qwen3-tts', source: { repository: 'https://github.com/x/ComfyUI-Qwen3-TTS', commit: '2ee1131' } } };
+    const result = nodesMod.installCustomNode(io, {
+        root: '/tmp/comfy', dep,
+        python: '/tmp/comfy/venv/bin/python',
+        torchSpec: { pin: '2.10.0', index_url: 'https://download.pytorch.org/whl/cpu' },
+        retryDeps: true,
+    });
+    assert.strictEqual(result.status, 'installed');
+    assert.strictEqual(result.origin, 'pre-existing');
+    assert.ok(!result.reason, `reason cleared: ${result.reason}`);
+});
+
+test('22b. installCustomNode returns incomplete reason when pip retry fails', () => {
+    const nodesMod = require('../src/installer/engine/nodes');
+    const { io } = createMockIo({
+        files: {
+            '/tmp/comfy/venv/bin/python': '#!/bin/sh',
+            '/tmp/comfy/custom_nodes/qwen3-tts/requirements.txt': 'transformers\n',
+        },
+        execResults: {
+            '/tmp/comfy/venv/bin/python -m pip install -r /tmp/comfy/custom_nodes/qwen3-tts/requirements.txt -c /tmp/comfy/venv/.animastor-torch-constraints.txt': { code: 1, stdout: '', stderr: 'conflict' },
+        },
+    });
+    const dep = { id: 'custom-node:comfyui-qwen3-tts', install: { directory: 'qwen3-tts', source: { repository: 'https://github.com/x', commit: '2ee1131' } } };
+    const result = nodesMod.installCustomNode(io, {
+        root: '/tmp/comfy', dep,
+        python: '/tmp/comfy/venv/bin/python',
+        torchSpec: { pin: '2.10.0' },
+        retryDeps: true,
+    });
+    assert.strictEqual(result.status, 'installed');
+    assert.strictEqual(result.origin, 'pre-existing');
+    assert.ok(/dependencies incomplete/.test(result.reason), `reason: ${result.reason}`);
+});
+
+// ========================== 23. buildInstallPlan consent =================
+test('23a. plan: missing ComfyUI with reference source → awaiting_decision (consent prompt)', () => {
+    const manifestMod = require('../src/installer/install-manifest');
+    const manifests = [manifestMod.loadManifest('audio/qwen-tts')];
+    const env = resolver.createEmptyEnvironment();
+    const report = resolver.resolveInstallation({ manifests, environment: env, mode: 'managed' });
+    const plan = buildInstallPlan({ report, manifests, decisions: {} });
+    const comfyStep = plan.steps.find((s) => s.id === 'comfyui-update');
+    assert.ok(comfyStep, 'comfyui-update step exists');
+    assert.strictEqual(comfyStep.awaiting_decision, true, 'awaiting consent');
+    assert.strictEqual(comfyStep.consent, 'accept_reference_runtime');
+    assert.ok(comfyStep.prompt.question.includes('rajsingh1-dev'), 'prompt names the reference source');
+});
+
+test('23b. plan: accept_reference_runtime=true → install_comfyui action (no block)', () => {
+    const manifestMod = require('../src/installer/install-manifest');
+    const manifests = [manifestMod.loadManifest('audio/qwen-tts')];
+    const env = resolver.createEmptyEnvironment();
+    const report = resolver.resolveInstallation({ manifests, environment: env, mode: 'managed' });
+    const plan = buildInstallPlan({ report, manifests, decisions: { accept_reference_runtime: true } });
+    const comfyStep = plan.steps.find((s) => s.id === 'comfyui-update');
+    assert.strictEqual(comfyStep.awaiting_decision, undefined, 'not awaiting');
+    assert.ok(comfyStep.action, 'action present');
+    assert.strictEqual(comfyStep.action.op, 'install_comfyui');
+    assert.ok(!comfyStep.abort, 'not aborted');
+});
+
+test('23c. plan: accept_reference_runtime=false → abort (fail-closed)', () => {
+    const manifestMod = require('../src/installer/install-manifest');
+    const manifests = [manifestMod.loadManifest('audio/qwen-tts')];
+    const env = resolver.createEmptyEnvironment();
+    const report = resolver.resolveInstallation({ manifests, environment: env, mode: 'managed' });
+    const plan = buildInstallPlan({ report, manifests, decisions: { accept_reference_runtime: false } });
+    const comfyStep = plan.steps.find((s) => s.id === 'comfyui-update');
+    assert.strictEqual(comfyStep.abort, true, 'aborted');
+    assert.ok(comfyStep.abort_reason.includes('declined'), `reason: ${comfyStep.abort_reason}`);
+});
+
+// ========================== 24. engine: adopt + full flow ================
+collectAsync('24. engine: adopt partial root + COMFY_PORT + worker start (end-to-end)', async () => {
+    const manifestMod = require('../src/installer/install-manifest');
+    const manifests = [manifestMod.loadManifest('audio/qwen-tts')];
+    const DUMMY_TOKEN = 'wrk.adopt-test-token';
+    const repoRootReal = path.resolve(__dirname, '..', '..');
+    // Partial root: venv + models + custom_nodes present, ComfyUI missing
+    const { io, calls, fs } = createMockIo({
+        files: {
+            '/tmp/comfy/venv/bin/python': '#!/bin/sh',
+            '/tmp/comfy/venv/bin/pip': '#!/bin/sh',
+            '/tmp/comfy/custom_nodes/qwen3-tts/requirements.txt': 'transformers\n',
+            '/tmp/comfy/models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-Base/model.safetensors': 'existing',
+            '/tmp/comfy/models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-Base/speech_tokenizer/model.safetensors': 'existing',
+            '/tmp/comfy/models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/model.safetensors': 'existing',
+            '/tmp/comfy/models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/speech_tokenizer/model.safetensors': 'existing',
+            '/tmp/comfy/.animastor-installer/install-state.json': JSON.stringify({
+                state_version: 1, mode: 'managed', profiles: ['audio/qwen-tts'],
+                artifacts: {
+                    runtime: { status: 'installed' },
+                    'custom-node:comfyui-qwen3-tts': { status: 'installed', detail: { reason: 'cloned; python dependencies incomplete — see warnings' } },
+                    'model-repo:qwen3-tts-12hz-1.7b-voicedesign': { status: 'installed' },
+                    'model-repo:qwen3-tts-12hz-1.7b-base': { status: 'installed' },
+                    'worker:audio/qwen-tts': { status: 'failed' },
+                    env: { status: 'installed' },
+                },
+            }),
+            '/tmp/repo/worker/worker/worker.cjs': '// worker v2.0.0',
+            '/tmp/repo/worker/worker/worker-env.cjs': '// env',
+            '/tmp/repo/worker/worker/worker-cleanup.cjs': '// cleanup',
+            '/tmp/repo/worker/worker/worker-cleanup-journal.cjs': '// journal',
+            '/tmp/repo/worker/worker/package.json': '{"name":"animastor-worker"}',
+            '/tmp/repo/worker/worker/package-lock.json': '{}',
+            '/tmp/repo/worker/worker/.env.example': 'HUB_URL=\nANIMASTOR_WORKER_TOKEN=\nWORKER_TYPE=\nWORKER_ID=\n',
+            '/tmp/repo/backend/ai/workflows/tts-qwen-narrator.json': realFs.readFileSync(path.join(repoRootReal, 'backend/ai/workflows/tts-qwen-narrator.json'), 'utf8'),
+            '/tmp/repo/backend/ai/workflows/tts-qwen-dialogue.json': realFs.readFileSync(path.join(repoRootReal, 'backend/ai/workflows/tts-qwen-dialogue.json'), 'utf8'),
+        },
+        execResults: {
+            'git -C /tmp/comfy init': { code: 0, stdout: '', stderr: '' },
+            'git -C /tmp/comfy remote add origin https://github.com/rajsingh1-dev/ComfyUI.git': { code: 0, stdout: '', stderr: '' },
+            'git -C /tmp/comfy fetch --tags origin': { code: 0, stdout: '', stderr: '' },
+            'git -C /tmp/comfy checkout c4cfee7ad16cfeb082e12f43cf4751b4a67a4e11': ({ fs: mfs }) => {
+                mfs.writeFileSync('/tmp/comfy/main.py', '# comfy fork');
+                mfs.mkdirSync('/tmp/comfy/.git/info', { recursive: true });
+                return { code: 0, stdout: '', stderr: '' };
+            },
+            'git -C /tmp/comfy remote get-url origin': { code: 0, stdout: 'https://github.com/rajsingh1-dev/ComfyUI.git', stderr: '' },
+            '/tmp/comfy/venv/bin/python -m pip --version': { code: 0, stdout: 'pip 23.0', stderr: '' },
+            '/tmp/comfy/venv/bin/python -m ensurepip --upgrade': { code: 0, stdout: '', stderr: '' },
+            '/tmp/comfy/venv/bin/python --version': { code: 0, stdout: 'Python 3.10.12' },
+            '/tmp/comfy/venv/bin/python -c import torch; print(torch.__version__)': { code: 0, stdout: '2.10.0+cpu' },
+            '/tmp/comfy/venv/bin/python -m pip install -r /tmp/comfy/custom_nodes/qwen3-tts/requirements.txt -c /tmp/comfy/venv/.animastor-torch-constraints.txt': { code: 0, stdout: '', stderr: '' },
+            'npm install --omit=dev --no-audit --no-fund': { code: 0, stdout: '', stderr: '' },
+            'ps -p 4242 -o args=': { code: 0, stdout: 'node worker.cjs', stderr: '' },
+            // Node.js check for worker
+            'node --check /tmp/animastor/worker/worker.cjs': { code: 0, stdout: '', stderr: '' },
+            'node --version': { code: 0, stdout: 'v22.0.0', stderr: '' },
+        },
+        httpResults: {
+            'https://animastor.in/api/v1/worker/verify': { status: 200, json: () => ({ verified: true, worker_id: 'w-adopt-test', worker_type: 'audio' }) },
+            'http://127.0.0.1:8288/system_stats': { status: 200, json: () => ({ system: {} }) },
+            'http://127.0.0.1:8288/object_info': {
+                status: 200,
+                json: () => ({
+                    Qwen3TTSVoiceDesign: {}, Qwen3TTSLoader: {}, Qwen3TTSVoiceClonePrompt: {},
+                    Qwen3TTSRoleBank: {}, Qwen3TTSAdvancedDialogue: {}, Qwen3TTSScriptProcessor: {},
+                    SaveAudioMP3: {},
+                }),
+            },
+            'https://modelscope.cn/api/v1/models/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/repo/files?Revision=master': {
+                status: 200,
+                json: () => ({ Code: 200, Data: { Files: [
+                    { Name: 'model.safetensors', Path: 'model.safetensors', Type: 'blob', Size: 0, Sha256: '' },
+                    { Name: 'speech_tokenizer', Path: 'speech_tokenizer', Type: 'tree', Size: 0 },
+                ] } }),
+            },
+            'https://modelscope.cn/api/v1/models/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/repo/files?Revision=master&Root=speech_tokenizer': {
+                status: 200,
+                json: () => ({ Code: 200, Data: { Files: [
+                    { Name: 'model.safetensors', Path: 'speech_tokenizer/model.safetensors', Type: 'blob', Size: 0, Sha256: '' },
+                ] } }),
+            },
+            'https://modelscope.cn/api/v1/models/Qwen/Qwen3-TTS-12Hz-1.7B-Base/repo/files?Revision=master': {
+                status: 200,
+                json: () => ({ Code: 200, Data: { Files: [
+                    { Name: 'model.safetensors', Path: 'model.safetensors', Type: 'blob', Size: 0, Sha256: '' },
+                    { Name: 'speech_tokenizer', Path: 'speech_tokenizer', Type: 'tree', Size: 0 },
+                ] } }),
+            },
+            'https://modelscope.cn/api/v1/models/Qwen/Qwen3-TTS-12Hz-1.7B-Base/repo/files?Revision=master&Root=speech_tokenizer': {
+                status: 200,
+                json: () => ({ Code: 200, Data: { Files: [
+                    { Name: 'model.safetensors', Path: 'speech_tokenizer/model.safetensors', Type: 'blob', Size: 0, Sha256: '' },
+                ] } }),
+            },
+        },
+    });
+    const log = createMockLogger();
+    const result = await runInstallation({
+        manifests, mode: 'managed', io,
+        roots: {
+            comfyuiRoot: '/tmp/comfy', workerDir: '/tmp/animastor/worker',
+            statePath: '/tmp/comfy/.animastor-installer/install-state.json',
+            repoRoot: '/tmp/repo', hubUrl: 'https://animastor.in/gpu',
+        },
+        decisions: {
+            comfyui_update: 'yes', install_custom_nodes: true, install_models: true,
+            workflows: 'all', worker_setup: true, worker_key_provided: true,
+            accept_reference_runtime: true,
+        },
+        secretProvider: async () => DUMMY_TOKEN,
+        logger: log, crypto: require('crypto'),
+        options: { comfyPort: 8288, startWorker: true },
+    });
+
+    // 1) ComfyUI adopted in place (not cloned from scratch)
+    assert.ok(calls.exec.some((c) => c.cmd === 'git' && c.args.join(' ') === '-C /tmp/comfy init'), 'git init for adopt');
+    assert.ok(calls.exec.some((c) => c.cmd === 'git' && (c.args.join(' ').includes('remote add origin') || c.args.join(' ').includes('remote set-url origin'))), 'remote added/set');
+    assert.ok(calls.exec.some((c) => c.cmd === 'git' && c.args.join(' ') === '-C /tmp/comfy fetch --tags origin'), 'fetched');
+    assert.ok(calls.exec.some((c) => c.cmd === 'git' && c.args.join(' ') === '-C /tmp/comfy checkout c4cfee7ad16cfeb082e12f43cf4751b4a67a4e11'), 'checkout ref');
+    assert.ok(fs.existsSync('/tmp/comfy/main.py'), 'main.py present after adopt');
+
+    // 2) COMFY_PORT in .env
+    const envText = fs.readFileSync('/tmp/animastor/worker/.env', 'utf8');
+    assert.ok(envText.includes('COMFY_PORT=8288'), '.env has COMFY_PORT=8288');
+    assert.ok(envText.includes('ANIMASTOR_WORKER_TOKEN='), '.env has token');
+
+    // 3) Worker started
+    assert.ok(result.results.worker.some((w) => w.id === 'worker-process' && w.started), 'worker-process result present');
+    const wp = result.results.worker.find((w) => w.id === 'worker-process');
+    assert.strictEqual(wp.alive, true, 'worker alive after start');
+
+    // 4) Node deps retried and healed
+    const nodeArtifact = JSON.parse(fs.readFileSync('/tmp/comfy/.animastor-installer/install-state.json', 'utf8')).artifacts['custom-node:comfyui-qwen3-tts'];
+    assert.ok(!nodeArtifact.detail.reason, `node deps healed (reason cleared): ${JSON.stringify(nodeArtifact.detail)}`);
+
+    // 5) Models skipped (already present)
+    for (const mr of result.results.models) {
+        assert.ok(mr.status === 'downloaded' || mr.status === 'skipped' || mr.status === 'verified', `${mr.id}: ${mr.status}`);
+    }
+
+    // 6) Status not blocked/failed
+    assert.ok(!['blocked', 'failed'].includes(result.status), `status: ${result.status}`);
+});
+
+// ==========================================================================
 
 Promise.all(testPromises).then(() => {
     console.log(`\nCPU installer tests: ${passed} passed, ${failed} failed`);
