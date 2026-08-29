@@ -14,6 +14,7 @@
  */
 
 const path = require('path');
+const { PrerequisiteError, classifyVenvCreateFailure, classifyVenvDir, debianVenvPackage } = require('./prereq');
 
 /**
  * Choose the install source for a clean install.
@@ -103,15 +104,53 @@ function updateComfyUI(io, { root, target, state = null, log }) {
     return { previous_commit: previousCommit, target: ref };
 }
 
+/**
+ * Move a broken/incomplete venv aside (never delete — the user may want to
+ * inspect it). Returns the quarantine path.
+ */
+function quarantineBrokenVenv(io, venvDir, reason, log) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const quarantine = `${venvDir}.broken-${stamp}`;
+    try {
+        io.fs.renameSync(venvDir, quarantine);
+    } catch (err) {
+        throw new Error(`existing venv at ${venvDir} is broken (${reason}) and could not be moved aside: ${err.message}`);
+    }
+    if (log) log.warn(`existing venv at ${venvDir} is broken (${reason}) — moved aside to ${quarantine}; a fresh venv will be created`);
+    return quarantine;
+}
+
 /** Install ComfyUI python requirements + torch pin into a venv. */
 function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log }) {
     const venvDir = path.join(root, 'venv');
     const py = path.join(venvDir, 'bin', 'python');
 
     let venvCreated = false;
+    let quarantined = null;
+
+    // A directory that LOOKS like a venv is not a working runtime: classify
+    // it first. A directory without bin/python is a broken/incomplete
+    // managed runtime — quarantine it and recreate instead of failing later
+    // (or worse, silently treating its presence as success).
+    const existing = classifyVenvDir(io, venvDir);
+    if (existing.state === 'incomplete') {
+        quarantined = quarantineBrokenVenv(io, venvDir, existing.reason, log);
+    }
+
     if (!io.fs.existsSync(py)) {
         let r = io.exec('python3', ['-m', 'venv', venvDir]);
-        if (r.code !== 0) throw new Error(`python3 -m venv failed (code ${r.code}): ${String(r.stderr || r.stdout || r.error || 'no output').slice(-500)}`);
+        if (r.code !== 0) {
+            const versionRes = io.exec('python3', ['--version']);
+            const vMatch = /Python\s+([0-9][0-9.]*)/.exec(String(versionRes.stdout) + String(versionRes.stderr));
+            const failure = classifyVenvCreateFailure(String(r.stderr || r.stdout || ''), vMatch ? vMatch[1] : null);
+            throw new PrerequisiteError({
+                code: failure.code,
+                summary: failure.summary,
+                message: `python3 -m venv failed (code ${r.code}): ${String(r.stderr || r.stdout || r.error || 'no output').slice(-500)}`,
+                hostPackage: failure.hostPackage,
+                remediationCommand: failure.remediationCommand,
+            });
+        }
         if (log) log.info(`venv created at ${venvDir}`);
         venvCreated = true;
     }
@@ -123,7 +162,16 @@ function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log }) {
     if (pipCheck.code !== 0) {
         const boot = io.exec(py, ['-m', 'ensurepip', '--upgrade']);
         if (boot.code !== 0) {
-            throw new Error(`pip is unavailable in the venv and ensurepip failed (code ${boot.code}): ${String(boot.stderr || boot.stdout || '').slice(-500)} — install the host package providing python3 venv+pip (e.g. python3-venv / python3-pip) and re-run`);
+            const versionRes = io.exec(py, ['--version']);
+            const vMatch = /Python\s+([0-9][0-9.]*)/.exec(String(versionRes.stdout) + String(versionRes.stderr));
+            const pkg = debianVenvPackage(vMatch ? vMatch[1] : null);
+            throw new PrerequisiteError({
+                code: 'MISSING_ENSUREPIP',
+                summary: 'the Python venv prerequisite is missing (venv has neither pip nor a working ensurepip)',
+                message: `pip is unavailable in the venv and ensurepip failed (code ${boot.code}): ${String(boot.stderr || boot.stdout || '').slice(-500)}`,
+                hostPackage: pkg,
+                remediationCommand: `sudo apt install ${pkg}`,
+            });
         }
         if (log) log.info('pip bootstrapped into the venv via ensurepip');
     }
@@ -162,7 +210,7 @@ function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log }) {
         if (log) log.info('ComfyUI requirements installed');
     }
 
-    return { venv: venvDir, python: py, venv_created: venvCreated };
+    return { venv: venvDir, python: py, venv_created: venvCreated, quarantined_broken_venv: quarantined };
 }
 
 /**

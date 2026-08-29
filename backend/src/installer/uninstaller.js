@@ -394,7 +394,8 @@ function renderUninstallPlan(plan, { state = null } = {}) {
     lines.push('');
     for (const group of plan.groups) {
         if (group.items.length === 0 && group.skipped.length === 0) continue;
-        lines.push(`[${group.title}]`);
+        const groupDef = GROUPS.find((g) => g.key === group.key);
+        lines.push(`[${groupDef ? groupDef.title : group.key}]`);
         for (const it of group.items) {
             const size = it.removable ? '' : ' (NOT removable — see note)';
             lines.push(`  - ${it.label}${size}`);

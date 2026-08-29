@@ -33,6 +33,7 @@ const { createRealIo, createDryRunIo } = require('./engine/io');
 const { createLogger } = require('./engine/logger');
 const { probeEnvironment, renderDetection } = require('./engine/probe');
 const { runInstallation, loadResumableState, renderResumeSummary } = require('./engine/engine');
+const prereq = require('./engine/prereq');
 const resolver = require('./compatibility-resolver');
 const { buildInstallPlan, renderPlanText } = require('./install-plan');
 const manifest = require('./install-manifest');
@@ -98,6 +99,35 @@ function resolveRepoRoot(flags) {
 
 function resolveStatePath(flags) {
     return flags.state || path.join(resolveRoot(flags), '.animastor-installer', 'install-state.json');
+}
+
+/**
+ * Host gates that run BEFORE any heavy change (plan execution, venv, clone,
+ * model downloads): Python venv/ensurepip/pip prerequisites and ownership
+ * mixing (sudo vs. normal user). On failure prints the exact remediation
+ * and exits — the installer never ploughs on into an unrecoverable state.
+ */
+function runHostGates(realIo, { paths, dryRun = false, stateUid = null, deep = true, venvDir = null }) {
+    const uid = prereq.currentUid();
+    const ownership = prereq.checkOwnership(realIo, {
+        paths,
+        home: prereq.currentHome(),
+        currentUid: uid,
+        stateUid,
+    });
+    if (!ownership.ok) {
+        console.error('\nInstallation stopped because of an ownership mismatch:');
+        for (const v of ownership.violations) console.error(`  ${v.message}`);
+        console.error('\nDo not mix sudo and normal-user installs in the same home directory.');
+        process.exit(1);
+    }
+    if (dryRun) return;
+    const gate = prereq.checkPythonPrerequisites(realIo, { python: 'python3', deep, existingVenvDir: venvDir });
+    if (!gate.ok) {
+        console.error('');
+        for (const line of prereq.renderRemediation(gate.failure)) console.error(line);
+        process.exit(1);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +271,17 @@ async function cmdInstall(flags) {
         root, workerDir, crypto,
         workerType: loadedManifests.length === 1 ? (loadedManifests[0].worker_bundle || {}).worker_type : null,
     });
+
+    // Prerequisites & ownership BEFORE the plan/confirmation flow: a missing
+    // python3.X-venv must be reported up front, with the exact apt command,
+    // not after the user has answered every prompt.
+    runHostGates(realIo, {
+        paths: [root, workerDir, statePath].filter(Boolean),
+        dryRun,
+        deep: true,
+        venvDir: path.join(root, 'venv'),
+    });
+
     // The dry-run guard wraps everything handed to the engine so any
     // accidental mutation throws "dry-run violation" instead of executing.
     const io = dryRun ? createDryRunIo(realIo) : realIo;
@@ -407,6 +448,17 @@ async function cmdResume(flags) {
     console.log(`Resuming installation of ${st.profiles.join(' + ')}`);
     for (const line of renderResumeSummary(st)) console.log(line);
 
+    // Resume/state semantics after a UID change: an installation created by
+    // another user must never be continued under the current one (that is
+    // how root-owned files end up inside a user's home).
+    runHostGates(io, {
+        paths: [root, statePath, workerDir].filter(Boolean),
+        dryRun: false,
+        deep: true,
+        venvDir: path.join(root, 'venv'),
+        stateUid: st.owner_uid != null ? st.owner_uid : null,
+    });
+
     let loadedManifests;
     try {
         loadedManifests = st.profiles.map((p) => manifest.loadManifest(p));
@@ -479,6 +531,15 @@ async function cmdUninstall(flags) {
         console.error(`Install state at ${statePath} is unreadable (${record.error}).`);
         console.error('Refusing to uninstall without a valid manifest — nothing was removed.');
         process.exit(1);
+    }
+
+    // Ownership note: an install created under sudo carries root-owned files.
+    // Removing those legitimately requires root — warn instead of blocking.
+    const uninstallUid = prereq.currentUid();
+    if (record.owner_uid != null && uninstallUid != null && record.owner_uid !== uninstallUid) {
+        const ownerDesc = record.owner_uid === 0 ? 'root' : `uid ${record.owner_uid}`;
+        console.warn(`Warning: this installation was created by ${ownerDesc}, but you are running as uid ${uninstallUid}.`);
+        console.warn('Removal of root-owned files will fail without elevated privileges (sudo).');
     }
 
     const plan = uninstaller.buildUninstallPlan(io, { state: record, statePath, home });
@@ -576,6 +637,16 @@ function printResult(result) {
     if (result.warnings.length > 0) {
         console.log('\nWarnings:');
         for (const w of result.warnings) console.log(`  ! ${w}`);
+    }
+    // A failed/blocked installation must be visible in the exit code so
+    // scripts (and the E2E smoke test) can react.
+    if (result.status === 'failed' || result.status === 'blocked') process.exitCode = 1;
+    if (result.remediation) {
+        console.log('\nRemediation:');
+        if (result.remediation.summary) console.log(`  ${result.remediation.summary}`);
+        if (result.remediation.package) console.log(`  Required host package: ${result.remediation.package}`);
+        if (result.remediation.command) console.log(`  Install it with: ${result.remediation.command}`);
+        console.log('  Then re-run the installer.');
     }
 }
 

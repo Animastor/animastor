@@ -340,6 +340,7 @@ async function downloadModelScopeRepo(io, spec, opts = {}) {
         log = null,
         expectedFiles = null,
         checksums = null,
+        progress = null,
     } = opts;
 
     const repository = spec.repository || (spec.url && spec.url.replace(/.*\/models\//, '').replace(/\/repo.*/, ''));
@@ -380,6 +381,12 @@ async function downloadModelScopeRepo(io, spec, opts = {}) {
     let totalAttempts = 0;
     let anyFailed = false;
 
+    // Aggregate progress across the whole repo (bytes + file counters).
+    if (progress && progress.beginRepo) {
+        const bytesTotal = filesToDownload.reduce((acc, f) => acc + (typeof f.Size === 'number' && f.Size > 0 ? f.Size : 0), 0);
+        progress.beginRepo({ repository, filesTotal: filesToDownload.length, bytesTotal: bytesTotal || null });
+    }
+
     for (const file of filesToDownload) {
         const filePath = normPath(file.Path);
         const absFile = `${absTargetDir}/${filePath}`;
@@ -395,6 +402,7 @@ async function downloadModelScopeRepo(io, spec, opts = {}) {
         const existing = await verifyFile(io, absFile, { checksum: fileChecksum || null, sizeBytesApprox: file.Size || null });
         if (existing.ok) {
             results.push({ path: filePath, status: 'skipped', grade: existing.grade });
+            if (progress && progress.fileSkipped) progress.fileSkipped(filePath, file.Size);
             continue;
         }
         if (existing.grade === 'corrupt' || existing.grade === 'size-mismatch') {
@@ -412,6 +420,8 @@ async function downloadModelScopeRepo(io, spec, opts = {}) {
         let fileAttempts = 0;
         let lastError = null;
 
+        if (progress && progress.beginFile) progress.beginFile(`${repository}/${filePath}`, file.Size || null);
+
         for (let attempt = 1; attempt <= retries; attempt += 1) {
             fileAttempts = attempt;
             try {
@@ -425,6 +435,7 @@ async function downloadModelScopeRepo(io, spec, opts = {}) {
                     dest: absPart,
                     appendFrom,
                     headers,
+                    onProgress: progress && progress.onChunk ? (e) => progress.onChunk(e) : undefined,
                 });
 
                 if (res.status === 416 && appendFrom > 0) {
@@ -443,6 +454,7 @@ async function downloadModelScopeRepo(io, spec, opts = {}) {
                 if (!verification.ok) {
                     try { io.fs.unlinkSync(absPart); } catch (_) { /* ignore */ }
                     results.push({ path: filePath, status: 'failed', grade: verification.grade, reason: verification.reason });
+                    if (progress && progress.endFile) progress.endFile({ status: 'failed', bytes: appendFrom });
                     anyFailed = true;
                     break;
                 }
@@ -450,6 +462,7 @@ async function downloadModelScopeRepo(io, spec, opts = {}) {
                 // Atomic publish
                 io.fs.renameSync(absPart, absFile);
                 results.push({ path: filePath, status: res.resumed ? 'resumed' : 'downloaded', grade: verification.grade });
+                if (progress && progress.endFile) progress.endFile({ status: res.resumed ? 'resumed' : 'downloaded', bytes: file.Size });
                 lastError = null;
                 break;
             } catch (err) {
@@ -461,12 +474,15 @@ async function downloadModelScopeRepo(io, spec, opts = {}) {
             }
         }
 
-        totalAttempts += fileAttempts;
         if (lastError) {
             results.push({ path: filePath, status: 'failed', reason: lastError.message });
+            if (progress && progress.endFile) progress.endFile({ status: 'failed', bytes: 0 });
             anyFailed = true;
         }
+        totalAttempts += fileAttempts;
     }
+
+    if (progress && progress.endRepo) progress.endRepo({ status: anyFailed ? 'failed' : 'downloaded' });
 
     if (anyFailed) {
         const failed = results.filter((r) => r.status === 'failed');

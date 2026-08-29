@@ -38,7 +38,7 @@ function createRealIo() {
             chmodSync: (p, mode) => fs.chmodSync(p, mode),
             statSync: (p) => {
                 const s = fs.statSync(p);
-                return { size: s.size, isFile: s.isFile(), isDirectory: s.isDirectory() };
+                return { size: s.size, isFile: s.isFile(), isDirectory: s.isDirectory(), uid: s.uid, gid: s.gid };
             },
             readdirSync: (p) => fs.readdirSync(p),
         },

@@ -53,6 +53,9 @@ function emptyState({ mode = null, profiles = [], root = null } = {}) {
         root,
         // hardware branch chosen by the installer: 'cuda' | 'cpu'
         device: null,
+        // uid of the account that created the installation — the ownership
+        // guard blocks resume/install under a different uid (sudo mixing).
+        owner_uid: null,
         // non-secret user decisions (comfyui_update, install_models, …).
         // Recorded so `resume` continues without re-prompting.
         decisions: {},
@@ -84,6 +87,7 @@ function emptyState({ mode = null, profiles = [], root = null } = {}) {
 function normalizeState(state) {
     if (!state || typeof state !== 'object') return state;
     if (state.device === undefined) state.device = null;
+    if (state.owner_uid === undefined) state.owner_uid = null;
     const empty = emptyState();
     state.components = { ...empty.components, ...(state.components || {}) };
     return state;
