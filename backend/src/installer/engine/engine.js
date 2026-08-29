@@ -766,13 +766,20 @@ async function runInstallation(args) {
         }
 
         // 4.7 Worker Key + .env configuration ----------------------------------------
+        // Runs on EVERY install where the worker is wanted — even full re-runs
+        // whose plan has no worker-key step (nothing left to ask). configureEnv
+        // merges (never overwrites), and runtime settings like COMFY_PORT must
+        // reach .env on every run: otherwise an already-running worker keeps
+        // its stale wiring forever.
         const keyStep = stepById(plan, 'worker-key');
+        const workerWanted = decisions.worker_setup === true || decisions.worker_setup === 'yes'
+            || (keyStep && (keyStep.provided || decisions.worker_key_provided === true));
         let tokenValue = null; // held in memory only; never stored on result/state
-        if (keyStep && (keyStep.provided || decisions.worker_setup === true || decisions.worker_setup === 'yes')) {
+        if (workerWanted) {
             const manifest = manifests[0];
             const required = ((manifest.worker_bundle || {}).env || {}).required || [];
             const values = {};
-            for (const key of keyStep.secret_keys || []) {
+            for (const key of (keyStep && keyStep.secret_keys) || []) {
                 if (secretProvider) {
                     const value = await secretProvider(key);
                     if (value) {
@@ -838,6 +845,14 @@ async function runInstallation(args) {
             onEvent: (kind, value) => { result.results[kind] = value; },
         });
         result.verification = ver;
+        // Record the instance this installer started so future runs reuse its
+        // port instead of auto-picking a new one (the runVerification scope
+        // has no state — the start step reports via the comfyui_started event).
+        const startedEv = result.results.comfyui_started;
+        if (startedEv && startedEv.port) {
+            st.comfyui_runtime = { port: startedEv.port, pid: startedEv.pid, started_at: io.now() };
+            save();
+        }
 
         if (runtimeFatal) {
             result.status = 'failed';
@@ -901,8 +916,6 @@ async function runVerification({ io, manifests, roots, options, log, crypto, tok
         });
         if (started.ok && started.value.up.ok) {
             stats = started.value.up.system_stats;
-            st.comfyui_runtime = { port, pid: started.value.pid, started_at: io.now() };
-            save();
             emit('comfyui_started', { pid: started.value.pid, port });
         } else {
             live.comfyui = { running: false, api_reachable: false };

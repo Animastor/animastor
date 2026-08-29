@@ -109,7 +109,9 @@ function createMockIo(overrides = {}) {
                 calls.http.push({ op: 'hashFile', filePath });
                 return 'deadbeef'.repeat(8);
             },
-            now: () => 1700000000000,
+            // Ticking clock: waitForApi's deadline check needs monotonic time —
+            // a constant now() makes the timeout loop infinite.
+            now: (() => { let t = 1700000000000; return () => (t += 1000); })(),
         },
         calls,
         fs,
@@ -605,9 +607,11 @@ test('16a. D1: real manifest ComfyUI source is reference-grade and requires cons
 });
 
 // Shared mock-io factory for the real-manifest engine runs (16b / 16).
-function createRealManifestEngineIo() {
+// `overrides.httpResults` / `overrides.execResults` are merged OVER the
+// defaults so individual tests can re-mock specific URLs/commands.
+function createRealManifestEngineIo(overrides = {}) {
     const repoRootReal = path.resolve(__dirname, '..', '..');
-    return createMockIo({
+    const base = {
         execResults: {
             'nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits': { code: 1, stdout: '', stderr: 'no devices' },
             'nvidia-smi': { code: 1, stdout: '', stderr: 'no devices' },
@@ -695,7 +699,11 @@ function createRealManifestEngineIo() {
                 }),
             },
         },
-    });
+    };
+    for (const k of ['execResults', 'httpResults', 'files']) {
+        base[k] = { ...base[k], ...(overrides[k] || {}) };
+    }
+    return createMockIo(base);
 }
 
 // ========================== 16b. D1 consent gate =======================
@@ -1112,10 +1120,27 @@ test('20d. startWorker restarts a running worker whose .env changed after its st
 });
 
 // ========================== 21. COMFY_PORT in .env =======================
-test('21. engine passes COMFY_PORT to .env when --comfy-port is given', async () => {
+collectAsync('21. engine passes COMFY_PORT to .env when --comfy-port is given', async () => {
     const manifestMod = require('../src/installer/install-manifest');
     const manifests = [manifestMod.loadManifest('audio/qwen-tts')];
-    const { io, fs } = createRealManifestEngineIo();
+    // 8288 must look FREE (connection refused) during port auto-pick, then
+    // become alive after ComfyUI spawns — stateful handler flipped by the
+    // spawnDaemon override below.
+    let comfySpawned = false;
+    const { io, fs } = createRealManifestEngineIo({
+        httpResults: {
+            'http://127.0.0.1:8288/system_stats': () => {
+                if (!comfySpawned) throw new Error('ECONNREFUSED');
+                return { status: 200, json: () => ({ system: {} }) };
+            },
+        },
+    });
+    const spawnCalls = [];
+    io.spawnDaemon = (cmd, args, opts) => {
+        if (args[0] === 'main.py') comfySpawned = true;
+        spawnCalls.push({ cmd, args, opts });
+        return 555;
+    };
     const log = createMockLogger();
     const result = await runInstallation({
         manifests, mode: 'managed', io,
@@ -1131,14 +1156,14 @@ test('21. engine passes COMFY_PORT to .env when --comfy-port is given', async ()
         },
         secretProvider: async () => 'wrk.test-token',
         logger: log, crypto: require('crypto'),
-        options: { comfyPort: 8288 },
+        options: { comfyPort: 8288, verifyTimeoutMs: 300 },
     });
     const envText = fs.readFileSync('/tmp/animastor/worker/.env', 'utf8');
     assert.ok(envText.includes('COMFY_PORT=8288'), `.env contains COMFY_PORT=8288\n${envText}`);
     assert.ok(!envText.includes('COMFY_PORT=8188'), 'COMFY_PORT not defaulted to 8188');
 });
 
-test('21b. a bare re-run inherits remembered --comfy-port/--start flags from state', async () => {
+collectAsync('21b. a bare re-run inherits remembered --comfy-port/--start flags from state', async () => {
     const manifestMod = require('../src/installer/install-manifest');
     const manifests = [manifestMod.loadManifest('audio/qwen-tts')];
     const roots = {
@@ -1153,38 +1178,77 @@ test('21b. a bare re-run inherits remembered --comfy-port/--start flags from sta
     };
     const base = { manifests, mode: 'managed', roots, decisions, secretProvider: async () => 'wrk.test-token', crypto: require('crypto') };
 
+    // Stateful 8288: FREE during port auto-pick, alive after ComfyUI spawn.
+    let comfySpawned1 = false;
+    const ioOpts1 = {
+        httpResults: {
+            'http://127.0.0.1:8288/system_stats': () => {
+                if (!comfySpawned1) throw new Error('ECONNREFUSED');
+                return { status: 200, json: () => ({ system: {} }) };
+            },
+        },
+    };
+    const spawnCalls1 = [];
     // Run 1: explicit flags → settings remembered in state
-    const io1 = createRealManifestEngineIo();
+    const io1 = createRealManifestEngineIo(ioOpts1);
+    io1.io.spawnDaemon = (cmd, args, opts) => {
+        if (args[0] === 'main.py') comfySpawned1 = true;
+        spawnCalls1.push({ cmd, args, opts });
+        return 555;
+    };
     const log1 = createMockLogger();
-    await runInstallation({ ...base, io: io1.io, logger: log1, options: { comfyPort: 8288, startComfyui: true, startWorker: true } });
+    await runInstallation({ ...base, io: io1.io, logger: log1, options: { comfyPort: 8288, startComfyui: true, startWorker: true, verifyTimeoutMs: 300 } });
     const st = JSON.parse(io1.fs.readFileSync(roots.statePath, 'utf8'));
     assert.deepStrictEqual(st.installer_options, { comfyPort: 8288, startComfyui: true, startWorker: true }, `options persisted: ${JSON.stringify(st.installer_options)}`);
 
     // Run 2: bare (no options) → remembered values apply; .env keeps the port
-    const io2 = createRealManifestEngineIo();
+    let comfySpawned2 = false;
+    const ioOpts2 = {
+        httpResults: {
+            'http://127.0.0.1:8288/system_stats': () => {
+                if (!comfySpawned2) throw new Error('ECONNREFUSED');
+                return { status: 200, json: () => ({ system: {} }) };
+            },
+        },
+    };
+    const io2 = createRealManifestEngineIo(ioOpts2);
+    io2.io.spawnDaemon = (cmd, args, opts) => {
+        if (args[0] === 'main.py') comfySpawned2 = true;
+        return 555;
+    };
     // pre-seed the state from run 1 into the fresh io
     io2.fs.mkdirSync('/tmp/comfy/.animastor-installer', { recursive: true });
     io2.fs.writeFileSync(roots.statePath, JSON.stringify(st));
     const log2 = createMockLogger();
-    await runInstallation({ ...base, io: io2.io, logger: log2, options: {} });
+    await runInstallation({ ...base, io: io2.io, logger: log2, options: { verifyTimeoutMs: 300 } });
     assert.ok(log2.lines.some((l) => l.includes('reusing remembered setting: comfyPort=8288')), `log: ${log2.lines.join('\n')}`);
     const envText = io2.fs.readFileSync('/tmp/animastor/worker/.env', 'utf8');
     assert.ok(envText.includes('COMFY_PORT=8288'), `.env still wired to 8288\n${envText}`);
 });
 
 // ================= 21c. managed mode: services auto-start, port auto-pick ==
-test('21c. bare managed run: foreign 8188 avoided, services start by default', async () => {
+collectAsync('21c. bare managed run: foreign 8188 avoided, services start by default', async () => {
     const engine = require('../src/installer/engine/engine');
     const manifestMod = require('../src/installer/install-manifest');
     const manifests = [manifestMod.loadManifest('audio/qwen-tts')];
     const spawnCalls = [];
+    // 8288 is FREE during port auto-pick, then the spawned ComfyUI comes UP —
+    // stateful handler flipped by the spawnDaemon override below.
+    let comfySpawned = false;
     const { io, fs, calls } = createRealManifestEngineIo({
-        // foreign ComfyUI occupies 8188; managed range is free
-        'http://127.0.0.1:8188/system_stats': { status: 200, json: () => ({ system: {} }) },
-        'http://127.0.0.1:8288/system_stats': () => { throw new Error('ECONNREFUSED'); },
-        'http://127.0.0.1:8289/system_stats': () => { throw new Error('ECONNREFUSED'); },
+        httpResults: {
+            'http://127.0.0.1:8288/system_stats': () => {
+                if (!comfySpawned) throw new Error('ECONNREFUSED');
+                return { status: 200, json: () => ({ system: {} }) };
+            },
+            'http://127.0.0.1:8289/system_stats': () => { throw new Error('ECONNREFUSED'); },
+        },
     });
-    io.spawnDaemon = (cmd, args, opts) => { spawnCalls.push({ cmd, args, opts }); return 555; };
+    io.spawnDaemon = (cmd, args, opts) => {
+        if (args[0] === 'main.py') comfySpawned = true; // only ComfyUI flips the port alive
+        spawnCalls.push({ cmd, args, opts });
+        return 555;
+    };
     const log = createMockLogger();
     const result = await runInstallation({
         manifests, mode: 'managed', io,
@@ -1213,7 +1277,7 @@ test('21c. bare managed run: foreign 8188 avoided, services start by default', a
     assert.ok(st.comfyui_runtime && st.comfyui_runtime.port === 8288, 'runtime recorded for future re-runs');
 });
 
-test('21d. autoPickComfyPort: runtime-alive > free default > managed range; existing mode trusts 8188', async () => {
+collectAsync('21d. autoPickComfyPort: runtime-alive > free default > managed range; existing mode trusts 8188', async () => {
     const engine = require('../src/installer/engine/engine');
     const mk = (handlers) => createMockIo({ httpResults: handlers }).io;
     const refused = () => { throw new Error('ECONNREFUSED'); };
