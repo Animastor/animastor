@@ -354,6 +354,43 @@ function checkOwnership(io, { paths = [], home = null, currentUid: uidInput = nu
     return { ok: violations.length === 0, violations };
 }
 
+/**
+ * Check for C build tools required by packages with native extensions
+ * (funasr, soundfile, etc.). Returns a list of missing packages with
+ * the exact apt install command to fix them.
+ */
+function checkBuildPrerequisites(io, { python = 'python3', log = null } = {}) {
+    const missing = [];
+    const versionRes = io.exec(python, ['--version']);
+    const vMatch = /Python\s+([0-9][0-9.]*)/.exec(String(versionRes.stdout) + String(versionRes.stderr));
+    const pyVer = vMatch ? vMatch[1] : null;
+    const pyMajor = pyVer ? pyVer.split('.').slice(0, 2).join('.') : null;
+
+    // gcc — required by C extensions
+    const gcc = io.exec('gcc', ['--version']);
+    if (gcc.code !== 0) missing.push({ pkg: 'build-essential', check: 'gcc --version' });
+
+    // python3-dev / python3.X-dev — headers for compiling C extensions against Python
+    const devPkg = pyMajor ? `python${pyMajor}-dev` : 'python3-dev';
+    const devCheck = io.exec(python, ['-c', 'import sysconfig; print(sysconfig.get_path("include"))']);
+    if (devCheck.code !== 0 || !String(devCheck.stdout).trim()) {
+        missing.push({ pkg: devPkg, check: `${python} -c "import sysconfig; print(sysconfig.get_path('include'))"` });
+    }
+
+    // libsndfile1-dev — required by soundfile (used by funasr)
+    const sndfile = io.exec('pkg-config', ['--exists', 'sndfile']);
+    if (sndfile.code !== 0) missing.push({ pkg: 'libsndfile1-dev', check: 'pkg-config --exists sndfile' });
+
+    if (missing.length === 0) return { ok: true, missing: [] };
+
+    const pkgList = missing.map((m) => m.pkg).join(' ');
+    const cmd = `sudo apt-get install -y ${pkgList}`;
+    const msg = `Missing C build tools required by Python packages with native extensions: ${missing.map((m) => m.pkg).join(', ')}. `
+        + `Run: ${cmd}`;
+    if (log) log.warn(msg);
+    return { ok: false, missing, remediation: { package: pkgList, command: cmd }, message: msg };
+}
+
 module.exports = {
     PrerequisiteError,
     debianVenvPackage,
@@ -362,6 +399,7 @@ module.exports = {
     remediationPayload,
     renderRemediation,
     checkPythonPrerequisites,
+    checkBuildPrerequisites,
     checkOwnership,
     currentUid,
     currentHome,

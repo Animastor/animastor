@@ -514,6 +514,21 @@ async function runInstallation(args) {
         const nodesStep = stepById(plan, 'custom-nodes');
         if (!runtimeFatal && nodesStep && nodesStep.action && nodesStep.decision === 'yes') {
             const python = path.join(comfyuiRoot, 'venv', 'bin', 'python');
+            // Check for C build tools (gcc, python3-dev, libsndfile1-dev) that
+            // packages like funasr/soundfile need. Missing tools produce opaque
+            // metadata-generation-failed errors from pip — catch early and give
+            // a precise remediation command.
+            const buildCheck = prereq.checkBuildPrerequisites(io, {
+                python: io.fs.existsSync(python) ? python : 'python3', log,
+            });
+            if (!buildCheck.ok) {
+                result.remediation = {
+                    code: 'MISSING_BUILD_TOOLS',
+                    summary: buildCheck.message,
+                    package: buildCheck.remediation.package,
+                    command: buildCheck.remediation.command,
+                };
+            }
             // Nodes an earlier run left with "python dependencies incomplete"
             // get an idempotent pip retry — the resolver keys node presence off
             // the directory, so without this the broken state would never heal.
