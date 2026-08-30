@@ -4,8 +4,8 @@
 > **Status:** Implemented (2026-08-30)
 > **Installer version:** 1.3.0
 >
-> Этот документ описывает **реализованную** кросс-платформенную архитектуру
-> Animastor Installer — two orthogonal dimensions: **Platform (OS)** and
+> This document describes the **implemented** cross-platform architecture
+> of Animastor Installer — two orthogonal dimensions: **Platform (OS)** and
 > **Deployment (runtime environment)** — and how adapters compose them.
 
 ---
