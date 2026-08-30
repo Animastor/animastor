@@ -529,22 +529,32 @@ describe('Setup contract — projections (unit)', () => {
             worker_bundle: { available: true, status: 'available', version: sc.getWorkerBundleVersion(), sha256: 'b'.repeat(64) },
         };
 
-        it('linux/managed returns the full dynamic setup flow', () => {
+        it('linux/managed returns the bootstrap flow (the worker is ALREADY created — no create step)', () => {
             const i = sc.buildInstructions({
                 profileIds: ['image/qwen-image'], platform: 'linux', mode: 'managed',
                 origin: 'https://app.animastor.in', probe: PROBE_OK,
             });
             expect(i.steps.map((s) => s.id)).to.deep.equal([
-                'create-worker', 'download-installer', 'run-installer', 'verify',
+                'download-bootstrap', 'run-bootstrap', 'verify',
             ]);
-            const download = i.steps.find((s) => s.id === 'download-installer');
-            expect(download.code).to.contain('https://app.animastor.in/gpu/installer');
-            expect(download.checksum.value).to.equal('c'.repeat(64));
-            const run = i.steps.find((s) => s.id === 'run-installer');
-            expect(run.code).to.contain('--profile image/qwen-image --mode managed');
+            const download = i.steps.find((s) => s.id === 'download-bootstrap');
+            // profile/mode are embedded in the download URL — nothing to type
+            expect(download.code).to.contain('https://app.animastor.in/gpu/installer?profile=image%2Fqwen-image&mode=managed');
+            const run = i.steps.find((s) => s.id === 'run-bootstrap');
+            expect(run.code).to.equal('bash animastor-installer.sh');
+            // the run body points at the interactive Worker Key prompt
+            expect(run.body).to.match(/Worker Key/i);
+            // verify is a simple last step: page heartbeat, CLI is optional
+            const verify = i.steps.find((s) => s.id === 'verify');
+            expect(verify.code).to.equal(undefined);
+            expect(i.verify_command).to.contain('status.sh');
+            // installer metadata for the UI (version primary, sha secondary)
+            expect(i.installer.version).to.equal(sc.getInstallerVersion());
+            expect(i.installer.sha256).to.equal('c'.repeat(64));
+            expect(i.installer.download_url).to.contain('/gpu/installer?profile=');
         });
 
-        it('linux/existing adds detection prerequisites and --mode existing', () => {
+        it('linux/existing adds detection prerequisites and embeds mode=existing', () => {
             const i = sc.buildInstructions({
                 profileIds: ['audio/qwen-tts'], platform: 'linux', mode: 'existing', probe: PROBE_OK,
             });
@@ -553,15 +563,15 @@ describe('Setup contract — projections (unit)', () => {
             expect(prereq.requirements.comfyui).to.be.a('string');
             expect(prereq.requirements.python).to.contain('3.10');
             expect(prereq.requirements.torch).to.contain('CUDA');
-            const run = i.steps.find((s) => s.id === 'run-installer');
-            expect(run.code).to.contain('--mode existing');
+            const download = i.steps.find((s) => s.id === 'download-bootstrap');
+            expect(download.code).to.contain('mode=existing');
         });
 
         it('windows returns the planned flow without commands', () => {
             const i = sc.buildInstructions({
                 profileIds: ['image/qwen-image'], platform: 'windows', mode: 'managed', probe: PROBE_OK,
             });
-            expect(i.steps.map((s) => s.id)).to.deep.equal(['create-worker', 'platform-planned']);
+            expect(i.steps.map((s) => s.id)).to.deep.equal(['platform-planned']);
             expect(JSON.stringify(i)).to.not.contain('curl');
         });
 
@@ -569,7 +579,7 @@ describe('Setup contract — projections (unit)', () => {
             const i = sc.buildInstructions({
                 profileIds: ['image/qwen-image'], platform: 'linux', mode: 'managed',
             }); // no probe → hub not serving the installer
-            expect(i.steps.map((s) => s.id)).to.deep.equal(['create-worker', 'platform-planned']);
+            expect(i.steps.map((s) => s.id)).to.deep.equal(['platform-planned']);
         });
 
         it('existing mode, installer down but bundle served → bundle-based flow (no dead end)', () => {
@@ -582,7 +592,7 @@ describe('Setup contract — projections (unit)', () => {
                 },
             });
             expect(i.steps.map((s) => s.id)).to.deep.equal([
-                'create-worker', 'prerequisites', 'download-bundle', 'unpack-bundle',
+                'prerequisites', 'download-bundle', 'unpack-bundle',
                 'configure-worker', 'start-worker', 'verify',
             ]);
             const dl = i.steps.find((s) => s.id === 'download-bundle');
@@ -609,8 +619,8 @@ describe('Setup contract — projections (unit)', () => {
                     worker_bundle: { available: true, status: 'available', version: '2.0.0', sha256: 'b'.repeat(64) },
                 },
             });
-            expect(i.steps.map((s) => s.id)).to.deep.equal(['create-worker', 'installer-unavailable']);
-            expect(i.steps[1].body).to.contain('Existing ComfyUI');
+            expect(i.steps.map((s) => s.id)).to.deep.equal(['installer-unavailable']);
+            expect(i.steps[0].body).to.contain('Existing ComfyUI');
             expect(JSON.stringify(i)).to.not.contain('curl');
         });
 
@@ -625,32 +635,39 @@ describe('Setup contract — projections (unit)', () => {
             expect(i.env.template_block).to.contain('WORKER_ID=<worker-id>');
         });
 
-        it('multi-profile instructions use comma-separated profile ids; shared passes --mode shared', () => {
+        it('multi-profile instructions embed the comma-separated profile list (URL-encoded)', () => {
             const i = sc.buildInstructions({
                 profileIds: ['audio/qwen-tts', 'image/qwen-image'], platform: 'linux', mode: 'shared', probe: PROBE_OK,
             });
-            const run = i.steps.find((s) => s.id === 'run-installer');
-            expect(run.code).to.contain('--profile audio/qwen-tts,image/qwen-image');
-            expect(run.code).to.contain('--mode shared');
+            const download = i.steps.find((s) => s.id === 'download-bootstrap');
+            expect(download.code).to.contain('profile=audio%2Fqwen-tts%2Cimage%2Fqwen-image');
+            expect(download.code).to.contain('mode=shared');
         });
 
-        it('isolated mode instructs one installer run per profile into distinct roots', () => {
+        it('isolated mode keeps the explicit bundle flow (one run per profile, distinct roots)', () => {
             const i = sc.buildInstructions({
                 profileIds: ['image/qwen-image', 'video/ltx-2.3'], platform: 'linux', mode: 'isolated', probe: PROBE_OK,
             });
-            const run = i.steps.find((s) => s.id === 'run-installer');
+            const run = i.steps.find((s) => s.id === 'run-bootstrap');
             expect(run.code).to.contain('--profile image/qwen-image');
             expect(run.code).to.contain('--profile video/ltx-2.3');
             expect(run.code).to.contain('isolated/qwen-image');
             expect(run.code).to.contain('isolated/ltx-2.3');
+            // the raw bundle is downloaded from the bundle endpoint
+            const download = i.steps.find((s) => s.id === 'download-bootstrap');
+            expect(download.code).to.contain('/gpu/installer/bundle');
         });
 
-        it('the Worker Key appears only as a placeholder — never a value', () => {
+        it('the Worker Key appears only as a placeholder — never a value or a command line flag', () => {
             const i = sc.buildInstructions({
                 profileIds: ['image/qwen-image'], platform: 'linux', mode: 'managed', probe: PROBE_OK,
             });
             expect(i.env.template_block).to.contain('ANIMASTOR_WORKER_TOKEN=<your-worker-key>');
             expect(i.env.template_block).to.not.match(/wrk\.[A-Za-z0-9_-]{8,}/);
+            // no credential in the download/run commands either
+            const blob = JSON.stringify(i.steps);
+            expect(blob).to.not.match(/wrk\.[A-Za-z0-9_-]{8,}/);
+            expect(blob.toLowerCase()).to.not.contain('worker-key=');
             expect(i.worker_key_policy.disclosed_once).to.equal(true);
             expect(i.worker_key_policy.disclosed_by).to.contain('POST /api/v1/workers');
         });

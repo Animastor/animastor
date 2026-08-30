@@ -52,7 +52,27 @@ async function startHub(config) {
     const server = await new Promise((resolve) => {
         const s = app.listen(0, () => resolve(s));
     });
-    return { server, base: `http://127.0.0.1:${server.address().port}` };
+    const port = server.address().port;
+    return { server, base: `http://127.0.0.1:${port}`, getWithHost: (p, host) => rawGet(port, p, host) };
+}
+
+/** GET with an explicit Host header (fetch/undici forbids overriding Host —
+ *  the hub's origin embedding is fed by nginx via proxy_set_header Host). */
+function rawGet(port, urlPath, host) {
+    const http = require('http');
+    return new Promise((resolve, reject) => {
+        const req = http.request(
+            { host: '127.0.0.1', port, path: urlPath, headers: { host } },
+            (res) => {
+                let data = '';
+                res.setEncoding('utf8');
+                res.on('data', (c) => { data += c; });
+                res.on('end', () => resolve(data));
+            }
+        );
+        req.on('error', reject);
+        req.end();
+    });
 }
 
 /** Parse a ustar buffer → [{ name, size, data }]. */
@@ -219,7 +239,7 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
 
         it('reports Content-Length matching the body (integrity header)', async () => {
             hub = await startHub(ARTIFACT_CONFIG);
-            for (const ep of ['/worker-bundle', '/installer']) {
+            for (const ep of ['/worker-bundle', '/installer/bundle', '/installer']) {
                 const res = await fetch(`${hub.base}${ep}`);
                 const buf = Buffer.from(await res.arrayBuffer());
                 expect(Number(res.headers.get('content-length'))).to.equal(buf.length);
@@ -306,13 +326,13 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
     });
 
     // ══════════════════════════════════════════════════════════════════
-    // Installer package
+    // Installer package (tarball — downloaded by the bootstrap, /installer/bundle)
     // ══════════════════════════════════════════════════════════════════
 
-    describe('GET /installer', () => {
+    describe('GET /installer/bundle', () => {
         it('serves a self-contained installer package with manifests', async () => {
             hub = await startHub(ARTIFACT_CONFIG);
-            const res = await fetch(`${hub.base}/installer`);
+            const res = await fetch(`${hub.base}/installer/bundle`);
             expect(res.status).to.equal(200);
             expect(res.headers.get('content-type')).to.contain('application/gzip');
             expect(res.headers.get('x-animastor-artifact-version')).to.equal(require('../src/installer/package.json').version);
@@ -330,7 +350,7 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
 
         it('published sha256 matches the downloaded package', async () => {
             hub = await startHub(ARTIFACT_CONFIG);
-            const buf = Buffer.from(await (await fetch(`${hub.base}/installer`)).arrayBuffer());
+            const buf = Buffer.from(await (await fetch(`${hub.base}/installer/bundle`)).arrayBuffer());
             const meta = await (await fetch(`${hub.base}/installer/sha256`)).json();
             expect(meta.artifact).to.equal('installer');
             expect(meta.version).to.equal(require('../src/installer/package.json').version);
@@ -340,7 +360,7 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
 
         it('answers 404 when installer sources are not mounted', async () => {
             hub = await startHub({ ...ARTIFACT_CONFIG, INSTALLER_SRC_DIR: '/nonexistent/installer' });
-            const res = await fetch(`${hub.base}/installer`);
+            const res = await fetch(`${hub.base}/installer/bundle`);
             expect(res.status).to.equal(404);
             expect((await res.json()).error).to.equal('installer_unavailable');
         });
@@ -351,7 +371,7 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
                 'package.json': JSON.stringify({ name: 'animastor-installer', version: '3.1.4' }),
             });
             hub = await startHub({ ...ARTIFACT_CONFIG, INSTALLER_SRC_DIR: src });
-            const res = await fetch(`${hub.base}/installer`);
+            const res = await fetch(`${hub.base}/installer/bundle`);
             expect(res.status).to.equal(200);
             expect(res.headers.get('x-animastor-artifact-version')).to.equal('3.1.4');
             expect(res.headers.get('content-disposition')).to.contain('animastor-installer-3.1.4.tar.gz');
@@ -366,9 +386,120 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
         it('no canonical package.json → 404 (a versionless artifact is never served)', async () => {
             const src = makeTmpDir({ 'cli.js': '// cli' });
             hub = await startHub({ ...ARTIFACT_CONFIG, INSTALLER_SRC_DIR: src });
-            const res = await fetch(`${hub.base}/installer`);
+            const res = await fetch(`${hub.base}/installer/bundle`);
             expect(res.status).to.equal(404);
             expect((await res.json()).error).to.equal('installer_unavailable');
+            // the bootstrap is unavailable for the same reason (no version)
+            expect((await fetch(`${hub.base}/installer`)).status).to.equal(404);
+        });
+    });
+
+    // ══════════════════════════════════════════════════════════════════
+    // Bootstrap installer script (Phase 3.2)
+    // ══════════════════════════════════════════════════════════════════
+
+    describe('GET /installer (bootstrap script)', () => {
+        it('serves an auditable shell script, not a tarball', async () => {
+            hub = await startHub(ARTIFACT_CONFIG);
+            const res = await fetch(`${hub.base}/installer?profile=image%2Fqwen-image&mode=managed`, {
+                headers: { host: 'app.animastor.in' },
+            });
+            expect(res.status).to.equal(200);
+            expect(res.headers.get('content-type')).to.contain('text/x-shellscript');
+            expect(res.headers.get('content-disposition')).to.contain('animastor-installer.sh');
+            expect(res.headers.get('cache-control')).to.equal('no-store');
+            const script = await res.text();
+            expect(script).to.match(/^#!/);
+            expect(script).to.contain('set -euo pipefail');
+        });
+
+        it('embeds the request origin, profile and mode — the user types nothing', async () => {
+            hub = await startHub(ARTIFACT_CONFIG);
+            const script = await hub.getWithHost('/installer?profile=image%2Fqwen-image&mode=managed', 'app.animastor.in');
+            expect(script).to.contain('HUB_URL="${ANIMASTOR_HUB_URL:-https://app.animastor.in/gpu}"');
+            expect(script).to.contain('INSTALL_PROFILE="${ANIMASTOR_PROFILE:-image/qwen-image}"');
+            expect(script).to.contain('INSTALL_MODE="${ANIMASTOR_MODE:-managed}"');
+            // the real installer is invoked with the embedded profile/mode
+            expect(script).to.contain('install --profile "$INSTALL_PROFILE" --mode "$INSTALL_MODE"');
+        });
+
+        it('PUBLIC_HUB_URL overrides the Host-derived origin; malformed Host falls back to the canonical origin', async () => {
+            // explicit override wins
+            const overrideHub = await startHub({ ...ARTIFACT_CONFIG, PUBLIC_HUB_URL: 'https://gpu.animastor.in/gpu' });
+            try {
+                const script = await (await fetch(`${overrideHub.base}/installer?profile=image%2Fqwen-image&mode=managed`)).text();
+                expect(script).to.contain('https://gpu.animastor.in/gpu');
+            } finally {
+                await new Promise((r) => overrideHub.server.close(r));
+            }
+            // a malformed Host never reaches the script (no header injection)
+            hub = await startHub(ARTIFACT_CONFIG);
+            const evil = await hub.getWithHost('/installer?profile=image%2Fqwen-image&mode=managed', 'evil.example.com:1; rm -rf /');
+            expect(evil).to.contain('https://animastor.in/gpu');
+            expect(evil).to.not.contain('evil.example.com');
+        });
+
+        it('WITHOUT query params: valid script with empty profile (run-time guard)', async () => {
+            hub = await startHub(ARTIFACT_CONFIG);
+            const res = await fetch(`${hub.base}/installer`, { headers: { host: 'app.animastor.in' } });
+            expect(res.status).to.equal(200);
+            const script = await res.text();
+            expect(script).to.contain('INSTALL_PROFILE="${ANIMASTOR_PROFILE:-}"');
+            expect(script).to.contain('no install profile configured');
+        });
+
+        it('invalid profile → 400 (fail closed, never a silently degraded script)', async () => {
+            hub = await startHub(ARTIFACT_CONFIG);
+            for (const bad of ['nope/x', 'image/qwen-image,evil/x', '%2e%2e%2fetc', 'image/old-something']) {
+                const res = await fetch(`${hub.base}/installer?profile=${encodeURIComponent(bad)}&mode=managed`);
+                expect(res.status, bad).to.equal(400);
+                expect((await res.json()).error).to.equal('invalid_profile');
+            }
+        });
+
+        it('invalid mode → 400', async () => {
+            hub = await startHub(ARTIFACT_CONFIG);
+            const res = await fetch(`${hub.base}/installer?profile=image%2Fqwen-image&mode=yolo`);
+            expect(res.status).to.equal(400);
+            expect((await res.json()).error).to.equal('invalid_mode');
+        });
+
+        it('hidden/internal manifests are never embeddable as profiles', async () => {
+            const manifests = makeTmpDir({
+                'image/qwen-image.json': JSON.stringify({
+                    profile: { id: 'image/qwen-image', type: 'image' }, status: 'stable',
+                }),
+                'image/secret-internal.json': JSON.stringify({
+                    profile: { id: 'image/secret-internal', type: 'image' }, status: 'internal',
+                }),
+            });
+            hub = await startHub({ ...ARTIFACT_CONFIG, INSTALLER_MANIFESTS_DIR: manifests });
+            const ok = await fetch(`${hub.base}/installer?profile=image%2Fqwen-image&mode=managed`);
+            expect(ok.status).to.equal(200);
+            const bad = await fetch(`${hub.base}/installer?profile=image%2Fsecret-internal&mode=managed`);
+            expect(bad.status).to.equal(400);
+        });
+
+        it('SECURITY: the bootstrap never contains credential material', async () => {
+            hub = await startHub(ARTIFACT_CONFIG);
+            const script = await (await fetch(`${hub.base}/installer?profile=image%2Fqwen-image&mode=managed`, {
+                headers: { host: 'app.animastor.in' },
+            })).text();
+            // no Worker Key patterns
+            expect(script).to.not.match(/wrk\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/);
+            expect(script).to.not.match(/token_hash/i);
+            // credential-bearing env names are actively REJECTED (fail closed)
+            expect(script).to.contain('ANIMASTOR_WORKER_TOKEN WORKER_TOKEN WORKER_KEY');
+            expect(script).to.contain('never accepts the Worker Key');
+            expect(script).to.contain('credential-like argument detected');
+        });
+
+        it('same parameters → byte-identical script (deterministic, diffable)', async () => {
+            hub = await startHub(ARTIFACT_CONFIG);
+            const url = `${hub.base}/installer?profile=image%2Fqwen-image&mode=managed`;
+            const a = await (await fetch(url, { headers: { host: 'app.animastor.in' } })).text();
+            const b = await (await fetch(url, { headers: { host: 'app.animastor.in' } })).text();
+            expect(a).to.equal(b);
         });
     });
 

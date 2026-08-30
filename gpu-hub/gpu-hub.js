@@ -27,6 +27,7 @@ const crypto = require("crypto")
 const fs = require("fs")
 const path = require("path")
 const { buildTarGz, walkDir } = require("./tarball")
+const { buildBootstrapScript, BOOTSTRAP_VERSION } = require("./bootstrap")
 
 // SYNC: backend/src/runtime/job-schema.js (PROTOCOL_VERSION)
 const PROTOCOL_VERSION = 2;
@@ -1281,6 +1282,102 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     });
   });
 
+  // ======================================================
+  // BOOTSTRAP INSTALLER (Private Worker onboarding — Phase 3.2)
+  // ======================================================
+  // GET /installer serves a small, auditable bootstrap SHELL SCRIPT (not a
+  // tarball): the user downloads and runs it on the GPU machine and it does
+  // the whole flow — download the installer bundle (GET /installer/bundle),
+  // verify its sha256 against the hub-published checksum (GET
+  // /installer/sha256), unpack into a temp dir and run the real installer
+  // CLI. The profile/mode selected in the web onboarding are embedded into
+  // the script at download time (query params, validated against the
+  // canonical manifest allowlist — they are NOT secrets). The Worker Key is
+  // NEVER part of this exchange: the installer asks for it interactively.
+  //
+  //   GET /installer            bootstrap script (animastor-installer.sh)
+  //                             ?profile=<id>&mode=<mode> (optional)
+  //   GET /installer/bundle     self-contained installer package (tar.gz)
+  //   GET /installer/sha256     installer checksum + version metadata
+
+  // Modes the bootstrap may embed — mirrors the setup contract INSTALL_MODES.
+  const BOOTSTRAP_MODES = new Set(["managed", "existing", "shared", "isolated"]);
+
+  // Canonical profile allowlist from the install manifests (hidden/internal
+  // profiles are never embeddable). Rebuilt with the same freshness rules as
+  // the workflow allowlist.
+  function loadProfileAllowlist() {
+    const allow = new Set();
+    if (!fs.existsSync(INSTALLER_MANIFESTS_DIR)) return allow;
+    for (const type of fs.readdirSync(INSTALLER_MANIFESTS_DIR).sort()) {
+      const typeDir = path.join(INSTALLER_MANIFESTS_DIR, type);
+      if (!fs.statSync(typeDir).isDirectory()) continue;
+      for (const file of fs.readdirSync(typeDir).sort()) {
+        if (!file.endsWith(".json")) continue;
+        let manifest = null;
+        try {
+          manifest = JSON.parse(fs.readFileSync(path.join(typeDir, file), "utf8"));
+        } catch (_) { continue; }
+        const id = manifest.profile && manifest.profile.id;
+        const status = manifest.status;
+        if (!id || status === "internal" || status === "hidden") continue;
+        allow.add(id);
+      }
+    }
+    return allow;
+  }
+
+  // The hub does not know its own public origin (it lives behind nginx), so
+  // the bootstrap embeds it from the forwarded Host. Only a clean DNS-name
+  // Host is accepted — anything else falls back to the canonical origin.
+  const HOSTNAME_RE = /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$/;
+
+  function publicHubUrl(req) {
+    if (config.PUBLIC_HUB_URL) return String(config.PUBLIC_HUB_URL).replace(/\/$/, "");
+    const host = req && req.headers && typeof req.headers.host === "string" ? req.headers.host : "";
+    if (HOSTNAME_RE.test(host)) return `https://${host}/gpu`;
+    return "https://animastor.in/gpu";
+  }
+
+  app.get("/installer", (req, res) => {
+    const meta = installerMeta();
+    if (!meta.version) {
+      return res.status(404).json({ error: "installer_unavailable" });
+    }
+    // Optional onboarding context: profile/mode baked into the script so the
+    // user never types them. Fail closed on invalid values (never silently
+    // degrade — a wrong profile would produce a confusing install later).
+    let profile = null;
+    if (req.query.profile !== undefined) {
+      const raw = String(req.query.profile);
+      const ids = raw.split(",").map((s) => s.trim()).filter(Boolean);
+      const allow = loadProfileAllowlist();
+      if (ids.length === 0 || !ids.every((id) => allow.has(id))) {
+        return res.status(400).json({ error: "invalid_profile" });
+      }
+      profile = ids.join(",");
+    }
+    let mode = null;
+    if (req.query.mode !== undefined) {
+      mode = String(req.query.mode);
+      if (!BOOTSTRAP_MODES.has(mode)) {
+        return res.status(400).json({ error: "invalid_mode" });
+      }
+    }
+    const script = buildBootstrapScript({
+      hubUrl: publicHubUrl(req),
+      profile,
+      mode,
+      installerVersion: meta.version,
+    });
+    res.setHeader("Content-Type", "text/x-shellscript; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="animastor-installer.sh"');
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Animastor-Bootstrap-Version", BOOTSTRAP_VERSION);
+    res.setHeader("X-Animastor-Artifact-Version", meta.version);
+    res.send(script);
+  });
+
   // Installer package — self-contained: installer sources + canonical
   // install manifests + the full worker bundle + generated root
   // package.json/README. Layout mirrors the repo (src/installer/*,
@@ -1389,7 +1486,7 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     return a && b && meta.version ? `${meta.version}|${a}|${b}|${c || "no-worker-bundle"}|${d || "no-workflows"}` : null;
   }
 
-  app.get("/installer", (req, res) => {
+  app.get("/installer/bundle", (req, res) => {
     const meta = installerMeta();
     const artifact = cachedArtifact(installerCache, installerFingerprint, buildInstallerArtifact);
     if (!artifact) {

@@ -459,11 +459,24 @@ function envTemplateBlock(manifests, { hubUrl = null } = {}) {
 }
 
 /**
- * Dynamic setup instructions (task §9). Nothing is hardcoded in the frontends:
- * commands, versions and checksums come from canonical metadata. The Worker
- * Key is referenced by placeholder ONLY — its value never enters this
- * response (it is disclosed once by POST /api/v1/workers and entered on the
- * GPU machine through the installer's hidden prompt).
+ * Dynamic setup instructions (task §9, Phase 3.2 bootstrap flow). Nothing is
+ * hardcoded in the frontends: commands, versions and checksums come from
+ * canonical metadata. The Worker Key is referenced by placeholder ONLY — its
+ * value never enters this response (it is disclosed once by
+ * POST /api/v1/workers and entered on the GPU machine through the
+ * installer's hidden prompt).
+ *
+ * Logical model (the worker is ALREADY created when these instructions are
+ * rendered — no "create the worker" step exists here):
+ *
+ *   1. download the bootstrap script (profile/mode embedded in the URL —
+ *      the user never types them);
+ *   2. run it — it downloads + checksum-verifies the installer bundle,
+ *      unpacks it and runs the real installer, which asks for the Worker
+ *      Key interactively (hidden input);
+ *   3. return to this page — the worker goes ONLINE after its first
+ *      heartbeat (~30s). A terminal diagnostics command is provided as
+ *      optional secondary info (verify_command), not as a required step.
  *
  * @param {{profileIds: string[], platform?: string, mode?: string,
  *          origin?: string, registry?: object, probe?: object}} args
@@ -501,7 +514,6 @@ function buildInstructions({
         return m;
     });
 
-    const profileArg = profileIds.join(',');
     const artifacts = getPlatformArtifacts({ platform, registry, probe });
     const base = String(origin || '').replace(/\/$/, '');
     const hubUrl = base ? `${base}/gpu` : null;
@@ -522,14 +534,14 @@ function buildInstructions({
             secrets: (manifests[0].worker_bundle.env && manifests[0].worker_bundle.env.secrets) || ['ANIMASTOR_WORKER_TOKEN'],
             template_block: envTemplateBlock(manifests, { hubUrl }),
         },
+        // Installer artifact metadata for the UI: version is the primary UX
+        // line; the sha256 belongs in a collapsed/secondary block (shown ONCE).
+        installer: null,
         steps,
+        // Optional terminal diagnostics — never a required step: the page
+        // itself shows the worker status (ONLINE after the first heartbeat).
+        verify_command: null,
     };
-
-    steps.push({
-        id: 'create-worker',
-        title: 'Create the worker and note its key',
-        body: 'In Settings → Private Workers create a worker (POST /api/v1/workers). The Worker Key is shown exactly once — the setup contract never returns it again.',
-    });
 
     const installerAvailable = !!(artifacts && artifacts.installer.available);
     const bundle = artifacts && artifacts.worker_bundle;
@@ -603,20 +615,17 @@ function buildInstructions({
         return response;
     }
 
-    const installerUrl = `${base}${artifacts.installer.download_url}`;
-    const installerFile = `animastor-installer-${artifacts.installer.version}.tar.gz`;
-    steps.push({
-        id: 'download-installer',
-        title: 'Download the installer on the GPU machine',
-        body: `Download the installer package (version ${artifacts.installer.version}).`
-            + (artifacts.installer.status === 'draft'
-                ? ' Status: draft — E2E acceptance on real GPU hardware is still pending.'
-                : ''),
-        code: `curl -fsSL -o ${installerFile} ${installerUrl}`,
-        checksum: artifacts.installer.sha256
-            ? { algorithm: 'sha256', value: artifacts.installer.sha256, verify_code: `echo "${artifacts.installer.sha256}  ${installerFile}" | sha256sum -c -` }
-            : null,
-    });
+    // ── Bootstrap flow (installer artifact is served by the hub) ────────
+
+    const profileParam = encodeURIComponent(profileIds.join(','));
+    const bootstrapUrl = `${base}/gpu/installer?profile=${profileParam}&mode=${mode}`;
+    response.installer = {
+        version: artifacts.installer.version,
+        sha256: artifacts.installer.sha256 || null,
+        status: artifacts.installer.status || 'available',
+        download_url: bootstrapUrl,
+    };
+    response.verify_command = '$HOME/animastor/tools/status.sh';
 
     if (mode === 'existing') {
         steps.push({
@@ -628,39 +637,68 @@ function buildInstructions({
                 python: `>= ${artifacts.minimum_requirements && artifacts.minimum_requirements.python || '3.10'}`,
                 torch: 'installed with CUDA support (detected; never auto-replaced)',
                 gpu: 'NVIDIA GPU with a CUDA-capable driver',
-                node: `>= ${artifacts.minimum_requirements && artifacts.minimum_requirements.node || '20'} (for the worker runtime)`,
+                node: `>= ${artifacts.minimum_requirements && artifacts.minimum_requirements.node || '20'} (for the installer runtime)`,
             },
         });
     }
 
-    let runCode;
-    let runBody;
     if (mode === 'isolated') {
-        // No multi-ComfyUI orchestration yet: each profile is installed into
-        // its own root — one installer run per profile.
-        runCode = profileIds
-            .map((p) => `tar -xzf ${installerFile} && node animastor-installer/src/installer/cli.js install --profile ${p} --mode managed --root "$HOME/animastor/isolated/${p.split('/').pop()}"`)
-            .join('\n');
-        runBody = 'Isolated mode: run the installer once per profile, each into its own root directory. The Worker Key is asked interactively (hidden input) on each run.';
-    } else {
-        runCode = `tar -xzf ${installerFile} && node animastor-installer/src/installer/cli.js install --profile ${profileArg} --mode ${mode}`;
-        runBody = mode === 'existing'
-            ? 'The installer confirms every step interactively on the GPU machine and asks for the Worker Key (hidden input) when configuring the worker.'
-            : 'The installer provisions ComfyUI, dependencies, models, baseline workflows and the worker bundle, then asks for the Worker Key (hidden input).';
+        // Isolated mode = several independent ComfyUI environments — one
+        // installer run per profile into its own root. That is beyond what a
+        // single embedded-profile bootstrap run can express, so this
+        // power-user path keeps the explicit bundle flow (bootstrap is the
+        // canonical path for the wizard modes managed/existing).
+        const bundleUrl = `${base}/gpu/installer/bundle`;
+        const installerFile = `animastor-installer-${artifacts.installer.version}.tar.gz`;
+        response.installer = {
+            version: artifacts.installer.version,
+            sha256: artifacts.installer.sha256 || null,
+            status: artifacts.installer.status || 'available',
+            download_url: bundleUrl,
+        };
+        steps.push({
+            id: 'download-bootstrap',
+            title: 'Download the installer',
+            body: `Download the installer package (version ${artifacts.installer.version}).`,
+            code: `curl -fsSL -o ${installerFile} ${bundleUrl}`,
+            checksum: artifacts.installer.sha256
+                ? { algorithm: 'sha256', value: artifacts.installer.sha256, verify_code: `echo "${artifacts.installer.sha256}  ${installerFile}" | sha256sum -c -` }
+                : null,
+        });
+        steps.push({
+            id: 'run-bootstrap',
+            title: 'Run the installer (once per profile)',
+            body: 'Isolated mode: run the installer once per profile, each into its own root directory. The Worker Key is asked interactively (hidden input) on each run.',
+            code: profileIds
+                .map((p) => `tar -xzf ${installerFile} && node animastor-installer/src/installer/cli.js install --profile ${p} --mode managed --root "$HOME/animastor/isolated/${p.split('/').pop()}"`)
+                .join('\n'),
+        });
+        steps.push({
+            id: 'verify',
+            title: 'Verify',
+            body: 'After the installer finishes the workers connect to Animastor automatically. Return to Settings → Private Workers: the status changes to ONLINE after the first heartbeat, usually within ~30 seconds.',
+        });
+        return response;
     }
 
     steps.push({
-        id: 'run-installer',
-        title: mode === 'existing' ? 'Run the installer in existing mode' : 'Run the installer',
-        body: runBody,
-        code: runCode,
+        id: 'download-bootstrap',
+        title: 'Download the installer',
+        body: `Download the bootstrap installer (installer version ${artifacts.installer.version}). The profile and connection mode you selected here are already embedded — nothing needs to be typed.`,
+        code: `curl -fsSL -o animastor-installer.sh ${bootstrapUrl}`,
+    });
+
+    steps.push({
+        id: 'run-bootstrap',
+        title: 'Run the installer',
+        body: 'The installer itself downloads and verifies all components (ComfyUI, models, worker), then asks for the Worker Key (hidden input) — paste the key saved above.',
+        code: 'bash animastor-installer.sh',
     });
 
     steps.push({
         id: 'verify',
         title: 'Verify',
-        body: 'Return to Settings → Private Workers: the worker status changes CONNECTING → ONLINE within ~30 seconds after the worker starts. The installer also runs its own verification step.',
-        code: `node animastor-installer/src/installer/cli.js verify --profile ${profileArg}`,
+        body: 'After the installer finishes the worker connects to Animastor automatically. Return to Settings → Private Workers: the status changes to ONLINE after the first heartbeat, usually within ~30 seconds.',
     });
 
     return response;

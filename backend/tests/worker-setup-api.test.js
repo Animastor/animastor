@@ -321,20 +321,24 @@ describe('Private worker setup contract API (Phase 3)', () => {
     // ══════════════════════════════════════════════════════════════════
 
     describe('GET setup/instructions', () => {
-        it('dynamic instructions for linux/managed include installer flow + checksum', async () => {
+        it('dynamic instructions for linux/managed include the bootstrap flow', async () => {
             const res = await fetch(`${base}/api/v1/private-worker/setup/instructions?profile_id=image/qwen-image&platform=linux&mode=managed`, {
                 headers: { Cookie: alice.cookie },
             });
             expect(res.status).to.equal(200);
             const body = await res.json();
             expect(body.profile_ids).to.deep.equal(['image/qwen-image']);
-            expect(body.steps.map((s) => s.id)).to.include('download-installer').and.include('run-installer');
-            const download = body.steps.find((s) => s.id === 'download-installer');
-            expect(download.code).to.contain('/gpu/installer');
-            expect(download.checksum.value).to.match(/^[0-9a-f]{64}$/);
-            // the old single-file instruction is gone from the contract
+            expect(body.steps.map((s) => s.id)).to.include('download-bootstrap').and.include('run-bootstrap');
+            const download = body.steps.find((s) => s.id === 'download-bootstrap');
+            // profile/mode embedded in the bootstrap download URL
+            expect(download.code).to.contain('/gpu/installer?profile=image%2Fqwen-image&mode=managed');
+            // the run command is just the script — no flags, no typing
+            const run = body.steps.find((s) => s.id === 'run-bootstrap');
+            expect(run.code).to.equal('bash animastor-installer.sh');
+            // the old tarball+node instruction is gone from the contract
             expect(JSON.stringify(body)).to.not.contain('worker-source');
             expect(JSON.stringify(body)).to.not.contain('node worker.cjs');
+            expect(JSON.stringify(body)).to.not.contain('cli.js install');
         });
 
         it('existing mode yields prerequisites; windows yields planned flow', async () => {
@@ -556,7 +560,7 @@ describe('Private worker setup contract API (Phase 3)', () => {
             const linux = methods.find((m) => m.platform === 'linux');
 
             // download artifact → calculate sha256 → compare with API checksum
-            const installerBuf = Buffer.from(await (await fetch(`${hubBase}/installer`)).arrayBuffer());
+            const installerBuf = Buffer.from(await (await fetch(`${hubBase}/installer/bundle`)).arrayBuffer());
             expect(linux.installer.sha256).to.equal(sha256(installerBuf));
             const bundleBuf = Buffer.from(await (await fetch(`${hubBase}/worker-bundle`)).arrayBuffer());
             expect(linux.worker_bundle.sha256).to.equal(sha256(bundleBuf));
@@ -566,16 +570,15 @@ describe('Private worker setup contract API (Phase 3)', () => {
             expect(artifacts.installer.sha256).to.equal(sha256(installerBuf));
             expect(artifacts.worker_bundle.sha256).to.equal(sha256(bundleBuf));
 
-            // and via instructions checksum
+            // and via the instructions installer metadata
             const instructions = await (await fetch(`${base}/api/v1/private-worker/setup/instructions?profile_id=image/qwen-image`, { headers: { Cookie: alice.cookie } })).json();
-            const download = instructions.steps.find((s) => s.id === 'download-installer');
-            expect(download.checksum.value).to.equal(sha256(installerBuf));
+            expect(instructions.installer.sha256).to.equal(sha256(installerBuf));
         });
 
         it('advertised versions match the downloaded artifact headers', async () => {
             const { methods } = await (await fetch(`${base}/api/v1/private-worker/setup/methods`, { headers: { Cookie: alice.cookie } })).json();
             const linux = methods.find((m) => m.platform === 'linux');
-            const installerRes = await fetch(`${hubBase}/installer`);
+            const installerRes = await fetch(`${hubBase}/installer/bundle`);
             expect(linux.installer.version).to.equal(installerRes.headers.get('x-animastor-artifact-version'));
             const bundleRes = await fetch(`${hubBase}/worker-bundle`);
             expect(linux.worker_bundle.version).to.equal(bundleRes.headers.get('x-animastor-artifact-version'));
@@ -586,7 +589,8 @@ describe('Private worker setup contract API (Phase 3)', () => {
             const linux = methods.find((m) => m.platform === 'linux');
             // the hub under test really serves these ⇒ available must be true
             expect(linux.installer.available).to.equal(true);
-            expect((await fetch(`${hubBase}/installer`)).status).to.equal(200);
+            expect((await fetch(`${hubBase}/installer/bundle`)).status).to.equal(200);
+            expect((await fetch(`${hubBase}/installer`)).status).to.equal(200); // bootstrap script
             expect(linux.worker_bundle.available).to.equal(true);
             expect((await fetch(`${hubBase}/worker-bundle`)).status).to.equal(200);
             expect((await fetch(`${hubBase}/worker-bundle/sha256`)).status).to.equal(200);
@@ -738,8 +742,8 @@ describe('Private worker setup contract API (Phase 3)', () => {
             expect(JSON.stringify(existing)).to.not.contain('/gpu/installer');
 
             const managed = await (await fetch(`${degBase}/api/v1/private-worker/setup/instructions?profile_id=image/qwen-image&platform=linux&mode=managed`, { headers: { Cookie: alice.cookie } })).json();
-            expect(managed.steps.map((s) => s.id)).to.deep.equal(['create-worker', 'installer-unavailable']);
-            expect(managed.steps[1].body).to.contain('Existing ComfyUI');
+            expect(managed.steps.map((s) => s.id)).to.deep.equal(['installer-unavailable']);
+            expect(managed.steps[0].body).to.contain('Existing ComfyUI');
         });
     });
 
