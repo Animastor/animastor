@@ -19,43 +19,43 @@
 
 ## 1. Summary Table by Document Sections
 
-| § | Идея | Статус | Где в коде / комментарий |
+| § | Idea | Status | Where in code / comment |
 |---|---|---|---|
-| 1 | Cloud = control plane, Worker = вычислитель | ✅ | `backend/` (оркестрация) + `gpu-hub/` (диспетчер) + `worker/` (исполнители) |
-| 2 | Горизонт 1: Cloud + собственные GPU пользователей | ✅ | `gpu-hub/gpu-hub.js`, `worker/worker/worker.cjs`, `worker/start-worker.sh` (image/audio/video), прод: GPU-инстанс E2E (L40S, LTX 2.3) |
-| 3 | Горизонт 2: полностью локальный Animastor | ⛔ | Нет локальной сборки; всё работает как cloud + удалённые воркеры |
-| 4 | Единая архитектура Worker, capabilities | 🔶 | Beacon передаёт `id/type/gpu/vram/version/image_tag/protocol_version`; **списка моделей нет** → маршрутизация только по `type` |
-| 5 | Heartbeat, исходящее соединение, jobs/progress/result | ✅ | Worker сам ходит на `HUB_URL` (outbound, без входящих портов); beacon 10 с; heartbeat-refresh 15 с (TTL 30 с); `animastor:queue:*`, `running`, `processing`, result/error-keys с ретраями. **Per-worker токенов нет** — только опциональный `GPU_HUB_API_KEY` |
-| 6 | Bring Your Own Model | 🔶 | Воркер выполняет произвольные ComfyUI-воркфлоу — модели «приносит» машина (LTX 2.3, qwen-tts, qwen-image и т.д.). Но **выбора воркера по моделям нет** |
-| 7 | Community Compute («торрент-модель» GPU) | ⛔ | Отсутствует полностью |
-| 8 | Модель contribution (GPU-hours, уровни) | ⛔ | Отсутствует |
-| 9 | Безопасность community workers (sandbox) | ⛔ | Воркеры доверенные (командные); изоляции для чужих машин нет |
-| 10 | Автоочистка данных + GC | 🔶 | Hub чистит Redis-состояние (running/processing/dedup, timeouts, `queue/clear`), но **файлы на воркере остаются** (`ComfyUI/input`, `output`); TTL-GC временных job-директорий нет |
-| 11 | Community flywheel | ⛔ | Не применимо до §7 |
-| 12 | Маркетинговый эффект | ⛔ | Не применимо |
-| 13 | Горизонт 3: managed-сервис | ⛔ | Не применимо |
-| 14 | Монетизация (Free/BYOG, Community, Managed) | ⛔ | Коммерческой модели нет |
-| 15 | Что заложить уже сейчас | ✅ | Принцип соблюдён: worker независим от места запуска, протокол версионируется, dispatch-lease + re-dispatch |
-| 16 | Главный стратегический принцип | 🔶 | Архитектурно фундамент стоит (оркестрация над разнородными inference-системами), но model-aware выбора ресурсов ещё нет |
-| 17 | Приоритет (9 пунктов) | 🔶 | Пункты 1–4 (частично 6) реализованы; 5, 7–9 — нет (см. ниже) |
+| 1 | Cloud = control plane, Worker = compute | ✅ | `backend/` (orchestration) + `gpu-hub/` (dispatcher) + `worker/` (executors) |
+| 2 | Horizon 1: Cloud + user's own GPUs | ✅ | `gpu-hub/gpu-hub.js`, `worker/worker/worker.cjs`, `worker/start-worker.sh` (image/audio/video), prod: GPU instance E2E (L40S, LTX 2.3) |
+| 3 | Horizon 2: fully local Animastor | ⛔ | No local build; everything works as cloud + remote workers |
+| 4 | Unified Worker architecture, capabilities | 🔶 | Beacon sends `id/type/gpu/vram/version/image_tag/protocol_version`; **no model list** → routing only by `type` |
+| 5 | Heartbeat, outbound connection, jobs/progress/result | ✅ | Worker polls `HUB_URL` (outbound, no inbound ports); beacon 10s; heartbeat-refresh 15s (TTL 30s); `animastor:queue:*`, `running`, `processing`, result/error keys with retries. **No per-worker tokens** — only optional `GPU_HUB_API_KEY` |
+| 6 | Bring Your Own Model | 🔶 | Worker executes arbitrary ComfyUI workflows — machine provides models (LTX 2.3, qwen-tts, qwen-image etc.). But **no model-based worker selection** |
+| 7 | Community Compute ("torrent model" GPU) | ⛔ | Completely absent |
+| 8 | Contribution model (GPU-hours, tiers) | ⛔ | Absent |
+| 9 | Community worker security (sandbox) | ⛔ | Workers trusted (team); no isolation for foreign machines |
+| 10 | Auto data cleanup + GC | 🔶 | Hub cleans Redis state (running/processing/dedup, timeouts, `queue/clear`), but **worker files remain** (`ComfyUI/input`, `output`); TTL-GC for temp job directories absent |
+| 11 | Community flywheel | ⛔ | Not applicable until §7 |
+| 12 | Marketing effect | ⛔ | Not applicable |
+| 13 | Horizon 3: managed service | ⛔ | Not applicable |
+| 14 | Monetization (Free/BYOG, Community, Managed) | ⛔ | No business model |
+| 15 | What to lay now | ✅ | Principle followed: worker independent of launch location, protocol versioned, dispatch-lease + re-dispatch |
+| 16 | Main strategic principle | 🔶 | Architectural foundation in place (orchestration over heterogeneous inference systems), but model-aware resource selection not yet implemented |
+| 17 | Priority (9 items) | 🔶 | Items 1–4 (partially 6) implemented; 5, 7–9 — not (see below) |
 
 ---
 
 ## 2. What's Already Implemented — Details with Paths
 
-### §1, §2, §5 — контрольная плоскость отделена от вычислений ✅
+### §1, §2, §5 — control plane separated from compute ✅
 
-Реальная схема проде (документ рисовал её как цель):
+Actual production scheme (document drew it as goal):
 
 ```text
-backend (control plane: оркестрация, очереди, dispatch-lease, re-dispatch)
+backend (control plane: orchestration, queues, dispatch-lease, re-dispatch)
     ↓ POST /gpu/task (dispatch_id, build_id, book/chapter/scene/stage, timeout_ms)
-gpu-hub (тупой транспорт: очереди по типам, dedup, timeout'ы, error-delivery)
+gpu-hub (dumb transport: queues by type, dedup, timeouts, error-delivery)
     ↓ animastor:queue:{image|audio|video}
 worker.cjs (ComfyUI + Node.js) — outbound polling /task/next
 ```
 
-Ключевые файлы:
+Key files:
 
 - `gpu-hub/gpu-hub.js` — реестр воркеров в Redis (`animastor:gpu-hub:workers`, TTL 15 мин), beacon, очереди, dedup (`animastor:job:{dispatch_id}:{job_id}`), timeouts (per-job + per-GPU), доставка ошибок на backend с ретраями и фолбэком в Redis (`animastor:error:{job_id}`).
 - `worker/worker/worker.cjs` — beacon каждые 10 с, поллинг задач, загрузка ассетов в `ComfyUI/input`, запуск воркфлоу, ожидание результата (per-job `timeout_ms` с fallback 10 мин / 2 ч для видео), OOM-safe чтение результата с диска, отправка результата/ошибки.
@@ -63,89 +63,89 @@ worker.cjs (ComfyUI + Node.js) — outbound polling /task/next
 - `backend/src/routes/generation-routes.cjs` — `/api/v1/worker/heartbeat`, `/status`, `/counts` (панель воркеров).
 - `backend/src/routes/book/generation-routes.cjs` — `/cancel-worker` (per task/type, чистка lease и hub-очередей).
 
-### §4 — capabilities: фундамент есть, моделей нет 🔶
+### §4 — capabilities: foundation exists, models missing 🔶
 
-Воркер заявляет о себе так (уже близко к схеме из документа):
+Worker advertises itself as (already close to document schema):
 
 ```text
-id, type (image|audio|video), gpu (имя), vram, version, image_tag, protocol_version
+id, type (image|audio|video), gpu (name), vram, version, image_tag, protocol_version
 ```
 
-Hub проверяет `worker_type_mismatch` и `protocol_version_mismatch`. Но в документе
-capabilities богаче: **модели по типам + cpu/ram/status**. Этого нет → сервер не
-может выбрать воркера «у которого есть LTX 2.3».
+Hub checks `worker_type_mismatch` and `protocol_version_mismatch`. But document's
+capabilities richer: **models by type + cpu/ram/status**. This is missing → server can't
+select worker "that has LTX 2.3".
 
-### §6 — BYOM: де-факто есть, де-юре нет 🔶
+### §6 — BYOM: de facto exists, de jure not 🔶
 
-Задача приходит как полный ComfyUI-воркфлоу (`task.params`), а модели лежат на
-машине воркера (`~/ComfyUI/models`: LTX 2.3 GGUF, gemma-3, qwen-tts, qwen-image).
-То есть «принеси свою модель» уже работает на уровне железа, но система не знает
-о моделях воркера и не может маршрутизировать по ним. Плюс отсутствует UI
-«Connect your GPU» — подключить свой GPU может только технически грамотный
-пользователь через скрипты.
+Task arrives as complete ComfyUI workflow (`task.params`), models reside on
+worker machine (`~/ComfyUI/models`: LTX 2.3 GGUF, gemma-3, qwen-tts, qwen-image).
+So "bring your own model" already works at hardware level, but system doesn't know
+about worker models and can't route by them. Plus missing UI
+"Connect your GPU" — only technically proficient users
+can connect GPU via scripts.
 
-### §10 — очистка: половина сделана 🔶
+### §10 — cleanup: half done 🔶
 
-Сделано: hub чистит всё Redis-состояние — `running`, `processing`, dedup-ключи,
-result/error-ключи по TTL (1 ч), `/queue/clear` (полный или по book/dispatch).
-Не сделано: **на стороне воркера** входные картинки и выходные файлы остаются в
-`ComfyUI/input` и `ComfyUI/output`; GC «временная job-директория старше TTL
-удаляется» отсутствует.
+Done: hub cleans all Redis state — `running`, `processing`, dedup keys,
+result/error keys by TTL (1h), `/queue/clear` (full or per book/dispatch).
+Not done: **on worker side** input images and output files remain in
+`ComfyUI/input` and `ComfyUI/output`; GC "temp job directory older than TTL
+deleted" absent.
 
 ---
 
 ## 3. Gaps — What's Needed to Approach the Vision
 
-По приоритету самого документа (§17):
+By document priority (§17):
 
-| # | Пункт приоритета | Статус | Что нужно |
+| # | Priority item | Status | What's needed |
 |---|---|---|---|
-| 1 | Стабильный Cloud + Worker protocol | ✅ | — |
-| 2 | Независимые workers с capabilities | 🔶 | Расширить beacon: `models` (по типам), `cpu/ram`; хранить в реестре hub |
+| 1 | Stable Cloud + Worker protocol | ✅ | — |
+| 2 | Independent workers with capabilities | 🔶 | Extend beacon: `models` (by type), `cpu/ram`; store in hub registry |
 | 3 | Heartbeat / registration / jobs / progress / result | ✅ | — |
-| 4 | Локальный worker пользователя | ✅ | (нужен только UX-онбординг «Connect your GPU») |
-| 5 | Выбор worker по capability/model | ⛔ | Маршрутизация в backend/hub по моделям, а не только по `type` |
-| 6 | Безопасная temp-область + автоочистка | 🔶 | Удаление входных/выходных файлов job на воркере + TTL-GC; (для чужих машин — sandbox, см. §9) |
-| 7 | Community compute | ⛔ | После §2-фундамента; требует per-worker токенов (§5) и изоляции (§9) |
-| 8 | Полностью локальная сборка | ⛔ | Та же архитектура, control plane локально |
-| 9 | Managed services и монетизация | ⛔ | После community |
+| 4 | User's local worker | ✅ | (only UX onboarding "Connect your GPU" needed) |
+| 5 | Worker selection by capability/model | ⛔ | Routing in backend/hub by models, not just `type` |
+| 6 | Safe temp area + auto cleanup | 🔶 | Delete input/output job files on worker + TTL-GC; (for foreign machines — sandbox, see §9) |
+| 7 | Community compute | ⛔ | After §2 foundation; requires per-worker tokens (§5) and isolation (§9) |
+| 8 | Fully local build | ⛔ | Same architecture, local control plane |
+| 9 | Managed services and monetization | ⛔ | After community |
 
-Дополнительно из документа:
+Additional from document:
 
-- **Per-worker токены** (§5): сейчас auth — опциональный общий `GPU_HUB_API_KEY`
-  только на `/task*`; beacon открыт. Без индивидуальных токенов community compute
-  невозможен.
-- **Sandbox/изоляция** (§9): воркеры доверенные; «пользователь даёт вычислитель,
-  а не доступ к машине» не реализовано и не требуется, пока воркеры только
-  командные.
+- **Per-worker tokens** (§5): currently auth — optional shared `GPU_HUB_API_KEY`
+  only on `/task*`; beacon open. Without individual tokens community compute
+  impossible.
+- **Sandbox/isolation** (§9): workers trusted; "user provides compute,
+  not machine access" not implemented and not needed while workers only
+  team-owned.
 
 ---
 
 ## 4. Conclusions and Recommendations
 
-**Первый горизонт документа — это не план, а уже работающая архитектура.**
-Фундамент, который документ просит «заложить сейчас» (§15, §17), заложен:
-контрольная плоскость отделена, воркер независим от места запуска, протокол
-версионируется, dispatch/lease/re-dispatch работают.
+**Document's first horizon — not a plan, but already working architecture.**
+Foundation the document asks to "lay now" (§15, §17) is laid:
+control plane separated, worker independent of launch location, protocol
+versioned, dispatch/lease/re-dispatch working.
 
-Три шага, дающие максимум приближения к видению при минимуме усилий:
+Three steps giving maximum approach to vision with minimum effort:
 
-1. **Capabilities + model-aware роутинг** (§4, §6, §17.2/17.5) — расширить beacon
-   списком моделей, выбирать воркера по модели. Это превращает «BYOM де-факто»
-   в «BYOM де-юре» и открывает §2-модель «у кого какое железо».
-2. **Очистка на стороне воркера** (§10) — дёшево, закрывает накопление мусора на
-   чужих машинах уже сегодня.
-3. **Per-worker токены** (§5) — обязательный фундамент перед любым community
-   compute; без них §7–§9 нереализуемы.
+1. **Capabilities + model-aware routing** (§4, §6, §17.2/17.5) — extend beacon
+   with model list, select worker by model. This turns "BYOM de facto"
+   into "BYOM de jure" and opens §2 model "who has what hardware".
+2. **Worker-side cleanup** (§10) — cheap, closes garbage accumulation on
+   foreign machines today.
+3. **Per-worker tokens** (§5) — mandatory foundation before any community
+   compute; without them §7–§9 unimplementable.
 
-Community compute и полностью локальная сборка — следующие горизонты, их не
-стоит начинать, пока не появился хотя бы один внешний (недоверенный) воркер.
+Community compute and fully local build — next horizons, shouldn't start
+until at least one external (untrusted) worker appears.
 
 ---
 
 ## 5. Related Files
 
-- Видение: `docs/Animastor_Близкие_горизонты.md`
-- Архитектура: `ARCHITECTURE.md` (корень репо), `docs/01-overview/SYSTEM_MAP.md`
-- Код: `gpu-hub/gpu-hub.js`, `worker/worker/worker.cjs`, `backend/src/runtime/{gpu-dispatcher,dispatch-engine,reconciliation-engine,worker-health,job-schema}.js`
-- Заметки с GPU-инстанса: `worker/new/SYSTEM.md`, `worker/new/MEMORY.md`
+- Vision: `docs/Animastor_Близкие_горизонты.md`
+- Architecture: `ARCHITECTURE.md` (repo root), `docs/01-overview/SYSTEM_MAP.md`
+- Code: `gpu-hub/gpu-hub.js`, `worker/worker/worker.cjs`, `backend/src/runtime/{gpu-dispatcher,dispatch-engine,reconciliation-engine,worker-health,job-schema}.js`
+- GPU instance notes: `worker/new/SYSTEM.md`, `worker/new/MEMORY.md`
