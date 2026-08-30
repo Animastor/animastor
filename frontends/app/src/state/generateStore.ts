@@ -883,6 +883,12 @@ export async function checkVBookAgentStatus(): Promise<VBookProgress> {
 
 export function clearVBookProgress(): void {
   vbookProgress.value = { stage: 'IDLE', sceneIndex: -1, scenesInWindow: 0, totalScenes: null, windowIndex: 0, message: null, stepType: null };
+  // Parallel AI Analysis (Milestone #2): clear per-task rows in lockstep
+  // with the legacy signal so a new generation / re-open never shows stale
+  // per-task rows from the previous run. resetAnalysisProgress() is
+  // idempotent — safe to call here even when the analysis signal was never
+  // touched (e.g. sequential mode).
+  resetAnalysisProgress();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1200,6 +1206,13 @@ export async function cancelGeneration(): Promise<void> {
   stopProgressStream();
   resetProgressState();
   vbookPollToken++;
+  // Parallel AI Analysis (Milestone #2): when the user cancels mid-run,
+  // any in-flight analysis rows must be frozen as 'cancelled' so the UI
+  // stops spinning. Backend will publish a 'cancelled' SSE event for
+  // each running task shortly after; here we proactively freeze the
+  // timers by clearing the signal. New events from the orchestrator
+  // will re-populate the signal on the next run.
+  resetAnalysisProgress();
   try {
     await postJson(`/book/${encodeURIComponent(bId)}/cancel-generation`);
   } catch (e) {
