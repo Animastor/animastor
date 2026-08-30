@@ -42,67 +42,67 @@
 
 ### 1.1 Entry point
 
-- `POST /api/v1/book/import-txt` → создаёт RAW_IMPORTED draft (lazy-book).
+- `POST /api/v1/book/import-txt` → creates RAW_IMPORTED draft (lazy-book).
 - `POST /api/v1/book/:bookId/bootstrap` → `txtImporter.bootstrapImportedText`
   → `agentService.bootstrapWithAgent` → `bootstrap.js:bootstrapWithAgentInner`
-  → `pipelineRunner.runPipeline(sessionId, text, …)` для первого окна.
+  → `pipelineRunner.runPipeline(sessionId, text, …)` for first window.
 - `POST /api/v1/book/:bookId/bootstrap-next-window` → `bootstrapNextWindow`
-  → пропускает шаг 0 (structure уже есть), вызывает `runPipeline` для
-  следующего чанка.
+  → skips step 0 (structure already exists), calls `runPipeline` for
+  next chunk.
 
-См. `backend/src/routes/book/import-routes.cjs:646` (`/bootstrap`).
+See `backend/src/routes/book/import-routes.cjs:646` (`/bootstrap`).
 
 ### 1.2 Sequence of AI steps in `runPipeline` (first window)
 
 | # | File | step | Dependencies | Note |
 |---|---|---|---|---|
-| 0 | bootstrap.js | `stepAnalyzeStructure` | только `text` | Возвращает `author/title/parts/segments`. Сохраняется в `window_data.structure`. |
+| 0 | bootstrap.js | `stepAnalyzeStructure` | `text` only | Returns `author/title/parts/segments`. Saved to `window_data.structure`. |
 | 1 | pipeline-runner.js:372 | `stepExtractCharacters` | `text` | `result.characters`, `result.mentions`. |
-| 1b | pipeline-runner.js:403 | `stepGenerateVoices` | `characters` (после шага 1) | Override voice на новых персонажах. **Опережает `locations` по контракту**, но обе ветки можно выпустить параллельно, если передать characters как input, а не использовать как цепочку. |
-| 2 | pipeline-runner.js:414 | `stepExtractLocations` | `text` + `characters` | Технически нужны character ids для mentions, но merge в шаге 3 сцен. Можно ослабить зависимость — locations только получает список существующих char ids. |
-| 3 | pipeline-runner.js:478 | `stepCreateScenes` | `characters`, `locations` | Возвращает сцены с environment-overrides. |
-| 4 | pipeline-steps.js:437 | `stepCreateUnits` | `scene`, `characters` | Per-scene, **последовательно по сценам в окне**. |
-| 5 | pipeline-steps.js:1080 | `stepCreateVisuals` | `scene`, `units`, `characters`, `locations`, `nextScene?` | Per-scene, последовательно. |
-| 6a | pipeline-steps.js:653 | `stepReconcilePassports` | `allVisualUnits`, `characters` | Window-level, один проход. |
+| 1b | pipeline-runner.js:403 | `stepGenerateVoices` | `characters` (after step 1) | Override voice on new characters. **Precedes `locations` by contract**, but both branches can run in parallel if characters passed as input, not as chain. |
+| 2 | pipeline-runner.js:414 | `stepExtractLocations` | `text` + `characters` | Technically needs character ids for mentions, but merge happens in step 3 scenes. Dependency can be relaxed — locations only gets list of existing char ids. |
+| 3 | pipeline-runner.js:478 | `stepCreateScenes` | `characters`, `locations` | Returns scenes with environment-overrides. |
+| 4 | pipeline-steps.js:437 | `stepCreateUnits` | `scene`, `characters` | Per-scene, **sequentially across scenes in window**. |
+| 5 | pipeline-steps.js:1080 | `stepCreateVisuals` | `scene`, `units`, `characters`, `locations`, `nextScene?` | Per-scene, sequentially. |
+| 6a | pipeline-steps.js:653 | `stepReconcilePassports` | `allVisualUnits`, `characters` | Window-level, single pass. |
 | 6b | pipeline-steps.js:754 | `stepReconcileVideoActions` | `allVisualUnits`, `characters` | Window-level. |
 | 7a | pipeline-steps.js:850 | `stepPolishStoryboard` | `allVisualUnits`, `characters`, `locations` (≥ 2 units) | Window-level. |
 | 7b | pipeline-steps.js:982 | `stepPolishVideoActions` | `allVisualUnits`, `characters`, `locations` (≥ 2) | Window-level. |
-| — | pipeline-steps.js:1490 | `stepRepairFantasyIds` | `allVisualUnits`, `characters`, `locations` | Финальный барьер. |
+| — | pipeline-steps.js:1490 | `stepRepairFantasyIds` | `allVisualUnits`, `characters`, `locations` | Final barrier. |
 
-Между шагами 1/1b/2/3/4/5/6/7 стоят `await checkCancelled()` — отмена
-пробрасывается через Redis + PG (`animastor:cancelled-workers:{bookId}`,
-`agent_sessions.status='cancelled'`). Контракт отмены должен сохраниться при
-параллелизации.
+Between steps 1/1b/2/3/4/5/6/7 are `await checkCancelled()` — cancellation
+propagated via Redis + PG (`animastor:cancelled-workers:{bookId}`,
+`agent_sessions.status='cancelled'`). Cancellation contract must be preserved
+when parallelizing.
 
 ### 1.3 AI transport
 
-- **Resolution:** `agent/bootstrap.js:47` вызывает
-  `workspaceAiProvider.resolveAIForBook(bookId)` → возвращает
+- **Resolution:** `agent/bootstrap.js:47` calls
+  `workspaceAiProvider.resolveAIForBook(bookId)` → returns
   `{ source, provider, endpoint, apiKey, model, workspaceId, purpose }`.
-  Существует уже purpose-aware API: `resolveAIProvider(workspaceId, 'agent')`
-  (`workspace-ai-provider.js:462`). Это — наш hook для будущего per-task
+  Purpose-aware API already exists: `resolveAIProvider(workspaceId, 'agent')`
+  (`workspace-ai-provider.js:462`). This is our hook for future per-task
   routing.
 - **AsyncLocalStorage:** `agent/ai-caller.js:17` — `runWithProvider(provider, fn)`
-  оборачивает весь pipeline. `callAI` берёт provider из context, иначе из
-  `options.provider`, иначе env fallback.
+  wraps entire pipeline. `callAI` takes provider from context, else from
+  `options.provider`, else env fallback.
 - **Transport:** `ai-service.callAI(messages, options, provider)` —
-  POST на `${baseUrl}/chat/completions` с `Bearer ${apiKey}` (AES-GCM
-  encryption для workspace, kill-switch для system AI). maxRetries=3
+  POST to `${baseUrl}/chat/completions` with `Bearer ${apiKey}` (AES-GCM
+  encryption for workspace, kill-switch for system AI). maxRetries=3
   (`ai-service.js:51`); per-step retry `STEP_RETRIES=3` (`agent-prompts.js:21`)
-  в `ai-caller.js:38`. timeout=180s по умолчанию, maxTokens=2048.
-- **Concurrency:** отсутствует. `dispatch-engine` использует Redis-атомики
-  (Lua quota, NX lease), но это для GPU scene-jobs, не для LLM. p-limit /
-  semaphore не подключены.
+  in `ai-caller.js:38`. timeout=180s default, maxTokens=2048.
+- **Concurrency:** absent. `dispatch-engine` uses Redis atomics
+  (Lua quota, NX lease), but for GPU scene-jobs, not LLM. p-limit /
+  semaphore not connected.
 
-### 1.4 Lifecycle в PG
+### 1.4 Lifecycle in PG
 
-| Таблица | Поля | Что нам даёт |
+| Table | Fields | What it gives us |
 |---|---|---|
-| `agent_sessions` | `session_id`, `book_id`, `status` (running/paused/completed/failed/cancelled), `progress_msg`, `window_data` | **уже подходит** для параллельного режима: один session = один run. |
-| `agent_steps` | `step_id`, `step_type` (whitelist с analyze_characters/analyze_locations/generate_voices), `status`, `result`, `error`, `started_at`, `finished_at` | **уже подходит** для per-task lifecycle. Step types для Parallel нужно расширить whitelist (`analyze_scenes` отсутствует). |
-| `agent_conversations` / `agent_messages` | prompt/response log per step | **переиспользуем без правок** для каждой sub-task. |
+| `agent_sessions` | `session_id`, `book_id`, `status` (running/paused/completed/failed/cancelled), `progress_msg`, `window_data` | **already suitable** for parallel mode: one session = one run. |
+| `agent_steps` | `step_id`, `step_type` (whitelist with analyze_characters/analyze_locations/generate_voices), `status`, `result`, `error`, `started_at`, `finished_at` | **already suitable** for per-task lifecycle. Step types for Parallel need whitelist extension (`analyze_scenes` missing). |
+| `agent_conversations` / `agent_messages` | prompt/response log per step | **reused without changes** for each sub-task. |
 
-Whitelist step_type сейчас:
+Whitelist step_type currently:
 `analyze_structure, analyze_characters, analyze_locations, create_scenes,
 enrich_scenes, create_units, create_visual_prompts,
 collect_character_candidates, resolve_character_mentions, generate_voices,
@@ -110,22 +110,22 @@ polish_storyboard, reconcile_passports, reconcile_video_actions,
 polish_video_actions, repair_fantasy_snakes`
 (`storage/postgres/schema.js:505`).
 
-Замечание: для текущего кода в `pipeline-steps.js` создание steps
-осуществляется через `createStep/completeStep/failStep`, но **большинство
-существующих step-функций НЕ вызывают `createStep`** — это исторически
-неполное покрытие. Можно использовать для будущего Parallel уже существующий
-API, расширив coverage.
+Note: for current code in `pipeline-steps.js` step creation
+happens via `createStep/completeStep/failStep`, but **most
+existing step functions DON'T call `createStep`** — historically
+incomplete coverage. Existing API can be used for future Parallel
+by extending coverage.
 
 ### 1.5 Cancellation flow
 
-Три уровня (`pipeline-runner.js:295`):
+Three levels (`pipeline-runner.js:295`):
 1. `isSessionCancelled(sessionId)` — session.status='cancelled'
-2. `isBookCancelled(bookId)` — любая сессия книги cancelled
+2. `isBookCancelled(bookId)` — any book session cancelled
 3. Redis `animastor:cancelled-workers:{bookId}` sismember 'vbook'
 
-Parallel orchestrator должен вызывать `checkCancelled()` между этапами и
-**между запуском каждой task** (на старте task — тоже чек; на завершении —
-ещё чек).
+Parallel orchestrator must call `checkCancelled()` between stages and
+**between launching each task** (check on task start too; on completion —
+another check).
 
 ### 1.6 Progress pub/sub
 
@@ -133,14 +133,14 @@ Parallel orchestrator должен вызывать `checkCancelled()` межд�
 `animastor:progress:{bookId}`. Frontend уже читает и рендерит
 `{ type: 'vbook', stage, message, scene_index, total_scenes, window_scene_index, window_total_scenes, … }`.
 
-Для Parallel нам достаточно добавить новое поле в payload, например
+For Parallel we just need to add new field to payload, e.g.
 `{ type: 'analysis', task: 'characters', status: 'running' | 'completed',
-total_tasks, completed_tasks }` — чтобы UI мог показать "2/4 tasks completed"
-без ломки существующего vbook-progress события.
+total_tasks, completed_tasks }` — so UI can show "2/4 tasks completed"
+without breaking existing vbook-progress event.
 
 ---
 
-## 2. Dependency Graph текущих analysis tasks
+## 2. Dependency Graph of current analysis tasks
 
 ```
 [text] ──┬──▶ stepAnalyzeStructure ──────▶ window_data.structure
@@ -149,77 +149,77 @@ total_tasks, completed_tasks }` — чтобы UI мог показать "2/4 t
          │                            │
          ├──▶ stepGenerateVoices ◀────┤  (voices depends on characters)
          │                            │
-         ├──▶ stepExtractLocations ◀──┤  (locations знает про character ids,
-         │                            │   но merge реально происходит в step 3)
+         ├──▶ stepExtractLocations ◀──┤  (locations knows about character ids,
+         │                            │   but merge actually happens in step 3)
          │                            │
          │   ┌────────────────────────┴────────────┐
          │   ▼                                     ▼
          │ stepCreateScenes ──▶ scenes[]     (per-window)
          │       │
          │       ▼
-         │ stepCreateUnits  ─▶ units[]  (per-scene, последовательно)
+         │ stepCreateUnits  ─▶ units[]  (per-scene, sequentially)
          │       │
          │       ▼
-         │ stepCreateVisuals ─▶ visualUnits[] (per-scene, последовательно)
+         │ stepCreateVisuals ─▶ visualUnits[] (per-scene, sequentially)
          │       │
          │       ▼
          │ stepReconcilePassports  ┐
-         │ stepReconcileVideoActions├─▶ все window-level, могут идти
-         │ stepPolishStoryboard    │   в любом порядке после visuals,
-         │ stepPolishVideoActions  ┘   но зависят друг от друга по данным
+         │ stepReconcileVideoActions├─▶ all window-level, can run
+         │ stepPolishStoryboard    │   in any order after visuals,
+         │ stepPolishVideoActions  ┘   but depend on each other for data
          │       │
          │       ▼
-         └─▶ stepRepairFantasyIds (финальный барьер)
+         └─▶ stepRepairFantasyIds (final barrier)
 ```
 
-### 2.1 Независимые ветки на входе
+### 2.1 Independent branches at input
 
-Три задачи, которые могут выполняться параллельно без потери качества
-(порядок сейчас: characters → voices → locations, но **нет зависимости по
-данным между ними** кроме того, что voices ожидает список персонажей):
+Three tasks that can run in parallel without quality loss
+(current order: characters → voices → locations, but **no data dependency
+between them** except voices expects character list):
 
 | Task | Input | Output |
 |---|---|---|
 | `extract_characters` | `text` | `characters[]`, `mentions{}` |
-| `generate_voices` | `text`, `characters[]` (от предыдущего шага) | `voices{}` override per character |
-| `extract_locations` | `text`, `characters[]` (id-list для ссылок) | `locations[]` |
-| `analyze_structure` | `text` (первые ~80 строк) | `structure` |
+| `generate_voices` | `text`, `characters[]` (from previous step) | `voices{}` override per character |
+| `extract_locations` | `text`, `characters[]` (id-list for references) | `locations[]` |
+| `analyze_structure` | `text` (first ~80 lines) | `structure` |
 
-Реальные технические зависимости:
+Real technical dependencies:
 
-- **characters → voices**: voices использует character_ids. Если опустить —
-  голоса не смогут ссылаться на персонажей. Но pipeline уже имеет
-  `mergeCharacterLists` (учитывает placeholder-skipping); практически шаги
-  можно запустить параллельно, если передать characters **как предварительный
-  список**, даже если он ещё обогащается параллельной задачей. Простое решение:
-  - characters финиширует → pipeline получает финальный набор.
-  - voices финиширует → мерджится поверх (override weak/generic voice).
-  - Альтернатива: voices стартует параллельно, используя черновой
-    placeholder-список (existing_chars), обогащает результат characters когда
-    тот придёт. Более сложная логика.
+- **characters → voices**: voices uses character_ids. If omitted —
+  voices can't reference characters. But pipeline already has
+  `mergeCharacterLists` (accounts for placeholder-skipping); practically steps
+  can run in parallel if characters passed **as preliminary
+  list**, even if still being enriched by parallel task. Simple solution:
+  - characters finishes → pipeline gets final set.
+  - voices finishes → merges on top (override weak/generic voice).
+  - Alternative: voices starts in parallel, using rough
+    placeholder list (existing_chars), enriches characters result when
+    it arrives. More complex logic.
 
-- **locations → scenes**: scenes нужен и `characters[]`, и `locations[]`. Это
-  жёсткая зависимость. Поэтому scenes — sequential **после** параллельной
-  тройки.
+- **locations → scenes**: scenes needs both `characters[]` and `locations[]`. This is
+  hard dependency. Therefore scenes — sequential **after** parallel
+  trio.
 
-### 2.2 Per-scene зависимости (внутри окна)
+### 2.2 Per-scene dependencies (within window)
 
-Создание units и visuals сейчас строго последовательно по сценам. Это даёт
-стабильные `scene_index/unit_index` для reconciliation. Parallelism per-scene
-внутри одного окна — отдельная задача, **выходит за рамки текущего recon**.
+Unit and visual creation currently strictly sequential across scenes. This gives
+stable `scene_index/unit_index` for reconciliation. Per-scene parallelism
+within single window — separate task, **outside current recon scope**.
 
 ### 2.3 Post-processing (window-level)
 
-Все 4-5 постпроцессинговых шагов работают на финальном наборе
-`enrichedScenes`. Они независимы по входу, но:
-- `ReconcilePassports` пишет `image.prompt`, потом
-- `ReconcileVideoActions` пишет `video.action`,
-- `PolishStoryboard` снова трогает `image.prompt`,
-- `PolishVideoActions` снова трогает `video.action`,
-- `stepRepairFantasyIds` — финальный барьер.
+All 4-5 post-processing steps work on final
+`enrichedScenes` set. They are input-independent, but:
+- `ReconcilePassports` writes `image.prompt`, then
+- `ReconcileVideoActions` writes `video.action`,
+- `PolishStoryboard` touches `image.prompt` again,
+- `PolishVideoActions` touches `video.action` again,
+- `stepRepairFantasyIds` — final barrier.
 
-Порядок важен: image-шаги → video-шаги → repair. Этот уровень лучше
-оставить Sequential в первой итерации. **За рамками recon.**
+Order matters: image steps → video steps → repair. This level better
+kept Sequential in first iteration. **Outside recon scope.**
 
 ---
 
