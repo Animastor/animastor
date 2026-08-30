@@ -117,6 +117,17 @@ data class SetupInstructionsEnv(
     val template_block: String? = null
 )
 
+/** Installer artifact metadata for the install step UI (bootstrap flow):
+ *  version is the primary UX line; the sha256 belongs in a collapsed block
+ *  (shown once). download_url is the profile-embedded bootstrap script
+ *  (managed/existing) or the installer bundle (isolated). */
+data class SetupInstructionsInstaller(
+    val version: String? = null,
+    val sha256: String? = null,
+    val status: String? = null,
+    val download_url: String? = null
+)
+
 data class SetupWorkerKeyPolicy(
     val disclosed_once: Boolean = true,
     val disclosed_by: String? = null,
@@ -131,7 +142,12 @@ data class SetupInstructions(
     val profile_ids: List<String> = emptyList(),
     val steps: List<SetupInstructionStep> = emptyList(),
     val env: SetupInstructionsEnv? = null,
-    val worker_key_policy: SetupWorkerKeyPolicy? = null
+    val worker_key_policy: SetupWorkerKeyPolicy? = null,
+    /** Bootstrap installer metadata — null when the installer is unavailable. */
+    val installer: SetupInstructionsInstaller? = null,
+    /** Optional terminal diagnostics (e.g. $HOME/animastor/tools/status.sh).
+     *  Never a required step: the page itself shows the worker status. */
+    val verify_command: String? = null
 )
 
 /** Extended worker status model (adapter over ONLINE/OFFLINE/REVOKED). */

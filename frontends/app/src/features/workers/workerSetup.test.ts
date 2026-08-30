@@ -7,7 +7,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchSetupProfiles, fetchSetupMethods, fetchSetupWorkflows,
   fetchSetupInstructions,
-  resolveArtifactUrl, groupProfilesByType, platformOptions, pickMethod,
+  resolveArtifactUrl, installerDownloadUrl, installerVersion, installerSha256,
+  groupProfilesByType, platformOptions, pickMethod,
   platformSelectable, linuxModeAvailability,
   setupStatusKey, setupStatusClass,
   initialWizardState, canGoNext, nextStep, prevStep,
@@ -340,11 +341,20 @@ describe('security — worker key', () => {
 // ── Instructions localization mapping ───────────────────────────────────────
 
 describe('instruction step mapping', () => {
-  it('known step ids map to i18n keys; unknown ids fall back to API text', () => {
-    expect(stepTitleKey('download-installer')).toBe('worker_setup_step_download_title');
-    expect(stepBodyKey('run-installer')).toBe('worker_setup_step_run_body');
+  it('bootstrap flow steps map to i18n keys; unknown ids fall back to API text', () => {
+    expect(stepTitleKey('download-bootstrap')).toBe('worker_setup_step_download_bootstrap_title');
+    expect(stepBodyKey('run-bootstrap')).toBe('worker_setup_step_run_bootstrap_body');
+    expect(stepTitleKey('verify')).toBe('worker_setup_step_verify_title');
     expect(stepTitleKey('some-future-step')).toBeNull();
     expect(stepBodyKey('some-future-step')).toBeNull();
+  });
+
+  it('no create-worker step — the worker is ALWAYS created before instructions are shown', () => {
+    expect(stepTitleKey('create-worker')).toBeNull();
+    expect(stepBodyKey('create-worker')).toBeNull();
+    // legacy tarball step ids are gone too (superseded by the bootstrap flow)
+    expect(stepTitleKey('download-installer')).toBeNull();
+    expect(stepBodyKey('run-installer')).toBeNull();
   });
 
   it('bundle-based existing flow + degraded states have localized mappings', () => {
@@ -355,6 +365,61 @@ describe('instruction step mapping', () => {
     expect(stepTitleKey('download-bundle')).toBe('worker_setup_step_download_bundle_title');
     expect(stepBodyKey('start-worker')).toBe('worker_setup_step_start_worker_body');
     expect(stepTitleKey('installer-unavailable')).toBe('worker_setup_step_installer_unavailable_title');
+  });
+});
+
+// ── Installer artifact metadata (bootstrap contract) ────────────────────────
+
+describe('installer artifact metadata', () => {
+  const bootstrapInstructions = {
+    platform: 'linux' as const,
+    mode: 'managed' as const,
+    profile_ids: ['image/qwen-image'],
+    steps: [],
+    env: { required: [], template_block: '' },
+    worker_key_policy: { disclosed_once: true, disclosed_by: [] },
+    installer: {
+      version: '1.2.3',
+      sha256: 'b'.repeat(64),
+      status: 'available',
+      download_url: 'https://animastor.in/gpu/installer?profile=image%2Fqwen-image&mode=managed',
+    },
+    verify_command: '$HOME/animastor/tools/status.sh',
+  } as import('./workerSetup').SetupInstructions;
+
+  it('instructions.installer wins over the generic method artifact', () => {
+    const m = method('linux', true, '0.9.0');
+    expect(installerDownloadUrl(bootstrapInstructions, m)).toContain('profile=image%2Fqwen-image');
+    expect(installerVersion(bootstrapInstructions, m)).toBe('1.2.3');
+    expect(installerSha256(bootstrapInstructions, m)).toBe('b'.repeat(64));
+  });
+
+  it('falls back to the method artifact while instructions are loading', () => {
+    const m = method('linux', true, '0.9.0');
+    expect(installerDownloadUrl(null, m)).toBe('/gpu/installer');
+    expect(installerVersion(null, m)).toBe('0.9.0');
+    expect(installerSha256(null, m)).toBe('a'.repeat(64));
+  });
+
+  it('degraded contract (installer null) + unavailable method → no fake link', () => {
+    const degraded = { ...bootstrapInstructions, installer: null, verify_command: null };
+    const down = method('linux', false, null, false);
+    expect(installerDownloadUrl(degraded, down)).toBeNull();
+    expect(installerVersion(degraded, down)).toBeNull();
+    expect(installerSha256(degraded, down)).toBeNull();
+    expect(resolveArtifactUrl(installerDownloadUrl(degraded, down))).toBeNull();
+  });
+
+  it('profile/mode are embedded in the bootstrap URL — user types nothing', () => {
+    const url = installerDownloadUrl(bootstrapInstructions, null)!;
+    expect(url).toContain('profile=image%2Fqwen-image');
+    expect(url).toContain('mode=managed');
+  });
+
+  it('verify_command is optional terminal diagnostics — never a required step', () => {
+    expect(bootstrapInstructions.verify_command).toBe('$HOME/animastor/tools/status.sh');
+    const without = { ...bootstrapInstructions, verify_command: null };
+    expect(without.verify_command).toBeNull();
   });
 });
 

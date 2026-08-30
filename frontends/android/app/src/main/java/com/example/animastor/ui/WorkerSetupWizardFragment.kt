@@ -640,21 +640,37 @@ class WorkerSetupWizardFragment : Fragment() {
         }
         hintView(b, getString(R.string.worker_setup_key_installer_note)).apply { setPadding(0, dp(6), 0, 0) }
 
-        // Installer artifact — version/URL/SHA all from the contract.
-        val installer = method?.installer
-        val installerUrl = WorkerSetupHelpers.resolveArtifactUrl(installer?.download_url, BuildConfig.BASE_URL)
+        // Installer artifact — the instructions contract carries the
+        // profile-embedded bootstrap script URL (it always wins over the
+        // generic method artifact, a fallback for the loading state).
+        // Version prominent; SHA-256 in a collapsed block (shown once).
+        val instructionsVal = instructions
+        val installerUrl = WorkerSetupHelpers.resolveArtifactUrl(
+            WorkerSetupHelpers.installerDownloadUrl(instructionsVal, method), BuildConfig.BASE_URL)
+        val installerVersionStr = WorkerSetupHelpers.installerVersion(instructionsVal, method)
+        val installerSha = WorkerSetupHelpers.installerSha256(instructionsVal, method)
         stepLabel(b, getString(R.string.worker_setup_installer_title))
-        if (installer != null && installer.available && installerUrl != null) {
-            val meta = buildString {
-                append(getString(R.string.worker_setup_version_fmt, installer.version ?: "\u2014"))
-                if (installer.sha256 != null) append(" \u00B7 SHA-256: ${installer.sha256.take(12)}\u2026")
-            }
-            hintView(b, meta)
+        if (installerUrl != null) {
+            hintView(b, if (installerVersionStr != null)
+                getString(R.string.worker_setup_installer_version_line, installerVersionStr)
+            else getString(R.string.worker_setup_version_fmt, "\u2014"))
             MaterialButton(ctx).apply {
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(42)).apply { topMargin = dp(6) }
                 text = getString(R.string.worker_setup_download_installer)
                 setOnClickListener { openDownload(installerUrl) }
                 b.addView(this)
+            }
+            if (installerSha != null) {
+                collapsibleBlock(b, getString(R.string.worker_setup_checksum)) { inner ->
+                    TextView(ctx).apply {
+                        text = installerSha
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                        setTypeface(Typeface.MONOSPACE)
+                        setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+                        setPadding(0, dp(4), 0, 0)
+                        inner.addView(this)
+                    }
+                }
             }
         } else {
             val bundle = method?.worker_bundle
@@ -668,7 +684,7 @@ class WorkerSetupWizardFragment : Fragment() {
         // Existing ComfyUI flow; otherwise a note (installer provisions it).
         val bundle = method?.worker_bundle
         val bundleUrl = WorkerSetupHelpers.resolveArtifactUrl(bundle?.download_url, BuildConfig.BASE_URL)
-        val bundlePrimary = WorkerSetupHelpers.bundleIsPrimaryArtifact(mode, installer, bundle)
+        val bundlePrimary = WorkerSetupHelpers.bundleIsPrimaryArtifact(mode, method?.installer, bundle)
         if (bundle != null && bundle.available && bundleUrl != null && bundlePrimary) {
             stepLabel(b, getString(R.string.worker_setup_bundle_title))
             val meta = buildString {
@@ -686,13 +702,15 @@ class WorkerSetupWizardFragment : Fragment() {
             hintView(b, getString(R.string.worker_setup_bundle_note, bundle.version)).apply { setPadding(0, dp(8), 0, 0) }
         }
 
-        // Baseline workflows — editable starting points (Phase 3.1 §17).
+        // Baseline workflows — OPTIONAL artifacts (never a runtime dependency):
+        // the installer fetches the profile's workflows itself; these downloads
+        // exist only for manual experiments in the ComfyUI editor.
         stepLabel(b, getString(R.string.worker_setup_workflows_title))
         val wfs = workflows
         if (wfs == null) {
             hintView(b, getString(R.string.play_loading))
         } else if (wfs.isEmpty()) {
-            hintView(b, "\u2014")
+            hintView(b, getString(R.string.worker_setup_workflow_none))
         } else {
             for (wf in wfs) {
                 val url = WorkerSetupHelpers.resolveArtifactUrl(wf.download_url, BuildConfig.BASE_URL)
@@ -727,14 +745,13 @@ class WorkerSetupWizardFragment : Fragment() {
                 }
                 b.addView(row)
             }
-            hintView(b, getString(R.string.worker_setup_workflow_editable))
+            hintView(b, getString(R.string.worker_setup_workflow_optional))
         }
 
         // Instructions — generated from API metadata (Phase 3.1 §15).
         stepLabel(b, getString(R.string.worker_setup_instructions_title))
-        val ins = instructions
-        if (ins != null) {
-            ins.steps.forEachIndexed { i, s ->
+        if (instructionsVal != null) {
+            instructionsVal.steps.forEachIndexed { i, s ->
                 val title = WorkerSetupHelpers.stepTitleKey(s.id)?.let { stringResForStepKey(it) }?.let { getString(it) }
                     ?: s.title ?: ""
                 val body = WorkerSetupHelpers.stepBodyKey(s.id)?.let { stringResForStepKey(it) }?.let { getString(it) }
@@ -753,17 +770,30 @@ class WorkerSetupWizardFragment : Fragment() {
                         (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(6)
                     }
                 }
-                s.checksum?.let { cs ->
-                    cs.value?.let { value ->
+                // Checksum — collapsed by default (web parity: <details>).
+                val cs = s.checksum
+                val csValue = cs?.value
+                if (csValue != null) {
+                    collapsibleBlock(b, "${getString(R.string.worker_setup_checksum)}: ${csValue.take(12)}\u2026") { inner ->
                         TextView(ctx).apply {
-                            text = "${getString(R.string.worker_setup_checksum)}: $value"
+                            text = csValue
                             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                             setTypeface(Typeface.MONOSPACE)
                             setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
                             setPadding(0, dp(4), 0, 0)
-                            b.addView(this)
+                            inner.addView(this)
+                        }
+                        cs.verify_code?.let { verify ->
+                            codeBlock(inner, verify)
                         }
                     }
+                }
+            }
+            // Optional terminal diagnostics — never a required step: the page
+            // itself shows the worker status (ONLINE after the first heartbeat).
+            instructionsVal.verify_command?.let { cmd ->
+                collapsibleBlock(b, getString(R.string.worker_setup_verify_command_label)) { inner ->
+                    codeBlock(inner, cmd)
                 }
             }
         } else if (instructionsFailed) {
@@ -774,6 +804,37 @@ class WorkerSetupWizardFragment : Fragment() {
         }
 
         hintView(b, getString(R.string.worker_setup_verify_hint)).apply { setPadding(0, dp(12), 0, 0) }
+    }
+
+    /** Collapsed "summary ▸" row + expandable content (web parity: <details>).
+     *  Tapping the summary toggles the content visibility; starts collapsed. */
+    private fun collapsibleBlock(b: LinearLayout, summary: String, content: (LinearLayout) -> Unit) {
+        val ctx = requireContext()
+        val contentBox = LinearLayout(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(6) }
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        content(contentBox)
+        val toggle = TextView(ctx).apply {
+            text = "▸ $summary"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+            setPadding(0, dp(6), 0, 0)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                val open = contentBox.visibility == View.GONE
+                contentBox.visibility = if (open) View.VISIBLE else View.GONE
+                text = "${if (open) "▾" else "▸"} $summary"
+            }
+            b.addView(this)
+        }
+        b.addView(contentBox)
+        // keep a reference so lint does not complain about the unused binding
+        toggle.isActivated = false
     }
 
     private fun renderLegacyInstructions(b: LinearLayout, token: String, worker: PrivateWorker) {
@@ -797,12 +858,12 @@ class WorkerSetupWizardFragment : Fragment() {
     }
 
     private fun stringResForStepKey(key: String): Int = when (key) {
-        "worker_setup_step_create_worker_title" -> R.string.worker_setup_step_create_worker_title
-        "worker_setup_step_create_worker_body" -> R.string.worker_setup_step_create_worker_body
         "worker_setup_step_prereq_title" -> R.string.worker_setup_step_prereq_title
         "worker_setup_step_prereq_body" -> R.string.worker_setup_step_prereq_body
-        "worker_setup_step_download_title" -> R.string.worker_setup_step_download_title
-        "worker_setup_step_download_body" -> R.string.worker_setup_step_download_body
+        "worker_setup_step_download_bootstrap_title" -> R.string.worker_setup_step_download_bootstrap_title
+        "worker_setup_step_download_bootstrap_body" -> R.string.worker_setup_step_download_bootstrap_body
+        "worker_setup_step_run_bootstrap_title" -> R.string.worker_setup_step_run_bootstrap_title
+        "worker_setup_step_run_bootstrap_body" -> R.string.worker_setup_step_run_bootstrap_body
         "worker_setup_step_download_bundle_title" -> R.string.worker_setup_step_download_bundle_title
         "worker_setup_step_download_bundle_body" -> R.string.worker_setup_step_download_bundle_body
         "worker_setup_step_unpack_bundle_title" -> R.string.worker_setup_step_unpack_bundle_title
@@ -811,8 +872,6 @@ class WorkerSetupWizardFragment : Fragment() {
         "worker_setup_step_configure_worker_body" -> R.string.worker_setup_step_configure_worker_body
         "worker_setup_step_start_worker_title" -> R.string.worker_setup_step_start_worker_title
         "worker_setup_step_start_worker_body" -> R.string.worker_setup_step_start_worker_body
-        "worker_setup_step_run_title" -> R.string.worker_setup_step_run_title
-        "worker_setup_step_run_body" -> R.string.worker_setup_step_run_body
         "worker_setup_step_verify_title" -> R.string.worker_setup_step_verify_title
         "worker_setup_step_verify_body" -> R.string.worker_setup_step_verify_body
         "worker_setup_step_installer_unavailable_title" -> R.string.worker_setup_step_installer_unavailable_title

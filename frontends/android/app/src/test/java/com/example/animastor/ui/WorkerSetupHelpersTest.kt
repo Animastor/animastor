@@ -1,6 +1,8 @@
 package com.example.animastor.ui
 
 import com.example.animastor.repository.SetupArtifactInfo
+import com.example.animastor.repository.SetupInstructions
+import com.example.animastor.repository.SetupInstructionsInstaller
 import com.example.animastor.repository.SetupMethod
 import com.example.animastor.repository.SetupProfile
 import com.example.animastor.ui.WorkerSetupHelpers.WizardStep
@@ -281,11 +283,60 @@ class WorkerSetupHelpersTest {
     // ── Instruction step mapping ─────────────────────────────────────────
 
     @Test
-    fun instructionSteps_knownIdsMapToI18nKeysUnknownFallBack() {
-        assertEquals("worker_setup_step_download_title", WorkerSetupHelpers.stepTitleKey("download-installer"))
-        assertEquals("worker_setup_step_run_body", WorkerSetupHelpers.stepBodyKey("run-installer"))
+    fun instructionSteps_bootstrapIdsMapToI18nKeysUnknownFallBack() {
+        assertEquals("worker_setup_step_download_bootstrap_title", WorkerSetupHelpers.stepTitleKey("download-bootstrap"))
+        assertEquals("worker_setup_step_run_bootstrap_body", WorkerSetupHelpers.stepBodyKey("run-bootstrap"))
         assertNull(WorkerSetupHelpers.stepTitleKey("some-future-step"))
         assertNull(WorkerSetupHelpers.stepBodyKey("some-future-step"))
+    }
+
+    @Test
+    fun instructionSteps_noCreateWorkerStep_workerCreatedBeforeInstructions() {
+        assertNull(WorkerSetupHelpers.stepTitleKey("create-worker"))
+        assertNull(WorkerSetupHelpers.stepBodyKey("create-worker"))
+        // legacy tarball step ids are gone (superseded by the bootstrap flow)
+        assertNull(WorkerSetupHelpers.stepTitleKey("download-installer"))
+        assertNull(WorkerSetupHelpers.stepBodyKey("run-installer"))
+    }
+
+    @Test
+    fun installerMetadata_instructionsContractWinsOverMethodArtifact() {
+        val m = method("linux", true, "0.9.0")
+        val bootstrap = SetupInstructions(
+            platform = "linux", mode = "managed",
+            installer = SetupInstructionsInstaller(
+                version = "1.2.3", sha256 = "b".repeat(64), status = "available",
+                download_url = "https://animastor.in/gpu/installer?profile=image%2Fqwen-image&mode=managed"
+            ),
+            verify_command = "\$HOME/animastor/tools/status.sh"
+        )
+        // instructions.installer wins (profile-embedded bootstrap)
+        assertEquals("https://animastor.in/gpu/installer?profile=image%2Fqwen-image&mode=managed",
+            WorkerSetupHelpers.installerDownloadUrl(bootstrap, m))
+        assertEquals("1.2.3", WorkerSetupHelpers.installerVersion(bootstrap, m))
+        assertEquals("b".repeat(64), WorkerSetupHelpers.installerSha256(bootstrap, m))
+        // fallback while instructions are loading
+        assertEquals("/gpu/installer", WorkerSetupHelpers.installerDownloadUrl(null, m))
+        assertEquals("0.9.0", WorkerSetupHelpers.installerVersion(null, m))
+        // degraded contract + unavailable method → no fake link
+        val degraded = bootstrap.copy(installer = null, verify_command = null)
+        val down = method("linux", false, null)
+        assertNull(WorkerSetupHelpers.installerDownloadUrl(degraded, down))
+        assertNull(WorkerSetupHelpers.installerVersion(degraded, down))
+        assertNull(WorkerSetupHelpers.installerSha256(degraded, down))
+        assertNull(WorkerSetupHelpers.resolveArtifactUrl(
+            WorkerSetupHelpers.installerDownloadUrl(degraded, down), "https://app.example"))
+    }
+
+    @Test
+    fun installerMetadata_profileAndModeEmbedded_userTypesNothing() {
+        val url = WorkerSetupHelpers.installerDownloadUrl(
+            SetupInstructions(installer = SetupInstructionsInstaller(
+                version = "1.0.0", sha256 = null, status = "available",
+                download_url = "https://x/gpu/installer?profile=image%2Fqwen-image&mode=managed")),
+            null)!!
+        assertTrue(url.contains("profile=image%2Fqwen-image"))
+        assertTrue(url.contains("mode=managed"))
     }
 
     @Test

@@ -74,8 +74,19 @@ export interface SetupInstructionStep {
   title: string;
   body: string;
   code?: string | null;
-  checksum?: { algorithm: string; value: string } | null;
+  checksum?: { algorithm: string; value: string; verify_code?: string | null } | null;
   requirements?: Record<string, string> | null;
+}
+
+/** Installer artifact metadata for the install step UI (bootstrap flow):
+ *  version is the primary UX line; the sha256 belongs in a collapsed
+ *  block (shown once). download_url is the profile-embedded bootstrap
+ *  script (managed/existing) or the installer bundle (isolated). */
+export interface SetupInstallerInfo {
+  version: string | null;
+  sha256: string | null;
+  status: string;
+  download_url: string | null;
 }
 
 export interface SetupInstructions {
@@ -85,6 +96,11 @@ export interface SetupInstructions {
   steps: SetupInstructionStep[];
   env: { required: string[]; template_block: string };
   worker_key_policy: { disclosed_once: boolean; disclosed_by: string[] };
+  /** Bootstrap installer metadata — null when the installer is unavailable. */
+  installer?: SetupInstallerInfo | null;
+  /** Optional terminal diagnostics (e.g. $HOME/animastor/tools/status.sh).
+   *  Never a required step: the page itself shows the worker status. */
+  verify_command?: string | null;
 }
 
 export interface SetupWorkerDetail {
@@ -153,6 +169,28 @@ export function resolveArtifactUrl(downloadUrl: string | null, origin?: string):
   const base = origin ?? (typeof location !== 'undefined' ? location.origin : '');
   if (!base) return downloadUrl;
   return `${base.replace(/\/$/, '')}${downloadUrl.startsWith('/') ? '' : '/'}${downloadUrl}`;
+}
+
+/** Primary installer download for the install step. The Setup Contract
+ *  instructions carry the profile-embedded bootstrap script URL (managed/
+ *  existing) or the installer bundle (isolated) — it always wins over the
+ *  generic method artifact, which is a fallback for the loading state. */
+export function installerDownloadUrl(instructions: SetupInstructions | null, method: SetupMethod | null): string | null {
+  const fromInstructions = instructions?.installer?.download_url ?? null;
+  if (fromInstructions) return fromInstructions;
+  return method?.installer?.download_url ?? null;
+}
+
+/** Installer version shown prominently in the install step (same precedence
+ *  as [installerDownloadUrl]). */
+export function installerVersion(instructions: SetupInstructions | null, method: SetupMethod | null): string | null {
+  return instructions?.installer?.version ?? method?.installer?.version ?? null;
+}
+
+/** Installer SHA-256 — rendered in a collapsed block, shown once
+ *  (same precedence as [installerDownloadUrl]). */
+export function installerSha256(instructions: SetupInstructions | null, method: SetupMethod | null): string | null {
+  return instructions?.installer?.sha256 ?? method?.installer?.sha256 ?? null;
 }
 
 /** Group profiles for the Setup Center cards: one card per worker type,
@@ -299,17 +337,18 @@ export function prevStep(state: WizardState): WizardStep | null {
 
 /** Instruction step id → localized title/body i18n keys. Unknown ids fall
  *  back to the API-provided text (future-proof). Commands/checksums are
- *  ALWAYS rendered verbatim from the API — never hardcoded in the UI. */
+ *  ALWAYS rendered verbatim from the API — never hardcoded in the UI.
+ *  The worker is ALWAYS created before instructions are shown (wizard
+ *  'create' step) — there is no 'create-worker' instruction step. */
 export function stepTitleKey(id: string): string | null {
   const map: Record<string, string> = {
-    'create-worker': 'worker_setup_step_create_worker_title',
     'prerequisites': 'worker_setup_step_prereq_title',
-    'download-installer': 'worker_setup_step_download_title',
+    'download-bootstrap': 'worker_setup_step_download_bootstrap_title',
+    'run-bootstrap': 'worker_setup_step_run_bootstrap_title',
     'download-bundle': 'worker_setup_step_download_bundle_title',
     'unpack-bundle': 'worker_setup_step_unpack_bundle_title',
     'configure-worker': 'worker_setup_step_configure_worker_title',
     'start-worker': 'worker_setup_step_start_worker_title',
-    'run-installer': 'worker_setup_step_run_title',
     'verify': 'worker_setup_step_verify_title',
     'installer-unavailable': 'worker_setup_step_installer_unavailable_title',
     'platform-planned': 'worker_setup_step_planned_title',
@@ -319,14 +358,13 @@ export function stepTitleKey(id: string): string | null {
 
 export function stepBodyKey(id: string): string | null {
   const map: Record<string, string> = {
-    'create-worker': 'worker_setup_step_create_worker_body',
     'prerequisites': 'worker_setup_step_prereq_body',
-    'download-installer': 'worker_setup_step_download_body',
+    'download-bootstrap': 'worker_setup_step_download_bootstrap_body',
+    'run-bootstrap': 'worker_setup_step_run_bootstrap_body',
     'download-bundle': 'worker_setup_step_download_bundle_body',
     'unpack-bundle': 'worker_setup_step_unpack_bundle_body',
     'configure-worker': 'worker_setup_step_configure_worker_body',
     'start-worker': 'worker_setup_step_start_worker_body',
-    'run-installer': 'worker_setup_step_run_body',
     'verify': 'worker_setup_step_verify_body',
     'installer-unavailable': 'worker_setup_step_installer_unavailable_body',
     'platform-planned': 'worker_setup_step_planned_body',

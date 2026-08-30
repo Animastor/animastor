@@ -27,7 +27,8 @@ import {
   type SetupWorkerDetail, type WizardState,
   fetchSetupProfiles, fetchSetupMethods, fetchSetupWorkflows,
   fetchSetupInstructions, fetchSetupWorkerStatus,
-  resolveArtifactUrl, groupProfilesByType, platformOptions, pickMethod,
+  resolveArtifactUrl, installerDownloadUrl, installerVersion, installerSha256,
+  groupProfilesByType, platformOptions, pickMethod,
   platformSelectable, linuxModeAvailability,
   setupStatusKey, setupStatusClass, initialWizardState, canGoNext,
   nextStep, prevStep, stepTitleKey, stepBodyKey, formatDiskBudget,
@@ -503,8 +504,11 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Install step: one-time Worker Key + installer artifact + workflows +
-// API-driven instructions. Versions/URLs/checksums all come from the API.
+// Install step: one-time Worker Key + profile-embedded bootstrap installer
+// + workflows + API-driven instructions. Versions/URLs/checksums all come
+// from the Setup Contract; the profile/mode are already embedded in the
+// bootstrap — nothing is typed. The worker is ALWAYS created before this
+// step (wizard 'create') — there is no "create a worker" instruction.
 // ─────────────────────────────────────────────────────────────────────────
 function InstallStep({ created, method, mode, workflows, instructions, instructionsFailed, copied, onCopyKey }: {
   created: { token: string; worker: PrivateWorker };
@@ -516,12 +520,16 @@ function InstallStep({ created, method, mode, workflows, instructions, instructi
   copied: boolean;
   onCopyKey: () => void;
 }) {
-  const installer = method?.installer ?? null;
-  const installerUrl = resolveArtifactUrl(installer?.download_url ?? null);
+  // The instructions contract carries the profile-embedded bootstrap URL —
+  // the canonical download; the generic method artifact is only a fallback
+  // for the loading state.
+  const installerUrl = resolveArtifactUrl(installerDownloadUrl(instructions, method));
+  const installerVersionStr = installerVersion(instructions, method);
+  const installerSha = installerSha256(instructions, method);
   const bundle = method?.worker_bundle ?? null;
   const bundleUrl = resolveArtifactUrl(bundle?.download_url ?? null);
   // Existing ComfyUI without the installer: the runtime bundle is THE artifact.
-  const bundlePrimary = mode === 'existing' && !!bundle?.available && !(installer && installer.available);
+  const bundlePrimary = mode === 'existing' && !!bundle?.available && !installerUrl;
 
   return (
     <div class="setup__step setup__install">
@@ -536,17 +544,22 @@ function InstallStep({ created, method, mode, workflows, instructions, instructi
       </div>
       <p class="card__hint card__hint--wrap">{t('worker_setup_key_installer_note')}</p>
 
-      {/* Installer artifact — single artifact, version from the contract */}
+      {/* Bootstrap installer — version prominent, checksum collapsed (once) */}
       <p class="card__label">{t('worker_setup_installer_title')}</p>
-      {installer && installer.available && installerUrl ? (
+      {installerUrl ? (
         <div class="setup__artifact">
           <span class="setup__artifact-meta">
-            {tf('worker_setup_version_fmt', installer.version ?? '—')}
-            {installer.sha256 ? ` · SHA-256: ${installer.sha256.slice(0, 12)}…` : ''}
+            {installerVersionStr ? tf('worker_setup_installer_version_line', installerVersionStr) : tf('worker_setup_version_fmt', '—')}
           </span>
           <a class="btn" href={installerUrl} download>
             {t('worker_setup_download_installer')}
           </a>
+          {installerSha && (
+            <details class="setup__checksum-details">
+              <summary>{t('worker_setup_checksum')}</summary>
+              <code class="setup__checksum-value">{installerSha}</code>
+            </details>
+          )}
         </div>
       ) : (
         <p class="card__hint card__hint--wrap">
@@ -573,12 +586,14 @@ function InstallStep({ created, method, mode, workflows, instructions, instructi
         <p class="card__hint card__hint--wrap">{tf('worker_setup_bundle_note', bundle.version)}</p>
       ) : null}
 
-      {/* Baseline workflows — editable starting points (Phase 3.1 §17) */}
+      {/* Baseline workflows — OPTIONAL artifacts (never a runtime dependency):
+          the installer fetches the profile's workflows itself; these downloads
+          exist only for manual experiments in the ComfyUI editor. */}
       <p class="card__label">{t('worker_setup_workflows_title')}</p>
       {workflows === null ? (
         <p class="card__hint">{t('play_loading')}</p>
       ) : workflows.length === 0 ? (
-        <p class="card__hint">—</p>
+        <p class="card__hint card__hint--wrap">{t('worker_setup_workflow_none')}</p>
       ) : (
         <div class="setup__workflows">
           {workflows.map((wf) => {
@@ -596,7 +611,7 @@ function InstallStep({ created, method, mode, workflows, instructions, instructi
               </div>
             );
           })}
-          <p class="card__hint card__hint--wrap">{t('worker_setup_workflow_editable')}</p>
+          <p class="card__hint card__hint--wrap">{t('worker_setup_workflow_optional')}</p>
         </div>
       )}
 
@@ -610,9 +625,11 @@ function InstallStep({ created, method, mode, workflows, instructions, instructi
               <div>{t((stepBodyKey(s.id) ?? '') as StrKey, s.body)}</div>
               {s.code && <pre class="settings__debug worker__env">{s.code}</pre>}
               {s.checksum && (
-                <div class="setup__checksum">
-                  {t('worker_setup_checksum')}: <code>{s.checksum.value}</code>
-                </div>
+                <details class="setup__checksum-details">
+                  <summary>{t('worker_setup_checksum')}: <code>{s.checksum.value.slice(0, 12)}…</code></summary>
+                  <code class="setup__checksum-value">{s.checksum.value}</code>
+                  {s.checksum.verify_code && <pre class="settings__debug worker__env">{s.checksum.verify_code}</pre>}
+                </details>
               )}
             </li>
           ))}
@@ -622,6 +639,15 @@ function InstallStep({ created, method, mode, workflows, instructions, instructi
         <LegacyInstructions token={created.token} worker={created.worker} />
       ) : (
         <p class="card__hint">{t('play_loading')}</p>
+      )}
+
+      {/* Optional terminal diagnostics — never a required step: the page
+          itself shows the worker status (ONLINE after the first heartbeat). */}
+      {instructions?.verify_command && (
+        <details class="setup__checksum-details">
+          <summary>{t('worker_setup_verify_command_label')}</summary>
+          <pre class="settings__debug worker__env">{instructions.verify_command}</pre>
+        </details>
       )}
 
       <p class="card__hint card__hint--wrap">{t('worker_setup_verify_hint')}</p>

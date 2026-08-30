@@ -1,6 +1,7 @@
 package com.example.animastor.ui
 
 import com.example.animastor.repository.SetupArtifactInfo
+import com.example.animastor.repository.SetupInstructions
 import com.example.animastor.repository.SetupMethod
 import com.example.animastor.repository.SetupProfile
 
@@ -190,16 +191,17 @@ object WorkerSetupHelpers {
 
     /** Instruction step id → localized title i18n key. Unknown ids ⇒ null
      *  (the UI falls back to the API-provided text — future-proof).
-     *  Commands/checksums are ALWAYS rendered verbatim from the API. */
+     *  Commands/checksums are ALWAYS rendered verbatim from the API.
+     *  The worker is ALWAYS created before instructions are shown (wizard
+     *  CREATE step) — there is no 'create-worker' instruction step. */
     fun stepTitleKey(id: String?): String? = when (id) {
-        "create-worker" -> "worker_setup_step_create_worker_title"
         "prerequisites" -> "worker_setup_step_prereq_title"
-        "download-installer" -> "worker_setup_step_download_title"
+        "download-bootstrap" -> "worker_setup_step_download_bootstrap_title"
+        "run-bootstrap" -> "worker_setup_step_run_bootstrap_title"
         "download-bundle" -> "worker_setup_step_download_bundle_title"
         "unpack-bundle" -> "worker_setup_step_unpack_bundle_title"
         "configure-worker" -> "worker_setup_step_configure_worker_title"
         "start-worker" -> "worker_setup_step_start_worker_title"
-        "run-installer" -> "worker_setup_step_run_title"
         "verify" -> "worker_setup_step_verify_title"
         "installer-unavailable" -> "worker_setup_step_installer_unavailable_title"
         "platform-planned" -> "worker_setup_step_planned_title"
@@ -208,14 +210,13 @@ object WorkerSetupHelpers {
 
     /** Instruction step id → localized body i18n key (see [stepTitleKey]). */
     fun stepBodyKey(id: String?): String? = when (id) {
-        "create-worker" -> "worker_setup_step_create_worker_body"
         "prerequisites" -> "worker_setup_step_prereq_body"
-        "download-installer" -> "worker_setup_step_download_body"
+        "download-bootstrap" -> "worker_setup_step_download_bootstrap_body"
+        "run-bootstrap" -> "worker_setup_step_run_bootstrap_body"
         "download-bundle" -> "worker_setup_step_download_bundle_body"
         "unpack-bundle" -> "worker_setup_step_unpack_bundle_body"
         "configure-worker" -> "worker_setup_step_configure_worker_body"
         "start-worker" -> "worker_setup_step_start_worker_body"
-        "run-installer" -> "worker_setup_step_run_body"
         "verify" -> "worker_setup_step_verify_body"
         "installer-unavailable" -> "worker_setup_step_installer_unavailable_body"
         "platform-planned" -> "worker_setup_step_planned_body"
@@ -228,4 +229,19 @@ object WorkerSetupHelpers {
      *  primary artifact (Phase 3.1 completion — bundle-based flow). */
     fun bundleIsPrimaryArtifact(mode: String?, installer: SetupArtifactInfo?, bundle: SetupArtifactInfo?): Boolean =
         mode == MODE_EXISTING && bundle?.available == true && installer?.available != true
+
+    /** Primary installer download for the install step. The Setup Contract
+     *  instructions carry the profile-embedded bootstrap script URL — it
+     *  always wins over the generic method artifact, which is only a
+     *  fallback for the loading state. */
+    fun installerDownloadUrl(instructions: SetupInstructions?, method: SetupMethod?): String? =
+        instructions?.installer?.download_url ?: method?.installer?.download_url
+
+    /** Installer version shown prominently in the install step. */
+    fun installerVersion(instructions: SetupInstructions?, method: SetupMethod?): String? =
+        instructions?.installer?.version ?: method?.installer?.version
+
+    /** Installer SHA-256 — rendered in a collapsed block, shown once. */
+    fun installerSha256(instructions: SetupInstructions?, method: SetupMethod?): String? =
+        instructions?.installer?.sha256 ?: method?.installer?.sha256
 }

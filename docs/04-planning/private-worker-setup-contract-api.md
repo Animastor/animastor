@@ -84,7 +84,8 @@ Base: `/api/v1/private-worker/setup`
 | GET | `/gpu/worker-bundle` | полный worker bundle (tar.gz) |
 | GET | `/gpu/worker-bundle/sha256` | checksum + версия bundle |
 | GET | `/gpu/workflow/:id` | baseline workflow JSON (allowlist из манифестов) |
-| GET | `/gpu/installer` | self-contained installer package (tar.gz) |
+| GET | `/gpu/installer` | **bootstrap-скрипт установщика** (bash): скачивает бандл, проверяет SHA-256, распаковывает во временную папку и запускает настоящий установщик со встроенными `profile`/`mode` (`?profile=…&mode=…`, валидация по allowlist манифестов; без параметров — run-time guard). Требует bash/curl|wget/tar/sha256sum/Node ≥ 20; активно отклоняет credential в env/argv (exit 3) |
+| GET | `/gpu/installer/bundle` | self-contained installer package (tar.gz) |
 | GET | `/gpu/installer/sha256` | checksum + версия installer'а |
 | GET | `/gpu/worker-source` | **DEPRECATED** (только `worker.cjs`); работает, помечен заголовками `Deprecation: true` + `Link: </worker-bundle>` |
 
@@ -214,6 +215,10 @@ Query: `?profile_id=<id>[,<id2>]&platform=linux|windows|docker&mode=managed|exis
 invalid_profile`; неизвестная platform → `404 unsupported_platform`;
 неверный mode → `400 invalid_mode`.
 
+ Воркер к этому моменту **уже создан** (визард: profile → mode → platform →
+ create worker → install) — шага `create-worker` в инструкции нет и быть не
+ может: фронт всегда показывает инструкцию только держателю ключа.
+
 ```jsonc
 {
   "platform": "linux",
@@ -230,26 +235,44 @@ invalid_profile`; неизвестная platform → `404 unsupported_platform`
     "secrets": ["ANIMASTOR_WORKER_TOKEN"],
     "template_block": "HUB_URL=<hub-url>\nANIMASTOR_WORKER_TOKEN=<your-worker-key>\nWORKER_TYPE=<worker-type>\nWORKER_ID=<worker-id>"
   },
+  // Метаданные bootstrap-инсталлятора для UI: version — главная строка,
+  // sha256 — в свёрнутом блоке (показывается один раз). Для managed/existing
+  // download_url — bootstrap-скрипт со встроенными profile/mode (ничего
+  // вводить не нужно); для isolated — tar.gz бандл.
+  "installer": {
+    "version": "1.3.0",
+    "sha256": "…",
+    "status": "available",
+    "download_url": "https://<origin>/gpu/installer?profile=image%2Fqwen-image&mode=managed"
+  },
   "steps": [
-    { "id": "create-worker", "title": "…", "body": "…" },
-    { "id": "download-installer", "title": "…", "body": "…",
-      "code": "curl -fsSL -o animastor-installer-1.0.0.tar.gz https://<origin>/gpu/installer",
-      "checksum": { "algorithm": "sha256", "value": "…", "verify_code": "echo \"…  file\" | sha256sum -c -" } },
-    { "id": "run-installer", "title": "…", "body": "…",
-      "code": "tar -xzf … && node animastor-installer/src/installer/cli.js install --profile image/qwen-image --mode managed" },
-    { "id": "verify", "title": "…", "body": "…", "code": "… verify --profile …" }
-  ]
+    // managed/existing (bootstrap flow):
+    { "id": "download-bootstrap", "title": "…", "body": "…",
+      "code": "curl -fsSL -o animastor-installer.sh https://<origin>/gpu/installer?profile=image%2Fqwen-image&mode=managed" },
+    { "id": "run-bootstrap", "title": "…", "body": "…",
+      "code": "bash animastor-installer.sh" },
+    { "id": "verify", "title": "…", "body": "…" }
+    // existing добавляет перед ними prerequisites
+    // (ComfyUI / Python / Torch / CUDA / GPU — detection делает installer).
+  ],
+  // Необязательная терминальная диагностика — НИКОГДА не обязательный шаг:
+  // страница сама показывает статус воркера (Online после heartbeat).
+  "verify_command": "$HOME/animastor/tools/status.sh"
 }
 ```
 
 - `mode=existing` добавляет шаг `prerequisites` (ComfyUI / Python / Torch /
   CUDA / GPU — detection делает installer, фронтам не хардкодить);
 - `mode=shared` передаёт `--mode shared` (CLI поддерживает);
-- `mode=isolated` — по одному запуску installer'а на профиль в отдельные
-  `--root` (multi-ComfyUI orchestration не реализуется);
-- `platform=windows|docker` → шаги `create-worker` + `platform-planned`
-  (без команд);
-- токен — только placeholder `<your-worker-key>`;
+- `mode=isolated` — bootstrap не используется (один запуск не выражает
+  независимые окружения): явный tar.gz flow, по одному запуску installer'а
+  на профиль в отдельные `--root`; `installer.download_url` указывает на
+  `/gpu/installer/bundle`, шаги получают checksum + verify_code;
+- деградация: installer недоступен + bundle доступен → шаг
+  `installer-unavailable` (или bundle-flow для existing); платформа не
+  опубликована → шаг `platform-planned` (без команд);
+- токен — только placeholder `<your-worker-key>`; bootstrap-скрипт actively
+  отклоняет credential в env/argv (fail closed, exit 3);
 - старая инструкция (`curl … worker-source`, `node worker.cjs`) в контракте
   отсутствует — она выводится из использования.
 

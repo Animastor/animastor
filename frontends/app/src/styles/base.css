@@ -1294,6 +1294,10 @@ button { font: inherit; color: inherit; }
 .setup__workflow { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; flex-wrap: wrap; }
 .setup__workflow-name { font-size: 0.8125rem; color: var(--text); font-weight: 600; }
 .setup__checksum { font-size: 0.6875rem; color: var(--text-2); word-break: break-all; }
+.setup__checksum-details { font-size: 0.75rem; color: var(--text-2); }
+.setup__checksum-details > summary { cursor: pointer; user-select: none; color: var(--text-2); }
+.setup__checksum-details[open] > summary { margin-bottom: 0.25rem; }
+.setup__checksum-value { display: block; font-size: 0.6875rem; word-break: break-all; color: var(--text-2); font-family: var(--font-mono, ui-monospace, monospace); }
 .setup__caps { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.5rem; }
 @media (max-width: 480px) {
   .setup__grid { grid-template-columns: 1fr; }
