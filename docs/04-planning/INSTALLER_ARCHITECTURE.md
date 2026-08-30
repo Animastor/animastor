@@ -4,9 +4,9 @@
 > **Status:** Current architecture as of HEAD (2026-08-30)
 > **Installer version:** 1.3.0 (`backend/src/installer/package.json`)
 >
-> Этот документ описывает **фактически реализованную** архитектуру Animastor
-> Installer на основе полного аудита кода, тестов и git-истории.
-> Он НЕ является user manual и НЕ проектирует новую архитектуру.
+> This document describes the **actually implemented** architecture of Animastor
+> Installer based on a full code audit, tests, and git history.
+> It is NOT a user manual and does NOT design a new architecture.
 
 ---
 

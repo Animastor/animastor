@@ -1,19 +1,17 @@
 # RunPod Integration --- GPU Hub
 
-> Плановый документ. Не является текущим заданием на реализацию.
+> Planning document. Not a current implementation task.
 >
-> Цель: подготовить будущую интеграцию Animastor GPU Hub с новым RunPod
-> REST API v2 и MCP, не связывая RunPod напрямую с core backend.
+> Goal: prepare for future integration of Animastor GPU Hub with the new RunPod
+> REST API v2 and MCP, without tying RunPod directly to the core backend.
 
-## 1. Идея
+## 1. Concept
 
-RunPod рассматривается как один из внешних провайдеров
-GPU-инфраструктуры.
+RunPod is considered as one of the external GPU infrastructure providers.
 
-В Animastor точкой интеграции должен быть **GPU Hub**, а не основной
-backend.
+In Animastor, the integration point should be the **GPU Hub**, not the main backend.
 
-Целевая схема:
+Target architecture:
 
 ``` text
 Animastor Backend
@@ -42,16 +40,15 @@ worker'ов; - состояние worker'ов; - provisioning; - lifecycle; -
 health; - подключение/отключение GPU; - передачу задач worker'ам; -
 реакцию на отказ инфраструктуры.
 
-## 2. Почему не интегрировать RunPod напрямую в Backend
+## 2. Why Not Integrate RunPod Directly into Backend
 
-Это принципиальное архитектурное решение.
+This is a fundamental architectural decision.
 
-Backend не должен знать: - какой RunPod API используется; - в каком
-datacenter находится GPU; - какой Pod был создан; - как выполняется
-provisioning; - как проверяется capacity; - как конкретно запускается
-worker; - как удаляется Pod.
+Backend should not know: which RunPod API is used; which datacenter the GPU is in;
+which Pod was created; how provisioning works; how capacity is checked;
+how the worker is started; how the Pod is deleted.
 
-Backend должен говорить GPU Hub примерно на уровне:
+Backend should tell GPU Hub at approximately this level:
 
 ``` text
 Мне нужен worker типа video/image/audio
@@ -63,7 +60,7 @@ GPU Hub уже решает, где и как получить вычислит�
 Так мы сохраняем независимость core backend от конкретного
 GPU-провайдера.
 
-## 3. Что использовать в RunPod
+## 3. What to Use from RunPod
 
 Основной будущий интерфейс:
 
@@ -85,7 +82,7 @@ MCP не должен автоматически становиться runtime-
 Для production runtime предпочтителен явный REST API v2 через
 собственный adapter.
 
-## 4. Где агент должен знакомиться с RunPod
+## 4. Where the Agent Should Learn About RunPod
 
 Перед началом реализации агент должен прочитать официальные источники
 RunPod.
@@ -140,7 +137,7 @@ RunPod.
 migration guide; 3. проверить нужные endpoint'ы; 4. сверить
 request/response schemas; 5. только после этого писать adapter.
 
-## 5. Сроки и ограничения RunPod
+## 5. RunPod Timelines and Constraints
 
 На момент создания документа RunPod объявил:
 
@@ -153,7 +150,7 @@ request/response schemas; 5. только после этого писать ada
 
 Не закладывать новый код на v1 или GraphQL.
 
-## 6. Что особенно полезно для GPU Hub
+## 6. What's Particularly Useful for GPU Hub
 
 ### 6.1 GPU availability
 
@@ -233,7 +230,7 @@ worker actually serving Animastor
 
 Это значительно лучше простого SSH-пинга.
 
-## 7. Будущий Provider Adapter
+## 7. Future Provider Adapter
 
 Не помещать RunPod API непосредственно в `gpu-hub.js`.
 
@@ -301,7 +298,7 @@ Video / LTX
 времени генерации; - persistence; - возможности использовать
 существующие Animastor workers.
 
-## 9. Собственный Worker Contract остаётся главным
+## 9. Our Own Worker Contract Remains Primary
 
 RunPod не должен диктовать внутренний протокол Animastor worker'а.
 
@@ -330,7 +327,7 @@ RunPod-specific worker protocol
 
 Это сохраняет переносимость.
 
-## 10. Lifecycle будущего worker'а
+## 10. Future Worker Lifecycle
 
 Целевой сценарий:
 
@@ -392,7 +389,7 @@ result deduplication
 
 Будущая RunPod-интеграция не должна ломать её.
 
-## 12. Redis и RunPod
+## 12. Redis and RunPod
 
 Redis остаётся внутренним state/coordination layer GPU Hub.
 
@@ -425,7 +422,7 @@ GPU type
 
 Но provider-specific metadata должна быть изолирована.
 
-## 13. Безопасность
+## 13. Security
 
 API credentials RunPod не должны попадать: - в frontend; - в worker
 request; - в git; - в обычные логи; - в job payload.
