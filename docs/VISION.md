@@ -1,132 +1,132 @@
-# Animastor — Vision: космический корабль
+# Animastor — Vision: The Spaceship
 
-## Главная идея
+## Core Idea
 
-Конечный интерфейс Animastor — **не панель управления генераторами**.
+The final Animastor interface is **not a dashboard with generators**.
 
-Конечный интерфейс — **разговор с собеседником**.
+The final interface is **a conversation with an interlocutor**.
 
-Пользователь приходит на «ресепшен» и просто говорит, что он хочет сегодня создать, посмотреть или послушать.
+The user comes to the "reception" and simply says what they want to create, watch, or listen to today.
 
-> «Я хочу сделать небольшое произведение в духе “Соляриса”. Холодное космическое пространство, одинокий человек, немного тревожное, но не страшное».
+> "I want to make a short work in the spirit of 'Solaris'. Cold cosmic space, a lonely person, slightly unsettling but not scary."
 
-Дальше пользователь не обязан знать ничего о моделях, workflow, ComfyUI, TTS, LTX, workers, GPU или других технических деталях.
+The user is not required to know anything about models, workflows, ComfyUI, TTS, LTX, workers, GPUs, or other technical details.
 
-Он описывает намерение, а система превращает его в произведение.
+They describe an intention, and the system turns it into a work.
 
-## Ресепшен
+## Reception
 
-Первый интерфейс должен быть предельно простым:
+The first interface should be extremely simple:
 
-> Здравствуйте. Что бы вы хотели сегодня создать?
+> Hello. What would you like to create today?
 
-Главный способ взаимодействия — голос.
+The primary interaction method is voice.
 
-Пользователь может разговаривать с системой естественно, уточнять, менять своё мнение, отвергать варианты и принимать их.
+The user can talk to the system naturally, ask clarifying questions, change their mind, reject options and accept them.
 
-Система может сама предлагать промежуточные результаты:
+The system can proactively suggest intermediate results:
 
-> «Вот такой персонаж вам подходит?»
+> "Does this character work for you?"
 >
-> «А этот голос подойдёт для диктора?»
+> "Will this voice work for the narrator?"
 >
-> «Вот три варианта атмосферы сцены. Какой ближе?»
+> "Here are three atmosphere options for the scene. Which feels closest?"
 
-Пользователь отвечает обычным языком:
+The user answers in plain language:
 
-> «Второй хороший, но сделай его немного темнее».
+> "The second one is good, but make it a bit darker."
 
-И работа продолжается.
+And work continues.
 
-## Агент как режиссёр-приёмщик
+## Agent as Reception Director
 
-Ресепшен-агент не занимается всей технической работой самостоятельно.
+The reception agent does not handle all technical work itself.
 
-Он управляет Animastor через MCP/API как инструментом.
+It manages Animastor via MCP/API as a tool.
 
-Animastor в этом случае становится производственной средой, а не конечным интерфейсом пользователя.
+Animastor in this case becomes a production environment, not the final user interface.
 
-Внутри Animastor работают специализированные агенты и субагенты:
+Inside Animastor, specialized agents and sub-agents work:
 
-- сценарные;
-- визуальные;
-- персонажные;
-- аудио;
+- screenplay;
+- visual;
+- character;
+- audio;
 - TTS;
 - video;
-- монтажные;
-- контрольные.
+- editing;
+- quality control.
 
-Они уже работают с конкретными генерационными системами.
+They already work with specific generative systems.
 
-## Генерационные системы — это мастерские
+## Generative Systems Are Workshops
 
-ComfyUI, TTS engines, LTX, Qwen, WAN и другие системы находятся ниже уровня пользователя.
+ComfyUI, TTS engines, LTX, Qwen, WAN, and other systems exist below the user level.
 
-Внутренний агент может:
+The internal agent can:
 
-- выбирать подходящую модель;
-- находить workflow;
-- собирать workflow;
-- устанавливать необходимые компоненты;
-- запускать пробные генерации;
-- анализировать ошибки;
-- исправлять конфигурацию;
-- повторять попытку;
-- сохранять успешные решения.
+- select the appropriate model;
+- find workflows;
+- assemble workflows;
+- install required components;
+- run test generations;
+- analyze errors;
+- fix configuration;
+- retry;
+- save successful solutions.
 
-Пользователь при этом говорит только:
+The user only says:
 
-> «Мне нужен такой результат».
+> "I need this result."
 
-А не:
+Not:
 
-> «Используй такую-то модель с таким-то sampler и таким-то workflow».
+> "Use this model with this sampler and this workflow."
 
-## Машина может учиться на собственном опыте
+## The Machine Can Learn from Its Own Experience
 
-Не обязательно каждый раз решать задачу с нуля.
+It is not necessary to solve each task from scratch.
 
-После успешной генерации система может сохранять рабочую конфигурацию:
+After a successful generation, the system can save the working configuration:
 
-> модель + workflow + nodes + параметры + окружение + ограничения + результат.
+> model + workflow + nodes + parameters + environment + constraints + result.
 
-Со временем формируется библиотека проверенных рецептов:
+Over time, a library of proven recipes forms:
 
-- LTX 2.3 + reference image → работает.
-- Qwen TTS + voice reference → работает.
-- Эта модель хорошо подходит для action-сцен.
-- Эта модель лучше говорит на русском.
-- Эта конфигурация требует 24 GB VRAM.
+- LTX 2.3 + reference image → works.
+- Qwen TTS + voice reference → works.
+- This model works well for action scenes.
+- This model speaks Russian better.
+- This configuration requires 24 GB VRAM.
 
-Ошибки тоже могут становиться частью памяти:
+Errors can also become part of memory:
 
-> Эта модель + этот node → несовместимы.
+> This model + this node → incompatible.
 
-Таким образом:
+Thus:
 
-> эксперимент → успешное решение → память → повторное использование.
+> experiment → successful solution → memory → reuse.
 
-## Человек может стать частью генеративного материала
+## Humans Can Become Part of Generative Material
 
-Поскольку пользователь уже разговаривает с системой, система может предложить:
+Since the user is already talking to the system, the system can suggest:
 
-> «Хотите, я сохраню образец вашего голоса для этого произведения?»
+> "Would you like me to save a sample of your voice for this work?"
 
-По желанию пользователя его голос может стать референсом для:
+At the user's discretion, their voice can become a reference for:
 
-- диктора;
-- персонажа;
-- персонального голоса;
-- будущих произведений.
+- a narrator;
+- a character;
+- a personal voice;
+- future works.
 
-То же самое возможно с изображениями и другими референсами.
+The same is possible with images and other references.
 
-Но всё это происходит по желанию пользователя и через естественный разговор, а не через сложную форму настроек.
+But all of this happens at the user's discretion and through natural conversation, not through a complex settings form.
 
-## Книжный мир
+## Book World
 
-У произведения постепенно появляется World — единый источник правды о нём. Это фундамент, даже важнее самого генератора.
+A work gradually acquires a World — a single source of truth about it. This is the foundation, even more important than the generator itself.
 
 ```
 Book World
@@ -139,12 +139,12 @@ Book World
 └── User overrides
 ```
 
-### Книга — исходник мира
+### The Book as World Source
 
-Книжный мир не собирается вручную — он **автоматически строится из самого произведения**.
+Book World is not assembled manually — it is **automatically built from the work itself**.
 
 ```
-Книга
+Book
   ↓
 TXT / speech transcription
   ↓
@@ -161,19 +161,19 @@ World extraction
 Book World
 ```
 
-Источником может быть:
+Sources can be:
 
-- TXT / EPUB / другой текст;
-- новая книга, которую пользователь надиктовал;
-- существующая книга из библиотеки;
-- пользовательский текст.
+- TXT / EPUB / other text;
+- a new book the user dictated;
+- an existing book from the library;
+- user-provided text.
 
-### Canonical World и My Interpretation
+### Canonical World and My Interpretation
 
-Когда пользователь говорит «А я хочу видеть Берлиоза вот таким» — это не создаёт нового персонажа, это создаёт **user override / интерпретацию** существующего.
+When the user says "I want to see Berlioz like this" — this does not create a new character; it creates a **user override / interpretation** of an existing one.
 
-- **Canonical World** — автоматически извлечённая и проверенная база.
-- **My Interpretation** — канон + пользовательские предпочтения.
+- **Canonical World** — automatically extracted and verified base.
+- **My Interpretation** — canon + user preferences.
 
 ```
 Canonical World
@@ -183,389 +183,389 @@ User preferences
 My Book World
 ```
 
-Готовые популярные миры — это просто кэш: если тысячу раз делают «Мастера и Маргариту», нет смысла тысячу раз заново извлекать один и тот же мир.
+Pre-made popular worlds are simply a cache: if "The Master and Margarita" is done a thousand times, there is no point in re-extracting the same world a thousand times.
 
-Три сценария:
+Three scenarios:
 
-- «Загрузил книгу → через некоторое время появился её мир».
-- «Мир уже есть → используй его».
-- «Надиктовал → система сама построила мир».
+- "Loaded a book → after some time its world appeared."
+- "World already exists → use it."
+- "Dictated → the system built the world itself."
 
-## World Extraction: неполные и распределённые знания
+## World Extraction: Incomplete and Distributed Knowledge
 
-При извлечении книжного мира нельзя предполагать, что вся информация о сущности находится в момент её первого появления.
+When extracting book world, you cannot assume that all information about an entity is present at its first appearance.
 
-Персонаж может:
+A character may:
 
-- впервые появиться в главе 1;
-- получить имя и роль в главе 1;
-- получить физическое описание в главе 2;
-- получить особенности характера в главе 5;
-- получить дополнительные визуальные детали значительно позже.
+- first appear in chapter 1;
+- receive a name and role in chapter 1;
+- receive a physical description in chapter 2;
+- receive personality traits in chapter 5;
+- receive additional visual details much later.
 
-Поэтому паспорт персонажа — **накапливаемая сущность**, а не результат одного прохода.
+Therefore a character passport is an **accumulated entity**, not the result of a single pass.
 
-### Агент выбирает источник информации
+### Agent Chooses Information Source
 
-Если необходимой информации пока нет в обработанной части книги, агент оценивает варианты:
+If the required information is not yet available in the processed portion of the book, the agent evaluates options:
 
-1. продолжить обработку книги и дождаться появления описания;
-2. найти информацию в других частях книги;
-3. выполнить поиск в интернете;
-4. использовать уже существующую информацию в базе World;
-5. временно создать вероятностное описание с указанием степени уверенности.
+1. continue processing the book and wait for the description to appear;
+2. find information in other parts of the book;
+3. perform a web search;
+4. use existing information in the World database;
+5. temporarily create a probabilistic description with a stated confidence level.
 
-При выборе источника учитываются: стоимость токенов, время, доступность информации, качество и авторитетность источника, необходимость точного соответствия тексту произведения.
+When choosing a source, the following are considered: token cost, time, information availability, source quality and authority, and the need for exact correspondence with the source text.
 
-### Внешний поиск как ускоритель
+### External Search as Accelerator
 
-Для произведений в общественном достоянии, если подробное описание персонажа доступно в надёжном внешнем источнике, агент может получить его из интернета вместо ожидания дальнейшей обработки книги.
+For works in the public domain, if a detailed character description is available in a reliable external source, the agent can fetch it from the internet instead of waiting for further book processing.
 
-Внешний источник не считается истиной автоматически: полученная информация сохраняется как **external evidence** и сопоставляется с самим текстом произведения.
+External sources are not automatically treated as truth: retrieved information is stored as **external evidence** and cross-referenced with the source text itself.
 
-### Временное описание
+### Provisional Descriptions
 
-Если персонаж уже необходим для генерации сцены, а точного описания ещё нет, агент может создать временный паспорт:
+If a character is needed for scene generation but no precise description exists yet, the agent can create a provisional passport:
 
-> «Мужчина европейского происхождения, соответствующий эпохе и социальному окружению произведения; одежда и внешний вид приблизительно соответствуют историческому контексту».
+> "Male of European origin, corresponding to the era and social context of the work; clothing and appearance approximately match the historical context."
 
-Такой паспорт получает статус **provisional / low confidence**. Когда позже появляется точная информация из книги или авторитетного источника, паспорт обновляется, а связанные визуальные материалы помечаются на регенерацию.
+Such a passport receives **provisional / low confidence** status. When precise information from the book or an authoritative source becomes available later, the passport is updated and related visual assets are marked for regeneration.
 
-### Главное правило
+### The Key Rule
 
-Не заставлять всю систему ждать идеального знания, если произведение можно продолжать создавать уже сейчас.
+Do not force the entire system to wait for perfect knowledge if the work can be continued now.
 
-Система умеет работать с неполной информацией, обозначать степень уверенности и постепенно заменять предположения подтверждёнными данными.
+The system is capable of working with incomplete information, indicating confidence levels, and gradually replacing assumptions with verified data.
 
-### World = постепенно уточняемая модель
+### World = Gradually Refined Model
 
-World Extraction становится не одноразовым импортом, а процессом постепенного познания произведения — почти как человеческое чтение: сначала «наверное, какой-то такой мужик», а через двадцать страниц — «у него были огромные усы, кривой нос и...».
+World Extraction becomes not a one-time import but a process of gradually understanding the work — much like human reading: first "probably some guy like that," and twenty pages later "he had enormous mustaches, a crooked nose, and...".
 
-Если позднее обнаружилась существенная характеристика персонажа, не нужно пересобирать всю книгу: связанные visual units помечаются как dirty и обновляются постепенно, только они.
+If a significant character trait is discovered later, there is no need to rebuild the entire book: related visual units are marked as dirty and updated incrementally, only those specific ones.
 
-В каждый момент агент знает:
+At any moment, the agent knows:
 
-> «Вот это я знаю точно. Вот это предполагаю. Вот это ещё не знаю. А вот это нашёл во внешнем источнике».
+> "This I know for certain. This I am assuming. This I do not yet know. And this I found in an external source."
 
-## Диктовка вместо набора
+## Dictation Instead of Typing
 
-Не нужно заставлять человека печатать «Введите название главы». Он просто говорит:
+Do not force the user to type "Enter chapter title." They simply say:
 
-> «Глава первая. Ну, значит, дело происходило...»
+> "Chapter one. So, it happened..."
 
-А система сама потом:
+And the system then:
 
-- исправляет оговорки;
-- убирает мусор;
-- сохраняет авторскую манеру;
-- определяет главы;
-- строит структуру;
-- создаёт книжный мир.
+- corrects slips of the tongue;
+- removes filler words;
+- preserves the author's manner;
+- identifies chapters;
+- builds structure;
+- creates book world.
 
-Пайплайн новой книги:
+New book pipeline:
 
-> речь → транскрипция → редакторский агент → текст книги → извлечение мира → производство.
+> speech → transcript → editorial agent → book text → world extraction → production.
 
-## Два поисковика
+## Two Search Engines
 
-Прежде чем генерировать, система проверяет, не существует ли уже готового ответа:
+Before generating, the system checks whether a ready answer already exists:
 
-- **World DB Search Agent** — ищет по собственной базе: «Есть ли это уже у нас?» Если есть — искать больше нечего.
-- **Web Research Agent** — если в базе нет: «Иду искать информацию» — и приносит результат обратно в World.
+- **World DB Search Agent** — searches its own database: "Do we already have this?" If yes, no further search is needed.
+- **Web Research Agent** — if not in the database: "Going to search for information" — and brings results back to World.
 
 ```
-Запрос пользователя
+User request
        ↓
    World DB
-   найдено? ─── да ──→ использовать
+   found? ─── yes ──→ use it
        │
-       нет
+       no
        ↓
  Web Research
        ↓
- проверка / структурирование
+ verification / structuring
        ↓
    World DB
 ```
 
-## Мобильный интерфейс
+## Mobile Interface
 
-Конечная система должна быть доступна человеку, который вообще не является инженером.
+The final system must be accessible to someone who is not an engineer at all.
 
-Например, человек едет в поезде и говорит с телефона:
+For example, a person on a train speaking into their phone:
 
-> «Хочу сегодня послушать Махабхарату».
+> "I want to listen to the Mahabharata today."
 
-Система:
+The system:
 
-> «Хорошо. Какой голос предпочитаете?»
+> "Sure. Which voice do you prefer?"
 >
-> «Женский, спокойный».
+> "Female, calm."
 >
-> «Вот несколько вариантов».
+> "Here are several options."
 >
-> «Второй хороший».
+> "The second one is good."
 
-И через некоторое время пользователь получает готовое произведение.
+And after some time the user receives the finished work.
 
-- Не нужно устанавливать ComfyUI.
-- Не нужно выбирать модель.
-- Не нужно разбираться в workflow.
-- Не нужно открывать десять вкладок.
+- No need to install ComfyUI.
+- No need to choose a model.
+- No need to understand workflows.
+- No need to open ten browser tabs.
 
-Нужно только сказать, чего хочется.
+You just need to say what you want.
 
-## Первый экран
+## First Screen
 
-Первый мобильный экран не должен быть панелью с двадцатью пятью кнопками:
+The first mobile screen should not be a panel with twenty-five buttons:
 
 ```
 ┌─────────────────────────────┐
 │                       Advanced│
 │                             │
-│       Что создаём?          │
+│       What are we making?   │
 │                             │
 │            ◯                │
-│       [говорить]            │
+│       [speak]               │
 │                             │
 │  ┌───────────────────────┐  │
 │  │                       │  │
-│  │   здесь появляются    │  │
-│  │   референсы, варианты │  │
-│  │   и результаты        │  │
+│  │   references, options │  │
+│  │   and results appear  │  │
+│  │   here                │  │
 │  │                       │  │
 │  └───────────────────────┘  │
 │                             │
 └─────────────────────────────┘
 ```
 
-Кнопка простая: **нажал → говоришь → нажал → закончил**. Агент продолжает работать в фоне.
+The button is simple: **press → speak → press → done**. The agent continues working in the background.
 
-## Асинхронная работа
+## Asynchronous Operation
 
-Система не должна требовать, чтобы человек сидел перед экраном и следил за progress bar.
+The system should not require the user to sit in front of the screen watching a progress bar.
 
-Пользователь уходит — «я пошёл суп варить, а ты пока работай» — и система потом сама говорит:
+The user leaves — "I'm going to make soup, you keep working" — and the system later says on its own:
 
-> «Я закончил первый вариант. Посмотри, пожалуйста».
+> "I finished the first option. Please take a look."
 
-Пользователь открывает телефон и видит:
+The user opens their phone and sees:
 
-> [референс]
+> [reference]
 >
-> «Вот как я сейчас представляю Берлиоза. Подходит?»
+> "Here is how I currently imagine Berlioz. Does it work?"
 
-Отвечает:
+They respond:
 
-> «Нет, очки больше и сделай его немного полнее».
+> "No, bigger glasses and make him a bit heavier."
 
-И снова убирает телефон.
+And put the phone away again.
 
-## Технический интерфейс никуда не исчезает
+## The Technical Interface Does Not Disappear
 
-Все существующие кнопки, панели, workers, profiles, workflows, модели и настройки остаются.
+All existing buttons, panels, workers, profiles, workflows, models, and settings remain.
 
-Но они становятся инженерным уровнем системы, а не обязательным пользовательским интерфейсом.
+But they become the engineering layer of the system, not a mandatory user interface.
 
-Человек может открыть технический режим, если хочет.
+The user can open the technical mode if they want.
 
-Но обычному пользователю он не нужен.
+But a regular user does not need it.
 
-Точно так же пассажиру космического корабля не нужно знать устройство реактора.
+Just as a spaceship passenger does not need to know the reactor's internals.
 
-## Куда мы идём
+## Where We Are Going
 
-Сегодня мы строим машинное отделение.
+Today we are building the engine room.
 
-Завтра поверх него появится капитанский мостик.
+Tomorrow the bridge will appear on top of it.
 
-Отдельно — как сама система будет учиться становиться лучше: каждая
-качественно доведённая человеком книга становится эталоном (Golden Book),
-а разница между сырым результатом и эталоном направляет дальнейшее
-улучшение кода, prompts и архитектуры. Подробнее —
-[«Эволюционное пахтание»](04-planning/GOLDEN_BOOK_EVOLUTION.md).
+Separately — how the system will learn to improve itself: each
+quality book refined by a human becomes a benchmark (Golden Book),
+and the gap between raw output and benchmark guides further
+improvement of code, prompts, and architecture. More on this in
+["Evolutionary Churning"](04-planning/GOLDEN_BOOK_EVOLUTION.md).
 
-А конечная точка — не ещё один сложный генератор.
+And the final destination is not yet another complex generator.
 
-Конечная точка — **космический корабль, с которым можно разговаривать**.
+The final destination is **a spaceship you can talk to**.
 
-Пользователь говорит:
+The user says:
 
-> «Компьютер, я хочу...»
+> "Computer, I want..."
 
-А дальше система сама разбирается, как это сделать.
+And the system figures out how to make it happen.
 
-Человек занимается не управлением машиной.
+The human is not operating the machine.
 
-Человек занимается своим замыслом.
+The human is pursuing their creative vision.
 
-## Вехи: как мы поймём, что корабль полетел
+## Milestones: How We'll Know the Ship Has Flown
 
-Vision считается реализованной не тогда, когда построены все внутренние компоненты, а тогда, когда пользователь перестаёт нуждаться в них.
+The Vision is considered realized not when all internal components are built, but when the user no longer needs them.
 
-### Веха 1 — Ресепшен
+### Milestone 1 — Reception
 
-Пользователь открывает Animastor и вместо технического интерфейса просто говорит:
+The user opens Animastor and instead of a technical interface simply says:
 
-> «Я хочу создать...»
+> "I want to create..."
 
-Ресепшен-агент понимает разговор и умеет вызывать Animastor через MCP/API.
+The reception agent understands conversation and can invoke Animastor via MCP/API.
 
-**Критерий:** простую задачу можно выполнить без ручного управления техническими экранами.
+**Criterion:** a simple task can be completed without manually navigating technical screens.
 
-### Веха 2 — Разговор вместо технического задания
+### Milestone 2 — Conversation Instead of Technical Brief
 
-Пользователь описывает произведение обычными словами.
+The user describes a work in plain words.
 
-Агент сам формирует рабочую структуру:
+The agent itself builds the working structure:
 
-- персонажей;
-- локации;
-- сцены;
-- визуальные требования;
-- аудио;
-- видео;
-- референсы.
+- characters;
+- locations;
+- scenes;
+- visual requirements;
+- audio;
+- video;
+- references.
 
-Если информации недостаточно, агент не показывает форму с двадцатью полями, а задаёт человеку вопрос.
+If information is insufficient, the agent does not show a form with twenty fields but asks the user a question.
 
-**Критерий:** пользователь может поставить задачу, не зная терминологии генеративных моделей.
+**Criterion:** the user can set a task without knowing generative model terminology.
 
-### Веха 3 — Референсы вместо настроек
+### Milestone 3 — References Instead of Settings
 
-Агенты показывают человеку промежуточные результаты:
+Agents show the user intermediate results:
 
-> «Этот персонаж подходит?»
+> "Does this character work?"
 >
-> «Этот голос подходит?»
+> "Does this voice work?"
 >
-> «Такая атмосфера сцены подходит?»
+> "Does this scene atmosphere work?"
 
-Пользователь отвечает обычной речью.
+The user answers in plain speech.
 
-Принятые варианты становятся частью проекта и используются дальше.
+Accepted options become part of the project and are used going forward.
 
-**Критерий:** человек управляет художественным результатом через выбор и разговор, а не через параметры моделей.
+**Criterion:** the user controls the artistic result through selection and conversation, not through model parameters.
 
-### Веха 4 — Агент управляет производством
+### Milestone 4 — Agent Manages Production
 
-Animastor становится MCP-инструментом для агента.
+Animastor becomes an MCP tool for the agent.
 
-Агент способен:
+The agent is able to:
 
-- создавать и изменять сцены;
-- запускать генерации;
-- получать статусы;
-- повторять неудачные задачи;
-- выбирать подходящий backend;
-- передавать задачи специализированным агентам.
+- create and modify scenes;
+- trigger generations;
+- receive statuses;
+- retry failed tasks;
+- select the appropriate backend;
+- delegate tasks to specialized agents.
 
-**Критерий:** технический интерфейс Animastor может полностью использоваться агентом без участия человека.
+**Criterion:** Animastor's technical interface can be used entirely by the agent without human involvement.
 
-### Веха 5 — Генерационный агент умеет экспериментировать
+### Milestone 5 — Generative Agent Can Experiment
 
-Если подходящего рабочего рецепта нет, внутренний агент способен:
+If no suitable working recipe exists, the internal agent can:
 
-1. найти модель;
-2. найти или собрать workflow;
-3. выполнить пробный запуск;
-4. проанализировать ошибку;
-5. исправить конфигурацию;
-6. повторить запуск;
-7. получить рабочий результат.
+1. find a model;
+2. find or assemble a workflow;
+3. run a test;
+4. analyze the error;
+5. fix configuration;
+6. retry;
+7. obtain a working result.
 
-**Критерий:** новая генерационная модель не требует обязательной ручной интеграции разработчиком для каждого нового сценария использования.
+**Criterion:** a new generative model does not require mandatory manual integration by a developer for each new use case.
 
-### Веха 6 — Память рабочих решений
+### Milestone 6 — Working Solution Memory
 
-Успешные конфигурации сохраняются как проверенные рецепты.
+Successful configurations are saved as proven recipes.
 
-Система помнит:
+The system remembers:
 
-- какие модели работают;
-- какие workflow работают;
-- какие параметры подходят;
-- какие конфигурации требуют определённого железа;
-- какие ошибки уже встречались.
+- which models work;
+- which workflows work;
+- which parameters fit;
+- which configurations require specific hardware;
+- which errors have been encountered before.
 
-**Критерий:** второй запуск аналогичной задачи заметно проще и быстрее первого.
+**Criterion:** a second run of a similar task is noticeably easier and faster than the first.
 
-### Веха 7 — Голос становится главным интерфейсом
+### Milestone 7 — Voice Becomes the Primary Interface
 
-Пользователь может практически всё основное взаимодействие выполнять голосом.
+The user can perform nearly all primary interactions by voice.
 
-Например:
+For example:
 
-> «Продолжи с прошлого варианта».
+> "Continue from the previous version."
 >
-> «Берлиоза оставляем».
+> "We're keeping Berlioz."
 >
-> «Этот голос мне не нравится».
+> "I don't like this voice."
 >
-> «Сделай сцену более динамичной».
+> "Make the scene more dynamic."
 >
-> «Покажи, что получилось».
+> "Show me how it turned out."
 
-**Критерий:** человеку не приходится возвращаться к техническому интерфейсу для обычной творческой работы.
+**Criterion:** the user never needs to return to the technical interface for normal creative work.
 
-### Веха 8 — Корабль
+### Milestone 8 — The Ship
 
-Финальный критерий.
+The final criterion.
 
-Система встречает пользователя:
+The system greets the user:
 
-> «Здравствуйте. Что бы вы хотели сегодня создать?»
+> "Hello. What would you like to create today?"
 
-Он описывает замысел.
+The user describes their vision.
 
-Система сама:
+The system:
 
-> понимает → уточняет → предлагает → получает одобрение → планирует → генерирует → исправляет → собирает → показывает результат.
+> understands → clarifies → suggests → receives approval → plans → generates → corrects → assembles → shows the result.
 
-Человек большую часть времени занимается не управлением производством, а своим произведением.
+The human spends most of their time not managing production but working on their creative vision.
 
-### Момент, когда можно сказать «корабль готов»
+### The Moment We Can Say "The Ship Is Ready"
 
-Если пользователь может провести от идеи до готового произведения длительную творческую сессию, не зная названий моделей, workflow, узлов ComfyUI, очередей, workers и технических параметров, — значит, мы достигли главной цели.
+If a user can go from idea to finished work in an extended creative session without knowing model names, workflows, ComfyUI nodes, queues, workers, or technical parameters — then we have achieved the main goal.
 
-Техническая сложность при этом никуда не исчезает.
+Technical complexity does not disappear.
 
-Она просто находится по другую сторону разговора.
+It simply moves to the other side of the conversation.
 
-> **Человек говорит с кораблём.**
-> **Корабль разговаривает с машинным отделением.**
+> **The human talks to the ship.**
+> **The ship talks to the engine room.**
 
-## Дорожная карта
+## Roadmap
 
-Vision — это документ с двумя слоями: **куда мы идём** и **примерно когда**. Сроки — временные окна, а не жёсткие обещания.
+Vision is a document with two layers: **where we are going** and **roughly when**. Timelines are windows, not hard promises.
 
-| Этап | Что появляется | Ориентир |
+| Stage | What appears | Target |
 | --- | --- | --- |
-| 1. Ресепшен-прототип | Первый мобильный экран + голосовой агент + MCP-вызов Animastor | 1–2 недели |
-| 2. Диалог + референсы | Агент разговаривает, показывает картинки/голоса, получает «да / нет / переделай» | 2–3 недели |
-| 3. Книжный мир | Автоматическое построение мира из книги, Canonical World + My Interpretation | 2–4 недели |
-| 4. Агентная генерация | Внутренние агенты выбирают workflows/models и управляют генераторами | 3–6 недель |
-| 5. Память рецептов | Успешные workflow/configuration сохраняются и переиспользуются | 2–3 недели |
-| 6. Диктовка → произведение | Пользователь надиктовывает книгу/замысел, агент редактирует и структурирует | 2–4 недели |
-| 7. Advanced | Нынешний технический Animastor становится инженерным режимом | параллельно |
-| 8. Первый «корабль» | От голоса до готового произведения без технического интерфейса | ~2–3 месяца |
+| 1. Reception prototype | First mobile screen + voice agent + MCP call to Animastor | 1–2 weeks |
+| 2. Dialogue + references | Agent talks, shows images/voices, gets "yes / no / redo" | 2–3 weeks |
+| 3. Book World | Automatic world building from book, Canonical World + My Interpretation | 2–4 weeks |
+| 4. Agent-driven generation | Internal agents select workflows/models and manage generators | 3–6 weeks |
+| 5. Recipe memory | Successful workflow/configuration saved and reused | 2–3 weeks |
+| 6. Dictation → work | User dictates book/vision, agent edits and structures | 2–4 weeks |
+| 7. Advanced | Current technical Animastor becomes engineering mode | parallel |
+| 8. First "ship" | From voice to finished work without technical interface | ~2–3 months |
 
-Этапы не обязательно последовательны — многое можно делать параллельно. Ориентир — не сумма недель, а первый живой вертикальный срез за 2–4 недели и цельный сценарий за 2–3 месяца.
+Stages are not necessarily sequential — much can be done in parallel. The target is not a sum of weeks but the first live vertical slice in 2–4 weeks and a complete scenario in 2–3 months.
 
-## Advanced — инженерный режим
+## Advanced — Engineering Mode
 
-Один и тот же Animastor может быть **игрушкой для обычного человека и лабораторией для инженера**.
+The same Animastor can be **a toy for regular users and a laboratory for engineers**.
 
-Обычный пользователь:
+Regular user:
 
-> 🎙️ «Что бы вы хотели создать?»
+> 🎙️ "What would you like to create?"
 
-Инженер (Advanced): Navigator, Generator, Workers, Profiles, Workflows, Models, Logs, Queue, Redis/DB...
+Engineer (Advanced): Navigator, Generator, Workers, Profiles, Workflows, Models, Logs, Queue, Redis/DB...
 
-Мы не упрощаем внутреннюю систему — мы прячем её сложность за правильным уровнем общения.
+We do not simplify the internal system — we hide its complexity behind the right level of communication.
 
-## Принцип
+## Principle
 
 > **Complexity should move down, not disappear.**
->
-> Сложность не надо уничтожать. Её надо убрать с пути человека.
+
+Complexity does not need to be destroyed. It needs to be moved out of the user's way.

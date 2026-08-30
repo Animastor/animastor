@@ -1,65 +1,65 @@
-# Близкие горизонты Animastor
+# Animastor Near Horizons
 
-## 1. Общая идея
+## 1. General Idea
 
-Animastor может развиваться не только как облачный сервис, но как распределённая система, где облачная часть отвечает за управление проектом и очередями, а вычисления выполняются независимыми workers.
+Animastor can develop not only as a cloud service but as a distributed system where the cloud portion handles project management and queues, while computation is performed by independent workers.
 
-Главный принцип:
+The key principle:
 
-> **Animastor Cloud — orchestration/control plane. Worker — вычислительный исполнитель.**
+> **Animastor Cloud — orchestration/control plane. Worker — compute executor.**
 
-Worker может находиться где угодно:
-- на компьютере пользователя;
-- на домашнем сервере;
-- на собственном VPS;
-- на RunPod или другом GPU-сервисе;
-- на инфраструктуре Animastor.
+Workers can be located anywhere:
+- on the user's computer;
+- on a home server;
+- on a personal VPS;
+- on RunPod or another GPU service;
+- on Animastor infrastructure.
 
-Это позволяет постепенно перейти от полностью облачного продукта к гибридной и полностью локальной модели без принципиального изменения архитектуры.
+This enables a gradual transition from a fully cloud product to hybrid and fully local models without fundamental architecture changes.
 
 ---
 
-# 2. Первый горизонт — Animastor Cloud + собственные workers
+## 2. First Horizon — Animastor Cloud + Personal Workers
 
-Пользователь входит в Animastor Cloud и может подключать собственные вычислительные ресурсы.
+A user logs into Animastor Cloud and can connect their own compute resources.
 
-Например:
+For example:
 
 ```text
 Animastor Cloud
     │
-    ├── Audio Worker → компьютер пользователя
-    ├── Image Worker → компьютер пользователя
+    ├── Audio Worker → user's computer
+    ├── Image Worker → user's computer
     ├── Video Worker → RunPod
-    └── LLM Worker → локальный компьютер / сервер
+    └── LLM Worker → local computer / server
 ```
 
-Пользователь сам выбирает, какие ресурсы ему выгодно держать локально, а какие получать из облака.
+The user chooses which resources to run locally and which to get from the cloud.
 
-### Примеры
+### Examples
 
-**Мощный домашний компьютер:**
-- Audio — локально;
-- Image — локально;
-- Video — облачный GPU;
-- LLM — локально.
+**Powerful home computer:**
+- Audio — local;
+- Image — local;
+- Video — cloud GPU;
+- LLM — local.
 
-**Средний компьютер:**
-- Audio — локально;
-- Image — облако;
-- Video — облако;
-- LLM — локально или облако.
+**Mid-range computer:**
+- Audio — local;
+- Image — cloud;
+- Video — cloud;
+- LLM — local or cloud.
 
-**Слабый компьютер:**
-- всё через облачные workers.
+**Low-end computer:**
+- everything through cloud workers.
 
-Таким образом, Animastor не навязывает одну модель использования.
+This way, Animastor does not impose a single usage model.
 
 ---
 
-# 3. Второй горизонт — полностью локальный Animastor
+## 3. Second Horizon — Fully Local Animastor
 
-Следующий вариант — пользователь устанавливает Animastor целиком на собственный компьютер или сервер.
+The next option is the user installs Animastor entirely on their own computer or server.
 
 ```text
 Animastor Local
@@ -74,7 +74,7 @@ Animastor Local
          └── LLM
 ```
 
-При необходимости отдельные workers могут оставаться внешними:
+If needed, individual workers can remain external:
 
 ```text
 Animastor Local
@@ -85,19 +85,19 @@ Animastor Local
     └── Video → external GPU
 ```
 
-То есть локальная версия не должна быть отдельной концепцией.
+The local version should not be a separate concept.
 
-Лучше, чтобы это была та же архитектура Animastor, только control plane также работает у пользователя.
+Ideally, it is the same Animastor architecture, with the control plane also running locally.
 
 ---
 
-# 4. Единая архитектура Worker
+## 4. Unified Worker Architecture
 
-Worker желательно сразу рассматривать как независимый вычислительный агент.
+Workers should be considered as independent compute agents from the start.
 
-При подключении worker сообщает серверу свои capabilities.
+Upon connection, a worker reports its capabilities to the server.
 
-Пример концептуального описания:
+Conceptual description example:
 
 ```text
 worker_id
@@ -129,24 +129,24 @@ status:
   offline
 ```
 
-Animastor не должен знать, где физически расположен worker.
+Animastor should not need to know where a worker is physically located.
 
-Сервер ставит задачу:
+The server assigns a task:
 
 ```text
 video_generation
 model = LTX
 ```
 
-и ищет worker, который способен её выполнить.
+and searches for a worker capable of executing it.
 
 ---
 
-# 5. Heartbeat и подключение
+## 5. Heartbeat and Connection
 
-Worker должен самостоятельно устанавливать исходящее защищённое соединение с Animastor Cloud.
+Workers should establish an outgoing secure connection to Animastor Cloud independently.
 
-Предпочтительная модель:
+Preferred model:
 
 ```text
 Worker ───── outbound connection ─────> Animastor Cloud
@@ -156,36 +156,36 @@ Worker ───── outbound connection ─────> Animastor Cloud
                                         Worker
 ```
 
-Пользователю не нужно открывать входящие порты на компьютере.
+The user does not need to open incoming ports on their computer.
 
-При регистрации worker получает токен и после этого:
-- отправляет heartbeat;
-- сообщает capabilities;
-- получает jobs;
-- отправляет progress;
-- передаёт результаты;
-- сообщает состояние.
+Upon registration, a worker receives a token and then:
+- sends heartbeats;
+- reports capabilities;
+- receives jobs;
+- sends progress;
+- delivers results;
+- reports status.
 
 ---
 
-# 6. Bring Your Own Model
+## 6. Bring Your Own Model
 
-Одна из потенциально сильных особенностей Animastor:
+One of Animastor's potentially strongest features:
 
-> Пользователь может приносить не только собственный GPU, но и собственные модели.
+> Users can bring not only their own GPU but also their own models.
 
-Например:
+For example:
 
 ```text
 Audio Worker
     ├── Qwen TTS
     ├── F5-TTS
-    └── другие модели
+    └── other models
 
 Image Worker
     ├── ComfyUI
     ├── Flux
-    └── другие модели
+    └── other models
 
 Video Worker
     └── LTX
@@ -193,96 +193,96 @@ Video Worker
 LLM Worker
     ├── Qwen
     ├── DeepSeek
-    └── локальные модели
+    └── local models
 ```
 
-Animastor в таком случае выступает как orchestration layer над разнообразными inference-системами.
+In this case, Animastor acts as an orchestration layer over diverse inference systems.
 
 ---
 
-# 7. Community Compute — «торрент-модель» для GPU
+## 7. Community Compute — "Torrent Model" for GPU
 
-Отдельная потенциально сильная идея — добровольный обмен вычислительным временем.
+A separate potentially powerful idea is voluntary compute time sharing.
 
-Пользователь может включить:
+A user can enable:
 
 > **Share my GPU**
 
-и разрешить другим пользователям использовать его worker в течение определённого времени.
+and allow other users to use their worker for a specified time period.
 
-Например:
+For example:
 
 ```text
-Пользователь A
+User A
 RTX 3060 / 12 GB
-Share GPU → 2 часа
+Share GPU → 2 hours
 ```
 
-В это время worker выполняет community jobs.
+During this time, the worker executes community jobs.
 
-После этого пользователь может сам использовать shared compute других участников.
+Afterward, the user can themselves use shared compute from other participants.
 
-Это напоминает торрент-модель, только вместо обмена файлами происходит обмен вычислительным временем.
+This is reminiscent of the torrent model, except instead of file sharing, compute time is exchanged.
 
 ---
 
-# 8. Возможная модель contribution
+## 8. Possible Contribution Model
 
-Можно учитывать вклад пользователя:
+User contributions can be tracked:
 
 ```text
-Ты поделился:       10 GPU-hours
-Получил от сети:     7 GPU-hours
-Баланс:              +3 GPU-hours
+You shared:        10 GPU-hours
+Received from network:  7 GPU-hours
+Balance:           +3 GPU-hours
 ```
 
-При этом строгий финансовый обмен не обязателен.
+Strict financial exchange is not required.
 
-Возможна более мягкая модель community contribution:
+A softer community contribution model is possible:
 
 - Contributor;
 - Community Worker;
 - Community Host;
-- другие уровни.
+- other levels.
 
-Можно показывать статистику:
+Statistics can be displayed:
 
 > You contributed 37 GPU-hours to Animastor Community.
 
-Это создаёт ощущение реального вклада в общую инфраструктуру.
+This creates a sense of real contribution to shared infrastructure.
 
 ---
 
-# 9. Безопасность community workers
+## 9. Community Worker Security
 
-Community worker должен быть максимально ограничен.
+Community workers should be as restricted as possible.
 
-Основной принцип:
+The core principle:
 
-> Пользователь предоставляет вычислительный ресурс, а не доступ ко всему своему компьютеру.
+> The user provides a compute resource, not access to their entire computer.
 
-Желательно использовать sandbox/container и минимальные права.
+Sandbox/containers and minimal privileges are preferred.
 
-Worker должен иметь доступ только к:
-- своей рабочей директории;
+Workers should only have access to:
+- their working directory;
 - GPU;
-- необходимым inference-процессам;
-- необходимой сети.
+- required inference processes;
+- required network.
 
-Worker не должен получать доступ к:
-- домашней директории пользователя;
-- пользовательским документам;
-- SSH-ключам;
-- произвольным системным командам;
-- другим данным компьютера.
+Workers should NOT have access to:
+- the user's home directory;
+- user documents;
+- SSH keys;
+- arbitrary system commands;
+- other computer data.
 
 ---
 
-# 10. Автоматическая очистка данных
+## 10. Automatic Data Cleanup
 
-Community worker должен быть практически stateless относительно пользовательского контента.
+Community workers should be effectively stateless with respect to user content.
 
-Жизненный цикл job:
+Job lifecycle:
 
 ```text
 JOB
@@ -296,29 +296,30 @@ upload result
 verify upload
  ↓
 delete temporary data
+ ↓
 ```
 
-После завершения должны удаляться:
-- исходные изображения;
+After completion, the following must be deleted:
+- source images;
 - reference images;
-- промежуточные изображения;
-- временные audio/video;
-- временные файлы;
-- рабочая директория конкретной job.
+- intermediate images;
+- temporary audio/video;
+- temporary files;
+- the specific job's working directory.
 
-Дополнительно нужен garbage collector.
+A garbage collector is also needed.
 
-Например:
+For example:
 
-> Любая временная job-директория старше заданного TTL автоматически удаляется.
+> Any temporary job directory older than a given TTL is automatically deleted.
 
-Это защищает пользователя от накопления мусора даже после crash или неожиданного отключения worker.
+This protects the user from accumulating junk even after a crash or unexpected worker shutdown.
 
 ---
 
-# 11. Потенциальный community flywheel
+## 11. Potential Community Flywheel
 
-Распределённая модель может создать сетевой эффект:
+The distributed model can create a network effect:
 
 ```text
                  Animastor
@@ -344,93 +345,93 @@ delete temporary data
                more users
 ```
 
-Чем больше пользователей участвует, тем больше потенциальной community compute-мощности.
+The more users participate, the more potential community compute capacity.
 
 ---
 
-# 12. Потенциальный маркетинговый эффект
+## 12. Potential Marketing Effect
 
-Бесплатная distributed-модель потенциально сама может стать источником органического продвижения.
+The free distributed model can potentially become a source of organic promotion.
 
-Возможные темы для YouTube и community:
+Possible topics for YouTube and community:
 
-- «Как пользоваться Animastor бесплатно»
-- «Как подключить свой GPU к Animastor»
-- «Animastor на RTX 3060»
-- «Animastor + RunPod»
-- «Как запускать LTX через свой GPU»
-- «Animastor + локальный LLM»
-- «Animastor + ComfyUI»
+- "How to use Animastor for free"
+- "How to connect your GPU to Animastor"
+- "Animastor on RTX 3060"
+- "Animastor + RunPod"
+- "How to run LTX through your own GPU"
+- "Animastor + local LLM"
+- "Animastor + ComfyUI"
 
-Особенно интересной аудиторией может стать ComfyUI / local AI community — люди, которые уже умеют работать с Docker, CUDA, локальными моделями и GPU.
+A particularly interesting audience could be the ComfyUI / local AI community — people who already know how to work with Docker, CUDA, local models, and GPUs.
 
-Animastor в таком случае становится не просто AI-сервисом, а системой для построения собственной AI-фабрики визуальной книги.
+In this case, Animastor becomes not just an AI service but a system for building your own visual book AI factory.
 
 ---
 
-# 13. Третий горизонт — готовый managed-сервис
+## 13. Third Horizon — Ready Managed Service
 
-После появления BYOG/community-модели можно предложить полностью готовый вариант.
+After the BYOG/community model is established, a fully ready option can be offered.
 
-Пользователь ничего не настраивает:
+The user configures nothing:
 
-> Нажал Generate — всё заработало.
+> Pressed Generate — everything worked.
 
-Animastor предоставляет:
-- готовые workers;
+Animastor provides:
+- ready workers;
 - GPU;
-- модели;
+- models;
 - API;
 - storage;
-- автоматическую конфигурацию;
-- мониторинг;
-- обслуживание.
+- automatic configuration;
+- monitoring;
+- maintenance.
 
-Пользователь платит за удобство.
+The user pays for convenience.
 
 ---
 
-# 14. Возможная монетизация
+## 14. Possible Monetization
 
-Условно можно выделить несколько моделей.
+Several models can be roughly distinguished.
 
 ### Free / BYOG
 
-Пользователь приносит:
-- свой GPU;
-- свои модели;
-- свои API;
-- свои внешние GPU.
+The user brings:
+- their own GPU;
+- their own models;
+- their own API;
+- their own external GPUs.
 
-Animastor предоставляет orchestration и сам продукт.
+Animastor provides orchestration and the product itself.
 
 ### Community
 
-Пользователь добровольно делится вычислительным временем и получает возможность пользоваться community compute.
+The user voluntarily shares compute time and gains access to community compute.
 
 ### Managed
 
-Animastor предоставляет готовые вычислительные ресурсы.
+Animastor provides ready compute resources.
 
-Здесь появляется основная коммерческая модель.
+This is where the primary commercial model appears.
 
-Принцип:
+Principle:
 
-> Пользователь, который хочет разбираться сам, может пользоваться системой практически бесплатно. Пользователь, который хочет «нажать кнопку и получить результат», платит за удобство и инфраструктуру.
+> A user who wants to figure things out themselves can use the system essentially for free. A user who wants to "press a button and get a result" pays for convenience and infrastructure.
 
 ---
 
-# 15. Что важно заложить уже сейчас
+## 15. What to Build Right Now
 
-Не нужно реализовывать всю distributed-систему в beta.
+It is not necessary to implement the entire distributed system in beta.
 
-Но текущая архитектура не должна закрывать этот путь.
+But the current architecture should not close this path.
 
-Ключевой принцип:
+The key principle:
 
-> **Worker должен быть независимым от места его запуска.**
+> **A worker must be independent of where it runs.**
 
-Сегодня:
+Today:
 
 ```text
 Animastor VPS
@@ -438,7 +439,7 @@ Animastor VPS
 Animastor Audio Worker
 ```
 
-Завтра:
+Tomorrow:
 
 ```text
 Animastor Cloud
@@ -446,7 +447,7 @@ Animastor Cloud
 User Audio Worker
 ```
 
-Позже:
+Later:
 
 ```text
 Animastor Cloud
@@ -456,7 +457,7 @@ Animastor Cloud
     └── LLM → local server
 ```
 
-И ещё позже:
+And even later:
 
 ```text
 Animastor Local
@@ -466,41 +467,41 @@ Animastor Local
 
 ---
 
-# 16. Главный стратегический принцип
+## 16. Key Strategic Principle
 
-Animastor потенциально может стать не просто приложением для генерации визуальных книг.
+Animastor has the potential to become more than just an app for generating visual books.
 
-Более широкая концепция:
+The broader concept:
 
-> **Animastor — orchestration platform для распределённой генерации визуального контента.**
+> **Animastor — orchestration platform for distributed visual content generation.**
 
-Пользователь может выбрать:
-- своё железо;
-- свои модели;
-- свои API;
+The user can choose:
+- their own hardware;
+- their own models;
+- their own API;
 - community compute;
-- облачные GPU;
-- готовую инфраструктуру Animastor;
-- любую комбинацию этих вариантов.
+- cloud GPUs;
+- Animastor's ready infrastructure;
+- any combination of these.
 
-При этом само приложение остаётся единым.
+The application itself remains unified.
 
 ---
 
-# 17. Приоритет
+## 17. Priority
 
-На этапе beta не следует пытаться реализовать всё сразу.
+During the beta phase, it is not advisable to try to implement everything at once.
 
-Приоритет:
+Priority:
 
-1. Стабильный Cloud + Worker protocol.
-2. Независимые workers с capabilities.
+1. Stable Cloud + Worker protocol.
+2. Independent workers with capabilities.
 3. Heartbeat / registration / jobs / progress / result.
-4. Локальный worker пользователя.
-5. Возможность выбирать worker по capability/model.
-6. Безопасная временная файловая область и автоматическая очистка.
-7. После этого — community compute.
-8. Затем — полностью локальная сборка.
-9. Затем — managed services и монетизация.
+4. User's local worker.
+5. Ability to select worker by capability/model.
+6. Secure temporary file area and automatic cleanup.
+7. After that — community compute.
+8. Then — fully local build.
+9. Then — managed services and monetization.
 
-Главная задача сейчас — **не построить всю будущую сеть, а построить правильный фундамент, на котором она сможет появиться.**
+The main task now is **not to build the entire future network, but to build the right foundation on which it can emerge.**
