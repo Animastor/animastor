@@ -4,67 +4,67 @@
 > schema changes, no downloads, no model/node installation.
 > **Date:** 2026-08-26
 > **Scope:** Generation Profiles `audio/qwen-tts`, `image/qwen-image`,
-> `video/ltx-2.3` и их фактические production dependencies.
+> `video/ltx-2.3` and their actual production dependencies.
 > **Companion docs:** `docs/04-planning/private-worker-installer-architecture.md`
 > (architecture draft), `docs/architecture/LINUX_INSTALLER_RECONNAISSANCE.md`
-> (предыдущая разведка), `docs/runtime-audits/README.md` (verified delivery chain).
+> (previous reconnaissance), `docs/runtime-audits/README.md` (verified delivery chain).
 
 ---
 
 ## 1. Executive Summary
 
-Исследование ответило на фундаментальный вопрос: **источником истины для
-install manifest является production workflow JSON**
-(`backend/ai/workflows/*.json`), связанный с профилем через поле
-`profile.{type}Profile` в connector'е. **Connector'ы — это backend-side
-execution metadata**: они живут только на VPS, патчат workflow JSON до
-отправки и **не пересекают границу GPU-воркера**. Installer НЕ должен
-устанавливать connector'ы.
+Research answered the fundamental question: **source of truth for
+install manifest is production workflow JSON**
+(`backend/ai/workflows/*.json`), linked to profile via
+`profile.{type}Profile` field in connector. **Connectors are backend-side
+execution metadata**: they live only on VPS, patch workflow JSON before
+sending and **don't cross GPU worker boundary**. Installer must NOT
+install connectors.
 
-Ключевые установленные факты:
+Key established facts:
 
-1. **Цепочка подтверждена кодом:** Profile (prompt-assembly) → Connector
+1. **Chain confirmed by code:** Profile (prompt-assembly) → Connector
    (entity→node bindings) → Workflow (ComfyUI API JSON) → `task.params`
-   через GPU Hub → `worker.cjs` → `POST http://127.0.0.1:8188/prompt`.
-   Workflow JSON доставляется на воркер по сети в runtime; на диске воркера
-   workflow-файлы не требуются (`docs/runtime-audits/README.md:19-52`,
+   via GPU Hub → `worker.cjs` → `POST http://127.0.0.1:8188/prompt`.
+   Workflow JSON delivered to worker over network at runtime; worker disk
+   doesn't require workflow files (`docs/runtime-audits/README.md:19-52`,
    `worker/worker/worker.cjs:310-339`).
-2. **Connector не добавляет runtime-зависимостей.** Его
-   `compatibility.nodeClasses` — подмножество `class_type` того же workflow
-   (валидируется при старте backend'а, `connector-loader.js:204-311`).
-   Model references в connector'ах отсутствуют. Единственный
-   installer-релевантный артефакт connector'а — `workflowHash` (sha256
-   workflow JSON) — может использоваться для drift-проверки, но не для
-   установки.
-3. **Найдено 7 production workflows**: `tts-qwen-narrator`,
+2. **Connector adds no runtime dependencies.** Its
+   `compatibility.nodeClasses` is subset of `class_type` of same workflow
+   (validated on backend startup, `connector-loader.js:204-311`).
+   Model references absent in connectors. Only
+   installer-relevant connector artifact — `workflowHash` (sha256
+   workflow JSON) — usable for drift-check, not for
+   installation.
+3. **7 production workflows found**: `tts-qwen-narrator`,
    `tts-qwen-dialogue`, `img-qwen-image`, `video-ltx-{1,2,3,4}p`
-   (4 видео-варианта идентичны по зависимостям, различаются только числом
-   нод `LTXVAddGuide`). Legacy `old_*` исключены загрузчиком
+   (4 video variants identical in dependencies, differ only in
+   `LTXVAddGuide` node count). Legacy `old_*` excluded by loader
    (`workflow-loader.js:29`).
-4. **Model inventory выведен из workflows**: audio — 2 ModelScope-репо
-   (ставятся самим custom node'ом, `auto_download: true`); image — 4 файла
-   (~21 GB); video — 7 файлов (~30 GB). Все target-каталоги подтверждены
-   runtime-аудитами.
-5. **Custom nodes**: audio — `ComfyUI-Qwen3-TTS` (единственный required);
-   image — `ComfyUI-GGUF` (единственный required); video — `ComfyUI-GGUF` +
-   `comfyui-kjnodes` (с обязательным AudioVAE-патчем) + вероятно
-   `comfyui-videohelpersuite`; часть class_type видео-workflow не
-   атрибутирована однозначно (UNKNOWN — требуется проверка `/object_info`
-   на референсном инстансе).
-6. **Единой runtime policy сейчас нет**: video-инстанс работает на
-   официальном ComfyUI `v0.27.0` + torch `2.6.0+cu124`; audio/image-инстансы
-   — на форке `rajsingh1-dev/ComfyUI` (commit `c4cfee7`) + torch
-   `2.10.0+cu128`. Требуется решение (§9, §14).
-7. **Аудиты как reference**: во всех трёх аудитах required-зависимости
-   присутствуют (MISSING = ∅); найдено значительное число UNUSED-компонентов
-   (операторские ноды, UI-тестовые workflow, upscaler-модель), которые НЕ
-   должны попадать в manifest.
+4. **Model inventory derived from workflows**: audio — 2 ModelScope repos
+   (installed by custom node itself, `auto_download: true`); image — 4 files
+   (~21 GB); video — 7 files (~30 GB). All target directories confirmed by
+   runtime audits.
+5. **Custom nodes**: audio — `ComfyUI-Qwen3-TTS` (only required);
+   image — `ComfyUI-GGUF` (only required); video — `ComfyUI-GGUF` +
+   `comfyui-kjnodes` (with mandatory AudioVAE patch) + likely
+   `comfyui-videohelpersuite`; some video workflow class_type
+   not uniquely attributed (UNKNOWN — requires `/object_info`
+   check on reference instance).
+6. **No unified runtime policy yet**: video instance runs on
+   official ComfyUI `v0.27.0` + torch `2.6.0+cu124`; audio/image instances
+   — on fork `rajsingh1-dev/ComfyUI` (commit `c4cfee7`) + torch
+   `2.10.0+cu128`. Decision needed (§9, §14).
+7. **Audits as reference**: all three audits have required dependencies
+   present (MISSING = ∅); significant UNUSED components found
+   (operator nodes, UI-test workflows, upscaler model) that must NOT
+   appear in manifest.
 
 ---
 
 ## 2. Current Architecture
 
-### 2.1 Фактическая цепочка (подтверждена кодом)
+### 2.1 Actual chain (confirmed by code)
 
 ```
                  BACKEND / VPS
@@ -100,39 +100,39 @@ execution metadata**: они живут только на VPS, патчат work
                     output → /history + файлы → base64 → hub → backend
 ```
 
-Граница подтверждена:
+Boundary confirmed:
 
-- Worker никогда не читает `backend/ai/*`: ни profiles, ни connectors, ни
-  workflow-файлы (`worker/worker/worker.cjs` — единственный consumer
-  `task.params`; `docs/runtime-audits/README.md:19-52`).
-- Workflow JSON не хранится на GPU-боксе для production; пустой
-  `~/ComfyUI/user/default/workflows/` — ожидаемое состояние
+- Worker never reads `backend/ai/*`: neither profiles, connectors, nor
+  workflow files (`worker/worker/worker.cjs` — sole consumer
+  of `task.params`; `docs/runtime-audits/README.md:19-52`).
+- Workflow JSON not stored on GPU box for production; empty
+  `~/ComfyUI/user/default/workflows/` — expected state
   (`docs/runtime-audits/README.md:47-52`;
-  `docs/runtime-audits/image-qwen/...md:70-103` — локальные workflow-файлы
-  явно помечены как UI test artifacts).
-- Backend не может стартовать без workflows+connectors:
-  `backend.cjs:307-316` → `process.exit(1)` при ошибке загрузки. Это
-  boot-critical backend-конфигурация, а не worker-зависимость.
+  `docs/runtime-audits/image-qwen/...md:70-103` — local workflow files
+  explicitly marked as UI test artifacts).
+- Backend cannot start without workflows+connectors:
+  `backend.cjs:307-316` → `process.exit(1)` on load error. This is
+  boot-critical backend configuration, not worker dependency.
 
-### 2.2 Компоненты и их владельцы
+### 2.2 Components and their owners
 
-| Компонент | Расположение | Владелец | Кто потребляет |
+| Component | Location | Owner | Consumer |
 |---|---|---|---|
 | Profiles | `backend/ai/profiles/{type}/{name}.json` | VPS | `ai-loader.js:213-219` → `assembly-profile.js:93-97` → prompt builders |
 | Skills | `backend/ai/skills/{type}/{name}.md` | VPS | `prompt-profile-loader.js:27-33` → agent pipeline |
-| Connectors | `backend/ai/connectors/conn-*.json` | VPS | `connector-loader.js:141-178` → сервисы audio/image/video |
-| Workflows | `backend/ai/workflows/*.json` | VPS | `workflow-loader.js:25-76`; в runtime уходят на воркер как `task.params` |
-| Worker bundle | `worker/worker/worker.cjs` + cleanup/journal | GPU-бокс | ставится вручную / hub `GET /worker-source` (`gpu-hub.js:1050-1060`) |
-| ComfyUI + nodes + models | `~/ComfyUI` на GPU-боксе | GPU-бокс | ComfyUI runtime |
+| Connectors | `backend/ai/connectors/conn-*.json` | VPS | `connector-loader.js:141-178` → audio/image/video services |
+| Workflows | `backend/ai/workflows/*.json` | VPS | `workflow-loader.js:25-76`; at runtime delivered to worker as `task.params` |
+| Worker bundle | `worker/worker/worker.cjs` + cleanup/journal | GPU box | installed manually / hub `GET /worker-source` (`gpu-hub.js:1050-1060`) |
+| ComfyUI + nodes + models | `~/ComfyUI` on GPU box | GPU box | ComfyUI runtime |
 
 ---
 
 ## 3. Generation Profiles
 
-### 3.1 Инвентаризация
+### 3.1 Inventory
 
-Все три профиля: `backend/ai/profiles/{audio,image,video}/*.json`.
-Загружаются рекурсивно (`ai-loader.js:84-113, 213-219`), кэш 60 с.
+All three profiles: `backend/ai/profiles/{audio,image,video}/*.json`.
+Loaded recursively (`ai-loader.js:84-113, 213-219`), 60s cache.
 
 | Поле | audio/qwen-tts | image/qwen-image | video/ltx-2.3 |
 |---|---|---|---|
@@ -141,182 +141,182 @@ execution metadata**: они живут только на VPS, патчат work
 | `model` | `Qwen3-TTS` | `Qwen2.5-VL` (*) | `LTX-2.3` |
 | `workflow` | `tts-qwen-*` (glob) | `img-qwen-image` | `video-ltx-*` (glob) |
 | `skill` | `audio/qwen-tts` | `image/qwen-image` | `video/ltx-2.3` |
-| `assembly.sections` | voiceInstruction, defaultInstruct | 14 секций (renderMode…quality) | characters, storyboard, renderInfo |
+| `assembly.sections` | voiceInstruction, defaultInstruct | 14 sections (renderMode…quality) | characters, storyboard, renderInfo |
 | `assembly.defaults` | defaultInstruct: "" | quality, negativeBase | negativeBase |
 | `video` | — | — | frameAlignment: 8, requiresTrim: true, requiresKeyframeForcing: true |
 
-(\*) Замечание: `model: "Qwen2.5-VL"` в image-профиле — это text encoder;
-фактическая diffusion-модель — Qwen-Image (см. §7). Поле `model` — UX-лейбл.
+(\*) Note: `model: "Qwen2.5-VL"` in image profile — this is text encoder;
+actual diffusion model — Qwen-Image (see §7). `model` field — UX label.
 
-### 3.2 Как профиль связан с connector'ом и workflow
+### 3.2 How profile links to connector and workflow
 
-Направление связи — **от connector'а к профилю**, не наоборот:
+Link direction — **from connector to profile**, not reverse:
 
-- Connector содержит `profile.{audioProfile|imageProfile|videoProfile}`
-  (например, `conn-video-1p.json:8-10` → `videoProfile: "ltx-2.3"`).
+- Connector contains `profile.{audioProfile|imageProfile|videoProfile}`
+  (e.g., `conn-video-1p.json:8-10` → `videoProfile: "ltx-2.3"`).
 - Resolution: user override (Settings, Redis
   `animastor:prompt-profiles`) → connector's profile field → null
   (`backend/src/services/profile-override.js:1-26`;
   `backend/src/audio/generation.js:30-33`).
-- Профиль НЕ содержит поля, ссылающегося на connector.
+- Profile does NOT contain field referencing connector.
 
-**Важно:** поле `workflow` в профиле (`"tts-qwen-*"`, `"video-ltx-*"`)
-**не читается кодом нигде** (проверено grep по
-`assembly-profile.js`/`ai-loader.js` и всем потребителям
-`resolveAssembly`). Реальный выбор workflow захардкожен в сервисах:
+**Important:** `workflow` field in profile (`"tts-qwen-*"`, `"video-ltx-*"`)
+**is not read by code anywhere** (verified via grep on
+`assembly-profile.js`/`ai-loader.js` and all consumers of
+`resolveAssembly`). Actual workflow selection hardcoded in services:
 
-| Профиль | Фактический выбор workflow | Код |
+| Profile | Actual workflow selection | Code |
 |---|---|---|
-| qwen-tts | `tts-qwen-narrator` / `tts-qwen-dialogue` (по типу сцены) | `audio/generation.js:19-20` |
+| qwen-tts | `tts-qwen-narrator` / `tts-qwen-dialogue` (by scene type) | `audio/generation.js:19-20` |
 | qwen-image | `img-qwen-image` | `image/iu-processor.js:182`, `image/connector-utils.js:8` |
-| ltx-2.3 | `` `video-ltx-${groupSize}p` `` (1–4 картинки в группе) | `workflows/video/video-workflows.js:634` |
+| ltx-2.3 | `` `video-ltx-${groupSize}p` `` (1–4 images in group) | `workflows/video/video-workflows.js:634` |
 
-### 3.3 Что профиль уже содержит vs что нужно Installer'у
+### 3.3 What profile already contains vs what Installer needs
 
-**Уже существует:** только prompt-assembly метаданные (секции, defaults)
-и video-метаданные постобработки (frameAlignment/trim/keyframes —
-используются в `video/video-merge.js:27-39`). Никаких runtime/install
-полей нет — это подтверждено и ранее
+**Already exists:** only prompt-assembly metadata (sections, defaults)
+and video post-processing metadata (frameAlignment/trim/keyframes —
+used in `video/video-merge.js:27-39`). No runtime/install
+fields — confirmed previously
 (`LINUX_INSTALLER_RECONNAISSANCE.md:14-28`).
 
-**Потенциально понадобится Installer'у** (по
-`private-worker-installer-architecture.md` §5.1, §9 — draft, не решать здесь):
+**Potentially needed by Installer** (per
+`private-worker-installer-architecture.md` §5.1, §9 — draft, not decided here):
 
-- ссылка на install spec / manifest (id профиля как ключ установки);
-- hardware requirements (min VRAM, CUDA tier);
+- reference to install spec / manifest (profile id as install key);
+  hardware requirements (min VRAM, CUDA tier);
 - ComfyUI version policy per profile;
-- формализация поля `workflow` (сейчас декоративное) как перечня
-  production workflows профиля.
+- formalization of `workflow` field (currently decorative) as list of
+  profile's production workflows.
 
-Profile schema в этом исследовании **не менялась**.
+Profile schema **not changed** in this research.
 
 ---
 
 ## 4. Connector Architecture
 
-### 4.1 Что такое connector в текущей архитектуре
+### 4.1 What is connector in current architecture
 
-Connector — декларативный JSON-контракт между backend-сущностями Animastor
-и нодами конкретного ComfyUI workflow
-(`docs/06-workflows/CONNECTOR_ARCHITECTURE.md` §2). Файлы:
-`backend/ai/connectors/conn-*.json` (загрузчик принимает только файлы с
-префиксом `conn-`, `connector-loader.js:151`).
+Connector — declarative JSON contract between Animastor backend entities
+and specific ComfyUI workflow nodes
+(`docs/06-workflows/CONNECTOR_ARCHITECTURE.md` §2). Files:
+`backend/ai/connectors/conn-*.json` (loader accepts only files with
+`conn-` prefix, `connector-loader.js:151`).
 
-Структура (все 7 файлов):
+Structure (all 7 files):
 
-| Поле | Назначение |
+| Field | Purpose |
 |---|---|
-| `connectorVersion` | версия коннектора (`1.0.0` у всех) |
-| `workflow` | имя workflow-файла без `.json` |
-| `workflowHash` | sha256 workflow JSON; пустые значения автозаполняются при старте (`connector-loader.js:561-568`) |
-| `label`, `description`, `type`, `metadata` | UX/описательные |
-| `profile.{type}Profile` | **связь с Generation Profile** |
-| `compatibility.nodeClasses` | map nodeId → ожидаемый class_type |
+| `connectorVersion` | connector version (`1.0.0` for all) |
+| `workflow` | workflow filename without `.json` |
+| `workflowHash` | sha256 workflow JSON; empty values auto-populated on startup (`connector-loader.js:561-568`) |
+| `label`, `description`, `type`, `metadata` | UX/descriptive |
+| `profile.{type}Profile` | **link to Generation Profile** |
+| `compatibility.nodeClasses` | map nodeId → expected class_type |
 | `inputs` / `outputs` / `parameters` | bindings: entityKey → { nodeId, field, expectedClass, default, min/max } |
-| `guideNodes` | только video: bindings LTXVAddGuide (frame_idx/strength/image) |
+| `guideNodes` | video only: LTXVAddGuide bindings (frame_idx/strength/image) |
 
-### 4.2 Production connector'ы и их связи
+### 4.2 Production connectors and their links
 
-| Connector | Workflow | Profile (`profile.*`) | Что передаёт в workflow | Что читает из результата |
+| Connector | Workflow | Profile (`profile.*`) | What passes to workflow | What reads from result |
 |---|---|---|---|---|
 | `conn-tts-narration.json` | `tts-qwen-narrator` | `audioProfile: qwen-tts` | narrationText→108.text, voiceInstruction→108.voice_instruction, seed/language/temperature→108, quality/filename→1008 | generatedAudio (node 1008 SaveAudioMP3) |
 | `conn-tts-dialogue.json` | `tts-qwen-dialogue` | `audioProfile: qwen-tts` | dialogueScript→108.script, defaultInstruct→108, character{1,2,3}Voice→71/80/82, roleName{1,2,3}→74, seed/temperature→75, quality/filename→1008 | generatedAudio (1008) |
 | `conn-image-generation.json` | `img-qwen-image` | `imageProfile: qwen-image` | positivePrompt→108.text, negativePrompt→109.text, width/height→110, steps/cfg/sampler/scheduler/seed→120, filename→1008 | generatedImage (1008 SaveImage) |
 | `conn-video-1p.json` | `video-ltx-1p` | `videoProfile: ltx-2.3` | sourceImages→216 (LoadImage), prompts→121/110, totalFrames→112, fps→129, cfg→128, guideStrength_0→214, filename→75 | generatedVideo (75 SaveVideo) |
-| `conn-video-2p.json` | `video-ltx-2p` | `videoProfile: ltx-2.3` | то же + guide bindings 199, 214 | generatedVideo |
-| `conn-video-3p.json` | `video-ltx-3p` | `videoProfile: ltx-2.3` | то же + guide bindings 199, 200, 214 | generatedVideo |
-| `conn-video-4p.json` | `video-ltx-4p` | `videoProfile: ltx-2.3` | то же + guide bindings 199, 200, 201, 214 | generatedVideo |
+| `conn-video-2p.json` | `video-ltx-2p` | `videoProfile: ltx-2.3` | same + guide bindings 199, 214 | generatedVideo |
+| `conn-video-3p.json` | `video-ltx-3p` | `videoProfile: ltx-2.3` | same + guide bindings 199, 200, 214 | generatedVideo |
+| `conn-video-4p.json` | `video-ltx-4p` | `videoProfile: ltx-2.3` | same + guide bindings 199, 200, 201, 214 | generatedVideo |
 
-### 4.3 Ответы на поставленные вопросы
+### 4.3 Answers to posed questions
 
-**Как происходит связь Backend → Connector → Workflow → ComfyUI → GPU
-Worker?** Именно так, с уточнением: connector существует только на шаге
-«Backend патчит Workflow». Дальше идёт уже готовый JSON:
+**How does Backend → Connector → Workflow → ComfyUI → GPU Worker linking
+happen?** Exactly so, with clarification: connector exists only at step
+"Backend patches Workflow". After that comes ready JSON:
 `setValue()` (`connector-loader.js:401-422`) → `gpu.sendUnified()`
 (`gpu-dispatcher.js:101-182`) → hub → worker → ComfyUI `/prompt`
-(`worker.cjs:310-339`). Connector не «вызывает» workflow — он описывает,
-куда в нём писать.
+(`worker.cjs:310-339`). Connector doesn't "call" workflow — it describes
+where to write in it.
 
-**Какие данные connector передаёт в workflow?** Только значения сущностей
-(тексты промптов, голоса, имена ролей, размеры, seed, strength guide'ов,
-filename prefix) по bindings `nodeId`+`field`. Изображения передаются НЕ
-через connector: reference-кадры видео приходят в `task.assets.images`
-(base64) и кладутся worker'ом в `COMFY_INPUT_DIR` как `{scene}_{unit}.png`
-(`worker.cjs:600-624`), а имена файлов в `LoadImage`-ноды вписывает
+**What data does connector pass to workflow?** Only entity values
+(prompt texts, voices, role names, sizes, seed, guide strength,
+filename prefix) via `nodeId`+`field` bindings. Images NOT passed
+through connector: video reference frames arrive in `task.assets.images`
+(base64) and placed by worker in `COMFY_INPUT_DIR` as `{scene}_{unit}.png`
+(`worker.cjs:600-624`), filenames in `LoadImage` nodes written by
 `video-workflows.js:372-390`.
 
-**Какие данные workflow возвращает?** Ничего «через connector»: результат —
-это файлы ComfyUI (`output/`), которые worker находит по output-нодам
+**What data does workflow return?** Nothing "through connector": result —
+is ComfyUI files (`output/`), which worker finds via output nodes
 (`SaveImage*`/`SaveAudio*`/`SaveVideo*`/`CreateVideo*`,
-`worker.cjs:145-157`) и шлёт base64 в hub (`worker.cjs:509-527`).
-Output-связь connector'а (`outputs.generatedVideo` и т.п.) используется
-backend'ом декларативно (для понимания, какая нода — выход), фактический
-поиск — по префиксу class_type в worker'е.
+`worker.cjs:145-157`) and sends base64 to hub (`worker.cjs:509-527`).
+Output binding of connector (`outputs.generatedVideo` etc.) used by
+backend declaratively (to understand which node is output), actual
+search — by class_type prefix in worker.
 
-**Есть ли у connector'а:**
+**Does connector have:**
 
-- profile — **да**, `profile.{type}Profile` (единственная связь с
+- profile — **yes**, `profile.{type}Profile` (only link to
   Generation Profile);
-- workflow — **да**, поле `workflow` (имя файла);
-- workflow_id — **да**, `workflowHash` (sha256, автозаполняется;
-  проверка при старте `connector-loader.js:208-218`);
-- model references — **нет** (ни в одном из 7 файлов);
-- node references — **да**, все bindings и `compatibility.nodeClasses`;
-- параметры ComfyUI — **нет** (нет URL/портов/аргументов запуска);
-- другие dependency references — **нет**.
+- workflow — **yes**, `workflow` field (filename);
+  workflow_id — **yes**, `workflowHash` (sha256, auto-populated;
+  validated on startup `connector-loader.js:208-218`);
+- model references — **no** (none in any of 7 files);
+  node references — **yes**, all bindings and `compatibility.nodeClasses`;
+- ComfyUI parameters — **no** (no URL/port/launch arguments);
+  other dependency references — **no**.
 
-**Есть ли connector-specific зависимости, не видные из workflow JSON?**
-**Нет.** `compatibility.nodeClasses` каждого connector'а — строгое
-подмножество `class_type` его workflow (проверено: все nodeId из
-compatibility присутствуют в workflow; валидатор это гарантирует,
-`connector-loader.js:221-241`). Connector не вносит ни одного нового
-class_type, файла модели или пакета.
+**Are there connector-specific dependencies not visible from workflow JSON?**
+**No.** `compatibility.nodeClasses` of each connector — strict
+subset of `class_type` of its workflow (verified: all nodeId from
+compatibility present in workflow; validator guarantees this,
+`connector-loader.js:221-241`). Connector introduces no new
+class_type, model file or package.
 
-**Может ли один connector использовать несколько workflow?** В текущей
-схеме — нет: поле `workflow` одно, загрузка 1:1
-(`connector-loader.js:185-194` индексирует connector по имени workflow).
+**Can one connector use multiple workflows?** In current
+scheme — no: `workflow` field is single, loading is 1:1
+(`connector-loader.js:185-194` indexes connector by workflow name).
 
-**Может ли один workflow использоваться несколькими connector/profile?**
-Технически индекс допускает lookup по имени, но фактически сейчас —
-строго 1 workflow : 1 connector : 1 profile
-(7 connector'ов на 7 workflow).
+**Can one workflow be used by multiple connectors/profiles?**
+Technically index allows lookup by name, but currently —
+strictly 1 workflow : 1 connector : 1 profile
+(7 connectors for 7 workflows).
 
-**Есть ли зависимости между connector'ом и установленным
-Worker/ComfyUI runtime?** Косвенная: connector валиден, пока совпадают
-`workflowHash` и nodeIds/class'ы в workflow. Если на воркере ComfyUI не
-знает какой-то class_type — упадёт выполнение задачи на GPU-боксе, но не
-connector. Прямой зависимости connector → runtime нет.
+**Are there dependencies between connector and installed
+Worker/ComfyUI runtime?** Indirect: connector is valid as long as
+`workflowHash` and nodeIds/classes in workflow match. If worker's ComfyUI doesn't
+know some class_type — task execution fails on GPU box, but not
+connector. No direct connector → runtime dependency.
 
-### 4.4 Граница: connector в install manifest или только backend metadata?
+### 4.4 Boundary: connector in install manifest or only backend metadata?
 
-**Установлено по коду: connector — BACKEND ONLY.**
+**Confirmed by code: connector — BACKEND ONLY.**
 
-Доказательства:
+Evidence:
 
-1. Worker не имеет кода, читающего connector'ы
-   (`worker/worker/worker.cjs` — 734 строки, единственные входы: env vars,
+1. Worker has no code reading connectors
+   (`worker/worker/worker.cjs` — 734 lines, only inputs: env vars,
    `task.params`, `task.assets`, ComfyUI HTTP API).
-2. Hub оперирует opaque `task.params` (`gpu-hub.js:661-688`) — содержимое
-   workflow JSON ему не нужно, connector'ы тем более.
-3. Connector'ы грузятся и валидируются только в backend-процессе
-   (`backend.cjs:307-316`), каталог монтируется в backend-контейнер
-   (`docker-compose.yml:86-89`), а не в worker.
-4. Delivery-модель: на GPU-бокс приходит уже пропатченный workflow JSON —
-   «следы» connector'а (конкретные значения в нодах) внутри `task.params`
-   есть, сам connector — нет.
+2. Hub operates opaque `task.params` (`gpu-hub.js:661-688`) — doesn't need
+   workflow JSON content, let alone connectors.
+3. Connectors loaded and validated only in backend process
+   (`backend.cjs:307-316`), directory mounted in backend container
+   (`docker-compose.yml:86-89`), not in worker.
+4. Delivery model: GPU box receives already-patched workflow JSON —
+   connector "traces" (specific values in nodes) inside `task.params`
+   present, connector itself — not.
 
-**Вывод для Installer:** installer НЕ устанавливает connector'ы. Это
-явно фиксируется. Единственное, что installer может *знать* о connector'ах
-(опционально, для drift-верификации): `workflowHash` и ожидаемый набор
-class_type — но эти данные installer может вывести и прямо из workflow
-JSON. Решение — §11, статус BACKEND ONLY.
+**Installer conclusion:** installer does NOT install connectors. This is
+explicitly documented. Only thing installer can *know* about connectors
+(optional, for drift verification): `workflowHash` and expected set of
+class_type — but installer can derive this directly from workflow
+JSON. Decision — §11, status BACKEND ONLY.
 
-**Замечание о хрупкости (зафиксировано, не менять):** merged-dialogue путь
-audio (`audio/generation.js:51-137`) патчит ноды 108/71/80/82/74 напрямую
-по hardcoded id, минуя connector; hardcoded-fallback'и есть и в
-per-segment пути (`generation.js:492, 521-524, 543-546`). На install
-footprint это не влияет (те же ноды/модели), но показывает, что connector
-— не единственный consumer структуры workflow.
+**Fragility note (documented, not to change):** merged-dialogue path
+audio (`audio/generation.js:51-137`) patches nodes 108/71/80/82/74 directly
+by hardcoded id, bypassing connector; hardcoded fallbacks exist in
+per-segment path (`generation.js:492, 521-524, 543-546`). Doesn't affect install
+footprint (same nodes/models), but shows connector
+is not sole consumer of workflow structure.
 
 ---
 
@@ -333,50 +333,50 @@ video/ltx-2.3 ─┬─ conn-video-1p ─→ video-ltx-1p.json  (639 строк,
                ├─ conn-video-3p ─→ video-ltx-3p.json  (698 строк, 45 нод, 3×LTXVAddGuide)
                └─ conn-video-4p ─→ video-ltx-4p.json  (728 строк, 46 нод, 4×LTXVAddGuide)
 
-legacy (НЕ production, исключены загрузчиком по префиксу old_, workflow-loader.js:29):
-  old_img-qwen-image.json  — отличается квантом CLIP (Q4_K_M вместо Q8_0) — footgun
-  old_video-ltx.json       — тот же video model set
+legacy (NOT production, excluded by loader via old_ prefix, workflow-loader.js:29):
+  old_img-qwen-image.json  — differs in CLIP quant (Q4_K_M vs Q8_0) — footgun
+  old_video-ltx.json       — same video model set
 ```
 
-Все 7 production workflow — в формате ComfyUI **API** (dict nodeId →
-{inputs, class_type, _meta}), не UI-формат. Это формат, который
-отправляется в `/prompt` как есть.
+All 7 production workflows — in ComfyUI **API** format (dict nodeId →
+{inputs, class_type, _meta}), not UI format. This is the format
+sent to `/prompt` as-is.
 
-Что каждый workflow ожидает от runtime:
+What each workflow expects from runtime:
 
-| Ожидание | Кто обеспечивает |
+| Expectation | Provider |
 |---|---|
-| ComfyUI HTTP API `/prompt`, `/history`, `/system_stats`, `/view` на `127.0.0.1:8188` | ComfyUI (запуск — `start-video.sh:65` / вручную) |
-| Все class_type зарегистрированы (core + custom nodes) | ComfyUI + custom_nodes |
-| Файлы моделей в соответствующих `models/<subdir>/` | установка (сейчас вручную; цель — installer) |
-| `input/` каталог доступен для записи (video reference frames) | worker `COMFY_INPUT_DIR` (`worker.cjs:51, 600-624`) |
-| `output/` каталог, для video — `output/video/*.mp4` fallback-скан | worker `COMFY_OUTPUT_DIR` (`worker.cjs:52, 421-433`) |
-| Сеть до ModelScope при первом запуске TTS (если модели не предзагружены) | `Qwen3TTSLoader.auto_download: true` |
-| ffmpeg-совместимое кодирование видео/аудио (CreateVideo/SaveVideo, SaveAudioMP3) | зависимости пакетов нод (imageio-ffmpeg и т.п.; см. MEMORY.md:112) |
+| ComfyUI HTTP API `/prompt`, `/history`, `/system_stats`, `/view` on `127.0.0.1:8188` | ComfyUI (launch — `start-video.sh:65` / manual) |
+| All class_type registered (core + custom nodes) | ComfyUI + custom_nodes |
+| Model files in corresponding `models/<subdir>/` | installation (currently manual; goal — installer) |
+| `input/` directory writable (video reference frames) | worker `COMFY_INPUT_DIR` (`worker.cjs:51, 600-624`) |
+| `output/` directory, for video — `output/video/*.mp4` fallback scan | worker `COMFY_OUTPUT_DIR` (`worker.cjs:52, 421-433`) |
+| Network to ModelScope on first TTS run (if models not preloaded) | `Qwen3TTSLoader.auto_download: true` |
+| ffmpeg-compatible video/audio encoding (CreateVideo/SaveVideo, SaveAudioMP3) | node package dependencies (imageio-ffmpeg etc.; see MEMORY.md:112) |
 
 ---
 
 ## 6. Workflow → Custom Node Mapping
 
-### 6.1 Полная таблица class_type
+### 6.1 Full class_type table
 
 **tts-qwen-narrator / tts-qwen-dialogue (profile audio/qwen-tts):**
 
-| class_type | Ноды | Пакет | Источник | Версия/ревизия |
+| class_type | Nodes | Package | Source | Version/revision |
 |---|---|---|---|---|
-| `Qwen3TTSVoiceDesign` | 108 (narrator); 71, 80, 82 (dialogue) | `ComfyUI-Qwen3-TTS` | `https://github.com/wanaigc/ComfyUI-Qwen3-TTS` | commit `2ee1131` (audio-аудит) |
-| `Qwen3TTSLoader` | 78 (оба); 79 (dialogue) | `ComfyUI-Qwen3-TTS` | то же | то же |
-| `Qwen3TTSVoiceClonePrompt` | 73, 81, 83 | `ComfyUI-Qwen3-TTS` | то же | то же |
-| `Qwen3TTSRoleBank` | 74 | `ComfyUI-Qwen3-TTS` | то же | то же |
-| `Qwen3TTSAdvancedDialogue` | 75 | `ComfyUI-Qwen3-TTS` | то же | то же |
-| `Qwen3TTSScriptProcessor` | 108 (dialogue) | `ComfyUI-Qwen3-TTS` | то же | то же |
-| `SaveAudioMP3` | 1008 (оба) | `ComfyUI-Qwen3-TTS` (атрибуция по исключению — см. ниже) | то же | то же |
+| `Qwen3TTSVoiceDesign` | 108 (narrator); 71, 80, 82 (dialogue) | `ComfyUI-Qwen3-TTS` | `https://github.com/wanaigc/ComfyUI-Qwen3-TTS` | commit `2ee1131` (audio audit) |
+| `Qwen3TTSLoader` | 78 (both); 79 (dialogue) | `ComfyUI-Qwen3-TTS` | same | same |
+| `Qwen3TTSVoiceClonePrompt` | 73, 81, 83 | `ComfyUI-Qwen3-TTS` | same | same |
+| `Qwen3TTSRoleBank` | 74 | `ComfyUI-Qwen3-TTS` | same | same |
+| `Qwen3TTSAdvancedDialogue` | 75 | `ComfyUI-Qwen3-TTS` | same | same |
+| `Qwen3TTSScriptProcessor` | 108 (dialogue) | `ComfyUI-Qwen3-TTS` | same | same |
+| `SaveAudioMP3` | 1008 (both) | `ComfyUI-Qwen3-TTS` (attribution by elimination — see below) | same | same |
 
-Атрибуция `SaveAudioMP3`: в ComfyUI core есть `SaveAudio`, но не
-MP3-вариант; на работающем audio-инстансе из custom nodes стоят только
-`comfyui-manager` и `qwen3-tts` (аудит `[6]`), значит `SaveAudioMP3`
-предоставляется пакетом `qwen3-tts`. **Высокая уверенность, требуется
-подтверждение** (`/object_info` на инстансе).
+`SaveAudioMP3` attribution: ComfyUI core has `SaveAudio`, but not
+MP3 variant; on running audio instance only
+`comfyui-manager` and `qwen3-tts` custom nodes installed (audit `[6]`), so `SaveAudioMP3`
+provided by `qwen3-tts` package. **High confidence, requires
+verification** (`/object_info` on instance).
 
 **img-qwen-image (profile image/qwen-image):**
 
