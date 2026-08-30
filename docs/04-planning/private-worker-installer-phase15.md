@@ -11,11 +11,8 @@
 
 ## 0. Guiding Principle
 
-> **Installer предоставляет проверенную Animastor baseline-конфигурацию,
-> но не забирает контроль над пользовательским ComfyUI.**
->
-> The installer delivers a verified Animastor baseline configuration, but it
-> never takes control of the user's ComfyUI.
+> **The installer delivers a verified Animastor baseline configuration,
+> but it never takes control of the user's ComfyUI.**
 
 Two real scenarios must both work:
 
