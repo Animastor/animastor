@@ -249,4 +249,91 @@ describe('runPipeline — analysis_mode dispatch (Milestone #1)', () => {
         expect(calls.characters).to.equal(1);
         expect(calls.locations).to.equal(1);
     });
+
+    it('analysisMode=parallel runs voices AFTER characters+locations complete (voices depends on merged characters)', async () => {
+        // Voices needs the MERGED character set (post-mergeCharacterLists),
+        // which is only available after the orchestrator's wave 1 finishes.
+        // So voices runs sequentially AFTER characters+locations, NOT
+        // inside the orchestrator.
+        const order = [];
+        const track = (label, ms) => async () => {
+            order.push(`start:${label}`);
+            await new Promise((r) => setTimeout(r, ms));
+            order.push(`end:${label}`);
+            return label === 'characters'
+                ? { characters: [{ id: 'c1', name: 'C1', appearance: 'tall, blonde' }], mentions: {} }
+                : (label === 'voices' ? { voices: { c1: 'soft' } } : []);
+        };
+
+        const mocks = makeMocks({
+            pipelineSteps: {
+                stepExtractCharacters: track('characters', 40),
+                stepGenerateVoices:    track('voices',     20),
+                stepExtractLocations:  track('locations',  40),
+            },
+        });
+        await run('sess', 'Some narrative text.', [], [], mocks, {
+            analysisMode: 'parallel',
+            analysisParallelism: 3,
+        });
+
+        // voices must START only AFTER characters AND locations have ENDED.
+        const startVoices = order.indexOf('start:voices');
+        const endChars    = order.indexOf('end:characters');
+        const endLocs     = order.indexOf('end:locations');
+        expect(startVoices).to.be.greaterThan(-1);
+        expect(endChars).to.be.greaterThan(-1);
+        expect(endLocs).to.be.greaterThan(-1);
+        expect(startVoices).to.be.greaterThan(endChars);
+        expect(startVoices).to.be.greaterThan(endLocs);
+
+        // characters and locations overlap (concurrent siblings).
+        const startChars = order.indexOf('start:characters');
+        const startLocs  = order.indexOf('start:locations');
+        expect(startChars).to.be.lessThan(endLocs);
+        expect(startLocs).to.be.lessThan(endChars);
+    });
+
+    it('analysisMode=parallel: voices step mutates characters[i].voice via the shared characters array', async () => {
+        const mocks = makeMocks({
+            pipelineSteps: {
+                stepExtractCharacters: async () => ({
+                    characters: [{ id: 'c1', name: 'C1', voice: '', appearance: 'tall, blonde' }],
+                    mentions: {},
+                }),
+                stepGenerateVoices: async (_sid, _text, chars) => {
+                    // Same mutation pattern as the real step: assign voice
+                    // to the character object directly.
+                    for (const ch of chars) ch.voice = 'soft female voice';
+                    return { voices: { c1: 'soft female voice' } };
+                },
+                stepExtractLocations: async () => [],
+            },
+        });
+        const result = await run('sess', 'Some narrative text.', [], [], mocks, {
+            analysisMode: 'parallel',
+            analysisParallelism: 3,
+        });
+        const c1 = result.characters.find((c) => c.id === 'c1');
+        expect(c1).to.exist;
+        expect(c1.voice).to.equal('soft female voice');
+    });
+
+    it('analysisMode=parallel: voices is skipped when no characters exist (legacy early-return preserved)', async () => {
+        const calls = { voices: 0 };
+        const mocks = makeMocks({
+            pipelineSteps: {
+                stepExtractCharacters: async () => ({ characters: [], mentions: {} }),
+                stepGenerateVoices: async () => { calls.voices++; return { voices: {} }; },
+                stepExtractLocations: async () => [],
+            },
+        });
+        await run('sess', 'Some narrative text.', [], [], mocks, {
+            analysisMode: 'parallel',
+            analysisParallelism: 3,
+        });
+        // The legacy step's own early-return (viableChars.length === 0) fires
+        // because mergeCharacterLists produces an empty list.
+        expect(calls.voices).to.equal(0);
+    });
 });

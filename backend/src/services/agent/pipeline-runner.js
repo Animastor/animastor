@@ -414,7 +414,16 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: effectiveChunkSize, message: PROGRESS_STAGES.extracting_chars });
         try {
             analysisOrchestratorResult = await parallelOrchestrator.run({
-                taskIds: ['characters', 'locations'],  // voices is commit #5
+                // Voices is intentionally NOT in the orchestrator's task list
+                // here — it depends on the MERGED character set (after
+                // mergeCharacterLists), and that merge happens AFTER the
+                // orchestrator returns. We run voices in the legacy slot
+                // below (sequential after the merge), exactly as the
+                // sequential path does. See parallel-analysis-orchestrator.js
+                // for the voices ANALYZERS entry, which remains available for
+                // future milestones if the merge logic is moved inside the
+                // orchestrator.
+                taskIds: ['characters', 'locations'],
                 analyzers: pipelineSteps,
                 sessionId,
                 text,
@@ -471,12 +480,12 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     // In subsequent windows, skips characters that already have meaningful voices
     // and only generates for newly discovered characters.
     //
-    // Parallel mode (Milestone #1, commit #5 will route voices through the
-    // orchestrator so it runs concurrently with whatever else is allowed to).
-    // Until then, parallel mode runs voices here in the legacy slot, AFTER the
-    // parallel character+location merge — voices depends on characters, never
-    // the other way around.
-    if (characters.length > 0) {
+    // Parallel mode (Milestone #1, Commit #5): voices runs sequentially
+// AFTER the orchestrator has merged characters + locations. The voices
+// step NEEDS the merged character set (it mutates characters[i].voice),
+// so it cannot run inside the orchestrator's wave — it runs here in the
+// legacy position. Same condition (characters.length > 0) as sequential.
+if (characters.length > 0) {
         const voiceResult = await pipelineSteps.stepGenerateVoices(sessionId, text, characters, stepIndex, _progress, language, options.promptProfiles);
         if (voiceResult && voiceResult.voices) {
             const voiced = Object.keys(voiceResult.voices).length;

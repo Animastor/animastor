@@ -273,4 +273,33 @@ it('runs three tasks: characters + locations in wave 1, voices after characters 
         expect(err).to.be.an('error');
         expect(err.message).to.match(/sessionId is required/);
     });
+
+    it('can orchestrate voices as wave-2 dependency (future milestone hook)', async () => {
+        // The orchestrator's voices entry is available but the pipeline-runner
+        // currently runs voices in its legacy slot (because voices mutates
+        // characters[i].voice and needs the MERGED character set). When the
+        // merge logic moves inside the orchestrator (next milestone), the
+        // pipeline can drop voices from its own loop and pass all three task
+        // ids here. This test pins the dependency wave ordering.
+        const calls = { characters: 0, voices: 0, chars_done_at: 0, voices_start_at: 0 };
+        const result = await orchestrator.run({
+            ...baseCtx,
+            characters: [{ id: 'r', name: 'Real', appearance: 'described' }],
+            analyzers: makeAnalyzers({
+                characters: async () => {
+                    calls.characters++;
+                    await SLEEP(20);
+                    return { characters: [{ id: 'r', name: 'Real' }], mentions: {} };
+                },
+                voices: async () => { calls.voices++; return { voices: { r: 'soft' } }; },
+            }),
+            taskIds: ['characters', 'voices'],
+            parallelism: 3,
+        });
+        expect(result.ok).to.equal(true);
+        expect(result.tasks.find((t) => t.id === 'voices').status).to.equal('completed');
+        // voices ran exactly once and only after characters.
+        expect(calls.voices).to.equal(1);
+        expect(calls.characters).to.equal(1);
+    });
 });
