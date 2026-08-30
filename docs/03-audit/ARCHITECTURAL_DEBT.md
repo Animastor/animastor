@@ -1,8 +1,8 @@
 # Architectural Debt: Animastor
 
-## ✅ Resolved Bugs (Н.0–Н.9, 2026-06-26)
+## ✅ Resolved Bugs (N.0–N.9, 2026-06-26)
 
-The following bugs were closed as part of sprint Н.0–Н.9. Details in `docs/TODO_IMMEDIATE.md`.
+The following bugs were closed as part of sprint N.0–N.9. Details in `docs/TODO_IMMEDIATE.md`.
 
 | Code | Problem | Status | Commit |
 |---|---|---|---|

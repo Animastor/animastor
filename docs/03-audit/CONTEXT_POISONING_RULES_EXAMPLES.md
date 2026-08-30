@@ -1,10 +1,10 @@
-# Контекстное заражение: конкретные id из примеров рулсов/демо-книги
+# Context Poisoning: Concrete IDs from Rules/Demo Book Examples
 
-Дата: 2026-08-09
-Статус: **Вариант 1 применён** (примеры обезличены); **Вариант 3 применён**
-(гибрид: детерминированный детект + LLM-пересборка); Вариант 2 — опционально.
+Date: 2026-08-09
+Status: **Option 1 applied** (examples anonymized); **Option 3 applied**
+(hybrid: deterministic detection + LLM rebuild); Option 2 — optional.
 
-## Симптом
+## Symptom
 
 При генерации книги `royallib_com_1786206633026` (русскоязычная книга) в
 `video.action` появился выдуманный id **`zhenshchina_v_budochke`** — такого
@@ -21,36 +21,38 @@ ivan_ponyrev, prozrachnyy). При этом сам id — это «женщин�
 - В других прогонах агент «придумывал» ей паспорт и голос — потому что тот же
   id фигурирует в примерах шага извлечения персонажей.
 
-## Механизм заражения
+## Poisoning Mechanism
 
-Агент копирует примеры из своего контекста, а не следует закрытому списку id.
-Все примеры в рулсах и в демо-данных были прошиты id из «Мастера и Маргариты»
-— **той самой книги, которую генерирует пользователь**. Когда агент встречает
-в тексте «женщина в будочке», он вспоминает из примера «правильный» id и
-вставляет его, даже если в Scene Context его нет.
+The agent copies examples from its context rather than following a closed ID list.
+All examples in rules and demo data were hardcoded with IDs from *The Master and Margarita*
+— **the very book the user is generating**. When the agent encounters
+"kiosk saleswoman" in text, it recalls the "correct" ID from the example and
+inserts it, even if it's absent from the Scene Context.
 
-Три независимых вектора инжекции:
+Three independent injection vectors:
 
-| Вектор | Где | Что видит агент |
+| Vector | Where | What the agent sees |
 |---|---|---|
-| Рулсы (`ai/rules/*.md`) | инжектятся во все шаги пайплайна | `mikhail_berlioz`, `ivan_ponyrev`, `zhenshchina_v_budochke`, «Патриаршие пруды», «Берлиоз», «Бездомный», «МАССОЛИТ», «Дайте нарзану» |
-| Демо-книга `ai/examples/*.json` | `%EXAMPLES%` в visuals (`buildImageExemplars`) | сцена с `berlioz, bezdomny` и готовыми image.prompt/video.action |
-| Демо-книга `ai/examples/*.json` | `refineDraft` (bootstrap) + `formatExamplesForPrompt` | весь каталог, включая главу «Патриаршие пруды» |
-| Дефолтные промпты `ai/workflows/video-ltx-*.json` | fallback-текст positivePrompt-ноды | M&M-сториборд (перезаписывается при сборке, но это мина) |
-| Инлайн-примеры в `ai-service.js` (refineDraft) | системный промпт | «Берлиоз и Бездомный сидели на скамейке…», «berlioz:» |
+| Vector | Where | What the agent sees |
+|---|---|---|
+| Rules (`ai/rules/*.md`) | Injected into all pipeline steps | `mikhail_berlioz`, `ivan_ponyrev`, `zhenshchina_v_budochke`, "Patriarch's Ponds", "Berlioz", "Bezdomny", "MASSOLIT", "Give me Narzan" |
+| Demo book `ai/examples/*.json` | `%EXAMPLES%` in visuals (`buildImageExemplars`) | scene with `berlioz, bezdomny` and ready-made image.prompt/video.action |
+| Demo book `ai/examples/*.json` | `refineDraft` (bootstrap) + `formatExamplesForPrompt` | entire catalog, including "Patriarch's Ponds" chapter |
+| Default prompts `ai/workflows/video-ltx-*.json` | fallback text of positivePrompt node | M&M storyboard (overwritten at assembly, but it's a landmine) |
+| Inline examples in `ai-service.js` (refineDraft) | system prompt | "Berlioz and Bezdomny sat on a bench…", "berlioz:" |
 
-Нестабильность («иногда паспорт, иногда просто id») объясняется тем, что id
-встречается в трёх независимых шагах — в каком из них агент споткнётся о текст,
-в тот и «протечёт» заражение.
+The instability ("sometimes a passport, sometimes just an ID") is explained by the fact that
+the ID appears in three independent steps — whichever step the agent hits first,
+that's where the poisoning leaks through.
 
-## Способы решения
+## Solutions
 
-### Вариант 1 — обезличить примеры (ПРИМЕНЁН)
+### Option 1 — Anonymize Examples (APPLIED)
 
-Конкретные id из «Мастера и Маргариты» заменены на нейтральную выдуманную
-демо-книгу **«Вечер в городе»** (М. Демин): `anna_smirnova`, `boris_volkov`,
-`dmitry_orekhov`, локация `city_park`. Та же выдуманная пара использована в
-примерах рулсов.
+Concrete IDs from *The Master and Margarita* replaced with a neutral fictional
+demo book **"Evening in the City"** (M. Demin): `anna_smirnova`, `boris_volkov`,
+`dmitry_orekhov`, location `city_park`. The same fictional pair is used in
+rule examples.
 
 | Было (M&M) | Стало (нейтрально) |
 |---|---|
@@ -74,16 +76,16 @@ storyboard_polish}.md`, `ai/examples/*.json` (9 файлов),
 заражение (совпадение демо-книги с генерируемой), но не закрывает механизм
 полностью.
 
-### Вариант 2 — явное предупреждение в рулсах (опционально)
+### Option 2 — Explicit Warning in Rules (optional)
 
-В начало рулсов добавить: «Примеры ниже — это ФОРМАТ. Их id НЕ относятся к
-вашей книге. Используйте ТОЛЬКО id из Scene Context / списка персонажей».
-Минимальные правки, но модель может игнорировать.
+Add to the beginning of rules: "The examples below are FORMAT only. Their IDs do NOT belong
+to your book. Use ONLY IDs from Scene Context / character list."
+Minimal changes, but the model may ignore it.
 
-### Вариант 3 — гибридный программный гард (ПРИМЕНЁН)
+### Option 3 — Hybrid Programmatic Guard (APPLIED)
 
-Двухслойная защита — детект детерминированный, восстановление LLM-ное
-(транслитерация в обратную сторону не годится: проект мультиязычный):
+Two-layer defense — detection is deterministic, recovery is LLM-based
+(reverse transliteration doesn't work: the project is multilingual):
 
 1. **Детект (`src/utils/snake-guard.js`, общий с аудит-скриптом).**
    snake_case-токен (`[A-Za-z]` + ≥1 подчёркивание, без possessive `'s`) —
@@ -176,9 +178,9 @@ LLM: детект говорит «это фэнтези-id», а агент п�
 естественное обозначение на языке книги («the kiosk saleswoman»). Детерминизм —
 только в решении «ремонтировать или нет», смысл восстанавливается контекстно.
 
-## Известные ограничения варианта 3
+## Known Limitations of Option 3
 
-- **Частичный фикс не откатывается, а доводится детерминированным fallback:**
+- **Partial fix is not rolled back but completed with deterministic fallback:**
   если агент-ремонт починил одно поле юнита, но оставил фэнтези-id в другом
   (или вернул грязный черновик), `mergeRepairResults` сохраняет черновик LLM и
   программно взрывает оставшийся invented-токен в обычные слова
@@ -214,7 +216,7 @@ LLM: детект говорит «это фэнтези-id», а агент п�
   mixed-script location id, которого нет в канонизированной карте — новые
   окна пишут канонические id; остатки ловит аудит-скрипт.
 
-## Известные остатки (не инжектятся — сознательно не тронуты)
+## Known Remnants (not injected — intentionally untouched)
 
 - `backend/src/scripts/test-scene-split.cjs` — дев-скрипт с M&M-фикстурами; не
   вызывается из package.json/тестов (ручной инструмент).
