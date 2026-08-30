@@ -1,18 +1,18 @@
-# Аудит стабилизации системы оркестрации
+# Orchestration System Stabilization Audit
 
-**Дата:** 2026-07-18  
-**Ревизия:** `35d8760` (T10 + финальные правки T9/T10)  
-**Область:** `backend/src/orchestration`, `backend/src/runtime`, `backend/src/services`,
-`gpu-hub`, `worker`  
-**Цель:** стабилизировать и консолидировать текущую систему без новой платформы,
-нового брокера задач или большого переписывания.
+**Date:** 2026-07-18
+**Revision:** `35d8760` (T10 + final T9/T10 fixes)
+**Scope:** `backend/src/orchestration`, `backend/src/runtime`, `backend/src/services`,
+`gpu-hub`, `worker`
+**Goal:** stabilize and consolidate the current system without a new platform,
+new task broker, or major rewrite.
 
-> Проверка `worker` ограничена deploy-артефактом и протоколом в репозитории.
-> Запущенный процесс на удалённом GPU сервере не инспектировался.
+> Worker verification limited to deploy artifact and repository protocol.
+> Running process on remote GPU server was not inspected.
 
 ---
 
-## 1. Итог
+## 1. Summary
 
 Система уже имеет правильный каркас:
 
@@ -55,7 +55,7 @@ Backend unit/integration suite проходит: **571 passing**. Это не п
 
 ---
 
-## 2. Что проверено
+## 2. What Was Verified
 
 - чтение текущих orchestration/runtime модулей и критических callback путей;
 - карта прямых записей asset state и active-scenes;
@@ -79,7 +79,7 @@ Backend unit/integration suite проходит: **571 passing**. Это не п
 
 ---
 
-## 3. Критические ошибки
+## 3. Critical Bugs
 
 ### P0.1 Репозиторный worker нельзя воспроизводимо развернуть
 
@@ -253,7 +253,7 @@ Dispatch engine считает quota и lease занятыми, хотя GPU Hub
 
 ---
 
-## 4. Высокие риски
+## 4. High Risks
 
 ### P1.1 Force regeneration повреждает quota accounting
 
@@ -392,7 +392,7 @@ reconcile занимает дольше интервала. Scheduler защищ
 
 ---
 
-## 5. Средний приоритет и полировка
+## 5. Medium Priority and Polish
 
 ### P2.1 State owner объявлен, но не обеспечен
 
@@ -503,7 +503,7 @@ audio generation path не найдено.
 
 ---
 
-## 6. Минимальная целевая схема
+## 6. Minimal Target Schema
 
 Новая архитектура не требуется. Достаточно закрепить текущие роли.
 
@@ -537,9 +537,9 @@ Asset transition выполняет только facade. Callback handler воз
 
 ---
 
-## 7. Порядок исправлений
+## 7. Fix Order
 
-### Этап A. Вернуть корректность
+### Phase A. Restore Correctness
 
 1. Исправить syntax репозиторного worker.
 2. Сделать callback result обязательным для `completeStage`.
@@ -549,7 +549,7 @@ Asset transition выполняет только facade. Callback handler воз
 
 После этого система перестанет ложно завершать и бесконечно повторять задачи.
 
-### Этап B. Убрать гонки
+### Phase B. Eliminate Races
 
 1. Добавить `dispatchId` в task/result/error contract.
 2. Исправить force reset и quota ownership.
@@ -557,7 +557,7 @@ Asset transition выполняет только facade. Callback handler воз
 4. Освобождать scheduler lock в `finally`.
 5. Сделать runtime loop неперекрывающимся.
 
-### Этап C. Консолидировать и удалить дубли
+### Phase C. Consolidate and Remove Duplicates
 
 1. Оставить один active-scenes API.
 2. Оставить один periodic `reconcileCycle`.
@@ -568,7 +568,7 @@ Asset transition выполняет только facade. Callback handler воз
 
 ---
 
-## 8. Обязательные тесты
+## 8. Required Tests
 
 ### Static smoke
 
@@ -602,7 +602,7 @@ done
 
 ---
 
-## 9. Что не делать
+## 9. What NOT to Do
 
 - Не добавлять Kafka, RabbitMQ, BullMQ или отдельный workflow engine.
 - Не вводить ещё одну state machine поверх asset state.
@@ -616,7 +616,7 @@ done
 
 ---
 
-## 10. Критерий готовности
+## 10. Readiness Criteria
 
 Система считается стабилизированной, когда одновременно выполняются условия:
 

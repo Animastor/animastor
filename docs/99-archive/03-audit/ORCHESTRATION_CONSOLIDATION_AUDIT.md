@@ -1,12 +1,12 @@
-# Аудит консолидации системы оркестрации
+# Orchestration System Consolidation Audit
 
-**Дата:** 2026-07-16
-**Область:** `backend/src/orchestration`, `backend/src/runtime`, `backend/src/services`, `gpu-hub`, `worker`
-**Контекст:** проведён после закрытия M5 (фасад оркестратора, все C1–C4 / M1–M5 закрыты, см. `docs/02-orchestration/ORCHESTRATOR_FACADE_PR.md`). Цель — зафиксировать, что **всё ещё выбивается** из единого оркестра, и наметить путь консолидации.
+**Date:** 2026-07-16
+**Scope:** `backend/src/orchestration`, `backend/src/runtime`, `backend/src/services`, `gpu-hub`, `worker`
+**Context:** conducted after M5 closure (orchestrator facade, all C1–C4 / M1–M5 closed, see `docs/02-orchestration/ORCHESTRATOR_FACADE_PR.md`). Goal — document what still breaks the unified orchestration, and outline a consolidation path.
 
 ---
 
-## 1. Резюме
+## 1. Summary
 
 Ядро оркестрации после M5 в хорошем состоянии: единый фасад из 11 команд (`orchestration/orchestrator.js`), атомарные per-asset состояния (HSET), version-gate перед READY, идемпотентные lease/quota. Но вокруг ядра сохранилось **три параллельных контура управления**, которые фасад не покрывает:
 
@@ -20,7 +20,7 @@
 
 ---
 
-## 2. Что уже консолидировано (не трогать, работает)
+## 2. What's Already Consolidated (don't touch, works)
 
 | Механизм | Где | Статус |
 |---|---|---|
@@ -33,9 +33,9 @@
 
 ---
 
-## 3. Костыли: что выбивается из оркестра
+## 3. Workarounds: What Breaks the Unified Orchestration
 
-Ранжировано по влиянию на консолидацию.
+Ranked by impact on consolidation.
 
 ### К1. Аудио-подсистема — параллельный оркестратор (критично)
 
@@ -118,9 +118,9 @@
 
 ---
 
-## 4. Рекомендации по консолидации
+## 4. Consolidation Recommendations
 
-Приоритет = влияние на «один оркестр» / стоимость.
+Priority = impact on "one orchestration" / cost.
 
 ### R1. Ввести команду `failStage` и канал ошибок worker → orchestrator (К2)
 
@@ -176,7 +176,7 @@
 
 ---
 
-## 5. Критерий «консолидировано»
+## 5. "Consolidated" Criteria
 
 Система оркестрации консолидирована, когда выполняются все пять инвариантов:
 
