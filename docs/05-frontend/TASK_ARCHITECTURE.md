@@ -1,81 +1,81 @@
 # Task Architecture (Progress Panel)
 
-> **Дата:** 2026-07-26
-> **Контекст:** После переработки ChatGPT 5.5 (F15 parallel generation) и последующего рефакторинга терминологии worker→task.
+> **Date:** 2026-07-26
+> **Context:** After ChatGPT 5.5 redesign (F15 parallel generation) and subsequent worker→task terminology refactoring.
 
 ---
 
-## 1. Терминология
+## 1. Terminology
 
-| Термин | Что это |
+| Term | Description |
 |---|---|
-| **Task** | Одно задание генерации, созданное пользователем. Имеет тип (`audio`/`image`/`video`), scope, список целей (сцен). |
-| **TaskRow** | Одна строка в UI-панели прогресса. Один task может породить одну или несколько строк (см. scope). |
-| **GPU Worker** | Удалённый процесс на GPU Hub, выполняющий работу. Не путать с UI-строками. |
-| **Scope** | Область генерации: `current_scene`, `current_chapter`, `from_current_scene`, `whole_book`. |
+| **Task** | A single generation job created by the user. Has a type (`audio`/`image`/`video`), scope, and list of targets (scenes). |
+| **TaskRow** | A single row in the UI progress panel. One task may produce one or more rows (see scope). |
+| **GPU Worker** | Remote process on the GPU Hub performing work. Do not confuse with UI rows. |
+| **Scope** | Generation scope: `current_scene`, `current_chapter`, `from_current_scene`, `whole_book`. |
 
 ---
 
-## 2. Жизненный цикл Task
+## 2. Task Lifecycle
 
 ```
-Пользователь выбирает scope и тип
+User selects scope and type
          │
          ▼
   Frontend: startGeneration()
          │
          ▼
   Backend: /regenerate → generation-routes.cjs
-         │  проверяет dirty_scenes, добавляет cover если надо
+         │  checks dirty_scenes, adds cover if needed
          ▼
   Backend: generation-progress.js → createTasks()
-         │  создаёт task на каждый тип × scope
-         │  task имеет task_id, type, scope, targets[сцены]
+         │  creates a task for each type × scope
+         │  task has task_id, type, scope, targets[scenes]
          ▼
   Backend: scheduler + dispatch-engine → GPU Hub
-         │  выполняют работу, обновляют asset states
+         │  perform work, update asset states
          ▼
   Backend: progress-panel.cjs → buildTaskRows()
-         │  читает tasks из redis, считает ready/total
-         │  возвращает массив TaskRow (JSON)
+         │  reads tasks from redis, calculates ready/total
+         │  returns TaskRow array (JSON)
          ▼
   Frontend: computeProgressRows()
-         │  строит UI-строки с прогрессом, таймерами, expiry
+         │  builds UI rows with progress, timers, expiry
          ▼
   Frontend: renderTaskRowsToSections()
-         │  рендерит строки в контейнеры по типу
+         │  renders rows into containers by type
 ```
 
 ---
 
-## 3. Scope → Количество строк
+## 3. Scope → Number of Rows
 
-Главное правило: **одно задание — одна строка**, кроме случая, когда пользователь явно выбрал конкретную сцену.
+The main rule: **one job — one row**, except when the user explicitly selected a specific scene.
 
-| Scope | Поведение | Пример |
+| Scope | Behavior | Example |
 |---|---|---|
-| `current_scene` | **Per-target**: каждая цель → отдельная строка | Image для scene5 + cover → 2 строки Image |
-| `current_chapter` | **Агрегированное**: одна строка на тип | Audio для chapter3 (5 сцен) → 1 строка Audio |
-| `from_current_scene` | **Агрегированное**: одна строка на тип | Те же 5 сцен → 1 строка |
-| `whole_book` | **Агрегированное**: одна строка на тип | 20 сцен → 1 строка Image |
+| `current_scene` | **Per-target**: each target → separate row | Image for scene5 + cover → 2 Image rows |
+| `current_chapter` | **Aggregated**: one row per type | Audio for chapter3 (5 scenes) → 1 Audio row |
+| `from_current_scene` | **Aggregated**: one row per type | Same 5 scenes → 1 row |
+| `whole_book` | **Aggregated**: one row per type | 20 scenes → 1 Image row |
 
-### Почему?
+### Why?
 
-- **current_scene**: если cover добавляется в dirty, это **другая сцена**. У неё свой прогресс, свой таймер. Показывать оба в одной строке неправильно.
-- **whole_book / chapter / from_current**: это **одно задание** с множеством целей. Пользователь хочет видеть общий прогресс задания, а не 20 отдельных строк.
+- **current_scene**: if cover is added to dirty, it is a **different scene**. It has its own progress, its own timer. Showing both in one row is incorrect.
+- **whole_book / chapter / from_current**: this is **one job** with multiple targets. The user wants to see overall job progress, not 20 separate rows.
 
-Реализовано в `backend/src/routes/book/progress-panel.cjs` — `buildTaskRows()`:
+Implemented in `backend/src/routes/book/progress-panel.cjs` — `buildTaskRows()`:
 
 ```javascript
 if (task.scope === 'current_scene') {
     // per-target expansion
     for (const target of targets) {
-        // считаем ready/total для ОДНОЙ сцены
+        // calculate ready/total for ONE scene
         result.push({ task_id, type, scene_id, ready, total, ... })
     }
     return result
 } else {
-    // aggregated: один воркер на все цели
+    // aggregated: one worker for all targets
     return [{ task_id, type, ready, total, ... }]
 }
 ```
@@ -84,44 +84,44 @@ if (task.scope === 'current_scene') {
 
 ## 4. Per-Task Timer (Frontend)
 
-Каждая строка (TaskRow) имеет свой таймер:
+Each row (TaskRow) has its own timer:
 
 ```
-Map<String, Long> taskFrozenElapsed   // taskKey → замороженные секунды
-Map<String, Long> taskCompletedAt     // taskKey → время 100%
+Map<String, Long> taskFrozenElapsed   // taskKey → frozen seconds
+Map<String, Long> taskCompletedAt     // taskKey → time of 100%
 ```
 
-### Механика
+### Mechanics
 
-1. **Task активен**: таймер живёт от `timerStartedAt` (глобальный старт сессии)
-2. **Task достиг 100%**:
-   - `taskCompletedAt[taskKey] = now` — запоминаем момент завершения
-   - `taskFrozenElapsed.getOrPut(taskKey) { ... }` — замораживаем время на этом моменте
-3. **Task отображается 10 секунд** после своего 100%
-4. **Через 10 секунд** после 100%:
+1. **Task is active**: timer runs from `timerStartedAt` (global session start)
+2. **Task reaches 100%**:
+   - `taskCompletedAt[taskKey] = now` — record completion time
+   - `taskFrozenElapsed.getOrPut(taskKey) { ... }` — freeze time at this point
+3. **Task is displayed for 10 seconds** after reaching 100%
+4. **After 10 seconds** past 100%:
    - `rows.removeAll { row.done && (now - taskCompletedAt) >= 10s }`
-   - Строка исчезает независимо от других строк
-5. **Когда все строки исчезли** → `applyGenerationResults()`, финализация
+   - Row disappears independently of other rows
+5. **When all rows disappear** → `applyGenerationResults()`, finalization
 
-### Почему независимый expiry?
+### Why independent expiry?
 
-- Audio закончился раньше Image → Audio строка исчезает через 10с, Image продолжает висеть
-- Если одна генерация зависла, завершённые не висят бесконечно
-- Пользователь не ждёт завершения всех заданий, чтобы увидеть Done
+- Audio finishes before Image → Audio row disappears after 10s, Image continues to display
+- If one generation is stuck, completed ones do not hang forever
+- The user does not wait for all jobs to finish to see Done
 
 ---
 
-## 5. Модели данных (Frontend)
+## 5. Data Models (Frontend)
 
 ```kotlin
-// Одна строка прогресса
+// Single progress row
 data class TaskRow(
     val taskId: String?,
     val type: String,          // "audio" | "image" | "video" | "vbook"
-    val label: String,         // локализованное название
+    val label: String,         // localized name
     val scope: String,
     val chapterId: String?,
-    val sceneId: String?,      // для per-scene строк
+    val sceneId: String?,      // for per-scene rows
     val ready: Int,
     val total: Int,
     val percent: Int,
@@ -129,17 +129,17 @@ data class TaskRow(
     val countText: String?,
     val indeterminate: Boolean, // spinner (VBook analyzing)
     val cancelled: Boolean,
-    val elapsedSeconds: Long    // frozen для done, live для active
+    val elapsedSeconds: Long    // frozen for done, live for active
 )
 
-// Состояние панели прогресса
+// Progress panel state
 sealed class ProgressPanelState {
-    data class Rows(val rows: List<TaskRow>)  // одна или несколько строк
-    object DoneRow                              // все Done (legacy, не используется)
-    object Hidden                               // нет активных задач
+    data class Rows(val rows: List<TaskRow>)  // one or more rows
+    object DoneRow                              // all Done (legacy, not used)
+    object Hidden                               // no active tasks
 }
 
-// Локализованные подписи
+// Localized labels
 data class TaskLabels(
     val cover: String,
     val audio: String,
@@ -158,7 +158,7 @@ data class TaskLabels(
 
 **Endpoint:** `GET /api/v1/book/:bookId/progress-panel`
 
-Ответ — массив task-строк:
+Response — task row array:
 
 ```json
 {
@@ -197,38 +197,38 @@ data class TaskLabels(
 }
 ```
 
-**Важно:** поле `workers` в JSON ответе осталось для обратной совместимости. На фронтенде эти объекты называются `ProgressWorker` в API-моделях, но отображаются как `TaskRow`.
+**Note:** The `workers` field in the JSON response was kept for backward compatibility. On the frontend these objects are called `ProgressWorker` in API models, but displayed as `TaskRow`.
 
 ---
 
-## 7. Файлы
+## 7. Files
 
-| Файл | Роль |
+| File | Role |
 |---|---|
-| `backend/src/services/generation-progress.js` | Создаёт задачи, хранит в Redis, отслеживает статус |
-| `backend/src/routes/book/progress-panel.cjs` | Строит ответ для /progress-panel, агрегирует или расширяет per-target |
-| `frontend/.../GenerateViewModel.kt` | `computeProgressRows()`, таймеры, expiry, `TaskRow` model |
-| `frontend/.../GenerateFragment.kt` | `renderTaskRowsToSections()`, рендер, кнопки Stop |
-| `frontend/.../SettingsFragment.kt` | `resetProgressState()` при очистке кэша |
+| `backend/src/services/generation-progress.js` | Creates tasks, stores in Redis, tracks status |
+| `backend/src/routes/book/progress-panel.cjs` | Builds response for /progress-panel, aggregates or expands per-target |
+| `frontend/.../GenerateViewModel.kt` | `computeProgressRows()`, timers, expiry, `TaskRow` model |
+| `frontend/.../GenerateFragment.kt` | `renderTaskRowsToSections()`, render, Stop buttons |
+| `frontend/.../SettingsFragment.kt` | `resetProgressState()` on cache clear |
 
 ---
 
-## 8. История переименований
+## 8. Rename history
 
-Было (от ChatGPT 5.5) | Стало | Причина
+Was (from ChatGPT 5.5) | Became | Reason
 ---|---|---
-`WorkerUi` | `TaskRow` | Путаница с GPU Worker
-`computeWorkers()` | `computeProgressRows()` | Функция не вычисляет воркеров
-`workerReadyFloor` | `taskReadyFloor` | Относится к заданию, не к воркеру
+`WorkerUi` | `TaskRow` | Confusion with GPU Worker
+`computeWorkers()` | `computeProgressRows()` | Function does not compute workers
+`workerReadyFloor` | `taskReadyFloor` | Relates to task, not worker
 `workerCompletedAt` | `taskCompletedAt` | -"-
 `workerFrozenElapsed` | `taskFrozenElapsed` | -"-
 `COMPLETED_WORKER_DISPLAY_MS` | `COMPLETED_TASK_DISPLAY_MS` | -"-
-`gpuProgressDoneAt` | *(удалён)* | Мёртвая переменная
-`resetWorkerState()` | `resetProgressState()` | Сбрасывает состояние прогресса
-`cancelWorker()` | `cancelTask()` | Отменяет задание, не воркер
-`WorkerLabels` | `TaskLabels` | Лейблы для строк, не для воркеров
-`ProgressPanelState.Workers` | `ProgressPanelState.Rows` | Список строк, не воркеров
-`buildWorker()` (backend) | `buildTaskRows()` | Строит строки, не воркеров
-`renderWorkersToSections()` | `renderTaskRowsToSections()` | Рендерит строки
-`setupWorkerStopButton()` | `setupTaskStopButton()` | Кнопка отмены задания
-`scopedWorkerLabel()` | `scopedTaskLabel()` | Лейбл для задания
+`gpuProgressDoneAt` | *(removed)* | Dead variable
+`resetWorkerState()` | `resetProgressState()` | Resets progress state
+`cancelWorker()` | `cancelTask()` | Cancels task, not worker
+`WorkerLabels` | `TaskLabels` | Labels for rows, not workers
+`ProgressPanelState.Workers` | `ProgressPanelState.Rows` | List of rows, not workers
+`buildWorker()` (backend) | `buildTaskRows()` | Builds rows, not workers
+`renderWorkersToSections()` | `renderTaskRowsToSections()` | Renders rows
+`setupWorkerStopButton()` | `setupTaskStopButton()` | Task cancel button
+`scopedWorkerLabel()` | `scopedTaskLabel()` | Label for task

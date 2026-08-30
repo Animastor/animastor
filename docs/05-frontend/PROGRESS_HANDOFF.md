@@ -1,45 +1,45 @@
 # GPU Progress — Frontend Handoff (F1–F7)
 
-> **Статус на 2026-06-27.** Backend-часть (B1–B5) и frontend-часть (F1–F7)
-> полностью сделаны и закоммичены (ветка `feat/orchestrator-facade`, сборка
-> `assembleDebug` успешна). Документ — архивная инструкция.
-> **Все задачи GPU Progress закрыты.**
+> **Status as of 2026-06-27.** Backend part (B1–B5) and frontend part (F1–F7)
+> are fully implemented and committed (branch `feat/orchestrator-facade`, build
+> `assembleDebug` successful). This document is an archival reference.
+> **All GPU Progress tasks are closed.**
 >
-> **Источник:** `docs-claude/PROGRESS_FRONTEND_HANDOFF.md`
+> **Source:** `docs-claude/PROGRESS_FRONTEND_HANDOFF.md`
 
-## Зачем это
+## Motivation
 
-Пользователь жаловался на сбои/неточности прогресса GPU-генерации в Android-UI:
-прогресс дёргается, откатывается назад, показывает ложный «Done», иногда
-зависает и авто-завершается, хотя ассеты не готовы.
+Users reported GPU generation progress inaccuracies/crashes in the Android UI:
+progress jumping, rolling back, showing false "Done", sometimes freezing and
+auto-completing even though assets were not ready.
 
-## Что УЖЕ сделано на backend (контракт для фронта)
+## What is already done on the backend (contract for the frontend)
 
-1. **`/assets-state` теперь детерминированный и монотонный.** `ready`-значения
-   не уменьшаются в пределах одной генерации. Файловый скан диска убран.
-   Источник истины — Redis-счётчик `animastor:iu-progress:...`.
-2. **Новые поля в `AssetsStateResponse`** (бэк уже их отдаёт):
-   `audio_error`, `image_error`, `video_error` (Int, счёт чанков со статусом
-   `error`/`failed`).
-3. **Новый SSE-эндпоинт:** `GET /api/v1/book/{bookId}/progress-stream`.
+1. **`/assets-state` is now deterministic and monotonic.** `ready` values do not
+   decrease within a single generation. Disk file scanning has been removed.
+   Source of truth is the Redis counter `animastor:iu-progress:...`.
+2. **New fields in `AssetsStateResponse`** (backend already returns them):
+   `audio_error`, `image_error`, `video_error` (Int, count of chunks with
+   `error`/`failed` status).
+3. **New SSE endpoint:** `GET /api/v1/book/{bookId}/progress-stream`.
    - `Content-Type: text/event-stream`
-   - Событие `event: open` при подключении
-   - Прогресс-события `data: {"type":"progress",...}`
-   - Heartbeat-комментарии `: ping\n\n` каждые 15с
+   - `event: open` event on connection
+   - Progress events `data: {"type":"progress",...}`
+   - Heartbeat comments `: ping\n\n` every 15 seconds
 
-## Карта фронтенда (что где лежит)
+## Frontend map (where things are)
 
-- `frontend/app/build.gradle.kts` — зависимости. OkHttp **4.12.0** уже есть.
+- `frontend/app/build.gradle.kts` — dependencies. OkHttp **4.12.0** is already present.
 - `frontend/.../RetrofitClient.kt` — `object RetrofitClient`
-- `frontend/.../BackendApi.kt` — Retrofit-интерфейс
+- `frontend/.../BackendApi.kt` — Retrofit interface
 - `frontend/.../LayerConfig.kt` — `data class AssetsStateResponse`
-- `frontend/.../Repository.kt` — обёртки
-- `frontend/.../MainActivity.kt` — поллер, состояние прогресса
+- `frontend/.../Repository.kt` — wrapper classes
+- `frontend/.../MainActivity.kt` — poller, progress state
 - `frontend/.../GenerateViewModel.kt` — ActiveGeneration, StateFlow
-- `frontend/.../item_worker_progress.xml` — строка воркера
-- `frontend/.../strings.xml` — строки `progress_*`
+- `frontend/.../item_worker_progress.xml` — worker row
+- `frontend/.../strings.xml` — strings `progress_*`
 
-## Реализованные шаги
+## Implemented steps
 
 ### VBook progress contract (2026-07-02)
 
@@ -62,30 +62,30 @@ panel row.
 - On VBook completion the frontend calls `applyGenerationResults()` so newly
   appended chunks/scenes soft-refresh into playback.
 
-### ✅ F7. Поля ошибок в модели ответа
-Добавлены `audio_error: Int = 0`, `image_error: Int = 0`, `video_error: Int = 0`
-в `AssetsStateResponse`.
+### ✅ F7. Error fields in the response model
+Added `audio_error: Int = 0`, `image_error: Int = 0`, `video_error: Int = 0`
+to `AssetsStateResponse`.
 
-### ✅ F3. Монотонность прогресса (никаких откатов)
-Добавлен `workerReadyFloor: MutableMap<String, Int>` в `MainActivity.kt`.
+### ✅ F3. Monotonic progress (no rollbacks)
+Added `workerReadyFloor: MutableMap<String, Int>` in `MainActivity.kt`.
 
-### ✅ F4. Stuck-детект (ложный авто-complete)
-`STUCK_TIMEOUT_MS = 120_000L`. Проверка `!lastPollFailed` перед stuck-веткой.
+### ✅ F4. Stuck detection (false auto-complete)
+`STUCK_TIMEOUT_MS = 120_000L`. Check `!lastPollFailed` before stuck branch.
 
-### ✅ F5. Завершение слоя по флагам, не по эвристике
-Параметр `doneFlag` в `add()`.
+### ✅ F5. Layer completion by flags, not heuristics
+Parameter `doneFlag` in `add()`.
 
-### ✅ F6. Устойчивость поллера
-Backoff: 1.5с → 3с → 6с (cap), сброс на успехе.
+### ✅ F6. Poller resilience
+Backoff: 1.5s → 3s → 6s (cap), reset on success.
 
-### ✅ F1. SSE-клиент
-Создан `network/ProgressStream.kt`.
+### ✅ F1. SSE client
+Created `network/ProgressStream.kt`.
 
-### ✅ F2. Вынос логики в ViewModel
-Опциональный рефакторинг.
+### ✅ F2. Logic extraction to ViewModel
+Optional refactoring.
 
-## Финальная проверка
+## Final verification
 
-- `./gradlew assembleDebug` — компиляция.
-- Ручной прогон `full`-профиля: прогресс растёт плавно, без откатов.
-- Обрыв сети во время генерации: UI не авто-завершает по stuck.
+- `./gradlew assembleDebug` — compilation.
+- Manual run with `full` profile: progress grows smoothly, no rollbacks.
+- Network interruption during generation: UI does not auto-complete on stuck.

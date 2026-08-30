@@ -2,61 +2,61 @@
 
 ## Overview
 
-Убрать жёсткую привязку сцены к 20–30 секундам.
-Сцены формируются по смыслу (место, время, персонажи, логика), а не по длительности.
-Видеочанки собираются по суммарной длительности IU, а не по количеству картинок.
+Remove the hard 20–30 second scene duration constraint.
+Scenes are formed by semantic content (location, time, characters, logic), not by duration.
+Video chunks are assembled by total IU duration, not by image count.
 
 ## Motivation
 
-- Сейчас AI тратит ретраи на искусственное дробление сцен длиннее 30с
-- `selectWorkflowGroups` группирует IU по 4 штуки, игнорируя их `estimated_duration_sec`
-- Это приводит к неестественно коротким сценам и лишним AI-вызовам
-- TTS, изображения и видео уже работают независимо — длинная сцена не проблема
+- AI currently wastes retries on artificially splitting scenes longer than 30s
+- `selectWorkflowGroups` groups IUs by 4, ignoring their `estimated_duration_sec`
+- This leads to unnaturally short scenes and unnecessary AI calls
+- TTS, images, and video already work independently — long scenes are not a problem
 
 ## Plan
 
-### 1. Конфиги — `src/services/agent-prompts.js`
-- `SCENE_TARGET_SEC`: 20 → 60 (целевая длительность сцены)
-- `SCENE_MAX_SEC`: 30 → 120 (максимальная длительность сцены)
-- `MAX_SCENES_PER_CHUNK`: 3 → 2 (меньше сцен, но длиннее)
-- Поправить комментарии и расчёты (words/sec)
+### 1. Config — `src/services/agent-prompts.js`
+- `SCENE_TARGET_SEC`: 20 → 60 (target scene duration)
+- `SCENE_MAX_SEC`: 30 → 120 (maximum scene duration)
+- `MAX_SCENES_PER_CHUNK`: 3 → 2 (fewer scenes, but longer)
+- Fix comments and calculations (words/sec)
 
-### 2. AI-правила — `ai/rules/scenes.md`
-- Убрать раздел `DURATION LIMITS — HARD REQUIREMENTS`
-- Убрать все упоминания `%SCENE_MAX_SEC%`, `%SCENE_TARGET_SEC%`, `%SCENE_MIN_SEC%`
-- Заменить на мягкую рекомендацию: не больше ~2 минут
-- Оставить только логические критерии сцены
+### 2. AI rules — `ai/rules/scenes.md`
+- Remove `DURATION LIMITS — HARD REQUIREMENTS` section
+- Remove all references to `%SCENE_MAX_SEC%`, `%SCENE_TARGET_SEC%`, `%SCENE_MIN_SEC%`
+- Replace with a soft guideline: no more than ~2 minutes
+- Keep only logical scene criteria
 
 ### 3. AI Pipeline — `src/services/agent/pipeline-steps.js`
-- `stepCreateScenes`: убрать duration-секции в `repairHint`
-- Оставить только coverage-валидацию (source coverage)
-- Убрать подстановки `SCENE_MAX_SEC`, `SCENE_TARGET_SEC`, `SCENE_MIN_SEC`
+- `stepCreateScenes`: remove duration sections in `repairHint`
+- Keep only coverage validation (source coverage)
+- Remove `SCENE_MAX_SEC`, `SCENE_TARGET_SEC`, `SCENE_MIN_SEC` substitutions
 
 ### 4. Pipeline Runner — `src/services/agent/pipeline-runner.js`
-- Убрать `findOversized` / `findUndersized`
-- Убрать `MAX_DURATION_RETRIES` и duration validation loop
-- Убрать duration-retry логику после coverage
-- Оставить coverage-only валидацию
+- Remove `findOversized` / `findUndersized`
+- Remove `MAX_DURATION_RETRIES` and duration validation loop
+- Remove duration-retry logic after coverage
+- Keep coverage-only validation
 
 ### 5. Fallback — `src/services/agent/text-utils.js`
-- `buildFallbackScenes`: обновить проверки под новые лимиты (120s max, 60s target)
-- Убрать warning на single sentence > SCENE_MAX_SEC
+- `buildFallbackScenes`: update checks for new limits (120s max, 60s target)
+- Remove warning on single sentence > SCENE_MAX_SEC
 
-### 6. Видеочанки — `src/workflows/video/video-workflows.js`
-- Изменить `selectWorkflowGroups(unitCount)` → `selectWorkflowGroups(units, iuDurations)`
-- Новый алгоритм: суммировать длительности IU, пока не наберётся ~20 секунд
-- Выбрать workflow по количеству IU в группе (1–4)
-- Если IU слишком длинный (больше 20с), поместить его одного в группу
-- Обновить все вызовы `selectWorkflowGroups`:
-  - `buildVideoWorkflows` — там уже есть `iuDurations`
+### 6. Video chunks — `src/workflows/video/video-workflows.js`
+- Change `selectWorkflowGroups(unitCount)` → `selectWorkflowGroups(units, iuDurations)`
+- New algorithm: sum IU durations until ~20 seconds accumulated
+- Select workflow by number of IUs in group (1–4)
+- If an IU is too long (>20s), place it alone in a group
+- Update all `selectWorkflowGroups` calls:
+  - `buildVideoWorkflows` — already has `iuDurations`
 
-### 7. Тесты — `tests/video-workflows.test.js`
-- Обновить тесты `selectWorkflowGroups` — теперь принимает durations
-- Добавить тесты для нового алгоритма с разными комбинациями длительностей
+### 7. Tests — `tests/video-workflows.test.js`
+- Update `selectWorkflowGroups` tests — now accepts durations
+- Add tests for new algorithm with various duration combinations
 
-### 8. Тесты — `tests/scene-split.test.js`
-- Обновить проверки `SCENE_MAX_SEC` и `MAX_SCENES_PER_CHUNK`
-- Если нужно — добавить тест на длинную сцену
+### 8. Tests — `tests/scene-split.test.js`
+- Update `SCENE_MAX_SEC` and `MAX_SCENES_PER_CHUNK` assertions
+- Add test for long scene if needed
 
 ## File Change Summary
 
@@ -68,26 +68,26 @@
 | `src/services/agent/pipeline-runner.js` | Remove duration retry loop, unused imports |
 | `src/services/agent/text-utils.js` | Falls back to updated constants — no code change needed |
 | `src/workflows/video/video-workflows.js` | New `selectWorkflowGroups(units, iuDurations)` |
-| `src/services/agent/bootstrap.js` | Fix missing `try {` syntax error (preëxisting) |
+| `src/services/agent/bootstrap.js` | Fix missing `try {` syntax error (preexisting) |
 | `tests/video-workflows.test.js` | Rewrite tests for duration-aware algorithm |
 | `tests/scene-split.test.js` | Update assertions |
 
 ## Order of Implementation
 
-1. Конфиги (agent-prompts.js)
-2. AI-правила (scenes.md)
+1. Config (agent-prompts.js)
+2. AI rules (scenes.md)
 3. Pipeline steps (pipeline-steps.js)
 4. Pipeline runner (pipeline-runner.js)
 5. Text utils (text-utils.js) — only doc updated, code unchanged
-6. Видеочанки (video-workflows.js)
-7. Тесты (video-workflows.test.js, scene-split.test.js)
-8. Прогон тестов — 40/40 + 26/26 passed ✅
+6. Video chunks (video-workflows.js)
+7. Tests (video-workflows.test.js, scene-split.test.js)
+8. Run tests — 40/40 + 26/26 passed ✅
 
 ## Bootstrap Bugfix
 
-Во время проверки синтаксиса всех изменённых файлов была найдена предсуществующая
-синтаксическая ошибка в `src/services/agent/bootstrap.js`: у функции `bootstrapWithAgent`
-отсутствовал `try {` перед телом try-блока — был только `} catch (err) {`.
+During syntax checking of all modified files, a preexisting syntax error was found
+in `src/services/agent/bootstrap.js`: the `bootstrapWithAgent` function was missing
+`try {` before the try block body — only `} catch (err) {` was present.
 
 ```diff
 -    // Read chunk_size from layer-config BEFORE getWindowText so the text budget matches
@@ -98,7 +98,7 @@
 
 ## Verification
 
-- ✅ `node -c` — синтаксис всех изменённых файлов валиден
+- ✅ `node -c` — syntax of all modified files is valid
 - ✅ `video-workflows.test.js` — 40 passing
 - ✅ `scene-split.test.js` — 26 passing
-- ✅ Deadcode проверен: никаких висячих импортов или символов
+- ✅ Dead code check: no dangling imports or symbols

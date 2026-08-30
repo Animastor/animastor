@@ -1,108 +1,108 @@
 # Android/Web Player Parity Audit
 
-Статус: 📝 Audit (код НЕ менялся).
-Дата: после серии web-фиксов P0-1/P1-1/P1-2/P2-1/P2-3/P2-4/P1-sticky/P2-target.
-Метод: сравнение семантики по текущему коду обеих платформ
-(`playbackStore.ts` / `PlayFragment.kt` + `PlaybackViewModel.kt`), плюс сверка со
-старыми Android-коммитами 83f7d1a (unit-switch reveal при паузе), 58680f2
-(AND-frame gate T2.1/T3.1/T5), d52dc2d (unit-bounded gate), 413a841 (единая
-аудио-шкала). Архитектурное различие НЕ считается багом — важен наблюдаемый
-контракт.
+Status: 📝 Audit (code NOT changed).
+Date: after web fix series P0-1/P1-1/P1-2/P2-1/P2-3/P2-4/P1-sticky/P2-target.
+Method: semantics comparison against current code on both platforms
+(`playbackStore.ts` / `PlayFragment.kt` + `PlaybackViewModel.kt`), plus cross-check with
+older Android commits 83f7d1a (unit-switch reveal during pause), 58680f2
+(AND-frame gate T2.1/T3.1/T5), d52dc2d (unit-bounded gate), 413a841 (unified
+audio scale). Architectural difference is NOT considered a bug — observed
+contract matters.
 
-Архитектуры:
+Architectures:
 - **Web:** `playbackStore` / `PlayerState` / `transition()` / `timeupdate` /
-  `loadedmetadata` / буфер-гейт по `waiting`.
-- **Android:** `PlayFragment` / `PlaybackViewModel` / единый ExoPlayer
-  (MergingMediaSource: аудио+видео в одной шкале — не могут разойтись) /
-  `STATE_READY`/`STATE_BUFFERING` / 50ms poll `startIuCycling` / generation-
-  гварды (`videoPlayerGeneration`, `videoCurrentGen`, `pendingRevealGen`).
+  `loadedmetadata` / buffer gate on `waiting`.
+- **Android:** `PlayFragment` / `PlaybackViewModel` / single ExoPlayer
+  (MergingMediaSource: audio+video on single scale — cannot desync) /
+  `STATE_READY`/`STATE_BUFFERING` / 50ms poll `startIuCycling` / generation
+  guards (`videoPlayerGeneration`, `videoCurrentGen`, `pendingRevealGen`).
 
 ---
 
-## 1. Сценарии
+## 1. Scenarios
 
 | # | SCENARIO | WEB BEHAVIOR | ANDROID BEHAVIOR | EQUIV? | ARCHITECTURAL DIFFERENCE | REAL RISK? |
 |---|---|---|---|---|---|---|
-| 1 | Unit A → B во время PLAYING | seekToPosition → checkPendingExternalSeek → stopAll → executePendingSeek → handleChunk: selectedUnit=B, showIu(B), seekAttachedVideo → SEEKING{landed:false, paused:true} (pendingLoad), phase PAUSED → Play → reveal по гейту | Navigator tap → pendingExternalSeek → stopAll(keepSurface=true) (сохраняет сцену+гейт) → handleChunk: selectedUnit=B, showIuImage(B) → pendingLoad: Paused → targetScene sameScene: seekTo(startPosMs) + Seeking{landed:false, paused:true} → Play → poll reveal по гейту | **YES** | Web: stopAll→IDLE + пере-арм SEEKING{landed:false} в seekAttachedVideo. Android: keepSurface-stopAll сохраняет гейт {landed:true}, targetScene пере-вооружает {landed:false}. Оба требуют Play после тапа (positioned-paused) | нет |
-| 2 | Unit A → B во время PAUSED | positioned-paused: SEEKING{paused:true} → reveal в paused (времяпдате от завершённого seek) → VIDEO_READY | positioned-paused: Seeking{paused:true} → poll-проверка reveal ДО isPaused-гейта → VideoReady (коммит 83f7d1a) | **YES** | Web: reveal по timeupdate (fires на seek при паузе). Android: 50ms poll независимо от паузы | нет |
-| 3 | SEEKING → PAUSE → RESUME → REVEAL | **sticky**: pausePlayback → SEEKING{paused:true} (payload жив) → resume → SEEKING{paused:false} → reveal по гейту | pausePlayback → `Paused` (payload сброшен) → resume → `ShowingStoryboard`; запасной путь: STATE_READY (`currentPlayerHasVideo && !Seeking` → Playing/VideoReady) | **NO** (наблюдаемо эквивалентно в достижимых случаях) | Web sticky — фикс P1. Android НЕ sticky в pausePlayback; seek локальный/мгновенный + 50ms poll раскрывают раньше человеческого тапа; при буферинге READY-reveal спасает | низкий (теоретический лок — только машинный тап/автопауза в окне seek на медленной сети, см. §3) |
-| 4 | SEEKING → BUFFERING → RESUME → REVEAL | sticky на входе/выходе буфер-гейта: SEEKING{paused:true} → SEEKING{paused:false} → reveal по гейту (target+tolerance) | STATE_BUFFERING → `transition(Paused)` (гейт сброшен) + enterBuffering; STATE_READY → `!Seeking` → Playing/VideoReady + exitBuffering — reveal по **готовности кадра** на seek-таргете | **YES** | Android не хранит гейт в буфер-гейте, но READY-reveal для не-SEEKING — запасной путь, которого у web не было (поэтому web и потребовался sticky). Кадр на Android может раскрыться чуть раньше (на target, а не target+tolerance) — это начало юнита B, не хвост A | низкий (только точность первого кадра, P2) |
-| 5 | SEEKING → overshoot unitEnd → следующий юнит → REVEAL | P2-4: каждый тик пере-оценивает AND-гейт; overshoot-тик не раскрывает, reveal при withinUnit=true | 50ms poll + `pos < unitEndMs` (belt-and-suspenders) в shouldRevealSeekVideo — никогда не имел одноразового guard-а, лоk невозможен | **YES** | Web фиксил то, чего у Android не было (poll без одноразового flip) | нет |
-| 6 | Book A → Book B во время PLAYING | P2-3: preparePlayback prevBookId≠bId → stopAll() + one-shots; stale image/audio не переживают | MainActivity: fragment.stopAll() (→Idle, все поля чисты) + VM.preparePlayback; дополнительно observeState PLAYING→SCENE_READY → stopAll(); deferred seek из A dropped если не в очереди B | **YES** | Web: stopAll внутри preparePlayback. Android: stopAll в координаторе/коллекторе + preparePlayback | нет |
-| 7 | Book A → Book B во время SEEKING | P2-3: stopAll → IDLE (гейт сброшен); stale seek не выполняется против B | fragment.stopAll() → Idle (гейт сброшен); VM.preparePlayback: pendingExternalSeek dropped если не в новой очереди | **YES** | тот же split координатор/коллектор | нет |
-| 8a | Video OFF → ON во время PLAYING | OFF: updateLayers (скрыто, аудио+сториборды идут). ON: attached → re-show (re-align только при \|diff\|>0.5); не attached → ensureSceneVideo(key,null) audio-sync | OFF: updateLayers (поверх сториборда, surface жив). ON: источник уже с видео → только updateLayers (re-show); audio-only → targetScene(af, currentPosition, includeVideo=true) — rebuild на **актуальной позиции аудио** | **YES** | Web: display:none элемент + diff-реалигн. Android: единый merged источник физически не дрейфует — rebuild с той же позицией | нет |
-| 8b | Video OFF → ON во время SEEKING | гейт живёт скрытым; ON: re-align → времяпдате до гейта → reveal (paused — после resume) | OFF: updateLayers скрывает, SEEKING не трогается. ON: источник с видео → re-show (reveal по гейту в poll); audio-only → targetScene(cur) → fresh Seeking{landed:true} → reveal по гейту | **YES** | та же пара re-show/rebuild | нет (теоретический угол re-align к не севшему аудио недостижим — аудио локальное) |
-| 9 | После reveal: stale seek target не воскресает; attach не пере-армливает | P2-cleanup: `pendingVideoTargetSec = -1` при reveal; attachVideo → else-ветка (синк к аудио, без SEEKING) | отдельного target-поля нет: seek-таргет применяется сразу (seekTo / setMediaSources(startPosMs)), гейт живёт в PlayerState.Seeking и исчезает с reveal; rotation/return re-gate только через revealVideoAfterReturn (videoReadyToShow) — осознанный re-gate поверхности, не stale target | **YES** | Поле, которое чинил web-фикс, на Android не существует | нет |
-| 10 | Старые callbacks/listeners после нового unit | P1-2: единый слот pendingMetaListener; timeupdate перечитывает текущий playerState; payload SEEKING заменяется целиком | единый ExoPlayer + один Listener на всю жизнь; stale-защита: `videoPlayerGeneration++` (targetScene/stopAll), `videoCurrentGen`, `pendingRevealGen`, onPlayerError гвард «stale (previous item)», onRenderedFirstFrame gen-guarded, onPositionDiscontinuity пишет в текущий playerState | **YES** | Android сильнее: generation-гварды вместо единого слота | нет |
+| 1 | Unit A → B during PLAYING | seekToPosition → checkPendingExternalSeek → stopAll → executePendingSeek → handleChunk: selectedUnit=B, showIu(B), seekAttachedVideo → SEEKING{landed:false, paused:true} (pendingLoad), phase PAUSED → Play → reveal via gate | Navigator tap → pendingExternalSeek → stopAll(keepSurface=true) (preserves scene+gate) → handleChunk: selectedUnit=B, showIuImage(B) → pendingLoad: Paused → targetScene sameScene: seekTo(startPosMs) + Seeking{landed:false, paused:true} → Play → poll reveal via gate | **YES** | Web: stopAll→IDLE + re-arm SEEKING{landed:false} in seekAttachedVideo. Android: keepSurface-stopAll preserves gate {landed:true}, targetScene re-arms {landed:false}. Both require Play after tap (positioned-paused) | no |
+| 2 | Unit A → B during PAUSED | positioned-paused: SEEKING{paused:true} → reveal in paused (timeupdate from completed seek) → VIDEO_READY | positioned-paused: Seeking{paused:true} → poll check reveal BEFORE isPaused-gate → VideoReady (commit 83f7d1a) | **YES** | Web: reveal via timeupdate (fires on seek during pause). Android: 50ms poll independent of pause | no |
+| 3 | SEEKING → PAUSE → RESUME → REVEAL | **sticky**: pausePlayback → SEEKING{paused:true} (payload alive) → resume → SEEKING{paused:false} → reveal via gate | pausePlayback → `Paused` (payload reset) → resume → `ShowingStoryboard`; fallback path: STATE_READY (`currentPlayerHasVideo && !Seeking` → Playing/VideoReady) | **NO** (observationally equivalent in reachable cases) | Web sticky — P1 fix. Android NOT sticky in pausePlayback; seek local/instant + 50ms poll reveals before human tap; during buffering READY-reveal saves | low (theoretical lock — only machine tap/auto-pause in seek window on slow network, see §3) |
+| 4 | SEEKING → BUFFERING → RESUME → REVEAL | sticky on buffer gate entry/exit: SEEKING{paused:true} → SEEKING{paused:false} → reveal via gate (target+tolerance) | STATE_BUFFERING → `transition(Paused)` (gate reset) + enterBuffering; STATE_READY → `!Seeking` → Playing/VideoReady + exitBuffering — reveal on **frame ready** at seek target | **YES** | Android doesn't store gate during buffer gate, but READY-reveal for non-SEEKING is a fallback path web didn't have (hence web needed sticky). Frame on Android may reveal slightly earlier (at target, not target+tolerance) — that's unit B start, not A tail | low (only first frame precision, P2) |
+| 5 | SEEKING → overshoot unitEnd → next unit → REVEAL | P2-4: every tick re-evaluates AND-gate; overshoot tick doesn't reveal, reveal when withinUnit=true | 50ms poll + `pos < unitEndMs` (belt-and-suspenders) in shouldRevealSeekVideo — never had one-shot guard, lock impossible | **YES** | Web fixed what Android never had (poll without one-shot flip) | no |
+| 6 | Book A → Book B during PLAYING | P2-3: preparePlayback prevBookId≠bId → stopAll() + one-shots; stale image/audio don't survive | MainActivity: fragment.stopAll() (→Idle, all fields clean) + VM.preparePlayback; additionally observeState PLAYING→SCENE_READY → stopAll(); deferred seek from A dropped if not in B queue | **YES** | Web: stopAll inside preparePlayback. Android: stopAll in coordinator/collector + preparePlayback | no |
+| 7 | Book A → Book B during SEEKING | P2-3: stopAll → IDLE (gate reset); stale seek not applied against B | fragment.stopAll() → Idle (gate reset); VM.preparePlayback: pendingExternalSeek dropped if not in new queue | **YES** | same coordinator/collector split | no |
+| 8a | Video OFF → ON during PLAYING | OFF: updateLayers (hidden, audio+storyboards continue). ON: attached → re-show (re-align only when |diff|>0.5); not attached → ensureSceneVideo(key,null) audio-sync | OFF: updateLayers (over storyboard, surface alive). ON: source already has video → just updateLayers (re-show); audio-only → targetScene(af, currentPosition, includeVideo=true) — rebuild at **current audio position** | **YES** | Web: display:none element + diff re-align. Android: single merged source physically doesn't drift — rebuild at same position | no |
+| 8b | Video OFF → ON during SEEKING | gate lives hidden; ON: re-align → timeupdate to gate → reveal (paused — after resume) | OFF: updateLayers hides, SEEKING untouched. ON: source with video → re-show (reveal via gate in poll); audio-only → targetScene(cur) → fresh Seeking{landed:true} → reveal via gate | **YES** | same re-show/rebuild pair | no (theoretical angle re-align to not-yet-landed audio unreachable — audio local) |
+| 9 | After reveal: stale seek target doesn't revive; attach doesn't re-arm | P2-cleanup: `pendingVideoTargetSec = -1` at reveal; attachVideo → else branch (sync to audio, no SEEKING) | no separate target field: seek target applied immediately (seekTo / setMediaSources(startPosMs)), gate lives in PlayerState.Seeking and disappears with reveal; rotation/return re-gate only via revealVideoAfterReturn (videoReadyToShow) — intentional surface re-gate, not stale target | **YES** | Field fixed by web fix doesn't exist on Android | no |
+| 10 | Old callbacks/listeners after new unit | P1-2: single pendingMetaListener slot; timeupdate re-reads current playerState; SEEKING payload replaced entirely | single ExoPlayer + single Listener for lifetime; stale protection: `videoPlayerGeneration++` (targetScene/stopAll), `videoCurrentGen`, `pendingRevealGen`, onPlayerError guard "stale (previous item)", onRenderedFirstFrame gen-guarded, onPositionDiscontinuity writes to current playerState | **YES** | Android stronger: generation guards vs single slot | no |
 
-Итог по сценариям: **9 YES / 1 NO-intentional** (сценарий 3 — см. §3).
+Scenario summary: **9 YES / 1 NO-intentional** (scenario 3 — see §3).
 
 ---
 
-## 2. Web-фиксы → Android-механизм
+## 2. Web Fixes → Android Mechanism
 
 | WEB FIX | ANDROID CURRENT MECHANISM | PARITY STATUS |
 |---|---|---|
-| **P1-2** loadedmetadata listener lifecycle (единый слот) | единый `Player.Listener`, навешивается один раз в createVideoPlayer; stale отсекаются generation-гвардами (`videoCurrentGen != videoPlayerGeneration`) | **EQUIVALENT** (пере-регистрация на каждый src на Android не существует архитектурно) |
-| **P2-1** enginePaused removal (write-only) | на Android поля `enginePaused` нет; источник истины — `PlaybackViewModel.uiState.phase` (+ `playerState` фрагмента) | **EQUIVALENT** (N/A — поля не было) |
-| **P2-3** book-switch reset | MainActivity: `fragment.stopAll()` при смене книги + VM.preparePlayback (deferred seek dropped если не в очереди) + observeState PLAYING→SCENE_READY → stopAll() | **EQUIVALENT** (механизм: координатор + фрагмент-коллектор, вместо stopAll внутри preparePlayback) |
-| **P2-4** overshoot recovery (guard → `!= SEEKING`) | 50ms poll без одноразового guard-а + `pos < unitEndMs` — лоk невозможен с самого начала | **EQUIVALENT** (уже было; web догонял) |
-| **P1** sticky SEEKING (pause/buffer сохраняют payload) | pausePlayback → `Paused` (НЕ sticky); буфер-гейт → `Paused`; запасной путь — READY-reveal для не-SEEKING; keepSurface-stopAll сохраняет гейт {seekLanded:true} | **INTENTIONAL DIFFERENCE** (см. §3) |
-| **P2** pendingVideoTargetSec cleanup | поля не существует: target применяется сразу в targetScene, гейт живёт в PlayerState.Seeking и умирает с reveal | **EQUIVALENT** (N/A — проблема невозможна) |
+| **P1-2** loadedmetadata listener lifecycle (single slot) | single `Player.Listener`, attached once in createVideoPlayer; stale blocked by generation guards (`videoCurrentGen != videoPlayerGeneration`) | **EQUIVALENT** (per-src re-registration doesn't exist architecturally on Android) |
+| **P2-1** enginePaused removal (write-only) | no `enginePaused` field on Android; source of truth — `PlaybackViewModel.uiState.phase` (+ fragment `playerState`) | **EQUIVALENT** (N/A — field didn't exist) |
+| **P2-3** book-switch reset | MainActivity: `fragment.stopAll()` on book switch + VM.preparePlayback (deferred seek dropped if not in queue) + observeState PLAYING→SCENE_READY → stopAll() | **EQUIVALENT** (mechanism: coordinator + fragment collector, vs stopAll inside preparePlayback) |
+| **P2-4** overshoot recovery (guard → `!= SEEKING`) | 50ms poll without one-shot guard + `pos < unitEndMs` — lock impossible from the start | **EQUIVALENT** (already existed; web was catching up) |
+| **P1** sticky SEEKING (pause/buffer preserve payload) | pausePlayback → `Paused` (NOT sticky); buffer gate → `Paused`; fallback — READY-reveal for non-SEEKING; keepSurface-stopAll preserves gate {seekLanded:true} | **INTENTIONAL DIFFERENCE** (see §3) |
+| **P2** pendingVideoTargetSec cleanup | field doesn't exist: target applied immediately in targetScene, gate lives in PlayerState.Seeking and dies with reveal | **EQUIVALENT** (N/A — problem impossible) |
 
-Итог по фиксам: **5 EQUIVALENT / 1 INTENTIONAL**.
+Fix summary: **5 EQUIVALENT / 1 INTENTIONAL**.
 
 ---
 
-## 3. Единственное реальное расхождение: pause во время незавершённого seek
+## 3. Single real divergence: pause during incomplete seek
 
 | | Web | Android |
 |---|---|---|
-| pause во время SEEKING | `SEEKING{paused:true}` (sticky — гейт жив, reveal после resume по гейту) | `Paused` (гейт сброшен); resume → `ShowingStoryboard` |
-| почему так | фикс P1: иначе resume уходил в SHOWING_STORYBOARD без пути reveal (timeupdate-guard + loadeddata уже сработал) | seek по локальному merged-файлу мгновенный, 50ms poll раскрывает в течение 50–100 мс — раньше человеческого тапа; при незавершённом seek на медленной сети STATE_BUFFERING→READY даёт READY-reveal |
-| наблюдаемый контракт | reveal после resume всегда | reveal после resume в практически достижимых случаях; **теоретический лок**: seek уже READY + пауза в окне 50–100 мс после тапа (машинный тап/автопауза при переключении таба точно в окне) — poll без гейта не раскроет, STATE_READY не пере-сработает (уже READY) |
+| pause during SEEKING | `SEEKING{paused:true}` (sticky — gate alive, reveal after resume via gate) | `Paused` (gate reset); resume → `ShowingStoryboard` |
+| why | P1 fix: otherwise resume went to SHOWING_STORYBOARD with no reveal path (timeupdate-guard + loadeddata already fired) | seek on local merged file instant, 50ms poll reveals within 50–100ms — before human tap; during incomplete seek on slow network STATE_BUFFERING→READY gives READY-reveal |
+| observed contract | reveal after resume always | reveal after resume in practically reachable cases; **theoretical lock**: seek already READY + pause in 50–100ms window after tap (machine tap/auto-pause on tab switch exactly in window) — poll without gate won't reveal, STATE_READY won't re-fire (already READY) |
 
-**Вывод:** расхождение **intentional** (Web — осознанный фикс, Android — другая
-архитектура, где проблема практически недостижима). НЕ менять Android.
-Зафиксировано как Known intentional difference в T4 manual plan.
+**Conclusion:** divergence is **intentional** (Web — deliberate fix, Android — different
+architecture where problem is practically unreachable). Do NOT change Android.
+Documented as Known intentional difference in T4 manual plan.
 
 ---
 
-## 4. Итоги
+## 4. Summary
 
-### Полностью parity (equivalent)
-Сценарии 1, 2, 5, 6, 7, 8a, 8b, 9, 10 и фиксы P1-2, P2-1, P2-3, P2-4,
-P2-target: наблюдаемое поведение совпадает, механизмы разные (архитектурно).
+### Full parity (equivalent)
+Scenarios 1, 2, 5, 6, 7, 8a, 8b, 9, 10 and fixes P1-2, P2-1, P2-3, P2-4,
+P2-target: observed behavior matches, mechanisms differ (architecturally).
 
 ### Intentional differences
-1. **Pause во время seek** (сценарий 3): Web sticky SEEKING{paused:true} vs
-   Android Paused — осознанно, практически недостижимо на Android.
-2. **Буфер-гейт во время seek** (сценарий 4): Web сохраняет гейт; Android
-   сбрасывает, но READY-reveal раскрывает по готовности на seek-таргете.
+1. **Pause during seek** (scenario 3): Web sticky SEEKING{paused:true} vs
+   Android Paused — intentional, practically unreachable on Android.
+2. **Buffer gate during seek** (scenario 4): Web preserves gate; Android
+   resets, but READY-reveal reveals on frame ready at seek target.
 
-### Реальные gaps
-Нет критичных. Два низкоприоритетных риска (оба P2, оба на Android, оба
-практически не проявляются):
-- **R1 (P2):** reveal после буфер-гейта во время seek может показать кадр на
-  seek-таргете (target), а не на гейте (target+tolerance) — начало юнита B,
-  не хвост A. Наблюдаемо только при замедлении сети точно в окне seek.
-- **R2 (P2):** теоретический stuck после pause-during-seek при уже-READY
-  игроке (см. §3) — требует машинного тапа/автопаузы в окне 50–100 мс.
+### Real gaps
+No critical ones. Two low-priority risks (both P2, both on Android, both
+practically never manifest):
+- **R1 (P2):** reveal after buffer gate during seek may show frame at
+  seek target (target), not gate (target+tolerance) — unit B start,
+  not A tail. Observable only when network slows exactly in seek window.
+- **R2 (P2):** theoretical stuck after pause-during-seek with already-READY
+  player (see §3) — requires machine tap/auto-pause in 50–100ms window.
 
-### Потенциальные bugs
-Формально — 0. Оба пункта выше — риски, не воспроизведённые баги; на web
-соответствующие классы уже закрыты фиксами P1/P2-4.
+### Potential bugs
+Formally — 0. Both items above are risks, not reproduced bugs; on web
+corresponding classes already closed by P1/P2-4 fixes.
 
-### Приоритет gap-ов
-- R1: P2 (не менять — Android merge-архитектура делает это неважным).
-- R2: P2 (не менять — недостижимо практически; если когда-нибудь понадобится
-  полный паритет — sticky-переход в Android `pausePlayback()`).
+### Gap priorities
+- R1: P2 (don't change — Android merge architecture makes this irrelevant).
+- R2: P2 (don't change — practically unreachable; if full parity ever needed —
+  sticky transition in Android `pausePlayback()`).
 
-### Что НЕ надо менять
-- Android: НЕ вводить sticky SEEKING в `pausePlayback()` (R2 не стоит
-  изменения ради теоретического случая); НЕ добавлять
-  `pendingVideoTargetSec`-аналог; НЕ переделывать буфер-гейт.
-- Web: НЕ переделывать reveal под Android-поллинг; текущая связка
-  timeupdate + AND-гейт + sticky — контракт.
-- Обе платформы: НЕ унифицировать механизмы reveal (poll vs timeupdate) —
-  это архитектурное различие, не баг.
+### What should NOT be changed
+- Android: do NOT introduce sticky SEEKING in `pausePlayback()` (R2 not worth
+  changing for theoretical case); do NOT add
+  `pendingVideoTargetSec` analog; do NOT redo buffer gate.
+- Web: do NOT redo reveal for Android polling; current
+  timeupdate + AND-gate + sticky — contract.
+- Both platforms: do NOT unify reveal mechanisms (poll vs timeupdate) —
+  this is architectural difference, not a bug.

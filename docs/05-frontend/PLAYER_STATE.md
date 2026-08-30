@@ -1,33 +1,33 @@
-# Состояние плеера после регенерации
+# Player State After Regeneration
 
-## Проблема
+## Problem
 
-После завершения GPU-генерации контент книги обновляется, но плеер остаётся в старом состоянии. Если просто перезапустить плеер (`preparePlayback` → `SCENE_READY`), пользователь теряет позицию, текущую фазу (был на паузе — сбрасывается), а UI дёргается.
+After GPU generation completes, the book content is updated, but the player remains in the old state. If the player is simply restarted (`preparePlayback` → `SCENE_READY`), the user loses position, current phase (paused is reset), and the UI glitches.
 
-## Решение: Soft Refresh
+## Solution: Soft Refresh
 
-Концепция: **«Генерация не управляет плеером. Генерация обновляет контент.»**
+Concept: **"Generation does not control the player. Generation updates the content."**
 
-После завершения генерации не вызывается полный сброс плеера. Вместо этого:
+After generation completes, a full player reset is not triggered. Instead:
 
-1. `GenerateViewModel` эмитит `PlaybackPreparation` с флагом `softRefresh = true`
-2. `MainActivity` вызывает `PlaybackViewModel.refreshContent()` вместо `preparePlayback()`
-3. Плеер остаётся в текущей фазе (PAUSED → PAUSED, PLAYING → PLAYING)
-4. Устанавливается флаг `needsContentRefresh = true`
-5. При следующем нажатии Play — рефетч свежего контента для текущей сцены
+1. `GenerateViewModel` emits `PlaybackPreparation` with flag `softRefresh = true`
+2. `MainActivity` calls `PlaybackViewModel.refreshContent()` instead of `preparePlayback()`
+3. Player remains in current phase (PAUSED → PAUSED, PLAYING → PLAYING)
+4. Flag `needsContentRefresh = true` is set
+5. On next Play press — refetch fresh content for the current scene
 
-## Архитектура
+## Architecture
 
 ```
 GenerateViewModel.onGenerationComplete()
   │
-  ├─ loadCoverBitmap(coverId)         ← с ретраем (5 попыток, ~17s backoff)
+  ├─ loadCoverBitmap(coverId)         ← with retry (5 attempts, ~17s backoff)
   │
   └─ _playbackPrepared.tryEmit(
        PlaybackPreparation(
          bookId, buildId, chunkIds, positions,
-         coverImage = cover,            ← обложка для fallback-фона
-         softRefresh = true             ← ФЛАГ мягкого обновления
+         coverImage = cover,            ← cover for fallback background
+         softRefresh = true             ← SOFT REFRESH FLAG
        )
      )
        │
@@ -36,32 +36,32 @@ MainActivity.setupPlaybackCoordination()
   │
   ├─ softRefresh == true
   │   └─ playbackViewModel.refreshContent(...)
-  │       ├─ очищает preloadCache
-  │       ├─ обновляет chunkQueue, buildId, positions
-  │       ├─ _repository.clearCache()   ← безусловно (buildId меняется)
+  │       ├─ clears preloadCache
+  │       ├─ updates chunkQueue, buildId, positions
+  │       ├─ _repository.clearCache()   ← unconditionally (buildId changes)
   │       │
   │       ├─ PAUSED / PLAYING:
   │       │   ├─ needsContentRefresh = true
-  │       │   └─ return (фаза не меняется)
+  │       │   └─ return (phase unchanged)
   │       │
   │       └─ IDLE / SCENE_READY:
-  │           └─ full reset (как preparePlayback)
+  │           └─ full reset (same as preparePlayback)
   │
-  └─ setCoverImage(cover)              ← всегда, если cover != null
+  └─ setCoverImage(cover)              ← always, if cover != null
 ```
 
-## Механизмы
+## Mechanisms
 
 ### 1. `needsContentRefresh`
 
-Флаг в `PlaybackViewModel`. Устанавливается `refreshContent()` когда плеер был в PAUSED или PLAYING.
+Flag in `PlaybackViewModel`. Set by `refreshContent()` when the player was in PAUSED or PLAYING.
 
-При следующем `resumePlayback()` (нажатие Play):
-- Флаг сбрасывается (`needsContentRefresh = false`)
-- Вместо простого `PLAYING` запускается корутина:
+On next `resumePlayback()` (Play press):
+- Flag is cleared (`needsContentRefresh = false`)
+- Instead of simple `PLAYING`, a coroutine is launched:
   - `_uiState.update { phase = DOWNLOADING }`
-  - `playNext()` → `fetchSceneData(id)` → рефетч аудио/изображений
-  - `emitChunk()` → PLAYING со свежим контентом
+  - `playNext()` → `fetchSceneData(id)` → refetch audio/images
+  - `emitChunk()` → PLAYING with fresh content
 
 ```kotlin
 fun resumePlayback() {
@@ -77,27 +77,27 @@ fun resumePlayback() {
 }
 ```
 
-### 2. Очистка плеера в PlayFragment
+### 2. Player cleanup in PlayFragment
 
-При `needsContentRefresh == true` фрагмент освобождает старые плееры ДО рефетча:
+When `needsContentRefresh == true`, the fragment releases old players BEFORE refetching:
 
 ```kotlin
 if (playbackViewModel.needsContentRefresh) {
-    currentPlayer?.release()    // ← старый MediaPlayer с placeholder
+    currentPlayer?.release()    // ← old MediaPlayer with placeholder
     nextPlayer?.release()
     videoPlayer?.release()
     currentPlayer = null
     isPaused = false
-    playbackViewModel.resumePlayback()  // ← рефетч нового аудио
+    playbackViewModel.resumePlayback()  // ← refetch new audio
     return
 }
 ```
 
-Без этого старый `MediaPlayer` начинал играть сразу (`currentPlayer?.start()`), а новое аудио цеплялось как `nextPlayer` — пользователь слышал старый placeholder.
+Without this, the old `MediaPlayer` would start playing immediately (`currentPlayer?.start()`), and new audio would attach as `nextPlayer` — the user would hear the old placeholder.
 
-### 3. Обложка (cover) как fallback-фон
+### 3. Cover as fallback background
 
-После генерации `onGenerationComplete()` загружает обложку через `loadCoverBitmap()` с ретраем:
+After generation, `onGenerationComplete()` loads the cover via `loadCoverBitmap()` with retry:
 
 ```kotlin
 var cover: Bitmap? = null
@@ -113,7 +113,7 @@ if (coverId != null && imageEnabled) {
 }
 ```
 
-`MainActivity` всегда вызывает `setCoverImage(cover)` если `cover != null`. В PlayFragment state collector:
+`MainActivity` always calls `setCoverImage(cover)` if `cover != null`. In PlayFragment state collector:
 
 ```kotlin
 if (state.coverImage != null) {
@@ -124,78 +124,78 @@ if (state.coverImage != null) {
 }
 ```
 
-После установки обложки шторы театра (`curtainsImage`) больше никогда не показываются для этой книги.
+After the cover is set, theater curtains (`curtainsImage`) are never shown again for this book.
 
-### 4. buildId и инвалидация кэша
+### 4. buildId and cache invalidation
 
-`buildId` — идентификатор версии контента на бэкенде. Используется в ключах кэша:
+`buildId` — backend content version identifier. Used in cache keys:
 
 ```
 cacheKey = "audio_${id}_${buildId}"
 diskKey  = "${buildId}_$id"
 ```
 
-После регенерации `startGeneration()` сохраняет новый `build_id` из ответа `/regenerate`:
+After regeneration, `startGeneration()` saves the new `build_id` from the `/regenerate` response:
 
 ```kotlin
 if (res.build_id != null) {
-    persistBuildId(res.build_id)  // ← buildId обновлён
+    persistBuildId(res.build_id)  // ← buildId updated
 }
 ```
 
-Изменение `buildId` делает старые кэш-ключи невалидными — `getChunkAudio()` получает cache miss и загружает свежие данные с бэкенда.
+Changing `buildId` invalidates old cache keys — `getChunkAudio()` gets a cache miss and loads fresh data from the backend.
 
-Дополнительно `refreshContent()` всегда вызывает `_repository.clearCache()` как страховку.
+Additionally, `refreshContent()` always calls `_repository.clearCache()` as a safeguard.
 
-### 5. Очистка кэша
+### 5. Cache cleanup
 
-| Где | Когда | Что чистит |
+| Location | When | What is cleaned |
 |-----|-------|-----------|
-| `startGeneration()` | Старт генерации | `_repository.clearCache()` |
-| `refreshContent()` | Завершение генерации | `_repository.clearCache()` (безусловно) |
-| `preparePlayback()` | Новая книга / смена buildId | `_repository.clearCache()` (условно, при смене buildId) |
+| `startGeneration()` | Generation start | `_repository.clearCache()` |
+| `refreshContent()` | Generation completion | `_repository.clearCache()` (unconditionally) |
+| `preparePlayback()` | New book / buildId change | `_repository.clearCache()` (conditionally, on buildId change) |
 
-## Сценарии
+## Scenarios
 
-### Сценарий A: Пользователь на паузе → генерация → Play
+### Scenario A: User paused → generation → Play
 
-1. Плеер PAUSED на сцене 5
-2. Запущена генерация (Audio + Image)
-3. Генерация завершается → `onGenerationComplete()`
+1. Player PAUSED on scene 5
+2. Generation started (Audio + Image)
+3. Generation completes → `onGenerationComplete()`
 4. `refreshContent()`:
-   - Очищает кэш
-   - Обновляет `chunkQueue`, `buildId`
+   - Clears cache
+   - Updates `chunkQueue`, `buildId`
    - `needsContentRefresh = true`
-   - Фаза остаётся **PAUSED**
-5. `setCoverImage(cover)` → UI обновляет обложку, шторы убраны
-6. Пользователь жмёт Play
+   - Phase remains **PAUSED**
+5. `setCoverImage(cover)` → UI updates cover, curtains removed
+6. User presses Play
 7. `resumePlayback()` → `needsContentRefresh == true`
-   - Фрагмент освобождает старый MediaPlayer
-   - `playNext()` → DOWNLOADING → `fetchSceneData(5)` → свежее аудио
-   - `emitChunk()` → PLAYING → новый MediaPlayer играет сцену 5
-8. **Результат:** позиция сохранена, обложка на месте, новое аудио играет
+   - Fragment releases old MediaPlayer
+   - `playNext()` → DOWNLOADING → `fetchSceneData(5)` → fresh audio
+   - `emitChunk()` → PLAYING → new MediaPlayer plays scene 5
+8. **Result:** position preserved, cover in place, new audio playing
 
-### Сценарий B: Пользователь играет → генерация → окончание текущей сцены
+### Scenario B: User playing → generation → current scene ends
 
-1. Плеер PLAYING на сцене 5
-2. Генерация завершается → `refreshContent()`
-3. `needsContentRefresh = true`, фаза остаётся **PLAYING**
-4. Текущий MediaPlayer доигрывает сцену 5 (старое аудио)
-5. `onAudioCompleted()` → `playNext(6)` → `fetchSceneData(6)` → свежее аудио для сцены 6
-6. Сцена 6 играет с новым контентом
-7. **Результат:** текущая сцена доигрывается, следующие сцены — свежие
+1. Player PLAYING on scene 5
+2. Generation completes → `refreshContent()`
+3. `needsContentRefresh = true`, phase remains **PLAYING**
+4. Current MediaPlayer finishes playing scene 5 (old audio)
+5. `onAudioCompleted()` → `playNext(6)` → `fetchSceneData(6)` → fresh audio for scene 6
+6. Scene 6 plays with new content
+7. **Result:** current scene finishes playing, next scenes have fresh content
 
-### Сценарий C: Новая книга (без генерации)
+### Scenario C: New book (no generation)
 
 1. `generateFromFile()` / `loadBookFromFile()`
-2. `softRefresh = false` (по умолчанию)
-3. `MainActivity` вызывает `preparePlayback()`:
+2. `softRefresh = false` (default)
+3. `MainActivity` calls `preparePlayback()`:
    - `chunkQueue.clear()`, `currentIndex = 0`
    - `_uiState.update { phase = SCENE_READY }`
-   - Если buildId изменился → `_repository.clearCache()`
-4. `setCoverImage(cover)` → обложка, шторы убраны
-5. **Результат:** полный сброс, плеер готов к воспроизведению
+   - If buildId changed → `_repository.clearCache()`
+4. `setCoverImage(cover)` → cover, curtains removed
+5. **Result:** full reset, player ready for playback
 
-## Удалённые/мёртвые механизмы
+## Removed/dead mechanisms
 
-- **`coverUpdated` channel** — был объявлен в `GenerateViewModel` но `_coverUpdated.tryEmit()` никогда не вызывался. Удалён. Обложка теперь передаётся исключительно через `PlaybackPreparation.coverImage`.
+- **`coverUpdated` channel** — was declared in `GenerateViewModel` but `_coverUpdated.tryEmit()` was never called. Removed. Cover is now delivered exclusively through `PlaybackPreparation.coverImage`.

@@ -1,133 +1,133 @@
-# Editor: ручное добавление и удаление сущностей (Add/Delete)
+# Editor: Manual Entity Add/Delete
 
-Единый UI-паттерн для ручного добавления и удаления **персонажей, локаций и голосов**
-на странице «Редактор» — непосредственно в существующих таблицах селекторов.
-Паттерн спроектирован для переиспользования при Add/Delete **Unit** и **Scene**.
+A unified UI pattern for manually adding and deleting **characters, locations, and voices**
+on the "Editor" page — directly within existing selector tables.
+The pattern is designed for reuse when adding/deleting **Units** and **Scenes**.
 
-Платформы: **web** (`frontends/app`) + **Android** (`frontends/android`), одинаковый UX.
+Platforms: **web** (`frontends/app`) + **Android** (`frontends/android`), identical UX.
 
 ---
 
-## UX-паттерн
+## UX Pattern
 
 ```
 Table
- └── Add (+) overlay-кнопка в правом верхнем углу
+ └── Add (+) overlay button in the top-right corner
        ↓
-     Modal/Dialog (форма по JSON-схеме сущности)
+     Modal/Dialog (form based on entity JSON schema)
        ↓
-     Save (валидация обязательных полей + уникальность ID)
+     Save (required field validation + ID uniqueness)
        ↓
-     Таблица обновляется без перезагрузки страницы
+     Table updates without page reload
 
 Table row
- └── [−] ID   (компактная «−»-кнопка, мягкий красный акцент, слева от ID)
+ └── [−] ID   (compact "−" button, soft red accent, left of ID)
        ↓
-     Confirmation Dialog («Удалить персонажа/локацию/голос?»)
+     Confirmation Dialog ("Delete character/location/voice?")
        ↓
-     Удаляется ВЕСЬ JSON-объект сущности → таблица обновляется сразу
+     Entire JSON entity object is deleted → table updates immediately
 ```
 
-Ключевые требования:
+Key requirements:
 
-- **«+»** — круглая, overlay/absolute относительно контейнера таблицы: не занимает
-  место в layout, первая строка таблицы не сдвигается.
-- **Диалог добавления** — modal, не отдельный экран с «Add → Back».
-- **Удаление** — только через confirmation dialog; удаляется вся сущность целиком
-  (весь JSON-объект), никаких висячих/частичных данных.
-- **ID** — валидный введённый ID используется как есть; свободный ввод
-  (например, кириллица) приводится к snake-case через существующую
-  транслитерацию (см. ниже).
-- Состояние других селекторов/таблиц не ломается; если удалена выбранная
-  сущность — выделение корректно снимается.
+- **"+"** — round, overlay/absolute relative to the table container: does not take
+  space in layout, first table row does not shift.
+- **Add dialog** — modal, not a separate screen with "Add → Back".
+- **Deletion** — only via confirmation dialog; the entire entity is deleted
+  (entire JSON object), no dangling/partial data.
+- **ID** — valid entered ID is used as-is; free-form input
+  (e.g., Cyrillic) is transliterated to snake_case via existing
+  transliteration (see below).
+- Other selectors/tables state is not broken; if the selected entity is deleted —
+  selection is correctly cleared.
 
 ---
 
 ## Backend API
 
-Роуты зарегистрированы в `backend/src/routes/book-routes.cjs`
-(под-регистратор `backend/src/routes/book/entity-crud-routes.cjs`):
+Routes registered in `backend/src/routes/book-routes.cjs`
+(sub-registrar `backend/src/routes/book/entity-crud-routes.cjs`):
 
-| Метод | Путь | Действие |
+| Method | Path | Action |
 |---|---|---|
-| `POST` | `/api/v1/book/:bookId/entities/:kind` | Добавить сущность `kind` ∈ `characters` \| `locations` \| `voices` |
-| `DELETE` | `/api/v1/book/:bookId/entities/:kind/:id` | Удалить сущность целиком |
+| `POST` | `/api/v1/book/:bookId/entities/:kind` | Add entity `kind` ∈ `characters` \| `locations` \| `voices` |
+| `DELETE` | `/api/v1/book/:bookId/entities/:kind/:id` | Delete entity entirely |
 
-- Запись идёт через **существующий** `book.saveBookBundle` — параллельный механизм
-  сохранения не создаётся; JSON-структура книги не меняется.
-- POST: валидация обязательных полей (по схеме сущности) + проверка
-  уникальности ID → `409` при дубликате.
-- DELETE: удаление всего JSON-объекта; при опустошении коллекции файл
-  удаляется штатно (поведение `saveBookBundle`).
+- Writes go through the **existing** `book.saveBookBundle` — no parallel save
+  mechanism is created; book JSON structure is unchanged.
+- POST: required field validation (per entity schema) + ID uniqueness check
+  → `409` on duplicate.
+- DELETE: entire JSON object removed; when collection is empty, file is
+  deleted normally (`saveBookBundle` behavior).
 
-### Генерация ID
+### ID Generation
 
-`backend/src/utils/entity-id.js` — **переиспользует существующую** функцию
-транслитерации `cyrToLatin` (`backend/src/utils/string-utils.js`) + snake-case:
+`backend/src/utils/entity-id.js` — **reuses the existing** transliteration
+function `cyrToLatin` (`backend/src/utils/string-utils.js`) + snake_case:
 
-- Введённый ID уже в принятом формате → используется как есть.
-- Свободный ввод (например, «Михаил Александрович Берлиоз») →
-  транслитерация + snake-case → `mikhail_aleksandrovich_berlioz`.
+- Entered ID already in accepted format → used as-is.
+- Free-form input (e.g., "Михаил Александрович Берлиоз") →
+  transliteration + snake_case → `mikhail_aleksandrovich_berlioz`.
 
-Новая функция транслитерации не написана — используется существующий утилит backend'а.
+No new transliteration function was written — backend utility is reused.
 
 ---
 
 ## Web (`frontends/app`)
 
-Переиспользуемые компоненты — `frontends/app/src/lib/entityEditor.tsx`:
+Reusable components in `frontends/app/src/lib/entityEditor.tsx`:
 
-- `EntityAddButton` — круглая «+» (overlay поверх таблицы).
-- `EntityDeleteButton` — компактная «−», мягкий красный акцент.
-- `EntityEditorDialog` — modal-форма, строится по схеме полей сущности.
-- `DeleteConfirmDialog` — confirmation dialog с динамическим текстом сущности.
+- `EntityAddButton` — round "+" (overlay over table).
+- `EntityDeleteButton` — compact "−", soft red accent.
+- `EntityEditorDialog` — modal form, built from entity field schema.
+- `DeleteConfirmDialog` — confirmation dialog with dynamic entity text.
 
 `frontends/app/src/pages/EditPage.tsx`:
 
-- Схемы полей трёх сущностей (`ENTITY_SCHEMAS` в `frontends/app/src/lib/entityEditor.tsx`)
-  построены по **текущим** JSON-моделям редактора (легаси-ключи демо-данных
-  вроде `base_appearance` / `cinematic_space` в схему не входят):
+- Field schemas for three entities (`ENTITY_SCHEMAS` in `frontends/app/src/lib/entityEditor.tsx`)
+  built from **current** editor JSON models (legacy demo data keys
+  like `base_appearance` / `cinematic_space` are excluded from schema):
   - character: `passport.appearance`, `passport.clothes`, `passport.video_tokens`;
   - location: `description`, `environment.time`, `environment.season`,
     `environment.lighting`, `environment.weather`, `environment.mood`,
     `environment.atmosphere`;
   - voice: `instruction`.
-  ID — свободное поле ввода (валидный формат используется как есть, иначе —
-  транслитерация на сервере).
-- «+» в правом верхнем углу каждой таблицы; delete-кнопка в заголовке карточки
-  слева от ID (не пересекается с «+»).
-- После save/delete — обновление таблицы из локального состояния (без reload).
-- Guard: сущность, удалённая после последней загрузки, пропускается при PATCH
-  (иначе 404 ронял бы весь save).
+  ID — free-form input field (valid format used as-is, otherwise —
+  server-side transliteration).
+- "+" in top-right of each table; delete button in card header
+  left of ID (no overlap with "+").
+- After save/delete — table update from local state (no reload).
+- Guard: entity deleted after last load is skipped during PATCH
+  (otherwise 404 would break entire save).
 
-Стили — `frontends/app/src/styles/base.css` (классы `.edit-entity-*`),
-строки — `frontends/app/src/app/i18n.ts` (ru/en), иконка «−» — `IconMinus`
-в `frontends/app/src/app/icons.tsx`.
+Styles — `frontends/app/src/styles/base.css` (`.edit-entity-*` classes),
+strings — `frontends/app/src/app/i18n.ts` (ru/en), "−" icon — `IconMinus`
+in `frontends/app/src/app/icons.tsx`.
 
 ---
 
 ## Android (`frontends/android`)
 
-- `repository/BackendApi.kt` + `repository/Repository.kt` — CRUD-методы
+- `repository/BackendApi.kt` + `repository/Repository.kt` — CRUD methods
   (`createEntity` / `deleteEntity`).
-- `res/layout/fragment_edit.xml` — плавающая «+» (overlay поверх таблицы).
-- `res/drawable/bg_entity_add.xml` (круглая кнопка), `res/drawable/ic_remove.xml`.
+- `res/layout/fragment_edit.xml` — floating "+" (overlay over table).
+- `res/drawable/bg_entity_add.xml` (round button), `res/drawable/ic_remove.xml`.
 - `ui/EditFragment.kt`:
-  - `EntityKind` enum + `EntityDef`/`EntityField` (схемы полей) — единый механизм на три сущности;
-  - диалог добавления — по существующему паттерну (TextInputLayout, дизайн Editor);
-  - confirmation dialog — «Удалить …?» / Отмена / Удалить;
-  - delete-кнопка в заголовке карточки слева от ID;
-  - обновление таблиц после save/delete, guard от PATCH удалённой сущности.
-- Строки — `res/values/strings.xml` + `res/values-ru/strings.xml`.
+  - `EntityKind` enum + `EntityDef`/`EntityField` (field schemas) — unified mechanism for three entities;
+  - add dialog — following existing pattern (TextInputLayout, Editor design);
+  - confirmation dialog — "Delete …?" / Cancel / Delete;
+  - delete button in card header left of ID;
+  - table updates after save/delete, guard against PATCH of deleted entity.
+- Strings — `res/values/strings.xml` + `res/values-ru/strings.xml`.
 
 ---
 
-## Расширение на Unit / Scene
+## Extension to Unit / Scene
 
-Добавление новой сущности сводится к:
+Adding a new entity requires:
 
-1. backend: `kind` в `entity-crud-routes.cjs` (схема полей для валидации);
-2. web: схема полей в `EditPage.tsx` (форма строится автоматически);
-3. Android: запись в `entityFields` + строки.
+1. backend: `kind` in `entity-crud-routes.cjs` (field schema for validation);
+2. web: field schema in `EditPage.tsx` (form is built automatically);
+3. Android: entry in `entityFields` + strings.
 
-Отдельные диалоги/кнопки под каждую сущность не нужны.
+Separate dialogs/buttons per entity are not needed.

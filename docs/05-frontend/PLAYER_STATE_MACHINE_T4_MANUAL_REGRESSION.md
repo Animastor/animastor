@@ -1,321 +1,320 @@
 # T4 — Manual Regression: Web Player (real timing/lifecycle)
 
-Статус: 📝 Plan → (заполняется при прогоне).
-База: `PLAYER_STATE_MACHINE_AUDIT_T6.md` — все кодовые фиксы серии закрыты
+Status: 📝 Plan → (to be filled during execution).
+Base: `PLAYER_STATE_MACHINE_AUDIT_T6.md` — all code fixes in the series are closed
 (P0-1, P1-1, P1-2, P2-1, P2-3, P2-4, P1 sticky SEEKING, P2 target cleanup).
-Юнит-тесты: vitest 38/38. T4 — единственный оставшийся шаг аудита: проверить
-**реальные** тайминги/сетевые задержки/UI-lifecycle, которые юнит-тесты не
-покрывают.
+Unit tests: vitest 38/38. T4 is the only remaining audit step: verify
+**real** timings/network latency/UI-lifecycle that unit tests do
+not cover.
 
-Цель: подтвердить, что цепочка
+Goal: confirm that the chain
 `audio position → selectedUnit → external seek → SEEKING → video seek → seekLanded
 → onVideoTimeUpdate → reveal gate → VIDEO_READY / PLAYING`
-согласована в живом браузере, и что ни один сценарий не даёт stale frame /
-stale storyboard / permanently hidden video / лишний seek / infinite loading.
+is consistent in a live browser, and that no scenario produces stale frame /
+stale storyboard / permanently hidden video / spurious seek / infinite loading.
 
 ---
 
-## Подготовка (для каждого захода)
+## Preparation (for each run)
 
-- [ ] Свежий билд web (`frontends/app`), рабочая книга с ≥2 сценами, в сцене ≥2
-      юнита (в идеале с server `start_ms`; legacy-cumulative — отдельный заход).
-- [ ] Книга с короткими юнитами (< 300 мс) — обязательна для overshoot-кейсов.
-- [ ] Две разные книги A и B (для book-switch кейсов).
-- [ ] Chrome DevTools открыты, Network + Performance; **Throttling: Slow 3G**
-      (для buffering-кейсов) — включать только в тех тестах, где указано.
-- [ ] Логи: `console` (видео-ошибки пишут `[PLAY-STREAM] ...`), снимки экрана
-      при каждом FAIL.
+- [ ] Fresh web build (`frontends/app`), working book with ≥2 scenes, each scene ≥2
+      units (ideally with server `start_ms`; legacy-cumulative — separate run).
+- [ ] Book with short units (< 300 ms) — mandatory for overshoot cases.
+- [ ] Two different books A and B (for book-switch cases).
+- [ ] Chrome DevTools open, Network + Performance; **Throttling: Slow 3G**
+      (for buffering cases) — enable only in tests where specified.
+- [ ] Logs: `console` (video errors write `[PLAY-STREAM] ...`), screenshots
+      on every FAIL.
 
 ---
 
-## Тест-кейсы
+## Test Cases
 
-Формат записи: ACTION / EXPECTED / ACTUAL / PASS/FAIL / SCREENSHOT-LOG (при FAIL).
+Recording format: ACTION / EXPECTED / ACTUAL / PASS/FAIL / SCREENSHOT-LOG (on FAIL).
 
 ---
 
 ### T4-1. Navigator → Unit A → playback
 
-- **ACTION:** Холодный старт → открыть книгу → Play → в Navigator выбрать Unit A
-  (первый юнит сцены).
-- **EXPECTED:** Сториборд A показывается сразу; видео раскрывается после посадки
-  seek (первый корректный кадр A); аудио идёт с начала юнита A; никакого
-  «чёрного экрана», никакого старого кадра.
+- **ACTION:** Cold start → open book → Play → select Unit A in Navigator
+  (first unit of scene).
+- **EXPECTED:** Storyboard A shown immediately; video reveals after seek lands
+  (first correct frame A); audio plays from start of unit A; no
+  "black screen", no old frame.
 - **ACTUAL:** …
 - **PASS/FAIL:** …
 - **SCREENSHOT/LOG:** …
 
 ---
 
-### T4-2. Во время playback быстро выбрать Unit B
+### T4-2. During playback quickly select Unit B
 
-- **ACTION:** Играет Unit A → тап Unit B в Navigator.
+- **ACTION:** Unit A playing → tap Unit B in Navigator.
 - **EXPECTED:**
-  - Визуальный критерий перехода (см. раздел «Критерий перехода A→B»):
-    не должно быть последовательности «A last frame → A storyboard → B storyboard
-    → B video» с чёрным/старым кадром; ожидается чистая смена A → B storyboard /
-    первый валидный кадр B → playback B.
-  - `selectedUnit` = B; видео остаётся прикреплённым (та же сцена — seek без
-    re-src); видео раскрывается, когда позиция внутри B (гейт), а не раньше.
-  - Аудио не обрывается/не скачет; субтитры B актуальны.
+  - Visual transition criterion (see "Unit A → Unit B transition criterion"):
+    no sequence "A last frame → A storyboard → B storyboard
+    → B video" with black/old frame; expect clean A → B storyboard /
+    first valid frame B → playback B.
+  - `selectedUnit` = B; video stays attached (same scene — seek without
+    re-src); video reveals when position is inside B (gate), not earlier.
+  - Audio not interrupted/skipping; B subtitles are current.
 - **ACTUAL:** …
 - **PASS/FAIL:** …
 - **SCREENSHOT/LOG:** …
 
 ---
 
-### T4-3. Быстро A → B → C (до готовности metadata)
+### T4-3. Fast A → B → C (before metadata ready)
 
-- **ACTION:** Играет A → быстро тапнуть B, затем C (быстрее, чем загрузится
-  видео B), если B и C в одной сцене — то же самое для юнитов.
-- **EXPECTED:** Финально играет C (target C, storyboard C, затем видео C);
-  stale-цель B нигде не применяется (никакого перескока на B после того, как
-  C уже выбран); видео не застревает скрытым.
+- **ACTION:** A playing → quickly tap B, then C (faster than B video loads);
+  if B and C are in same scene — same for units.
+- **EXPECTED:** Finally plays C (target C, storyboard C, then video C);
+  stale target B is not applied anywhere (no jump to B after
+  C is already selected); video doesn't get stuck hidden.
 - **ACTUAL:** …
 - **PASS/FAIL:** …
 - **SCREENSHOT/LOG:** …
 
 ---
 
-### T4-4. A → B → A быстро
+### T4-4. A → B → A fast
 
-- **ACTION:** Играет A → B → сразу обратно A.
-- **EXPECTED:** Финально играет A; кадр/позиция соответствуют A (не хвост B);
-  никакого stale frame; reveal по гейту A.
+- **ACTION:** A playing → B → immediately back to A.
+- **EXPECTED:** Finally plays A; frame/position match A (not tail of B);
+  no stale frame; reveal via A gate.
 - **ACTUAL:** …
 - **PASS/FAIL:** …
 - **SCREENSHOT/LOG:** …
 
 ---
 
-### T4-5. Pause во время SEEKING
+### T4-5. Pause during SEEKING
 
-- **ACTION:** Тапнуть Unit B и **сразу** (пока видео seek-ится, на Slow 3G окно
-  шире) нажать Pause.
-- **EXPECTED:** Состояние остаётся SEEKING{paused:true} (sticky); сториборд B
-  на экране; видео скрыто; никакого «зависшего hidden video» после.
+- **ACTION:** Tap Unit B and **immediately** (while video is seeking, wider window
+  on Slow 3G) press Pause.
+- **EXPECTED:** State remains SEEKING{paused:true} (sticky); storyboard B
+  on screen; video hidden; no "stuck hidden video" afterward.
 - **ACTUAL:** …
 - **PASS/FAIL:** …
 - **SCREENSHOT/LOG:** …
 
 ---
 
-### T4-6. Play после Pause (из T4-5)
+### T4-6. Play after Pause (from T4-5)
 
-- **ACTION:** Продолжение T4-5 → нажать Play.
-- **EXPECTED:** Seek продолжается (не начинается заново, без лишнего перескока);
-  видео раскрывается по гейту (первый кадр B, не хвост A); playback продолжается
-  с позиции B; никакого прыжка назад к началу юнита.
+- **ACTION:** Continuation of T4-5 → press Play.
+- **EXPECTED:** Seek continues (not restarted, no extra jump);
+  video reveals via gate (first frame B, not tail of A); playback continues
+  from B position; no jump back to unit start.
 - **ACTUAL:** …
 - **PASS/FAIL:** …
 - **SCREENSHOT/LOG:** …
 
 ---
 
-### T4-7. Buffering/network slowdown во время SEEKING
+### T4-7. Buffering/network slowdown during SEEKING
 
-- **ACTION:** Throttling Slow 3G → тапнуть Unit B → дождаться «Загрузка…»
-  (буфер-гейт) до посадки seek.
-- **EXPECTED:** Буфер-гейт сохраняет SEEKING{paused:true} (не PAUSED, не
-  SHOWING_STORYBOARD); после накопления буфера выход → SEEKING{paused:false} →
-  reveal B; не должно быть: infinite loading, видео навсегда скрыто, возврат
-  видео к началу юнита, двойной seek.
+- **ACTION:** Throttling Slow 3G → tap Unit B → wait for "Loading…"
+  (buffer gate) before seek lands.
+- **EXPECTED:** Buffer gate maintains SEEKING{paused:true} (not PAUSED, not
+  SHOWING_STORYBOARD); after buffer accumulates → exit → SEEKING{paused:false} →
+  reveal B; should not have: infinite loading, video permanently hidden, video
+  returning to unit start, double seek.
 - **ACTUAL:** …
 - **PASS/FAIL:** …
 - **SCREENSHOT/LOG:** …
 
 ---
 
-### T4-8. Video layer OFF → ON во время playback
+### T4-8. Video layer OFF → ON during playback
 
-- **ACTION:** Играет сцена с видео → выключить chip Video → через 2–3 сек включить.
-- **EXPECTED:** При OFF — сториборды продолжают циклиться (аудио не
-  останавливается); при ON — видео продолжает с **актуальной позиции audio**
-  (не с позиции старого юнита, не с начала сцены); без «Загрузка…»-цикла,
-  без long/infinite buffering; позиция видео ≈ позиции аудио (±0.5 с).
+- **ACTION:** Scene with video playing → disable Video chip → re-enable after 2–3 seconds.
+- **EXPECTED:** On OFF — storyboards continue cycling (audio does not
+  stop); on ON — video continues from **current audio position**
+  (not from old unit position, not from scene start); no "Loading…" loop,
+  no long/infinite buffering; video position ≈ audio position (±0.5s).
 - **ACTUAL:** …
 - **PASS/FAIL:** …
 - **SCREENSHOT/LOG:** …
 
 ---
 
-### T4-9. Video layer OFF → ON во время SEEKING
+### T4-9. Video layer OFF → ON during SEEKING
 
-- **ACTION:** Тапнуть Unit B → во время seek выключить Video → включить обратно.
-- **EXPECTED:** Гейт живёт скрытым; после ON видео выравнивается по аудио
-  (аудио уже на target B) и раскрывается, когда позиция входит в юнит B;
-  никакого «зависшего скрытого видео», никакого stale кадра A.
+- **ACTION:** Tap Unit B → during seek disable Video → re-enable.
+- **EXPECTED:** Gate lives hidden; after ON video syncs to audio
+  (audio already at target B) and reveals when position enters unit B;
+  no "stuck hidden video", no stale frame A.
 - **ACTUAL:** …
 - **PASS/FAIL:** …
 - **SCREENSHOT/LOG:** …
 
 ---
 
-### T4-10. Переключить Unit во время SEEKING
+### T4-10. Switch Unit during SEEKING
 
-- **ACTION:** Тапнуть Unit B → во время незавершённого seek тапнуть Unit C.
-- **EXPECTED:** Старый seek не влияет на C: финальный таргет C, гейт C;
-  никакого применения stale-цели B после выбора C; видео раскрывается по C.
+- **ACTION:** Tap Unit B → during incomplete seek tap Unit C.
+- **EXPECTED:** Old seek does not affect C: final target C, gate C;
+  no application of stale target B after C is selected; video reveals via C.
 - **ACTUAL:** …
 - **PASS/FAIL:** …
 - **SCREENSHOT/LOG:** …
 
 ---
 
-### T4-11. Переключить книгу во время playback
+### T4-11. Switch book during playback
 
-- **ACTION:** Играет книга A → открыть книгу B (из списка/библиотеки) →
-  Play в B.
-- **EXPECTED:** Аудио A останавливается; никакого stale кадра/сториборда A на
-  SCENE_READY B (обложка/шторки B); selectedUnit/currentIuBlobUrl чисты;
-  первая сцена B стартует нормально; никакого неожиданного старта playback
-  книги A поверх B.
+- **ACTION:** Book A playing → open book B (from list/library) →
+  Play in B.
+- **EXPECTED:** A audio stops; no stale A frame/storyboard on
+  SCENE_READY B (B cover/curtains); selectedUnit/currentIuBlobUrl clean;
+  first scene B starts normally; no unexpected start of book A playback
+  over B.
 - **ACTUAL:** …
 - **PASS/FAIL:** …
 - **SCREENSHOT/LOG:** …
 
 ---
 
-### T4-12. Переключить книгу во время SEEKING
+### T4-12. Switch book during SEEKING
 
-- **ACTION:** Играет A → тапнуть юнит (SEEKING) → сразу открыть книгу B.
-- **EXPECTED:** Все состояния A сброшены (IDLE на открытии B); deferred/в
-  полёте seek из A не выполняется против B (не стартует playback B «сам по
-  себе»); stale pending target не применяется; B стартует нормально.
+- **ACTION:** A playing → tap unit (SEEKING) → immediately open book B.
+- **EXPECTED:** All A states reset (IDLE on B open); deferred/in-flight
+  seek from A does not execute against B (B playback doesn't start "on its
+  own"); stale pending target not applied; B starts normally.
 - **ACTUAL:** …
 - **PASS/FAIL:** …
 - **SCREENSHOT/LOG:** …
 
 ---
 
-### T4-13. Pause → Resume после уже показанного video frame
+### T4-13. Pause → Resume after video frame already shown
 
-- **ACTION:** Дождаться reveal (видео видимо) → Pause → 2 сек → Play.
-- **EXPECTED:** Pause → видео остаётся видимым (VIDEO_READY, не сториборд);
-  Resume → playback продолжается с той же позиции; **никакого возврата видео
-  к началу юнита** (stale target уже очищен); никакого повторного seek.
+- **ACTION:** Wait for reveal (video visible) → Pause → 2 seconds → Play.
+- **EXPECTED:** Pause → video stays visible (VIDEO_READY, not storyboard);
+  Resume → playback continues from same position; **no video return
+  to unit start** (stale target already cleared); no re-seek.
 - **ACTUAL:** …
 - **PASS/FAIL:** …
 - **SCREENSHOT/LOG:** …
 
 ---
 
-### T4-14. Attach/detach video через реальный UI lifecycle (несколько раз)
+### T4-14. Attach/detach video through real UI lifecycle (multiple times)
 
-- **ACTION:** Играет сцена с видео → переключиться на другую вкладку
-  (Navigator/назад) и обратно на Play — повторить 3–5 раз; вариант: свернуть/
-  развернуть вкладку браузера.
-- **EXPECTED:** Каждый remount: видео re-attach без потери позиции (синк к
-  аудио); короткий сториборд до первого кадра (нормально), затем reveal;
-  никакого повторного вооружения SEEKING без необходимости, никакого
-  зависшего hidden video, никакого black frame; после нескольких циклов —
-  стабильный playback.
+- **ACTION:** Scene with video playing → switch to another tab
+  (Navigator/back) and back to Play — repeat 3–5 times; variant: minimize/
+  restore browser tab.
+- **EXPECTED:** Each remount: video re-attaches without position loss (synced to
+  audio); short storyboard before first frame (normal), then reveal;
+  no unnecessary SEEKING re-arming, no
+  stuck hidden video, no black frame; after several cycles —
+  stable playback.
 - **ACTUAL:** …
 - **PASS/FAIL:** …
 - **SCREENSHOT/LOG:** …
 
 ---
 
-### T4-15. Отсутствие stale-артефактов (сквозная проверка всех кейсов выше)
+### T4-15. Absence of stale artifacts (cross-cutting check of all above cases)
 
-- **ACTION:** В каждом из T4-1…T4-14 фиксировать и отметить отсутствие:
-  - [ ] старого кадра предыдущего unit;
-  - [ ] старого storyboard (картинка A на юните B);
-  - [ ] старого video frame (кадр A поверх B);
-  - [ ] зависшего hidden video (аудио играет, видео никогда не появляется);
-  - [ ] возврата video назад к началу unit (прыжок позиции);
-  - [ ] повторного неожиданного seek (video прыгает без действия пользователя);
-  - [ ] infinite loading («Загрузка…» без завершения);
-  - [ ] stale subtitle/image (субтитр/картинка не совпадает с текущим юнитом).
+- **ACTION:** In each of T4-1…T4-14, note the absence of:
+  - [ ] old frame from previous unit;
+  - [ ] old storyboard (image A on unit B);
+  - [ ] old video frame (frame A over B);
+  - [ ] stuck hidden video (audio plays, video never appears);
+  - [ ] video returning to unit start (position jump);
+  - [ ] unexpected re-seek (video jumps without user action);
+  - [ ] infinite loading ("Loading…" without completion);
+  - [ ] stale subtitle/image (subtitle/image doesn't match current unit).
 - **ACTUAL:** …
 - **PASS/FAIL:** …
 - **SCREENSHOT/LOG:** …
 
 ---
 
-## Критерий перехода Unit A → Unit B (визуальный)
+## Unit A → Unit B transition criterion (visual)
 
-**НЕ должно быть** цепочки с разрывами/артефактами:
+There should **NOT** be a chain with gaps/artifacts:
 
 ```
 A last frame → A storyboard → B storyboard → B video
-(с чёрным кадром, мельканием старого кадра, задержкой «чёрный экран»)
+(with black frame, old frame flash, "black screen" delay)
 ```
 
-**Нормальный результат:**
+**Normal result:**
 
 ```
-A (воспроизведение)
-→ clean transition (мгновенно, без чёрного/сталого кадра)
-→ B storyboard (картинка юнита B, пока видео позиционируется)
-→ B video (первый кадр B раскрывается по гейту — не хвост A)
+A (playing)
+→ clean transition (instant, no black/stale frame)
+→ B storyboard (image of unit B, while video positions)
+→ B video (first frame B revealed via gate — not tail of A)
 → playback B
 ```
 
-Допустимо: кратковременный показ сториборда B поверх видео-элемента во время
-seek (это by design — reveal-гейт). Недопустимо: показ кадра/хвоста A после
-выбора B; чёрный прямоугольник; видео, раскрытое ДО входа позиции в юнит B.
+Acceptable: brief storyboard B display over video element during
+seek (this is by design — reveal gate). Unacceptable: showing frame/tail of A after
+B is selected; black rectangle; video revealed BEFORE position enters unit B.
 
-### Video OFF → ON: критерий позиции
+### Video OFF → ON: position criterion
 
-После включения video должен продолжить с **актуальной позиции audio**
-(не с позиции старого unit, не с начала сцены). Допустимое расхождение — не
-более ~0.5 с (и оно тут же выравнивается). Недопустимо: видео прыгает к началу
-сцены/старому юниту, повторная загрузка с нуля, цикл «Загрузка…».
+After enabling, video should continue from **current audio position**
+(not from old unit position, not from scene start). Acceptable delta — no
+more than ~0.5s (and it self-corrects). Unacceptable: video jumps to scene
+start/old unit, reload from scratch, "Loading…" loop.
 
 ---
 
 ## Known intentional difference
 
-| Платформа | Pause во время незавершённого seek |
+| Platform | Pause during incomplete seek |
 |---|---|
-| **Web** | `SEEKING{paused:true}` (sticky — гейт сохраняется; фикс P1) |
-| **Android** | `Paused` (payload сбрасывается; практически недостижимо — мгновенный локальный seek + 50ms poll) |
+| **Web** | `SEEKING{paused:true}` (sticky — gate preserved; P1 fix) |
+| **Android** | `Paused` (payload reset; practically unreachable — instant local seek + 50ms poll) |
 
-**Это НЕ считать FAIL.** Поведение платформ намеренно различается; на web
-sticky-семантика даёт reveal после resume, на Android reveal успевает
-произойти до человеческого тапа. Если в T4-5/T4-6 на web поведение
-соответствует sticky-контракту — тест PASS.
+**Do not count as FAIL.** Platform behavior intentionally differs; on web
+sticky semantics give reveal after resume, on Android reveal completes
+before human tap. If T4-5/T4-6 on web behavior matches sticky contract — test is PASS.
 
 ---
 
-## Итоговые критерии
+## Final Criteria
 
 ### T4 PASS criteria
 
-Все **обязательные** тесты = PASS, и в T4-15 не отмечено ни одного
-stale-артефакта / hidden-video / лишнего seek / infinite loading.
+All **mandatory** tests = PASS, and T4-15 notes no
+stale artifacts / hidden video / spurious seek / infinite loading.
 
-### Обязательные тесты
+### Mandatory tests
 
-- T4-1 (базовый старт),
-- T4-2 (A → B во время playback) — включая визуальный критерий перехода,
-- T4-5 + T4-6 (pause/resume во время SEEKING — sticky-контракт),
-- T4-8 (Video OFF → ON во время playback) — включая критерий позиции,
-- T4-11 (book switch во время playback),
-- T4-13 (pause/resume после reveal — отсутствие возврата к началу юнита),
-- T4-15 (отсутствие stale-артефактов).
+- T4-1 (basic start),
+- T4-2 (A → B during playback) — including visual transition criterion,
+- T4-5 + T4-6 (pause/resume during SEEKING — sticky contract),
+- T4-8 (Video OFF → ON during playback) — including position criterion,
+- T4-11 (book switch during playback),
+- T4-13 (pause/resume after reveal — no return to unit start),
+- T4-15 (no stale artifacts).
 
-### Optional (рекомендуемые, но не блокирующие)
+### Optional (recommended, but not blocking)
 
-- T4-3 (A → B → C быстро),
+- T4-3 (fast A → B → C),
 - T4-4 (A → B → A),
-- T4-7 (buffering на Slow 3G — нужен throttle),
-- T4-9 (Video OFF → ON во время SEEKING),
-- T4-10 (смена юнита во время SEEKING),
-- T4-12 (book switch во время SEEKING),
-- T4-14 (многократный attach/detach).
+- T4-7 (buffering on Slow 3G — needs throttle),
+- T4-9 (Video OFF → ON during SEEKING),
+- T4-10 (unit switch during SEEKING),
+- T4-12 (book switch during SEEKING),
+- T4-14 (multiple attach/detach).
 
-### Классификация failure
+### Failure classification
 
-- **P0 (блокер прогона):** permanently hidden video (аудио играет, видео не
-  раскрывается никогда); infinite loading; stale кадр предыдущего unit поверх
-  нового; «видео прыгает к началу юнита» при resume; книга A продолжает играть
-  на книге B.
-- **P1 (критично, но не блокер прогона):** переход A→B с видимым чёрным
-  кадром/хвостом A > 1 кадра; Video OFF→ON без выравнивания позиции; повторный
-  неожиданный seek; stale subtitle/image дольше одного юнита.
-- **P2 (косметика/перф):** однократное мелькание сториборда при reveal;
-  незначительное (>0.5 с, но выравнивающееся) расхождение позиции видео/аудио
-  после Video ON; лишний сетевой запрос при same-scene unit-tap (известный
-  остаточный риск, не баг).
+- **P0 (run blocker):** permanently hidden video (audio plays, video never
+  reveals); infinite loading; stale previous unit frame over
+  new; "video jumps to unit start" on resume; book A continues playing
+  over book B.
+- **P1 (critical, but not run blocker):** A→B transition with visible black
+  frame/tail of A > 1 frame; Video OFF→ON without position alignment; repeated
+  unexpected seek; stale subtitle/image longer than one unit.
+- **P2 (cosmetic/perf):** single storyboard flash during reveal;
+  minor (>0.5s, but self-correcting) video/audio position
+  divergence after Video ON; extra network request on same-scene unit-tap (known
+  residual risk, not a bug).

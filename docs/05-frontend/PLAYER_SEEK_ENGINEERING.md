@@ -1,275 +1,275 @@
-# Player: позиционирование цельного scene-video по юнитам (инженерная документация)
+# Player: Unit-based Positioning of Whole Scene Video (Engineering Documentation)
 
-Этап работы: диагностика и исправление механизма seek видео при выборе юнита через
-Navigator, а также переключения слоёв (video/storyboard). Документ фиксирует не только
-финальное решение, но и путь диагностики, чтобы при повторении проблемы не проходить
-все эксперименты заново.
+This phase involved diagnosing and fixing the video seek mechanism when selecting a unit through
+the Navigator, as well as layer switching (video/storyboard). This document records not only
+the final solution but also the diagnostic path, so that if the problem recurs, you don't have to
+repeat all experiments.
 
-Итоговое состояние зафиксировано коммитом `43df034` (Android) + `dd7478e` (web),
-сверху — документация и удаление временного debug (`this commit`).
+Final state is captured by commit `43df034` (Android) + `dd7478e` (web),
+with documentation and temporary debug removal on top (`this commit`).
 
 ---
 
-## 1. Текущая архитектура Player
+## 1. Current Player Architecture
 
-Сцена воспроизводится **двумя независимыми медиа-элементами** (по одному на таймлайн):
+A scene is played by **two independent media elements** (one per timeline):
 
-| Поток | Android | Web |
+| Stream | Android | Web |
 |---|---|---|
-| Аудио | `MediaPlayer` (`currentPlayer`), цельный аудиофайл сцены | `<audio>` |
-| Видео | `MediaPlayer` (`videoPlayer`), цельный видеофайл сцены | `<video>` |
+| Audio | `MediaPlayer` (`currentPlayer`), whole scene audio file | `<audio>` |
+| Video | `MediaPlayer` (`videoPlayer`), whole scene video file | `<video>` |
 
-- **Цельный видеофайл сцены** — один `.mp4` на сцену (все юниты склеены), создаётся
-  бэкендом при merge: `backend/src/video/video-merge.js` — `alignGroupClips`
-  (подгонка клипов к точным аудио-кадрам) + `forceKeyframesAtUnitBoundaries`
-  (ключевой кадр на каждой границе юнита), модуль `video-timeline.js` + тесты.
-- **Цельный аудиофайл сцены** — один аудиофайл на сцену.
-- **Канонический таймлайн** — аудио (`start_ms` из серверного storyboard).
-  Цельное видео выровнено по этой же оси на merge-этапе: у финального muxed-файла
-  единая шкала времени, поэтому и аудио, и видео сикаются в одну и ту же позицию.
-- **Модульные таймстемпы юнитов** — у каждого юнита есть `start_ms` (и `duration_ms`).
-  Связь «юнит → позиция в цельном видео» вычисляется функцией `unitStartMs()`:
-  берётся серверный `start_ms`; для легаси-сторибордов без таймстемпов — кумулятивная
-  сумма `duration_ms` предыдущих юнитов.
+- **Whole scene video file** — one `.mp4` per scene (all units concatenated), created by
+  the backend during merge: `backend/src/video/video-merge.js` — `alignGroupClips`
+  (aligning clips to exact audio frames) + `forceKeyframesAtUnitBoundaries`
+  (keyframe at each unit boundary), module `video-timeline.js` + tests.
+- **Whole scene audio file** — one audio file per scene.
+- **Canonical timeline** — audio (`start_ms` from server storyboard).
+  The whole video is aligned to this same axis during the merge stage: the final muxed file
+  has a unified time scale, so both audio and video seek to the same position.
+- **Modular unit timestamps** — each unit has `start_ms` (and `duration_ms`).
+  The "unit → position in whole video" mapping is calculated by `unitStartMs()`:
+  server `start_ms` is used; for legacy storyboards without timestamps — cumulative
+  sum of `duration_ms` of previous units.
 
-Точки позиционирования (`frontends/android/.../ui/PlayFragment.kt`,
+Positioning entry points (`frontends/android/.../ui/PlayFragment.kt`,
 `frontends/app/src/state/playbackStore.ts`):
 
 ```
-Navigator/Edit тап юнита
+Navigator/Edit unit tap
   → PlaybackViewModel.seekToPosition(chapterId, sceneId, unitIndex, unitId)
       → pendingExternalSeek = ActivePosition(...), currentIndex = idx
   → executePendingSeek()
-      → explicitVideoSeekPending = true   ← видео сикается ЯВНО (включая 0)
+      → explicitVideoSeekPending = true   ← video seeks EXPLICITLY (including 0)
       → SharedPositionManager.navigateTo(seek)
-      → phase = DOWNLOADING, очистка storyboard-кэша и preloadCache, рефетч сцены
-      → playNext() → чанк сцены → handleChunk()
+      → phase = DOWNLOADING, clear storyboard-cache and preloadCache, refetch scene
+      → playNext() → scene chunk → handleChunk()
   → handleChunk()
-      → seekToUnit = targetUnit (из SharedPositionManager) иначе 0
-      → seekMs = unitStartMs(iuSequence, seekToUnit)   ← расчёт на аудио-оси
-      → если видео есть: playVideoOverlay(bytes, seekMs, explicitVideoSeek)
-  → построение видео-плеера → onPrepared → seekTo(target, SEEK_CLOSEST)
-      → пауза: poll-в-паузе до подтверждения позиции → peek-render (start→pause)
-      → игра: подтвердить seek → start()
+      → seekToUnit = targetUnit (from SharedPositionManager) else 0
+      → seekMs = unitStartMs(iuSequence, seekToUnit)   ← calculate on audio axis
+      → if video present: playVideoOverlay(bytes, seekMs, explicitVideoSeek)
+  → build video player → onPrepared → seekTo(target, SEEK_CLOSEST)
+      → paused: poll-in-pause until position confirmed → peek-render (start→pause)
+      → playing: confirm seek → start()
 ```
 
-Начало сцены, середина и конец обрабатываются одинаково: target явный, включая `0`
-для юнита 1 / старта сцены (`explicitVideoSeekPending` — паритет с web; без него seek
-в 0 попадал в ветку «синхронизироваться с аудио» и мог быть пропущен).
+Scene start, middle, and end are handled identically: target is explicit, including `0`
+for unit 1 / scene start (`explicitVideoSeekPending` — web parity; without it, seek
+to 0 fell into the "sync with audio" branch and could be skipped).
 
 ---
 
-## 2. Обнаруженные проблемы (хронология)
+## 2. Issues Found (chronology)
 
-1. **Сдвиг на целый юнит:** выбор N-го юнита → видео вставало на позицию N-1-го
-   (например, 3-й юнит показывал 2-й). Первые юниты стартовали с начала/чёрного кадра.
-2. **Seek иногда не выполнялся вовсе:** юнит выбирался, видео оставалось на текущей
-   позиции.
-3. **«Неправильная позиция сначала, потом корректная»:** видео начинало играть с
-   неверного места, затем принудительный polling перебрасывал его на правильный
-   таймстемп.
-4. **Переключение слоёв (video → storyboard → video):**
-   - в паузе видео не возвращалось — оставалась картинка storyboard;
-   - в игре видео замирало («убегало» от аудио на несколько секунд) либо возвращалось
-     не на ту позицию и само куда-то смещалось.
-5. **Mid-unit рассинхрон при restore:** позиция внутри юнита (не на границе) ложилась
-   на keyframe предыдущего юнита.
-6. **Флэш при навигации по юнитам:** промельк картинки юнита / обложки / чёрного
-   экрана перед появлением видео-кадра.
-7. **Web (отдельно):** первый клик на 1-й юнит иногда не делал seek в начало;
-   навигация внутри сцены перезагружала видео-элемент → флэш.
+1. **Off by one unit:** selecting Nth unit → video showed position of N-1th
+   (e.g., 3rd unit displayed 2nd). First units started from beginning/black frame.
+2. **Seek sometimes not executed at all:** unit was selected, video stayed at current
+   position.
+3. **"Wrong position first, then correct":** video started playing from
+   wrong position, then forced polling moved it to the correct
+   timestamp.
+4. **Layer switching (video → storyboard → video):**
+   - in pause, video did not return — storyboard image remained;
+   - in playback, video froze ("ran away" from audio by several seconds) or returned
+     to wrong position and shifted on its own.
+5. **Mid-unit desync on restore:** position within a unit (not at boundary) landed
+   on previous unit's keyframe.
+6. **Flash during unit navigation:** brief flash of unit image / cover / black
+   screen before video frame appeared.
+7. **Web (separate):** first click on 1st unit sometimes didn't seek to beginning;
+   navigation within scene reloaded video element → flash.
 
 ---
 
-## 3. Причины и механизмы (что исследовалось)
+## 3. Causes and Mechanisms (what was investigated)
 
-| Причина | Механизм |
+| Cause | Mechanism |
 |---|---|
-| **Keyframe-выравнивание seek** | Дефолтный `seekTo` ложится на ближайший keyframe ПЕРЕД целью. Середина юнита = старт предыдущего юнита → «сдвиг на юнит». Юнит-таргеты ложатся точно, потому что на границах юнитов теперь стоят keyframe'ы (merge, профильно — `video.requiresKeyframeForcing`). |
-| **Гонка seekTo ↔ start()** | `start()` до завершения асинхронного seek «роняет» seek — видео играет с 0/со стейл-кадра. |
-| **Paused MediaPlayer не рендерит новый кадр** | После seek в паузе поверхность держит старый кадр (предыдущий юнит) — «сдвиг на один юнит» виден, хотя `currentPosition` точный. Нужен peek-render (start→pause). |
-| **Скрытие SurfaceView убивает поверхность** | `INVISIBLE` уничтожает surface → MediaPlayer останавливается и впадает в битое состояние; «оживить» его нельзя — только пересоздать плеер. |
-| **Rebuild+seek всегда даёт остаток рассинхрона** | Пока видео пересоздаётся/сикается, аудио продолжает играть; остаток ≈ длительность seek. Лечится только «не трогать видео при переключении слоёв» (web-парадигма). |
-| **Кэш/стейл-данные** | Исключены полным clean rebuild + очисткой кэша/данных приложения (баг воспроизводился начисто). |
-| **Индекс вместо unit_id** | Проверялся путь «Navigator → выбранный unit → его идентификатор → timestamp»: сдвиг оказался не логикой индексов, а keyframe-выравниванием. |
-| **Дрейф двух независимых часов** | Аудио и видео идут со слегка разной скоростью (~0.7% на устройстве) — к концу сцены видео уходит вперёд на ~0.5с. |
+| **Keyframe-aligned seek** | Default `seekTo` lands on nearest keyframe BEFORE target. Mid-unit = previous unit start → "unit shift". Unit targets land exactly because keyframes are now at unit boundaries (merge, profiled — `video.requiresKeyframeForcing`). |
+| **Race: seekTo ↔ start()** | `start()` before async seek completes "drops" the seek — video plays from 0/stale frame. |
+| **Paused MediaPlayer doesn't render new frame** | After seek in pause, surface holds old frame (previous unit) — "one unit shift" is visible even though `currentPosition` is accurate. Peek-render (start→pause) is needed. |
+| **Hiding SurfaceView kills surface** | `INVISIBLE` destroys surface → MediaPlayer stops and enters broken state; cannot "revive" it — must recreate the player. |
+| **Rebuild+seek always produces residual desync** | While video is recreated/seeked, audio continues playing; residual ≈ seek duration. Only fix: "don't touch video during layer switching" (web paradigm). |
+| **Cache/stale data** | Excluded via full clean rebuild + app cache/data clear (bug reproduced from scratch). |
+| **Index instead of unit_id** | Investigated path "Navigator → selected unit → its identifier → timestamp": shift was caused by keyframe alignment, not index logic. |
+| **Two independent clocks drifting** | Audio and video run at slightly different speeds (~0.7% on device) — by end of scene, video leads by ~0.5s. |
 
 ---
 
-## 4. Внесённые исправления (финальное решение)
+## 4. Applied Fixes (final solution)
 
 ### Android (`PlayFragment.kt`, `PlaybackViewModel.kt`)
-1. **Explicit unit-target, включая 0** — `explicitVideoSeekPending`: видео сикается
-   прямо в таргет юнита (web-паритет), а не через «синхронизироваться с аудио».
-2. **`SEEK_CLOSEST` (API 26+)** — точный кадр для mid-unit позиций (иначе keyframe
-   предыдущего юнита); фолбэк для старых API.
-3. **Poll-в-паузе + peek-render** — после seek в паузе: опрос `currentPosition`, пока
-   seek не ляжет (повторный seek при сбросе), затем короткий `start()`+`pause()`,
-   чтобы на поверхность попал ровно искомый кадр. Без гонки с `start()`.
-4. **Переключение слоёв без пересоздания плеера (z-order)** — поверхность **никогда
-   не скрывается**; слой storyboard поднимается НАД отверстием поверхности
-   (`bringToFront()`). Видео продолжает играть скрытым и возвращается уже
-   синхронизированным с аудио (web-парадигма: `display:none` не трогает элемент).
-5. **`keepSurface` при unit-seek** — старый кадр держится на живой поверхности, пока
-   новый плеер готовится; новый кадр заменяет его напрямую — без обложки, чёрного
-   экрана и флэша. Сториборд при идущем видео не показывается.
-6. **Speed-lock (`setPlaybackParams`)** — адаптивная коррекция скорости видео под
-   аудио (каждые ~8с, замер приростов `dv`/`da`, кламп [0.9, 1.1]); дрейф ограничен
-   без видимых скачков (не polling-seek!).
-7. **`syncVideoFrame` защищён от несвежей аудио-позиции** — использует явный
-   `pendingVideoTargetMs` во время навигации.
+1. **Explicit unit-target, including 0** — `explicitVideoSeekPending`: video seeks
+   directly to unit target (web parity), not via "sync with audio".
+2. **`SEEK_CLOSEST` (API 26+)** — exact frame for mid-unit positions (otherwise keyframe
+   of previous unit); fallback for older APIs.
+3. **Poll-in-pause + peek-render** — after seek in pause: poll `currentPosition` until
+   seek lands (re-seek on reset), then short `start()`+`pause()`,
+   so the exact target frame is rendered on surface. No race with `start()`.
+4. **Layer switching without player recreation (z-order)** — surface is **never
+   hidden**; storyboard layer is brought ABOVE the surface viewport
+   (`bringToFront()`). Video continues playing hidden and returns already
+   synchronized with audio (web paradigm: `display:none` doesn't touch element).
+5. **`keepSurface` on unit-seek** — old frame held on live surface while
+   new player prepares; new frame replaces it directly — no cover, no black
+   screen, no flash. Storyboard is not shown during video playback.
+6. **Speed-lock (`setPlaybackParams`)** — adaptive video speed correction to
+   match audio (every ~8s, measuring `dv`/`da` increments, clamped [0.9, 1.1]); drift limited
+   without visible jumps (not polling-seek!).
+7. **`syncVideoFrame` protected from stale audio position** — uses explicit
+   `pendingVideoTargetMs` during navigation.
 
 ### Web (`frontends/app/src/state/playbackStore.ts`)
-1. **Явный unit-target (включая 0)** применяется на load/loadedmetadata/resume
+1. **Explicit unit-target (including 0)** applied on load/loadedmetadata/resume
    (`pendingVideoTargetSec`).
-2. **Навигация внутри сцены не перезагружает видео-элемент** — ключ сцены
-   (`currentVideoSceneKey`): тот же файл → только `currentTime`, старый кадр держится,
-   новый заменяет напрямую (без чёрного промежутка).
-3. **`unitStartMs` по серверному `start_ms`** — единый расчёт с Android.
+2. **In-scene navigation does not reload video element** — scene key
+   (`currentVideoSceneKey`): same file → only `currentTime`, old frame held,
+   new frame replaces directly (no black gap).
+3. **`unitStartMs` based on server `start_ms`** — unified calculation with Android.
 
 ### Backend (`backend/src/video/video-merge.js`, `video-timeline.js`)
-- `alignGroupClips` — подгонка клипов к точным аудио-кадрам (корень «сдвига на юнит»
-  в склейке);
-- `forceKeyframesAtUnitBoundaries` — keyframe на каждой границе юнита (точные
-  unit-таргеты для `SEEK_CLOSEST`).
+- `alignGroupClips` — align clips to exact audio frames (root cause of "unit shift"
+  in concatenation);
+- `forceKeyframesAtUnitBoundaries` — keyframe at each unit boundary (exact
+  unit targets for `SEEK_CLOSEST`).
 
 ---
 
-## 5. Текущее стабильное поведение (эталон)
+## 5. Current Stable Behavior (reference)
 
-1. **Выбор юнита в Navigator:** старый кадр держится на экране → видео-плеер
-   пересоздаётся из кэшированного файла сцены → точный `SEEK_CLOSEST` → кадр юнита
-   появляется напрямую. Без картинки, обложки, чёрного экрана и флэша. Дельта
-   видео↔аудио после seek ≈ 160–200 мс (~1 кадр).
-2. **Пауза** — seek точный, дельта 0 (peek-render рендерит ровно искомый кадр).
-3. **Переключение слоёв:** мгновенное, в обе стороны; видео возвращается уже на
-   позиции аудио (оба шли в реальном времени), без rebuild-задержки и рассинхрона.
-4. **Дрейф скорости** ограничен speed-lock'ом (без видимых прыжков).
-5. **Финальная склейка не затронута** — там один файл, синхронизация зашита при merge.
-
----
-
-## 6. Экспериментальные методы (путь диагностики)
-
-Чтобы в будущем не проходить это заново, зафиксированы все опробованные подходы и их
-результаты:
-
-1. **Различные варианты seek** — дефолтный `seekTo` (keyframe), `SEEK_CLOSEST`,
-   повторный seek при сбросе. Вывод: только `SEEK_CLOSEST` даёт точный mid-unit кадр.
-2. **Принудительный polling** (перевыставление позиции видео по аудио каждые ~200 мс) —
-   доказал механизм «сначала неверная позиция, потом коррекция», но давал видимые
-   прыжки → убран, заменён speed-lock'ом и точечными фиксами.
-3. **Анализ `currentTime` vs фактической позиции** — `currentPosition` в паузе
-   сообщает запрошенный target, а не отрисованный кадр; позицию нельзя проверять по
-   позиции — нужен захват кадра.
-4. **Проверка последовательности событий video player** — `loadedmetadata/canplay/
-   timeupdate/seeking/seeked` (web) и `onPrepared/onSeekComplete` (Android): показала,
-   что seek иногда ронялся `start()`'ом.
-5. **Сравнение Web и Android** — на той же сцене из 5 юнитов web вёл себя правильно →
-   логика таймстемпов верна, проблема в Android-реализации seek/поверхности.
-6. **Clean rebuild + очистка кэша/данных** — исключение кэширования как причины.
-7. **Переиспользование плеера на Android (эксперимент, ОТКАЗАНО)** — seek на живом
-   плеере в паузе вызывает мигание поверхности на устройстве; возвращено к
-   «rebuild + keepSurface». Web переиспользует элемент (браузер плавно меняет
-   `currentTime`), Android — нет.
-8. **Polling-подтверждение перед исправлением** — временный агрессивный polling
-   подтвердил, что причина в первом неправильном seek, а не в позиции.
+1. **Unit selection in Navigator:** old frame held on screen → video player
+   recreated from cached scene file → exact `SEEK_CLOSEST` → unit frame
+   appears directly. No image, cover, black screen, or flash. Video↔audio
+   delta after seek ≈ 160–200 ms (~1 frame).
+2. **Pause** — seek is exact, delta 0 (peek-render renders exactly the target frame).
+3. **Layer switching:** instant, both directions; video returns already at
+   audio position (both were running in real-time), no rebuild delay or desync.
+4. **Speed drift** limited by speed-lock (no visible jumps).
+5. **Final concatenation untouched** — single file, synchronization baked in during merge.
 
 ---
 
-## 7. Документация по Debug-инструментарию (что использовалось и как)
+## 6. Experimental Methods (diagnostic path)
 
-> Инструментарий временный, полностью удалён в финальном коммите этого этапа.
-> Описание сохранено, чтобы при необходимости воспроизвести методику.
+To avoid repeating this in the future, all tried approaches and their
+results are documented:
 
-### Куда писались данные
-- Backend-роут `POST /api/v1/debug/video-seek` (включался флагом `VIDEO_SEEK_DEBUG=1`
-  в docker-compose), писал JSONL в `<OUTPUT_DIR>/logs/video_seek_debug.jsonl`;
-  кадры — в `<OUTPUT_DIR>/logs/frames/<seek_id>.png`.
-- Android отправлял записи fire-and-forget через `Repository.postVideoSeekDebug` →
+1. **Various seek variants** — default `seekTo` (keyframe), `SEEK_CLOSEST`,
+   re-seek on reset. Conclusion: only `SEEK_CLOSEST` gives exact mid-unit frame.
+2. **Forced polling** (repositioning video based on audio every ~200 ms) —
+   proved the "wrong position first, then correction" mechanism, but produced visible
+   jumps → removed, replaced by speed-lock and targeted fixes.
+3. **`currentTime` vs actual position analysis** — `currentPosition` in pause
+   reports requested target, not rendered frame; position cannot be verified by
+   position — frame capture is needed.
+4. **Video player event sequence check** — `loadedmetadata/canplay/
+   timeupdate/seeking/seeked` (web) and `onPrepared/onSeekComplete` (Android): showed
+   that seek was sometimes dropped by `start()`.
+5. **Web vs Android comparison** — on the same 5-unit scene, web behaved correctly →
+   timestamp logic is correct, problem was in Android seek/surface implementation.
+6. **Clean rebuild + cache/data clear** — ruling out caching as cause.
+7. **Player reuse on Android (experiment, REJECTED)** — seek on live
+   player in pause caused surface flicker on device; reverted to
+   "rebuild + keepSurface". Web reuses element (browser smoothly changes
+   `currentTime`), Android does not.
+8. **Polling confirmation before fix** — temporary aggressive polling
+   confirmed the cause was in the first incorrect seek, not in position.
+
+---
+
+## 7. Debug Tooling Documentation (what was used and how)
+
+> Tooling was temporary, fully removed in the final commit of this phase.
+> Description retained to reproduce the methodology if needed.
+
+### Where data was written
+- Backend route `POST /api/v1/debug/video-seek` (enabled by `VIDEO_SEEK_DEBUG=1`
+  in docker-compose), wrote JSONL to `<OUTPUT_DIR>/logs/video_seek_debug.jsonl`;
+  frames to `<OUTPUT_DIR>/logs/frames/<seek_id>.png`.
+- Android sent records fire-and-forget via `Repository.postVideoSeekDebug` →
   `BackendApi.postVideoSeekDebug`.
-- Пользователь не имеет logcat — часть сообщений дублировалась в жёлтую строку на
-  экране плеера (`debugText`).
+- User has no logcat — some messages were duplicated to yellow text on
+  player screen (`debugText`).
 
-### Какие события логировались
-| Событие | Содержимое |
+### What events were logged
+| Event | Content |
 |---|---|
-| `SEEK_REQUEST` | `unit_id`, `unit_index`, `unit_start`, `unit_end`, `seek_target` — что приложение собиралось сделать |
-| `SEEK_RESULT` | `video_after`, `video_duration`, `video_file` — куда реально легло видео после seek |
-| `SEEK_TRACE` | 50-мс семплы `(v, a, playing)` в течение ~1.5с после seek — точный момент замены позиции |
-| `LOCK_CHECK` | `video_pos`, `audio_pos`, `delta_ms` на +1.5с и +4с — не перезаписывается ли позиция позже |
-| `FRAME_CAPTURE` | base64-JPEG фактического кадра поверхности (PixelCopy) — сравнивался с ожидаемым кадром клипа (PSNR) |
-| `AUDIO_SEEK_RESULT` | `audio_after` — аудио-ось (единственная неизмеряемая ранее) |
-| `LAYER_TOGGLE` | позиции, `paused`, `playing` при переключении слоёв |
-| `VIDEO_ERROR` | `what`/`extra` ошибок плеера (prepare/decode) |
+| `SEEK_REQUEST` | `unit_id`, `unit_index`, `unit_start`, `unit_end`, `seek_target` — what the app intended to do |
+| `SEEK_RESULT` | `video_after`, `video_duration`, `video_file` — where video actually landed after seek |
+| `SEEK_TRACE` | 50ms samples `(v, a, playing)` for ~1.5s after seek — exact moment of position change |
+| `LOCK_CHECK` | `video_pos`, `audio_pos`, `delta_ms` at +1.5s and +4s — whether position is later overwritten |
+| `FRAME_CAPTURE` | base64-JPEG of actual surface frame (PixelCopy) — compared with expected clip frame (PSNR) |
+| `AUDIO_SEEK_RESULT` | `audio_after` — audio axis (the only previously unmeasurable) |
+| `LAYER_TOGGLE` | positions, `paused`, `playing` during layer switching |
+| `VIDEO_ERROR` | `what`/`extra` of player errors (prepare/decode) |
 
-### Как анализировались
-- **Ожидаемая vs фактическая позиция:** `seek_target` (из `unitStartMs`) против
-  `video_after` (SEEK_RESULT) и против `v` в трассах. Если `unit_start` неверный —
-  ошибка до Player; `seek_target` неверный — расчёт seek; `video_after` на позиции
-  предыдущего юнита — сам плеер/поверхность.
-- **Кадры:** сервер сохранял PNG, ffmpeg-сравнение (PSNR) с эталонным кадром
-  склейки на таргете — отличало «позиция неверная» от «позиция верная, но на экране
-  стейл-кадр».
-- **Последовательность:** JSONL удобен для построчной разборки хронологии
+### How analysis was performed
+- **Expected vs actual position:** `seek_target` (from `unitStartMs`) vs
+  `video_after` (SEEK_RESULT) and vs `v` in traces. If `unit_start` wrong —
+  error before Player; `seek_target` wrong — seek calculation; `video_after` at
+  previous unit position — player/surface itself.
+- **Frames:** server saved PNG, ffmpeg comparison (PSNR) with reference clip frame
+  at target — distinguished "wrong position" from "position correct but stale
+  frame on screen".
+- **Sequence:** JSONL方便 for line-by-line chronology analysis
   (tap → SEEK_REQUEST → seek → SEEK_RESULT → LOCK…).
 
 ---
 
-## 8. Паритет и расхождения Web ↔ Android (зафиксировано)
+## 8. Web ↔ Android Parity and Divergences (documented)
 
-| Механизм | Android | Web | Статус |
+| Mechanism | Android | Web | Status |
 |---|---|---|---|
-| Explicit unit-target (включая 0) | `explicitVideoSeekPending` → seekTo | `pendingVideoTargetSec` → currentTime | ✅ выровнено |
-| Расчёт seek (start_ms → cumulative) | `unitStartMs()` | `unitStartMs()` | ✅ идентично |
-| Применение target при resume | `pendingVideoTargetMs` | `pendingVideoTargetSec` | ✅ выровнено |
-| Повторное применение при готовности | onPrepared | loadedmetadata / attachVideo | ✅ выровнено |
-| Audio-seek к юниту | `seekTo(seekMs)` | `seekAudio(el, seekMs)` | ✅ выровнено |
-| Навигация без флэша (та же сцена) | keepSurface: плеер пересоздаётся, старая поверхность жива | элемент не перезагружается, только currentTime | ✅ один результат, разная реализация |
-| Слои: видео не умирает при скрытии | z-order `bringToFront` (поверхность никогда не скрывается) | `display:none` (элемент не трогается) | ✅ концептуально выровнено |
-| Слои: re-enable уже включённого видео | источник с видео НЕ трогается (`updateLayers`-re-show, `targetScene` только при audio-only источнике) | re-show; seek только при дрейфе > 0.5 c (2026-08-17) | ✅ выровнено (2026-08-17) |
-| Точный mid-unit seek | `SEEK_CLOSEST` (keyframe-выравнивание Android) | нативный точный seek браузера | ✅ не применимо к web |
-| Speed-lock | `setPlaybackParams` (адаптивная коррекция скорости) | нет | ⚠️ расхождение: дрейфа на web не наблюдалось, реализовать только при необходимости |
-| Переиспользование плеера при навигации | **отклонено** (seek на живом плеере в паузе мигает на устройстве) | переиспользуется всегда | ⚠️ платформенное ограничение Android |
-| Silent-сцена: продвижение после последнего юнита | `onAudioCompleted()` в silent-цикле | `onAudioCompleted()` в silent-цикле | ✅ выровнено (2026-08-16) |
-| Silent-сцена: возобновление цикла после паузы | `startSilentIuCycling` в resume | `startSilentIuCycling` в resume | ✅ выровнено (2026-08-16) |
-| Показ видео до первого кадра | `videoReadyToShow` (STATE_READY / onRenderedFirstFrame) | `videoHasFrame` (loadeddata) | ✅ выровнено (2026-08-16) |
-| Reveal-гейт при unit seek (n-1) | `videoSeekInFlight` + `pendingRevealPosMs = start+150ms` | `videoSeekInFlight` + `pendingVideoRevealSec = target+150ms` (timeupdate) | ✅ выровнено (2026-08-17) |
+| Explicit unit-target (including 0) | `explicitVideoSeekPending` → seekTo | `pendingVideoTargetSec` → currentTime | ✅ aligned |
+| Seek calculation (start_ms → cumulative) | `unitStartMs()` | `unitStartMs()` | ✅ identical |
+| Target application on resume | `pendingVideoTargetMs` | `pendingVideoTargetSec` | ✅ aligned |
+| Re-application on ready | onPrepared | loadedmetadata / attachVideo | ✅ aligned |
+| Audio-seek to unit | `seekTo(seekMs)` | `seekAudio(el, seekMs)` | ✅ aligned |
+| Navigation without flash (same scene) | keepSurface: player recreated, old surface alive | element not reloaded, only currentTime | ✅ same result, different implementation |
+| Layers: video doesn't die on hide | z-order `bringToFront` (surface never hidden) | `display:none` (element not touched) | ✅ conceptually aligned |
+| Layers: re-enable already-enabled video | video source NOT touched (`updateLayers`-re-show, `targetScene` only for audio-only source) | re-show; seek only on drift > 0.5s (2026-08-17) | ✅ aligned (2026-08-17) |
+| Exact mid-unit seek | `SEEK_CLOSEST` (Android keyframe alignment) | native precise browser seek | ✅ not applicable to web |
+| Speed-lock | `setPlaybackParams` (adaptive speed correction) | none | ⚠️ divergence: no drift observed on web, implement only if needed |
+| Player reuse on navigation | **rejected** (seek on live player in pause flickers on device) | always reused | ⚠️ Android platform limitation |
+| Silent scene: advance after last unit | `onAudioCompleted()` in silent cycle | `onAudioCompleted()` in silent cycle | ✅ aligned (2026-08-16) |
+| Silent scene: resume cycle after pause | `startSilentIuCycling` in resume | `startSilentIuCycling` in resume | ✅ aligned (2026-08-16) |
+| Video show before first frame | `videoReadyToShow` (STATE_READY / onRenderedFirstFrame) | `videoHasFrame` (loadeddata) | ✅ aligned (2026-08-16) |
+| Reveal gate on unit seek (n-1) | `videoSeekInFlight` + `pendingRevealPosMs = start+150ms` | `videoSeekInFlight` + `pendingVideoRevealSec = target+150ms` (timeupdate) | ✅ aligned (2026-08-17) |
 
-**Аудит паритета (2026-08-16):** три Android-фикса, которых не было на web,
-перенесены и выровнены: silent-сцены продвигаются на следующую сцену (web
-циклил картинки вечно), silent-циклинг возобновляется после паузы, и видео не
-показывается до первого кадра (нет чёрного прямоугольника поверх сториборда).
+**Parity audit (2026-08-16):** three Android fixes not present on web were
+ported and aligned: silent scenes advance to next scene (web
+was cycling images forever), silent cycling resumes after pause, and video is not
+shown before first frame (no black rectangle over storyboard).
 
-**Аудит паритета (2026-08-17):** единая master timeline — аудио. `video_start_ms`
-убран из Player на обоих фронтах (вторая шкала не могла надёжно попасть в первый
-кадр юнита — кадр «первый ≥ границы» на границе LTX-клипа оказывался последним
-кадром предыдущего). Вместо неё — reveal-гейт по позиции: при unit seek элемент
-скрыт, сториборд ВЫБРАННОГО юнита покрывает переход (аудио-шкала), видео
-раскрывается только когда позиция реально внутри юнита (target + 150ms).
+**Parity audit (2026-08-17):** single master timeline — audio. `video_start_ms`
+removed from Player on both fronts (second scale could not reliably hit the first
+unit frame — "first ≥ boundary" frame at LTX clip boundary turned out to be the last
+frame of previous unit). Replaced with position-based reveal gate: on unit seek, element
+is hidden, SELECTED unit storyboard covers the transition (audio scale), video
+is revealed only when position is actually inside the unit (target + 150ms).
 
-**Аудит паритета (2026-08-17, слои видео):** web re-enable видео-слоя при идущем
-playback безусловно делал audio-sync seek уже прикреплённого видео
+**Parity audit (2026-08-17, video layers):** web re-enable of video layer during running
+playback unconditionally did audio-sync seek of already-attached video
 (`setLayerVideo(true)` → `ensureSceneVideo` → `seekAttachedVideo` →
-`applyVideoSeek(null)`), что сбрасывало буфер и входило в буфер-гейт (6→20 c) —
-долгая/бесконечная буферизация. Android этого не делает: источник с видео на
-re-enable не трогается (мгновенный re-show), rebuild — только для audio-only
-источника (слой был выключен на загрузке сцены). Web приведён к паритету:
-прикреплённое видео на re-enable только показывается (seek — при дрейфе > 0.5 c,
-возможном из-за отключённого гейта при скрытом слое); отсутствующее видео —
-прежний late-video путь.
-Намеренно оставлены расхождения: единый ExoPlayer + `MergingMediaSource`
-(Android) против пары `<audio>`+`<video>` с адаптивным буфер-гейтом (web) —
-каждая схема правильна для своей платформы (на web клиент не может смержить
-отдельные MP3/MP4); gapless-переход −200 мс остаётся только на web (Android
-отказался от него ради единого clock); persistent disk-cache видео есть только
-на Android (web опирается на браузерный HTTP-кэш с ETag/304); сохранение
-позиции через reload (sessionStorage/bfcache) — только web (Android живёт
-VM-состоянием).
+`applyVideoSeek(null)`), which reset buffer and entered buffer gate (6→20s) —
+long/infinite buffering. Android doesn't do this: video source on
+re-enable is not touched (instant re-show), rebuild only for audio-only
+source (layer was disabled on scene load). Web brought to parity:
+attached video on re-enable only shows (seek only on drift > 0.5s,
+possible due to disabled gate with hidden layer); missing video —
+previous late-video path.
+Intentional divergences remain: single ExoPlayer + `MergingMediaSource`
+(Android) vs `<audio>`+`<video>` pair with adaptive buffer gate (web) —
+each scheme is correct for its platform (on web, client cannot merge
+separate MP3/MP4); gapless −200ms transition only on web (Android
+dropped it for unified clock); persistent disk-cache video only
+on Android (web relies on browser HTTP cache with ETag/304); position
+preservation via reload (sessionStorage/bfcache) — web only (Android lives
+with VM state).
 
-**Ключевые различия платформ:** браузерный `<video>` плавно меняет `currentTime` и
-переживает `display:none`; Android `MediaPlayer` + `SurfaceView` — скрытие поверхности
-убивает плеер, а seek в паузе на живом плеере даёт артефакты. Поэтому web
-переиспользует элемент, Android — пересоздаёт плеер из кэшированного файла сцены с
-удержанием старого кадра (keepSurface). Скорость отклика Android на ~0.4с медленнее —
-цена платформы, визуально стабильно.
+**Key platform differences:** browser `<video>` smoothly changes `currentTime` and
+survives `display:none`; Android `MediaPlayer` + `SurfaceView` — hiding surface
+kills the player, and seek in pause on live player produces artifacts. So web
+reuses element, Android recreates player from cached scene file with
+old frame held (keepSurface). Android response speed ~0.4s slower —
+platform cost, visually stable.
