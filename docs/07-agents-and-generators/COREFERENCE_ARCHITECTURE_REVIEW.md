@@ -1,195 +1,191 @@
 # Coreference Resolution — Architectural Review
 
-## Контекст
+## Context
 
-Ревью относится к документам:
+This review relates to the following documents:
 
 - `docs/07-agents-and-generators/COREFERENCE_RESOLUTION.md`
 - `docs/07-agents-and-generators/COREFERENCE_TODO.md`
 
-Цель фичи правильная: до генерации visual prompts нужно уметь разрешать
-упоминания персонажей вроде "редактор", "продавщица", "он", "она" в
-канонические `character_id`, не полагаясь на regex-угадывание в
+The feature goal is correct: before generating visual prompts, the system must be
+able to resolve character mentions like "editor", "saleswoman", "he", "she" into
+canonical `character_id` values, without relying on regex guessing in
 `image-service.js`.
 
-Важные архитектурные уточнения:
+Important architectural clarifications:
 
-- Есть два разных окна, их нельзя смешивать:
-  - **окно разведки / analysis window**: примерно 4000 символов, нужно для
-    широкого LLM-контекста и грубого сбора кандидатов: кто потенциально
-    активен в этом фрагменте, какие алиасы/роли встретились, какой nearby
-    context нужен для местоимений;
-  - **окно сборки / generation span**: примерно 1500 символов, текущий
-    ограниченный фрагмент, из которого собираются сцены/юниты и где нужен
-    точный mention-level resolution.
-- Токены нужно жечь на точность только там, где результат реально попадёт в
-  текущие сцены/юниты. Поэтому целевая схема: **coarse pass по 4000** строит
-  candidate set, **fine pass по 1500** размечает конкретные mentions.
-- Coreference-данные должны храниться **только в БД**. Не нужно добавлять
-  `sentence_map` в `chapters/*.json` и раздувать book JSON производными
-  данными.
-- JSON книги должен оставаться творческим/авторским payload. Resolution,
-  aliases, mention spans, версии и audit trail — это индексируемое
-  производное состояние, его место в PostgreSQL.
+- There are two distinct windows that must not be mixed:
+  - **Analysis window**: approximately 4000 characters, used for broad LLM context
+    and coarse candidate collection: who is potentially active in this fragment,
+    what aliases/roles were encountered, what nearby context is needed for pronouns;
+  - **Generation span**: approximately 1500 characters, the current bounded fragment
+    from which scenes/units are built and where precise mention-level resolution is needed.
+- Tokens should be spent on accuracy only where the result will actually appear in
+  current scenes/units. Therefore the target scheme: **coarse pass over 4000** builds
+  a candidate set, **fine pass over 1500** marks specific mentions.
+- Coreference data must be stored **only in the database**. There is no need to add
+  `sentence_map` to `chapters/*.json` and inflate book JSON with derived data.
+- Book JSON must remain the creative/author payload. Resolution, aliases, mention
+  spans, versions, and audit trail are indexable derived state — their place is in
+  PostgreSQL.
 
-## Общая оценка
+## Overall Assessment
 
-Направление хорошее: вынести coreference в отдельный этап пайплайна до
-visual prompts и заменить эвристики явным результатом разведки. Это снижает
-случайные false positive, делает поведение проверяемым и даёт основу для
-нормального аудита.
+The direction is sound: extract coreference into a separate pipeline stage before
+visual prompts and replace heuristics with an explicit resolution result. This
+reduces random false positives, makes behavior testable, and provides a basis for
+proper auditing.
 
-Главные проблемы текущего плана:
+Main issues with the current plan:
 
-1. Документы смешивают sentence-level и unit-level ответственность.
-2. Предложение хранить `sentence_map` в JSON создаёт второй источник истины.
-3. `safeAliasIndex` в описанном виде небезопасен, потому что строится из
-   предложения целиком, а не из конкретных mention spans.
-4. План не использует естественное разделение coarse/fine: широкое окно нужно
-   для кандидатов, а точная разметка нужна только для сборочного span.
-5. Нет чёткой схемы версионирования resolution относительно source offsets,
-   scene spans, unit spans и версии character registry.
+1. Documents mix sentence-level and unit-level responsibilities.
+2. The proposal to store `sentence_map` in JSON creates a second source of truth.
+3. `safeAliasIndex` as described is unsafe because it is built from entire sentences
+   rather than specific mention spans.
+4. The plan does not leverage the natural coarse/fine split: a wide window is needed
+   for candidates, but precise annotation is only needed for the generation span.
+5. There is no clear versioning scheme for resolution relative to source offsets,
+   scene spans, unit spans, and character registry versions.
 
-## Что Хорошо
+## What's Good
 
-### 1. Правило "не угадывай"
+### 1. The "don't guess" rule
 
-Это ключевое правильное решение. Для image generation ложная привязка хуже,
-чем отсутствие привязки: если модель получила паспорт не того персонажа, кадр
-визуально загрязнён сильнее, чем при пропущенном паспорте.
+This is the key correct decision. For image generation, a false binding is worse
+than no binding: if the model received the wrong character's passport, the frame
+is visually corrupted more than with a missing passport.
 
-Правило должно остаться жёстким:
+The rule must remain strict:
 
-- uncertain mention -> `unknown`;
-- generic mention без контекста -> `unknown`;
-- ambiguous alias -> не добавлять в alias index;
-- pronouns никогда не становятся stable aliases.
+- uncertain mention → `unknown`;
+- generic mention without context → `unknown`;
+- ambiguous alias → do not add to alias index;
+- pronouns never become stable aliases.
 
-### 2. Отдельный этап разведки
+### 2. Separate resolution stage
 
-`resolve_characters` как отдельный pipeline step — хорошая граница. Это не
-должно жить внутри `image-service.js`: image service должен потреблять уже
-подготовленные участники кадра, а не заниматься литературным анализом.
+`resolve_characters` as a separate pipeline step is a good boundary. It should
+not live inside `image-service.js`: the image service should consume already-prepared
+frame participants rather than performing literary analysis.
 
-### 3. Позиция до visual prompts
+### 3. Position before visual prompts
 
-Coreference должен происходить до `create_visual_prompts`, иначе visual prompt
-author продолжит получать неполный список участников и будет вынужден решать
-задачу сам, без стабильного контракта.
+Coreference must happen before `create_visual_prompts`; otherwise the visual prompt
+author will continue receiving an incomplete participant list and will be forced to
+solve the task without a stable contract.
 
-### 4. Оконная обработка
+### 4. Windowed processing
 
-Работа по окнам правильная. Coreference не должен анализировать всю книгу за
-один вызов. Более того, не нужно делать полный дорогой resolution по всему
-окну разведки. Нужно явно разделить:
+Working by windows is correct. Coreference should not analyze the entire book in a
+single call. Moreover, a full expensive resolution across the entire analysis window
+is not needed. The following should be explicitly separated:
 
-- **coarse pass по analysis window ~4000**: собрать кандидатов, активных
-  персонажей, видимые алиасы/роли, nearby context;
-- **fine pass по generation span ~1500**: строго разметить только те
-  предложения и mentions, которые реально попадут в текущие сцены/юниты.
+- **Coarse pass over analysis window ~4000**: collect candidates, active characters,
+  visible aliases/roles, nearby context;
+- **Fine pass over generation span ~1500**: strictly annotate only those sentences
+  and mentions that will actually appear in current scenes/units.
 
-Это экономит токены и снижает шум: широкий контекст используется для понимания,
-но не превращается напрямую в участников кадра.
+This saves tokens and reduces noise: the wide context is used for understanding
+but is not directly turned into frame participants.
 
-## Что Не Хорошо
+## What's Not Good
 
-### 1. `scene.participants` как главный результат resolution слишком грубый
+### 1. `scene.participants` as the main resolution output is too coarse
 
-Если просто собрать всех персонажей из `sentence_map` в `scene.participants`,
-каждый IU сцены начнёт получать паспорта всех персонажей сцены. Для кадра,
-где в тексте есть только продавщица, могут быть inject-нуты Берлиоз и
-Бездомный, потому что они есть в соседних предложениях той же сцены.
+If all characters from `sentence_map` are simply collected into `scene.participants`,
+every IU in the scene will receive passports for all scene characters. For a frame
+where the text only has the saleswoman, Berlioz and Bezdomny may be injected
+because they appear in adjacent sentences of the same scene.
 
-Это ломает главный принцип IU: кадр должен показывать только то, что есть в
-unit text.
+This breaks the main IU principle: a frame should show only what is in the unit text.
 
-Лучше:
+Better approach:
 
-- resolution работает на уровне предложений и mention spans;
-- после `create_units` каждый `unit` получает свой список участников через
-  пересечение `unit.source_start/source_end` с resolved sentence spans;
-- `scene.participants` становится агрегатом для scene-level metadata, но не
-  главным источником паспортов для каждого изображения;
-- `buildCharacters()` должен предпочитать `unit.participants`, а
-  `scene.participants` использовать только как fallback.
+- Resolution works at the sentence and mention span level;
+- After `create_units`, each `unit` gets its own participant list by intersecting
+  `unit.source_start/source_end` with resolved sentence spans;
+- `scene.participants` becomes an aggregate for scene-level metadata but is not
+  the main source of passports for each image;
+- `buildCharacters()` should prefer `unit.participants`, using `scene.participants`
+  only as a fallback.
 
-### 2. `sentence_map` в JSON — лишний "фарш"
+### 2. `sentence_map` in JSON — unnecessary "padding"
 
-Добавлять `sentence_map` в `chapters/*.json` не стоит. Это производный индекс,
-а не авторский контент сцены.
+Adding `sentence_map` to `chapters/*.json` is not worthwhile. It is a derived
+index, not creative scene content.
 
-Минусы JSON-хранения:
+Drawbacks of JSON storage:
 
-- раздувает book payload;
-- усложняет diff и scene hash;
-- создаёт риск рассинхрона с PG;
-- смешивает творческое состояние книги с аналитическими индексами;
-- заставляет UI/API таскать данные, которые нужны в основном backend-пайплайну.
+- inflates book payload;
+- complicates diff and scene hash;
+- creates risk of desync with PG;
+- mixes creative book state with analytical indexes;
+- forces UI/API to carry data that is mainly needed by the backend pipeline.
 
-Решение: хранить resolution только в PostgreSQL.
+Solution: store resolution only in PostgreSQL.
 
-### 3. `safeAliasIndex` нельзя строить из слов предложения
+### 3. `safeAliasIndex` cannot be built from sentence words
 
-Псевдокод `buildSafeAliasIndex(sentenceMap, text, characters)` опасен: если в
-предложении есть два персонажа, а функция извлекла "значимые слова", она не
-знает, какое слово относится к какому персонажу.
+The pseudocode `buildSafeAliasIndex(sentenceMap, text, characters)` is dangerous:
+if a sentence contains two characters and the function extracted "significant words",
+it has no way to know which word belongs to which character.
 
-Пример:
+Example:
 
 > "Продавщица ответила Берлиозу, а поэт нахмурился."
 
-Sentence-level список будет:
+The sentence-level list would be:
 
 ```json
 ["booth_woman", "mikhail_aleksandrovich_berlioz", "ivan_nikolaevich_ponyrev"]
 ```
 
-Из этого нельзя безопасно вывести:
+From this it is impossible to safely derive:
 
-- "продавщица" -> `booth_woman`
-- "Берлиозу" -> `mikhail_aleksandrovich_berlioz`
-- "поэт" -> `ivan_nikolaevich_ponyrev`
+- "продавщица" → `booth_woman`
+- "Берлиозу" → `mikhail_aleksandrovich_berlioz`
+- "поэт" → `ivan_nikolaevich_ponyrev`
 
-Нужны mention-level данные.
+Mention-level data is needed.
 
-### 4. Coreference per scene теряет контекст
+### 4. Coreference per scene loses context
 
-Если resolution запускать отдельно на `scene.text`, местоимения в начале сцены
-могут потерять antecedent из предыдущего предложения/сцены. Особенно это
-важно, если сцена начинается продолжением действия: "Он повернулся..." после
-предыдущей сцены, где субъект был явно назван.
+If resolution is run separately on `scene.text`, pronouns at the beginning of a
+scene may lose their antecedent from the previous sentence/scene. This is especially
+important if a scene starts as a continuation of action: "He turned around..." after
+a previous scene where the subject was explicitly named.
 
-Но и полный точный resolution на все 4000 символов избыточен: значительная
-часть analysis window может не попасть в текущий generation span. Лучше:
+However, a full precise resolution across all 4000 characters is also excessive:
+a significant portion of the analysis window may not appear in the current generation
+span. Better approach:
 
-- на **analysis window ~4000** запускать грубый сбор кандидатов;
-- на **generation span ~1500** запускать точный mention-level resolver;
-- в fine prompt передавать не весь `characters.json`, а candidate set из
-  coarse pass плюс короткий surrounding context из analysis window;
-- сохранять абсолютные source offsets и потом раскладывать результат по сценам
-  и юнитам.
+- On the **analysis window ~4000**: run coarse candidate collection;
+- On the **generation span ~1500**: run fine mention-level resolution;
+- In the fine prompt, pass only candidate characters from the coarse pass plus short
+  surrounding context from the analysis window, not the entire `characters.json`;
+- Preserve absolute source offsets and then distribute results across scenes and units.
 
-### 5. Нет версионирования resolution
+### 5. No resolution versioning
 
-Coreference зависит от:
+Coreference depends on:
 
-- исходного текста и source offsets;
-- текущего списка персонажей;
-- версии prompt/schema;
-- модели;
-- правил unknown/generic aliases.
+- source text and source offsets;
+- current character list;
+- prompt/schema version;
+- model;
+- unknown/generic alias rules.
 
-Если персонаж переименован, объединён с дублем или изменился character registry,
-старые resolution rows могут стать некорректными. Нужен `resolver_version` и
-`character_registry_hash`.
+If a character is renamed, merged with a duplicate, or the character registry changes,
+old resolution rows may become invalid. A `resolver_version` and
+`character_registry_hash` are needed.
 
-## Рекомендуемая Архитектура
+## Recommended Architecture
 
 ### 1. DB-only storage
 
-Не добавлять `sentence_map` в scene JSON.
+Do not add `sentence_map` to scene JSON.
 
-Основные таблицы:
+Core tables:
 
 ```sql
 CREATE TABLE IF NOT EXISTS character_resolution_runs (
@@ -276,7 +272,7 @@ CREATE INDEX IF NOT EXISTS idx_character_mentions_norm
     ON character_mentions(book_id, mention_norm);
 ```
 
-Для alias index можно добавить материализованную/обычную таблицу:
+For the alias index, a materialized/regular table can be added:
 
 ```sql
 CREATE TABLE IF NOT EXISTS character_aliases (
@@ -295,31 +291,31 @@ CREATE TABLE IF NOT EXISTS character_aliases (
 
 ### 2. Pipeline shape
 
-Рекомендуемый порядок:
+Recommended order:
 
 1. `analyze_structure`
 2. `analyze_characters`
 3. `analyze_locations`
-4. `collect_character_candidates` на analysis window ~4000
-5. `create_scenes` из generation span ~1500
-6. `resolve_character_mentions` на generation span ~1500, используя candidates
-   из шага 4 и surrounding context из analysis window
+4. `collect_character_candidates` on analysis window ~4000
+5. `create_scenes` from generation span ~1500
+6. `resolve_character_mentions` on generation span ~1500, using candidates
+   from step 4 and surrounding context from analysis window
 7. `create_units`
-8. `assign_unit_participants` из DB mentions + unit spans
+8. `assign_unit_participants` from DB mentions + unit spans
 9. `create_visual_prompts`
 
-Вариант 6 и 7 можно поменять местами, если удобнее:
+Steps 6 and 7 can be swapped if more convenient:
 
-1. сначала создать units;
-2. затем fine mention resolution;
-3. затем проставить `unit.participants`.
+1. First create units;
+2. Then fine mention resolution;
+3. Then set `unit.participants`.
 
-Критично не это, а правило: visual prompts должны видеть unit-level
-participants, а не только scene-level participants.
+The critical point is not the order but the rule: visual prompts must see
+unit-level participants, not only scene-level participants.
 
 ### 3. Analysis window vs generation span
 
-Нужно ввести явные имена в коде и документах:
+Clear names must be introduced in code and documentation:
 
 - `analysisWindowStart`
 - `analysisWindowEnd`
@@ -333,23 +329,23 @@ analysis window:       [source_start ... source_start + ~4000]
 coarse candidates:     possible_character_ids + aliases_seen + active_context
 
 generation span:       [source_start ... source_start + ~1500]
-created scenes:        contiguous prefix внутри generation span
-fine resolution:       mention-level rows только внутри generation span
-unit participants:     пересечение unit spans с fine resolved mentions
+created scenes:        contiguous prefix within generation span
+fine resolution:       mention-level rows only within generation span
+unit participants:     intersection of unit spans with fine resolved mentions
 ```
 
-Так resolver видит широкий контекст, но дорогая точная разметка делается только
-для текста, который реально сейчас собирается. Coarse candidates нельзя
-напрямую использовать как participants для scene/unit/image generation.
+This way the resolver sees wide context, but expensive precise annotation is done
+only for text that is actually being assembled right now. Coarse candidates cannot
+be directly used as participants for scene/unit/image generation.
 
 ### 4. Coarse candidate pass
 
-Грубый проход по 4000 должен отвечать на вопрос:
+The coarse pass over 4000 should answer:
 
-> Кто потенциально активен в этом контексте и какие алиасы/роли могут
-> встретиться в ближайшем generation span?
+> Who is potentially active in this context, and what aliases/roles might appear
+> in the nearest generation span?
 
-Output должен быть маленьким:
+Output should be small:
 
 ```json
 {
@@ -366,18 +362,17 @@ Output должен быть маленьким:
 }
 ```
 
-Этот результат:
+This result:
 
-- сохраняется в `character_window_candidates`;
-- сужает `%KNOWN_CHARACTERS%` для fine resolver;
-- не попадает напрямую в `scene.participants`;
-- не inject-ит паспорта.
+- is saved in `character_window_candidates`;
+- narrows `%KNOWN_CHARACTERS%` for the fine resolver;
+- does not directly enter `scene.participants`;
+- does not inject passports.
 
 ### 5. Fine resolver output
 
-Fine resolver получает generation span ~1500, candidate set из coarse pass и
-короткий surrounding context. Он должен возвращать не только `characters: []`,
-а mentions:
+The fine resolver receives generation span ~1500, candidate set from coarse pass,
+and short surrounding context. It must return not only `characters: []` but mentions:
 
 ```json
 {
@@ -419,17 +414,15 @@ Validation rules:
 
 ### 6. Safe aliases
 
-Alias index строится только из `character_mentions`, не из raw sentence words.
+Alias index is built only from `character_mentions`, not from raw sentence words.
 
 Safe alias criteria:
 
-- mention type is `name`, `nickname`, `profession`, `title`, or stable
-  description;
+- mention type is `name`, `nickname`, `profession`, `title`, or stable description;
 - not pronoun;
 - not generic word;
 - maps to exactly one character in the whole book;
-- appears at least N times, or is manually approved, or comes from canonical
-  character name;
+- appears at least N times, or is manually approved, or comes from canonical character name;
 - no collision after normalization.
 
 Unsafe examples:
@@ -440,48 +433,48 @@ Unsafe examples:
 - "женщина"
 - "человек"
 - "люди"
-- "поэт", если в книге больше одного поэта
-- "редактор", если есть несколько редакторов или role changes over time
+- "поэт" (if the book has more than one poet)
+- "редактор" (if there are multiple editors or role changes over time)
 
 ### 7. Image service contract
 
-`image-service.js` должен стать потребителем, а не resolver.
+`image-service.js` must become a consumer, not a resolver.
 
-Желательное поведение:
+Desired behavior:
 
 1. `buildCharacters(scene, unit, chapter, book)`:
    - primary: `unit.participants`;
    - secondary: explicit `scene.participants`;
    - fallback: DB safe aliases / legacy prompt inference.
 2. `inferCharactersFromPrompt()`:
-   - оставить как fallback;
-   - не считать его canonical;
-   - логировать, когда fallback сработал.
+   - keep as fallback;
+   - do not treat as canonical;
+   - log when fallback is triggered.
 3. `normalizeCharacterRefs()`:
-   - использовать safe aliases из DB;
-   - не заменять generic/pronouns;
-   - не делать fuzzy replacement без collision check.
+   - use safe aliases from DB;
+   - do not replace generic/pronouns;
+   - no fuzzy replacement without collision check.
 
-## Что Лучше Поправить в TODO
+## Recommended TODO Fixes
 
 ### P0 — Schema
 
-Заменить:
+Replace:
 
-- "миграция для `scenes` -> поле `sentence_map JSONB`"
+- "migration for `scenes` → field `sentence_map JSONB`"
 
-На:
+With:
 
 - `character_resolution_runs`
 - `sentence_resolutions`
 - `character_mentions`
 - `character_aliases`
-- добавить `resolve_characters` в `agent_steps.step_type`
-- обновить purge/reconcile для удаления resolution rows при удалении сцен/книги
+- add `resolve_characters` to `agent_steps.step_type`
+- update purge/reconcile to delete resolution rows when scenes/book are deleted
 
 ### P1 — Prompt
 
-Добавить в prompt:
+Add to prompt:
 
 - output mentions, not only character arrays;
 - never return `"unknown"` as character id;
@@ -491,8 +484,7 @@ Unsafe examples:
 
 ### P2 — Agent Service
 
-Заменить `stepResolveCharacters(sessionId, bookId, scene, characters)` на два
-шага:
+Replace `stepResolveCharacters(sessionId, bookId, scene, characters)` with two steps:
 
 ```js
 stepCollectCharacterCandidates(sessionId, bookId, {
@@ -505,7 +497,7 @@ stepCollectCharacterCandidates(sessionId, bookId, {
 })
 ```
 
-И:
+And:
 
 ```js
 stepResolveCharacterMentions(sessionId, bookId, {
@@ -519,42 +511,41 @@ stepResolveCharacterMentions(sessionId, bookId, {
 })
 ```
 
-Результат сохранять в PG, не в scene JSON.
+Save result to PG, not to scene JSON.
 
 ### P3 — Unit Participants
 
-Добавить отдельный шаг:
+Add a separate step:
 
 ```js
 assignUnitParticipants(bookId, chapterId, sceneId, units)
 ```
 
-Он читает `character_mentions` по source span и возвращает participants для
-каждого unit.
+It reads `character_mentions` by source span and returns participants for each unit.
 
 ### P4 — Safe Alias Index
 
-Строить alias table из `character_mentions`, а не из sentence text напрямую.
-Нужны тесты на:
+Build alias table from `character_mentions`, not directly from sentence text.
+Tests needed for:
 
-- два персонажа в одном предложении;
+- two characters in one sentence;
 - collision alias;
 - generic word;
 - pronoun;
-- profession, которая валидна только для одного персонажа.
+- profession valid for only one character.
 
 ### P5 — Storage
 
-Заменить полностью:
+Replace entirely:
 
-- не хранить `sentence_map` в `chapters/*.json`;
-- не хранить safe aliases в Redis как source of truth;
-- хранить resolution и aliases в PostgreSQL;
-- Redis можно использовать только как cache с TTL/version key.
+- do not store `sentence_map` in `chapters/*.json`;
+- do not store safe aliases in Redis as source of truth;
+- store resolution and aliases in PostgreSQL;
+- Redis may only be used as cache with TTL/version key.
 
 ### P6 — Tests
 
-Добавить:
+Add:
 
 - coarse candidate pass validation;
 - resolver output validation;
@@ -566,22 +557,22 @@ assignUnitParticipants(bookId, chapterId, sceneId, units)
 
 ### Token burn
 
-Если делать точный mention-level resolution по полным 4000 символам, стоимость
-растёт без пользы: не весь analysis window будет использован текущим
-generation span. Если делать resolution только по 1500 без широкого контекста,
-теряется качество местоимений и ролевых упоминаний.
+If precise mention-level resolution is done across full 4000 characters, the cost
+grows without benefit: not all of the analysis window will be used by the current
+generation span. If resolution is done only over 1500 without wide context, pronoun
+and role mention quality is lost.
 
-Митигация:
+Mitigation:
 
-- 4000 -> дешёвый coarse pass;
-- 1500 -> дорогой fine pass;
-- fine prompt получает только candidate characters, а не весь character registry.
+- 4000 → cheap coarse pass;
+- 1500 → expensive fine pass;
+- fine prompt receives only candidate characters, not the entire character registry.
 
-## Риски
+## Risks
 
 ### False positives
 
-Главный риск. Митигация:
+Main risk. Mitigation:
 
 - conservative prompt;
 - unknown by default;
@@ -591,8 +582,8 @@ generation span. Если делать resolution только по 1500 без 
 
 ### Stale DB rows
 
-Если source text or character registry changed, old rows must be invalidated.
-Митигация:
+If source text or character registry changed, old rows must be invalidated.
+Mitigation:
 
 - `source_hash`;
 - `character_registry_hash`;
@@ -602,41 +593,38 @@ generation span. Если делать resolution только по 1500 без 
 
 ### Offset drift
 
-Если sentence splitter и source coverage считают offsets по-разному, unit
-participants будут неверными.
+If sentence splitter and source coverage compute offsets differently, unit
+participants will be incorrect.
 
-Митигация:
+Mitigation:
 
-- один deterministic splitter;
-- абсолютные offsets;
+- one deterministic splitter;
+- absolute offsets;
 - tests with dialogue punctuation, quotes, ellipsis, Cyrillic.
 
 ### Over-injection of scene participants
 
-Если оставить текущий scene-level подход, visual prompts будут получать лишние
-паспорта.
+If the current scene-level approach is kept, visual prompts will receive extra passports.
 
-Митигация:
+Mitigation:
 
 - primary source for image passports = `unit.participants`;
-- scene-level participants only fallback/metadata.
+- scene-level participants only as fallback/metadata.
 
-## Итог
+## Summary
 
-Фича нужна и архитектурно оправдана, но её лучше строить не как
-`sentence_map` внутри scene JSON, а как DB-backed coreference index.
+This feature is needed and architecturally justified, but it should be built not
+as `sentence_map` inside scene JSON but as a DB-backed coreference index.
 
-Ключевые решения:
+Key decisions:
 
-1. Развести **analysis window ~4000** и **generation span ~1500**.
-2. Делать coarse candidate collection по 4000, а fine mention resolution по
-   1500.
-3. Хранить resolution только в PostgreSQL.
-4. Перейти от sentence-level arrays к mention-level rows.
-5. Проставлять participants на уровне unit.
-6. Использовать safe aliases только как проверенный fallback, не как основной
-   механизм.
+1. Separate **analysis window ~4000** and **generation span ~1500**.
+2. Coarse candidate collection over 4000, fine mention resolution over 1500.
+3. Store resolution only in PostgreSQL.
+4. Move from sentence-level arrays to mention-level rows.
+5. Set participants at the unit level.
+6. Use safe aliases only as a verified fallback, not as the primary mechanism.
 
-Если сделать именно так, `image-service.js` станет проще: он будет брать
-готовые participants и passports, а не пытаться восстанавливать смысл текста
-regex-ами и fuzzy matching.
+If implemented this way, `image-service.js` becomes simpler: it takes ready-made
+participants and passports instead of trying to reconstruct meaning from text
+using regex and fuzzy matching.

@@ -1,31 +1,31 @@
-# Coreference Resolution — Упрощение (v3)
+# Coreference Resolution — Simplification (v3)
 
-## История
+## History
 
-- **v1 (original):** regex + fuzzy matching в image-service.js
-- **v2 (coarse/fine):** двухфазный LLM-пайплайн + 5 PostgreSQL таблиц — ✅ реализовано, затем упрощено
-- **v3 (current — LLM-driven):** LLM возвращает participants напрямую, backend только валидирует ID
+- **v1 (original):** regex + fuzzy matching in image-service.js
+- **v2 (coarse/fine):** two-phase LLM pipeline + 5 PostgreSQL tables — ✅ implemented, then simplified
+- **v3 (current — LLM-driven):** LLM returns participants directly, backend only validates IDs
 
-## Текущая архитектура
+## Current Architecture
 
-LLM при создании юнитов (`stepCreateUnits`) возвращает `participants: [character_id]` для каждого unit'а.
-assignUnitParticipants валидирует ID. Никаких БД-таблиц, regex, транслитерации, coarse/fine split.
+LLM during unit creation (`stepCreateUnits`) returns `participants: [character_id]` for each unit.
+`assignUnitParticipants` validates IDs. No database tables, regex, transliteration, or coarse/fine split.
 
 **Pipeline:**
 ```
 analyze_structure → analyze_characters → analyze_locations → create_scenes → create_units (+ participants) → assign_unit_participants (validation) → create_visual_prompts
 ```
 
-**Что осталось от v2:**
-- `assignUnitParticipants()` — упрощён до валидатора
-- `applyScenePairParticipantFallback()` — fallback для "первый/второй/литераторы"
-- `normalizeCharacterRefs()` в image-service.js — замена алиасов на ID
-- `buildSafeAliasIndex()` в image-service.js — безопасный индекс алиасов
-- `shouldInjectParticipantPassports()` — умный guard
+**What remains from v2:**
+- `assignUnitParticipants()` — simplified to a validator
+- `applyScenePairParticipantFallback()` — fallback for "first/second/writers"
+- `normalizeCharacterRefs()` in image-service.js — alias-to-ID replacement
+- `buildSafeAliasIndex()` in image-service.js — safe alias index
+- `shouldInjectParticipantPassports()` — smart guard
 
-## Статус тестов
+## Test Status
 
-### coreference-image.test.js (68 тестов) ✅
+### coreference-image.test.js (68 tests) ✅
 - `inferCharactersFromPrompt` — Cyrillic/Latin, mixed case, punctuation, partial tokens, dedup
 - `normalizeCharacterRefs` — Russian→ID replacement, alias index, word boundary
 - `buildSafeAliasIndex` — collisions, unsafe types, generic words
@@ -34,7 +34,7 @@ analyze_structure → analyze_characters → analyze_locations → create_scenes
 - `buildImagePrompt` — passport injection, direct prompt, typography IU
 - `isTypographyStyle` / `resolveVisualStyle` — detection, priority
 
-### coreference-agent.test.js (35 тестов) ✅
+### coreference-agent.test.js (35 tests) ✅
 - `assignUnitParticipants` — validation, dedup, unknown ID filter, empty, multiple units
 - `getFallbackVisual` — unit-level participants, no over-injection
 - `applyScenePairParticipantFallback` — group references, ordinal, no override, 2-person guard
@@ -42,20 +42,20 @@ analyze_structure → analyze_characters → analyze_locations → create_scenes
 - `splitIntoSentences` / `splitIntoSentencesWithOffsets` — sentence boundaries, offsets, ellipsis
 - `character identity merge` — merge short IDs, skip generic chars
 
-**Удалены (v2 → v3):**
-- computeHash (7 тестов)
-- normalizeForMatch (12 тестов)
-- matchMentionsToUnits (11 тестов)
-- coreference-cleanup.test.js (6 тестов для БД-таблиц)
+**Removed (v2 → v3):**
+- computeHash (7 tests)
+- normalizeForMatch (12 tests)
+- matchMentionsToUnits (11 tests)
+- coreference-cleanup.test.js (6 tests for DB tables)
 
-**Итого: 68 + 35 = 103 теста → 68 + ~30 = ~98 тестов (после упрощения)**
+**Total: 68 + 35 = 103 tests → 68 + ~30 = ~98 tests (after simplification)**
 
-## Известные issues (minor)
+## Known Issues (minor)
 
-### cleanup-service.cjs — legacy функции
-`cleanupBookResolutions()` и `cleanupSceneResolutionRows()` остались в cleanup-service.cjs.
-Не вызываются ниоткуда. Можно оставить для очистки legacy данных из БД, если они есть.
+### cleanup-service.cjs — legacy functions
+`cleanupBookResolutions()` and `cleanupSceneResolutionRows()` remain in cleanup-service.cjs.
+Not called from anywhere. Can be left for cleaning up legacy data from the database if present.
 
-### normalizeForMatch дублирован в image-service.js
-normalizeForMatch + CYR_LATIN_MAP — только в image-service.js теперь (не дублируется).
-Желательно вынести в `backend/src/utils/normalize.js` для переиспользования.
+### normalizeForMatch duplicated in image-service.js
+normalizeForMatch + CYR_LATIN_MAP — now only in image-service.js (no longer duplicated).
+Ideally move to `backend/src/utils/normalize.js` for reuse.

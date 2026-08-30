@@ -23,8 +23,8 @@ scene text itself.
 - [x] Add a coverage validator immediately after `stepCreateScenes()`.
 - [x] Verify that generated `scene.text` values cover a contiguous source prefix without non-whitespace gaps.
 - [x] Normalize text before coverage comparison:
-  - `\r\n` / `\r` -> `\n`
-  - `NBSP` -> regular space
+  - `\r\n` / `\r` → `\n`
+  - `NBSP` → regular space
   - preserve meaningful punctuation and dialogue dashes
 - [x] Advance `currentOffset` by verified `next_offset`, not by planned buffer length.
 - [x] If coverage fails, use deterministic fallback before saving the window.
