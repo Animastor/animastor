@@ -357,7 +357,12 @@ function transition(prev: AnalysisTaskRow, ev: ProgressEvent): AnalysisTaskRow {
   if (next.status === 'running' && prev.startedAt == null) {
     next.startedAt = Date.now();
   }
-  if (next.status !== 'running' && next.startedAt != null && prev.status === 'running') {
+  // A task transitioning out of 'running' gets a finishedAt stamp.
+  // Also handle the edge case where a task was 'pending' and the orchestrator
+  // reports it cancelled / failed directly (no 'running' ever fired) —
+  // finishedAt is still recorded so the overall phaseFinishedAt detection works.
+  const isTerminal = next.status === 'completed' || next.status === 'failed' || next.status === 'cancelled';
+  if (isTerminal && next.finishedAt == null) {
     next.finishedAt = Date.now();
   }
   if (typeof ev.duration_ms === 'number' && Number.isFinite(ev.duration_ms)) {
@@ -396,7 +401,18 @@ export function applyAnalysisEvent(prev: AnalysisProgress, ev: ProgressEvent): A
   const allTerminal = Object.values(tasks).every((t) =>
     t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled'
   );
-  if (allTerminal && phaseStartedAt != null && phaseFinishedAt == null) {
+  if (allTerminal && phaseFinishedAt == null) {
+    // Degenerate case: all tasks cancelled/failed/completed without ever
+    // entering 'running' (orchestrator reported terminal state directly).
+    // In that case there is no phaseStartedAt to anchor against, but we
+    // still set phaseFinishedAt so the UI's overall timer shows 00:00:00
+    // and the 'All tasks terminal' detection fires.
+    if (phaseStartedAt == null) {
+      const earliestFinish = Math.min(
+        ...Object.values(tasks).map((t) => t.finishedAt ?? Infinity)
+      );
+      phaseStartedAt = Number.isFinite(earliestFinish) ? earliestFinish : Date.now();
+    }
     phaseFinishedAt = Date.now();
   }
   const phaseDurationMs = phaseStartedAt != null
