@@ -550,6 +550,11 @@ export interface AgentStatusResponse {
 }
 
 // GET/PUT /book/{id}/layer-config — LayerConfigResponse / LayerConfigUpdate
+// Parallel / Subagent AI Analysis (Milestone #2): analysis_mode selects
+// the orchestrator path (sequential = legacy, parallel = concurrent
+// characters+locations); analysis_parallelism caps in-flight LLM calls
+// (1..8). Both fields are OPTIONAL on the response — backend may omit
+// them, in which case the UI falls back to defaults.
 export interface LayerConfigResponse {
   book_id?: string | null;
   audio_enabled: boolean;
@@ -560,6 +565,8 @@ export interface LayerConfigResponse {
   audio_timeout_minutes?: number | null;
   image_timeout_minutes?: number | null;
   video_timeout_minutes?: number | null;
+  analysis_mode?: 'sequential' | 'parallel';
+  analysis_parallelism?: number | null;
 }
 
 export interface LayerConfigUpdate {
@@ -571,6 +578,8 @@ export interface LayerConfigUpdate {
   audio_timeout_minutes?: number | null;
   image_timeout_minutes?: number | null;
   video_timeout_minutes?: number | null;
+  analysis_mode?: 'sequential' | 'parallel' | null;
+  analysis_parallelism?: number | null;
 }
 
 // GET /book/{id}/status — BookStatus (lazy book; served camelCase by backend)

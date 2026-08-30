@@ -249,6 +249,19 @@ export const videoEnabled = signal(true);
 export const layerConfigLoaded = signal(false);
 export const hasAssets = signal(false);
 
+// ── Parallel / Subagent AI Analysis (Milestone #2) ──
+// analysisMode governs the orchestrator path the backend uses for the
+// first AI phase (characters + locations). Defaults to 'sequential' so
+// every existing book / user keeps legacy behaviour until the Settings
+// page opts them in. analysisParallelism caps the number of concurrent
+// LLM requests the orchestrator will dispatch (1..8). Both are sourced
+// from /book/:id/layer-config on every loadLayerConfig call and from
+// /agent-status on every progress poll so the Generate page always
+// reflects the live backend decision.
+export const analysisMode = signal<'sequential' | 'parallel'>('sequential');
+export const analysisParallelism = signal<number>(3);
+export const analysisConfigLoaded = signal(false);
+
 export function setVBookEnabled(v: boolean): void { vbookEnabled.value = v; void persistLayerConfig(); }
 export function setAudioEnabled(v: boolean): void { audioEnabled.value = v; void persistLayerConfig(); }
 export function setImageEnabled(v: boolean): void { imageEnabled.value = v; void persistLayerConfig(); }
@@ -256,17 +269,26 @@ export function setVideoEnabled(v: boolean): void { videoEnabled.value = v; void
 
 export async function loadLayerConfig(): Promise<void> {
   const currentBook = bookId.value;
-  if (!currentBook) { layerConfigLoaded.value = true; return; }
+  if (!currentBook) { layerConfigLoaded.value = true; analysisConfigLoaded.value = true; return; }
   try {
     const cfg = await getJson<LayerConfigResponse>(`/book/${encodeURIComponent(currentBook)}/layer-config`);
     audioEnabled.value = cfg.audio_enabled;
     imageEnabled.value = cfg.image_enabled;
     videoEnabled.value = cfg.video_enabled;
     vbookEnabled.value = cfg.vbook_enabled;
+    // Milestone #2 — backend authoritative. Defaults match layer-config
+    // DEFAULTS on the server (sequential, parallelism=3) so a missing
+    // field doesn't flip the UI to a non-default value.
+    analysisMode.value = cfg.analysis_mode === 'parallel' ? 'parallel' : 'sequential';
+    const p = cfg.analysis_parallelism;
+    if (typeof p === 'number' && Number.isFinite(p)) {
+      analysisParallelism.value = Math.min(8, Math.max(1, p));
+    }
   } catch (e) {
     console.warn('loadLayerConfig failed:', (e as Error).message);
   }
   layerConfigLoaded.value = true;
+  analysisConfigLoaded.value = true;
 }
 
 async function persistLayerConfig(): Promise<void> {
