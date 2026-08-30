@@ -1,48 +1,48 @@
-# Аудит временных файлов ComfyUI в worker
+# ComfyUI Temp Files Audit in Worker
 
-> Полный аудит lifecycle временных файлов ComfyUI (input/output), создаваемых
-> worker.cjs при генерации image / audio / video. Исследование проведено
-> перед реализацией cleanup after job.
+> Full audit of ComfyUI temp file lifecycle (input/output) created by
+> worker.cjs during image / audio / video generation. Research conducted
+> before implementing post-job cleanup.
 >
-> **Read-only**: ничего не исправлялось. Основан на чтении исходного кода.
-> Дата: 2026-08-24. Ветка: `master` (`90b9d22`).
+> **Read-only**: nothing was fixed. Based on source code reading.
+> Date: 2026-08-24. Branch: `master` (`90b9d22`).
 >
-> ## Статус реализации
+> ## Implementation Status
 >
-> Аудит реализован в двух коммитах:
-> - **`b860162`** — per-job точечный cleanup (`cleanupJobArtifacts`, try/finally):
->   input+output удаляются после успешной доставки результата.
-> - **`e874761`** — crash-safe recovery через worker-local journal
+> Audit implemented in two commits:
+> - **`b860162`** — per-job targeted cleanup (`cleanupJobArtifacts`, try/finally):
+>   input+output deleted after successful result delivery.
+> - **`e874761`** — crash-safe recovery via worker-local journal
 >   (`worker-cleanup-journal.cjs`): lifecycle CREATED→GENERATED→DELIVERED→CLEANED
->   сохраняется на persistent-диске worker'а; при restart `recoverCleanupJournal()`
->   дочищает файлы job, результат которой уже доставлен в hub (delivered), и
->   убирает input-файлы недоставленных job (output сохраняется). Детали — в
->   `COMFYUI_CLEANUP_RECOVERY_AUDIT.md` и самом коде.
+>   persisted on worker's persistent disk; on restart `recoverCleanupJournal()`
+>   cleans up files of jobs whose result was already delivered to hub (delivered), and
+>   removes input files of undelivered jobs (output preserved). Details in
+>   `COMFYUI_CLEANUP_RECOVERY_AUDIT.md` and the code itself.
 
 ---
 
-## 1. Исполнители
+## 1. Executors
 
-**Один универсальный worker**: `worker/worker/worker.cjs` (657 строк, CJS).
+**Single universal worker**: `worker/worker/worker.cjs` (657 lines, CJS).
 
-Тип задаётся `WORKER_TYPE` (image | audio | video) и влияет только на:
-- таймауты (`VIDEO_RESULT_TIMEOUT_MS` vs `RESULT_TIMEOUT_MS`);
-- логику поиска результата в `waitResult` (fs-scan для video).
+Type set by `WORKER_TYPE` (image | audio | video) and only affects:
+- timeouts (`VIDEO_RESULT_TIMEOUT_MS` vs `RESULT_TIMEOUT_MS`);
+- result search logic in `waitResult` (fs-scan for video).
 
-Отдельных worker-файлов под каждый тип нет.
+No separate worker files per type.
 
 ---
 
-## 2. Конфигурация путей
+## 2. Path Configuration
 
-| Переменная | Значение по умолчанию | Назначение |
+| Variable | Default Value | Purpose |
 |---|---|---|
-| `COMFY_INPUT_DIR` | `/home/jovyan/ComfyUI/input` | Куда worker кладёт reference images |
-| `COMFY_OUTPUT_DIR` | `path.resolve(COMFY_INPUT_DIR, "../output")` | Откуда worker читает результаты |
+| `COMFY_INPUT_DIR` | `/home/jovyan/ComfyUI/input` | Where worker places reference images |
+| `COMFY_OUTPUT_DIR` | `path.resolve(COMFY_INPUT_DIR, "../output")` | Where worker reads results |
 
 ---
 
-## 3. Полный lifecycle задачи
+## 3. Full Task Lifecycle
 
 ### 3.1 Image (IU Image)
 
@@ -54,16 +54,16 @@ Job received (task.assets.image: base64)
   → waitResult(prompt_id)
       → /history/{prompt_id} → outputs[SaveImage].images[0] → {filename, subfolder: "", type}
   → downloadResult(meta)
-      → читает COMFY_OUTPUT_DIR/{filename} (локально, OOM-safe)
+      → reads COMFY_OUTPUT_DIR/{filename} (locally, OOM-safe)
       → base64 → data URL
   → sendResult(task, base64) → hub → backend
-      → backend пишет в /data/output/{buildId}/{bookId}_{chapterId}_{sceneId}_{iuId}.png
+      → backend writes to /data/output/{buildId}/{bookId}_{chapterId}_{sceneId}_{iuId}.png
   → Done
 ```
 
-**Input-файл**: `COMFY_INPUT_DIR/{baseId}.png`  
-**Output-файл**: `COMFY_OUTPUT_DIR/ComfyUI_XXXXX_.png`  
-**Backend-файл**: `/data/output/{buildId}/{bookId}_{chapterId}_{sceneId}_{iuId}.png`
+**Input file**: `COMFY_INPUT_DIR/{baseId}.png`
+**Output file**: `COMFY_OUTPUT_DIR/ComfyUI_XXXXX_.png`
+**Backend file**: `/data/output/{buildId}/{bookId}_{chapterId}_{sceneId}_{iuId}.png`
 
 ### 3.2 Audio (Audio Chunk)
 
@@ -73,43 +73,43 @@ Job received (no assets)
   → waitResult(prompt_id)
       → /history/{prompt_id} → outputs[SaveAudioMP3].audio → {filename, subfolder: "audio", type}
   → downloadResult(meta)
-      → читает COMFY_OUTPUT_DIR/audio/{filename}
+      → reads COMFY_OUTPUT_DIR/audio/{filename}
       → base64 → data URL
   → sendResult(task, base64) → hub → backend
-      → backend пишет в /data/output/{buildId}/{bookId}_{chapterId}_{sceneId}_{chunkIndex}.mp3
+      → backend writes to /data/output/{buildId}/{bookId}_{chapterId}_{sceneId}_{chunkIndex}.mp3
   → Done
 ```
 
-**Input-файл**: нет  
-**Output-файл**: `COMFY_OUTPUT_DIR/audio/tts_XXXXX_.mp3` или `COMFY_OUTPUT_DIR/audio/dialogue_XXXXX_.mp3`
+**Input file**: none
+**Output file**: `COMFY_OUTPUT_DIR/audio/tts_XXXXX_.mp3` or `COMFY_OUTPUT_DIR/audio/dialogue_XXXXX_.mp3`
 
-### 3.3 Video (Scene Video, multi-image I2V)
+### 3.3 Video (Scene Video, Multi-Image I2V)
 
 ```
 Job received (task.assets.images: { [unitId]: base64 })
-  → для каждого unitId: saveBase64ImageSafe(base64, "{scenePrefix}_{unitId}.png")
+  → for each unitId: saveBase64ImageSafe(base64, "{scenePrefix}_{unitId}.png")
       → COMFY_INPUT_DIR/{scenePrefix}_{unitId}.png  (×N)
-  → waitForFileReady для каждого
+  → waitForFileReady for each
   → runWorkflow(task.params) → ComfyUI /prompt → prompt_id
   → waitResult(prompt_id)
       → 1) /history → outputs[SaveVideo].videos[0].filename
-      → или 2) outputs[*].[*].filename where .endsWith('.mp4')
-      → или 3) fs-scan: output/video/ → новые .mp4 → фильтр по prefix "LTX-2"
+      → or 2) outputs[*].[*].filename where .endsWith('.mp4')
+      → or 3) fs-scan: output/video/ → new .mp4 → filter by prefix "LTX-2"
   → downloadResult(meta)
-      → читает COMFY_OUTPUT_DIR/video/{filename}
+      → reads COMFY_OUTPUT_DIR/video/{filename}
       → base64 → data URL
   → sendResult(task, base64) → hub → backend
-      → backend пишет в /data/output/{buildId}/{bookId}_{chapterId}_{sceneId}_gN.mp4
+      → backend writes to /data/output/{buildId}/{bookId}_{chapterId}_{sceneId}_gN.mp4
   → Done
 ```
 
-**Input-файлы**: `COMFY_INPUT_DIR/{scenePrefix}_{unitId}.png` (столько же, сколько IU)  
-**Output-файл**: `COMFY_OUTPUT_DIR/video/LTX-2_XXXXX_.mp4`  
-**Backend-файл**: `/data/output/{buildId}/{bookId}_{chapterId}_{sceneId}_gN.mp4`
+**Input files**: `COMFY_INPUT_DIR/{scenePrefix}_{unitId}.png` (same count as IUs)
+**Output file**: `COMFY_OUTPUT_DIR/video/LTX-2_XXXXX_.mp4`
+**Backend file**: `/data/output/{buildId}/{bookId}_{chapterId}_{sceneId}_gN.mp4`
 
 ---
 
-## 4. Формирование имён файлов в input
+## 4. Input File Name Formation
 
 ```js
 // job_id examples:
@@ -117,22 +117,22 @@ Job received (task.assets.images: { [unitId]: base64 })
 //   "bookId_chapterId_sceneId_0001:audio"     — audio chunk
 //   "bookId_chapterId_sceneId_g1:video"      — video group
 
-// Базовый ID (без суффикса типа):
+// Base ID (without type suffix):
 const [baseId] = task.job_id.split(/:(iu_image|image|audio|video)$/);
 
-// Для multi-image (video) — срезается _gN суффикс группы:
+// For multi-image (video) — strip group suffix _gN:
 const scenePrefix = baseId.replace(/_g\d+$/, '');
 
-// Итоговое имя файла в input:
+// Final input file name:
 //   single image:  "{baseId}.png"
 //   multi-image:   "{scenePrefix}_{unitId}.png"
 ```
 
-Input-имена содержат `job_id` → уникальны per task.
+Input names contain `job_id` → unique per task.
 
 ---
 
-## 5. Определение output-файла
+## 5. Output File Detection
 
 ### Image
 `/history/{prompt_id}` → `outputs[nodeId].images[0]`:
@@ -148,35 +148,35 @@ Input-имена содержат `job_id` → уникальны per task.
 ```
 → `COMFY_OUTPUT_DIR/audio/tts_00001_.mp3`
 
-### Video (3 механизма)
+### Video (3 mechanisms)
 1. `/history` → `outputs[nodeId].videos[0].filename`:
    ```json
    { "filename": "LTX-2_00001_.mp4", "subfolder": "video", "type": "output" }
    ```
-2. Fallback: `outputs[*].[*].filename` где `.endsWith('.mp4')`
-3. Fs-scan: `output/video/` → новые `.mp4` → `prefix` = `path.basename("video/LTX-2")` = `"LTX-2"`
+2. Fallback: `outputs[*].[*].filename` where `.endsWith('.mp4')`
+3. Fs-scan: `output/video/` → new `.mp4` → `prefix` = `path.basename("video/LTX-2")` = `"LTX-2"`
 
 ---
 
-## 6. Что удаляется сейчас
+## 6. What Gets Deleted Currently
 
-**Worker.cjs: НИЧЕГО.** Ни input, ни output не удаляются ни после успеха, ни после ошибки, ни в `finally`.
+**Worker.cjs: NOTHING.** Neither input nor output deleted after success, error, or in `finally`.
 
-**Backend (не относится к ComfyUI):**
-- `cleanupService.cleanupBuild(buildId)` — удаляет `/data/output/{buildId}` целиком (REST API / регенерация / reconciliation).
-- Pre-delete stale PNG при dirty-регенерации (`iu-processor.js:145-163`, `scene-orchestrator.js:381-387`).
+**Backend (not ComfyUI-related):**
+- `cleanupService.cleanupBuild(buildId)` — deletes `/data/output/{buildId}` entirely (REST API / regeneration / reconciliation).
+- Pre-delete stale PNG during dirty regeneration (`iu-processor.js:145-163`, `scene-orchestrator.js:381-387`).
 
-**Итог**: каждая задача оставляет после себя на диске worker-машины:
-- 1 PNG в `input/` (image) или N PNG (video multi-image)
-- 1 PNG/MP3/MP4 в `output/` (или `output/audio/`, `output/video/`)
+**Result**: each task leaves on worker machine disk:
+- 1 PNG in `input/` (image) or N PNGs (video multi-image)
+- 1 PNG/MP3/MP4 in `output/` (or `output/audio/`, `output/video/`)
 
-Мусор накапливается бесконечно.
+Trash accumulates indefinitely.
 
 ---
 
-## 7. Output-файлы: формат и subfolder
+## 7. Output Files: Format and Subfolder
 
-| Тип | Node | filename_prefix | Фактический путь | subfolder |
+| Type | Node | filename_prefix | Actual Path | subfolder |
 |---|---|---|---|---|
 | Image | `SaveImage` | `ComfyUI` | `output/ComfyUI_XXXXX_.png` | `""` |
 | Audio | `SaveAudioMP3` | `audio/tts` | `output/audio/tts_XXXXX_.mp3` | `audio` |
@@ -185,37 +185,37 @@ Input-имена содержат `job_id` → уникальны per task.
 
 ---
 
-## 8. Конкуренция и безопасность имён
+## 8. Competition and Name Safety
 
-| Сценарий | Риск | Комментарий |
+| Scenario | Risk | Comment |
 |---|---|---|
-| Один worker, последовательные задачи | Нет | Worker.cjs обрабатывает задачи в цикле, по одной. Имена содержат job_id → уникальны. |
-| Два worker на одной машине | Нет | Каждый — отдельный процесс с уникальным job_id. |
-| image + video worker на одной ComfyUI | Нет | Разные имена файлов (разные unitId). |
-| Две задачи с одинаковым job_id | Нет | job_id уникален — содержит bookId + chapterId + sceneId + chunkIndex/IUId. |
-| Worker restart во время задачи | Да | Orphaned файлы остаются. Не критично, но накапливается. |
-| Одна задача, несколько групп (video _g1, _g2) | Нет | Каждая группа — отдельный job с уникальным job_id. |
+| Single worker, sequential tasks | None | Worker.cjs processes tasks in loop, one at a time. Names contain job_id → unique. |
+| Two workers on one machine | None | Each is separate process with unique job_id. |
+| image + video worker on one ComfyUI | None | Different file names (different unitIds). |
+| Two tasks with same job_id | None | job_id is unique — contains bookId + chapterId + sceneId + chunkIndex/IUId. |
+| Worker restart during task | Yes | Orphaned files remain. Not critical, but accumulates. |
+| Single task, multiple groups (video _g1, _g2) | None | Each group is separate job with unique job_id. |
 
 ---
 
-## 9. Обработка ошибок
+## 9. Error Handling
 
-| Ситуация | Что происходит | Output существует? | Cleanup нужен |
+| Situation | What Happens | Output Exists? | Cleanup Needed |
 |---|---|---|---|
-| ComfyUI error (no prompt_id) | `runWorkflow` → throw | Нет | Input cleanup |
-| Timeout в waitResult | `waitResult` → throw (60s / 2h) | Возможно частично | Input cleanup |
-| Output не найден в history | Timeout → throw | Нет | Input cleanup |
-| Worker restart | Процесс убит → orphan | Да, всё | Orphan cleanup (startup) |
-| Отмена задачи (backend) | Worker узнаёт через timeout | Возможно | Input cleanup |
-| Download error | `downloadResult` → throw | Да (ComfyUI создал) | Input + output cleanup |
+| ComfyUI error (no prompt_id) | `runWorkflow` → throw | No | Input cleanup |
+| Timeout in waitResult | `waitResult` → throw (60s / 2h) | Possibly partial | Input cleanup |
+| Output not found in history | Timeout → throw | No | Input cleanup |
+| Worker restart | Process killed → orphan | Yes, all | Orphan cleanup (startup) |
+| Task cancellation (backend) | Worker learns via timeout | Possibly | Input cleanup |
+| Download error | `downloadResult` → throw | Yes (ComfyUI created) | Input + output cleanup |
 
 ---
 
-## 10. Предлагаемая архитектура cleanup
+## 10. Proposed Cleanup Architecture
 
-### 10.1 Где разместить
+### 10.1 Where to Place
 
-В `workerLoop()`, в блоке `try { ... } finally { ... }`:
+In `workerLoop()`, in `try { ... } finally { ... }` block:
 
 ```js
 async function workerLoop() {
@@ -257,46 +257,46 @@ async function workerLoop() {
 }
 ```
 
-### 10.2 Что удалять
+### 10.2 What to Delete
 
-**Input-файлы**: только те, что worker сам создал (список `createdInputFiles`).  
-**Output-файл**: только один конкретный файл, полученный из `downloadResult`.
+**Input files**: only those worker itself created (list `createdInputFiles`).
+**Output file**: only single specific file obtained from `downloadResult`.
 
-### 10.3 Чего НЕ делать
+### 10.3 What NOT to Do
 
-- `rm -rf COMFY_INPUT_DIR/*` — удалит чужие файлы (другой worker, другая задача).
-- `rm -rf COMFY_OUTPUT_DIR/video/*` — удалит все видео, включая чужие.
-- Удалять output до `sendResult` — `sendResult` может упасть, и результат будет потерян.
-- Удалять output при ошибке до `downloadResult` — output может не существовать.
+- `rm -rf COMFY_INPUT_DIR/*` — would delete other workers' files.
+- `rm -rf COMFY_OUTPUT_DIR/video/*` — would delete all videos, including others'.
+- Delete output before `sendResult` — `sendResult` may fail, result lost.
+- Delete output on error before `downloadResult` — output may not exist.
 
-### 10.4 Привязка к job
+### 10.4 Job Binding
 
-- **Input**: имена содержат `baseId` / `scenePrefix` из `job_id` → уникальны per task.
-- **Output**: определяется через `waitResult` → `{filename, subfolder}` → полный путь.
-- **Ключевой принцип**: удаляем только то, что сами создали (input) и только то, что сами прочитали (output).
+- **Input**: names contain `baseId` / `scenePrefix` from `job_id` → unique per task.
+- **Output**: determined via `waitResult` → `{filename, subfolder}` → full path.
+- **Key principle**: delete only what we created (input) and only what we read (output).
 
-### 10.5 Edge cases
+### 10.5 Edge Cases
 
-| Edge case | Обработка |
+| Edge Case | Handling |
 |---|---|
-| Файл уже удалён (другим процессом) | `unlink` в `catch` → игнорируем |
-| Worker restart во время задачи | Файлы остаются (orphan) — решается startup sweep |
-| Два worker на одной машине, одна задача | Невозможно — job_id уникален |
-| Output в subfolder `audio` или `video` | Полный путь = `COMFY_OUTPUT_DIR/subfolder/filename` |
-| Video multi-image (N input файлов) | Все N запоминаются в `createdInputFiles` |
-| Audio (нет input файлов) | `createdInputFiles` пуст → cleanup только output |
-| Error после waitResult, до downloadResult | Output существует, но не прочитан. Удалять? **Нет** — если ошибка временная, re-dispatch найдёт файл. |
-| Error до waitResult | Output не существует → только input cleanup |
+| File already deleted (by other process) | `unlink` in `catch` → ignore |
+| Worker restart during task | Files remain (orphan) — resolved by startup sweep |
+| Two workers on one machine, one task | Impossible — job_id unique |
+| Output in subfolder `audio` or `video` | Full path = `COMFY_OUTPUT_DIR/subfolder/filename` |
+| Video multi-image (N input files) | All N recorded in `createdInputFiles` |
+| Audio (no input files) | `createdInputFiles` empty → cleanup only output |
+| Error after waitResult, before downloadResult | Output exists but not read. Delete? **No** — if error is temporary, re-dispatch will find file. |
+| Error before waitResult | Output doesn't exist → only input cleanup |
 
-### 10.6 Дополнительно (startup sweep)
+### 10.6 Additional (Startup Sweep)
 
-При старте worker можно добавить sweep orphaned файлов старше N часов.
-Осторожно: sweep должен удалять только файлы, чей `job_id` неактивен (нет в `animastor:running`).
-Эта опция — вне рамок cleanup after job, но рекомендуется для production.
+On worker startup, can add sweep of orphaned files older than N hours.
+Caution: sweep must only delete files whose `job_id` is inactive (not in `animastor:running`).
+This option is outside post-job cleanup scope, but recommended for production.
 
-### 10.7 Graceful shutdown
+### 10.7 Graceful Shutdown
 
-При `SIGTERM`/`SIGINT`:
-- Удалить input-файлы текущей задачи (если есть).
-- Output-файл не трогать — результат может быть полезен для recovery.
-- Не ждать завершения генерации.
+On `SIGTERM`/`SIGINT`:
+- Delete input files of current task (if any).
+- Don't touch output file — result may be useful for recovery.
+- Don't wait for generation to complete.
