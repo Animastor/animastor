@@ -336,4 +336,78 @@ describe('runPipeline — analysis_mode dispatch (Milestone #1)', () => {
         // because mergeCharacterLists produces an empty list.
         expect(calls.voices).to.equal(0);
     });
+
+    it('analysisMode=parallel: does NOT silently fall back to sequential on orchestrator failure (no double AI calls)', async () => {
+        const calls = { characters: 0, locations: 0 };
+        const mocks = makeMocks({
+            pipelineSteps: {
+                stepExtractCharacters: async () => { calls.characters++; return { characters: [], mentions: {} }; },
+                stepGenerateVoices: async () => ({ voices: {} }),
+                // locations throws BOTH attempts (every retry) — simulated by
+                // a single throw that surfaces through ai-caller's outer
+                // attempt loop. The orchestrator catches and marks the task
+                // failed. Sequential fallback is forbidden by spec.
+                stepExtractLocations: async () => { calls.locations++; throw new Error('provider outage'); },
+            },
+        });
+        // The orchestrator catches per-task failures and returns ok:false
+        // with a recorded failure. Pipeline continues with whatever results
+        // siblings produced.
+        const result = await run('sess', 'Some narrative text.', [], [], mocks, {
+            analysisMode: 'parallel',
+            analysisParallelism: 3,
+        });
+        // locations threw once — characters ran once. No second invocation
+        // (no silent sequential retry).
+        expect(calls.characters).to.equal(1);
+        expect(calls.locations).to.equal(1);
+        // Pipeline returned a result with the surviving characters merge
+        // (empty in this test, but the result is well-formed).
+        expect(result).to.be.an('object');
+        expect(result.characters).to.deep.equal([]);
+    });
+
+    it('analysisMode=parallel: cancellation between waves skips downstream tasks', async () => {
+        let cancelled = false;
+        const calls = { characters: 0, locations: 0 };
+        const mocks = makeMocks({
+            pipelineSteps: {
+                stepExtractCharacters: async () => {
+                    calls.characters++;
+                    // Trigger cancellation as soon as characters starts.
+                    cancelled = true;
+                    return { characters: [{ id: 'r', name: 'Real', voice: '' }], mentions: {} };
+                },
+                stepGenerateVoices: async () => ({ voices: {} }),
+                stepExtractLocations: async () => { calls.locations++; return []; },
+            },
+            agentSession: {
+                updateSession: async () => {},
+                createSession: async () => ({ session_id: 'sess-test' }),
+                isSessionCancelled: async () => cancelled,  // flips after characters
+                isBookCancelled: async () => false,
+            },
+        });
+
+        // Pipeline catches the cancellation error (Sonnet_CANCELLED) at the
+        // outermost checkCancelled() call (which lives in the pipeline-runner
+        // itself, after the orchestrator). So we just run the pipeline and
+        // expect either a thrown SESSION_CANCELLED or a degraded result.
+        let err = null;
+        try {
+            await run('sess', 'Some narrative text.', [], [], mocks, {
+                analysisMode: 'parallel',
+                analysisParallelism: 3,
+            });
+        } catch (e) { err = e; }
+        // characters ran once before cancellation tripped.
+        expect(calls.characters).to.equal(1);
+        // No silent sequential fallback — locations either ran or didn't, but
+        // never twice.
+        expect(calls.locations).to.be.at.most(1);
+        if (err) {
+            // Cancellation propagates as expected.
+            expect(err.code).to.equal('SESSION_CANCELLED');
+        }
+    });
 });

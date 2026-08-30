@@ -572,7 +572,31 @@ if (characters.length > 0) {
         locations_extracted: newLocations ? newLocations.length : 0,
         characters_failed: analysisOrchestratorResult ? analysisOrchestratorResult.tasks.find((t) => t.id === 'characters')?.status === 'failed' : false,
         locations_failed:  analysisOrchestratorResult ? analysisOrchestratorResult.tasks.find((t) => t.id === 'locations')?.status  === 'failed' : false,
+        locations_cancelled: analysisOrchestratorResult ? analysisOrchestratorResult.tasks.find((t) => t.id === 'locations')?.status === 'cancelled' : false,
+        characters_cancelled: analysisOrchestratorResult ? analysisOrchestratorResult.tasks.find((t) => t.id === 'characters')?.status === 'cancelled' : false,
     }));
+
+    // Loud observability when BOTH parallel analysis tasks failed in
+    // parallel mode — this is a degraded scenario the user must know about.
+    // Sequential mode degrades silently (one task at a time, same behaviour).
+    // In parallel mode we surface this so the operator can correlate with the
+    // AI provider outage / quota / etc. We do NOT fall back to sequential —
+    // that would risk double AI calls for the same window.
+    if (analysisOrchestratorResult) {
+        const charsTask = analysisOrchestratorResult.tasks.find((t) => t.id === 'characters');
+        const locsTask  = analysisOrchestratorResult.tasks.find((t) => t.id === 'locations');
+        const charsFailed = charsTask && charsTask.status === 'failed';
+        const locsFailed  = locsTask  && locsTask.status  === 'failed';
+        if (charsFailed && locsFailed) {
+            console.error(JSON.stringify({
+                event: 'analysis_phase_total_failure',
+                mode: 'parallel',
+                characters_error: charsTask && charsTask.error,
+                locations_error: locsTask && locsTask.error,
+                note: 'Both parallel analysis tasks failed; continuing with empty merge (legacy behaviour). Not falling back to sequential — would risk double AI calls.',
+            }));
+        }
+    }
 
     // ── Scene split with coverage-only validation ──
     // Duration validation is delegated to video chunking (selectWorkflowGroups).
