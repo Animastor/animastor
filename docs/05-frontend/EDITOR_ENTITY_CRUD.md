@@ -66,7 +66,7 @@ Routes registered in `backend/src/routes/book-routes.cjs`
 function `cyrToLatin` (`backend/src/utils/string-utils.js`) + snake_case:
 
 - Entered ID already in accepted format → used as-is.
-- Free-form input (e.g., "Михаил Александрович Берлиоз") →
+- Free-form input (e.g., "Mikhail Aleksandrovich Berlioz") →
   transliteration + snake_case → `mikhail_aleksandrovich_berlioz`.
 
 No new transliteration function was written — backend utility is reused.
