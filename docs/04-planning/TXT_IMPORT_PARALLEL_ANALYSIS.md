@@ -1,46 +1,46 @@
 # TXT Import: Parallel / Subagent Analysis — Architecture Recon
 
-> **Статус:** Reconnaissance + proposed architecture · подготовлено ДО реализации.
-> Цель: понять текущий pipeline, выделить независимые шаги и предложить
-> расширяемую модель `Task → AgentProfile → Provider/Model` для перехода от
-> последовательного AI-анализа к параллельному — без поломки текущего
-> Sequential-режима.
+> **Status:** Reconnaissance + proposed architecture · prepared BEFORE implementation.
+> Goal: understand current pipeline, identify independent steps and propose
+> extensible model `Task → AgentProfile → Provider/Model` for transitioning from
+> sequential AI analysis to parallel — without breaking current
+> Sequential mode.
 >
-> **Не реализует код.** Только разведка и архитектурные решения.
+> **No code implementation.** Only reconnaissance and architectural decisions.
 
 ---
 
 ## 0. TL;DR
 
-- **Сейчас:** AI-pipeline TXT-импорта полностью последовательный. Один
-  `agent_sessions` + последовательность `agent_steps` (analyze_structure →
+- **Current:** TXT-import AI-pipeline fully sequential. Single
+  `agent_sessions` + sequence of `agent_steps` (analyze_structure →
   characters → voices → locations → scenes → units → visuals → reconcile →
-  polish → repair). Шаги вызываются через `agent/ai-caller.js → ai-service.callAI`
-  с единственным заранее разрешённым провайдером.
-- **Зависимости шагов:** characters/voices/locations независимы между собой и
-  могут выполняться параллельно. Scenes зависят от characters+locations. Units
-  и visuals — per-scene, можно частично параллелить внутри окна, но это за
-  рамками recon.
-- **Можно сделать:** минимум-инвазивно параллелить шаги A (characters, voices,
-  locations) на входе `runPipeline`. Sequential-режим сохраняется без изменений.
-- **Нельзя использовать повторно как есть:** dispatch-engine / lease-manager /
-  circuit-breaker / retry-budget-manager заточены под **scene-level GPU jobs**,
-  а не под LLM-анализ текста. Их принципы (lease, idempotency, journal) —
-  переносимы, код — нет.
-- **Модель данных для Parallel:**
+  polish → repair). Steps called via `agent/ai-caller.js → ai-service.callAI`
+  with single pre-resolved provider.
+- **Step dependencies:** characters/voices/locations independent of each other and
+  can run in parallel. Scenes depend on characters+locations. Units
+  and visuals — per-scene, partially parallelizable within window, but
+  outside recon scope.
+- **Can be done:** minimally invasive parallelization of steps A (characters, voices,
+  locations) at `runPipeline` entry. Sequential mode preserved unchanged.
+- **Cannot reuse as-is:** dispatch-engine / lease-manager /
+  circuit-breaker / retry-budget-manager designed for **scene-level GPU jobs**,
+  not LLM text analysis. Their principles (lease, idempotency, journal) —
+  transferable, code — not.
+- **Data model for Parallel:**
   ```
   AnalysisTask ──▶ AgentProfile ──▶ Provider (workspace / system / env)
                                        └──▶ Model (per-task override)
   ```
-  4 независимых Task могут иметь один AgentProfile и один Provider, но разные
-  модели — либо все шарить одну — оба варианта должны поддерживаться
-  конфигурацией без правок orchestrator'а.
+  4 independent Tasks can share one AgentProfile and one Provider, but different
+  models — or all share one — both options must be supported
+  by configuration without orchestrator changes.
 
 ---
 
-## 1. Audit: текущий pipeline
+## 1. Audit: current pipeline
 
-### 1.1 Входная точка
+### 1.1 Entry point
 
 - `POST /api/v1/book/import-txt` → создаёт RAW_IMPORTED draft (lazy-book).
 - `POST /api/v1/book/:bookId/bootstrap` → `txtImporter.bootstrapImportedText`
@@ -52,9 +52,9 @@
 
 См. `backend/src/routes/book/import-routes.cjs:646` (`/bootstrap`).
 
-### 1.2 Sequence of AI steps в `runPipeline` (первое окно)
+### 1.2 Sequence of AI steps in `runPipeline` (first window)
 
-| # | Файл | step | Зависимости | Примечание |
+| # | File | step | Dependencies | Note |
 |---|---|---|---|---|
 | 0 | bootstrap.js | `stepAnalyzeStructure` | только `text` | Возвращает `author/title/parts/segments`. Сохраняется в `window_data.structure`. |
 | 1 | pipeline-runner.js:372 | `stepExtractCharacters` | `text` | `result.characters`, `result.mentions`. |
@@ -223,79 +223,79 @@ total_tasks, completed_tasks }` — чтобы UI мог показать "2/4 t
 
 ---
 
-## 3. Параллелизация: где именно выигрыш
+## 3. Parallelization: where exactly the gain is
 
-### 3.1 Узкое место
+### 3.1 Bottleneck
 
-`runPipeline` для первого окна последовательно делает:
+`runPipeline` for first window sequentially does:
 
 ```
-T_struct   = время AI для analyze_structure     (~20-40s)
-T_chars    = время AI для extract_characters     (~30-60s)
-T_voices   = время AI для generate_voices        (~30-60s)
-T_locs     = время AI для extract_locations      (~30-60s)
-T_scenes   = время AI для create_scenes          (~40-90s)
+T_struct   = AI time for analyze_structure     (~20-40s)
+T_chars    = AI time for extract_characters     (~30-60s)
+T_voices   = AI time for generate_voices        (~30-60s)
+T_locs     = AI time for extract_locations      (~30-60s)
+T_scenes   = AI time for create_scenes          (~40-90s)
 T_units    = per-scene × N_scenes                (~15s × 3)
 T_visuals  = per-scene × N_scenes                (~15s × 3)
-T_reconcile/polish (×4)                          (~30-60s каждый)
+T_reconcile/polish (×4)                          (~30-60s each)
 T_repair   = final snake_case                   (~15-30s)
 ```
 
-Sequential T_total ≈ 8–14 минут на окно. Параллелизация шага A
+Sequential T_total ≈ 8–14 minutes per window. Parallelizing step A
 (characters/voices/locations):
 
 ```
 T_a_parallel ≈ max(T_chars, T_voices, T_locs, T_struct) ≈ 30-60s
 ```
 
-Экономия: ~60–120s на первом окне. На 5+ окнах это может стать существенным.
+Savings: ~60–120s on first window. On 5+ windows this becomes significant.
 
-### 3.2 Что НЕ нужно трогать в первом релизе
+### 3.2 What NOT to touch in first release
 
-- Per-scene units/visuals (Sequential в текущем коде, stability reasons).
-- Post-processing polish/reconcile порядок.
-- `stepAnalyzeStructure` — он отдельно в `bootstrap.js:106` ДО `runPipeline`,
-  не блокирует наш параллелизм, можно оставить sequential.
-- `stepRepairFantasyIds` — финальный sequential barrier.
+- Per-scene units/visuals (Sequential in current code, stability reasons).
+- Post-processing polish/reconcile order.
+- `stepAnalyzeStructure` — separate in `bootstrap.js:106` BEFORE `runPipeline`,
+  doesn't block our parallelization, can stay sequential.
+- `stepRepairFantasyIds` — final sequential barrier.
 
 ---
 
 ## 4. Proposed Architecture
 
-### 4.1 Концептуальные слои (разделение «Subagent ≠ API»)
+### 4.1 Conceptual layers (separation "Subagent ≠ API")
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ Task                                                                   │
-│   "что сделать" — функциональная единица анализа                       │
+│   "what to do" — functional analysis unit                              │
 │   { id, type, dependencies, input, outputSchema, status, retryPolicy } │
 └──────────────────────────────┬───────────────────────────────────────┘
                                │ references
                                ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ AgentProfile                                                            │
-│   "кто умеет делать" — конфигурируемый профиль (system prompt + rules) │
+│   "who can do it" — configurable profile (system prompt + rules)       │
 │   { id, promptFile, examplesPath?, stepType, outputSchema }            │
 └──────────────────────────────┬───────────────────────────────────────┘
                                │ uses
                                ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ Provider + Model                                                        │
-│   "через что говорить с LLM" — транспорт                               │
+│   "how to talk to LLM" — transport                                     │
 │   { source: 'workspace'|'system'|'env', endpoint?, apiKey?, model? }    │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Главное:** четыре task могут иметь:
-- один и тот же `AgentProfile` + один `Provider` + одну `Model` (наш
-  Sequential сегодня)
-- один `AgentProfile`, разные `Provider` (например, characters — workspace,
+**Key point:** four tasks can have:
+- same `AgentProfile` + single `Provider` + single `Model` (our
+  Sequential today)
+- same `AgentProfile`, different `Provider` (e.g., characters — workspace,
   voices — system fallback)
-- разные `AgentProfile`, разные `Provider` и `Model` (например, scenes через
-  большую модель, voices через маленькую)
+- different `AgentProfile`, different `Provider` and `Model` (e.g., scenes via
+  large model, voices via small model)
 
-Orchestrator **не знает** про Provider/Model — он знает про Task. Resolution
-Task→AgentProfile→Provider делает один resolver.
+Orchestrator **doesn't know** about Provider/Model — it knows about Task. Resolution
+Task→AgentProfile→Provider done by single resolver.
 
 ### 4.2 AnalysisWorkflow — определение
 
@@ -349,110 +349,110 @@ interface TaskOutputSpec {
 `dependencies: [...]` указывающими на единственный предыдущий шаг. Никаких
 правок orchestrator'а — тот же код, просто `dependency-aware scheduler`.
 
-### 4.3 Минимальная архитектура для первого Parallel режима
+### 4.3 Minimal architecture for first Parallel mode
 
-Цель: распараллелить шаги `extract_characters` + `generate_voices` +
-`extract_locations` на входе `runPipeline`, сохранив Sequential fallback.
+Goal: parallelize `extract_characters` + `generate_voices` +
+`extract_locations` at `runPipeline` entry, preserving Sequential fallback.
 
-**Новые файлы:**
-- `backend/src/services/agent/analysis-workflow.js` — определение `WORKFLOW_TXT_IMPORT_V1`
+**New files:**
+- `backend/src/services/agent/analysis-workflow.js` — `WORKFLOW_TXT_IMPORT_V1` definition
 - `backend/src/services/agent/analysis-scheduler.js` — DAG planner
   (topological order → batch of parallelizable tasks)
-- `backend/src/services/agent/analysis-runner.js` — исполнитель batch'а:
-  `Promise.allSettled` для independent tasks, write через существующие
+- `backend/src/services/agent/analysis-runner.js` — batch executor:
+  `Promise.allSettled` for independent tasks, write via existing
   `createStep/completeStep/failStep`
-- `backend/src/services/agent/concurrency.js` — простой семафор (без
-  зависимостей; ~30 LOC; обёртка вокруг Promise queue)
+- `backend/src/services/agent/concurrency.js` — simple semaphore (no
+  dependencies; ~30 LOC; Promise queue wrapper)
 
-**Изменения существующего кода (минимальные):**
-- `pipeline-runner.js:runPipeline` → вынести шаги 1/1b/2 в `analysis-runner.js`,
-  передать результат в `stepCreateScenes`.
-- `agent/bootstrap.js:bootstrapWithAgentInner` — после `stepAnalyzeStructure`
-  (который остаётся sequential), передать `text` в `analysis-runner` для
-  параллельной фазы A.
+**Existing code changes (minimal):**
+- `pipeline-runner.js:runPipeline` → extract steps 1/1b/2 to `analysis-runner.js`,
+  pass result to `stepCreateScenes`.
+- `agent/bootstrap.js:bootstrapWithAgentInner` — after `stepAnalyzeStructure`
+  (remains sequential), pass `text` to `analysis-runner` for
+  parallel phase A.
 
-**Конфигурация:**
-- Флаг `TXT_IMPORT_PARALLEL_ANALYSIS_ENABLED` (env, default ON для dev /
-  OFF для production до стабилизации).
-- Static workflow definition `WORKFLOW_TXT_IMPORT_V1` — hardcoded JS-объект
-  (как `PROGRESS_STAGES` сейчас). БД-схема `agent_steps` уже подходит.
+**Configuration:**
+- Flag `TXT_IMPORT_PARALLEL_ANALYSIS_ENABLED` (env, default ON for dev /
+  OFF for production until stabilized).
+- Static workflow definition `WORKFLOW_TXT_IMPORT_V1` — hardcoded JS object
+  (like `PROGRESS_STAGES` currently). DB schema `agent_steps` already suitable.
 
-### 4.4 Расширяемая архитектура (future-state)
+### 4.4 Extensible architecture (future-state)
 
-**Когда понадобится:**
-- >5 задач в workflow
-- per-task provider/model routing (разные workspaces)
-- динамическое добавление tasks (admin UI)
+**When needed:**
+- >5 tasks in workflow
+- per-task provider/model routing (different workspaces)
+  dynamic task addition (admin UI)
 
-**Расширения:**
-- `agent_workflows` (PG) — JSONB с версионированным workflow definition
+**Extensions:**
+- `agent_workflows` (PG) — JSONB with versioned workflow definition
 - `agent_profiles` (PG) — AgentProfile storage
-- `agent_tasks` (PG, nullable FK в `agent_steps.step_type='analysis_task'`)
-- `agent_providers` (PG) — per-workspace provider routing (уже есть
+- `agent_tasks` (PG, nullable FK in `agent_steps.step_type='analysis_task'`)
+- `agent_providers` (PG) — per-workspace provider routing (already exists
   `workspace_ai_providers`)
 
-**НЕ НУЖНО в первой итерации:**
-- DB-driven workflow (hardcoded JS достаточно)
-- UI редактор workflow (не нужен — конфиг через env + файлы)
-- Runtime dispatch через dispatch-engine (для LLM-задач не нужен lease —
-  см. §5.3)
+**NOT NEEDED in first iteration:**
+- DB-driven workflow (hardcoded JS sufficient)
+- UI workflow editor (not needed — config via env + files)
+  Runtime dispatch via dispatch-engine (LLM tasks don't need lease —
+  see §5.3)
 
 ---
 
-## 5. Механизмы runtime: что переиспользовать, что делать своё
+## 5. Runtime mechanisms: what to reuse, what to build custom
 
-### 5.1 Переиспользуем **как есть**
+### 5.1 Reuse **as-is**
 
-| Механизм | Файл | Что переиспользуем |
+| Mechanism | File | What we reuse |
 |---|---|---|
 | Provider resolution | `workspace-ai-provider.js` (`resolveAIProvider`) | purpose='agent' → resolution → AsyncLocalStorage |
-| AI HTTP transport | `ai-service.callAI` | уже принимает `{ model, maxTokens, timeout, retries, provider }` |
+| AI HTTP transport | `ai-service.callAI` | already accepts `{ model, maxTokens, timeout, retries, provider }` |
 | AI retry+parse | `agent/ai-caller.js:callAI` | `STEP_RETRIES`, exponential backoff, `parseJsonResponse` |
-| Prompt loading | `agent-prompts.SYSTEM_PROMPTS`, `ai-loader.js` | Уже загружает `ai/rules/*.md` |
-| Session lifecycle | `agent-session.js` (createSession/updateSession/isSessionCancelled) | Уже работает на PG |
-| Step lifecycle | `agent-session.js` (createStep/completeStep/failStep) | Уже работает на PG, расширяем step_type whitelist |
-| Cancellation | Redis `cancelled-workers:{book}` + `agent_sessions.status` | Тот же контракт, нужно вызывать `checkCancelled` в parallel-batch |
-| Progress pub/sub | `progress-pubsub.cjs` | Расширяем payload (новый `type='analysis'`) |
-| Workspace provider encryption | `workspace-ai-provider.encryptSecret/decryptSecret` | Без изменений |
+| Prompt loading | `agent-prompts.SYSTEM_PROMPTS`, `ai-loader.js` | Already loads `ai/rules/*.md` |
+| Session lifecycle | `agent-session.js` (createSession/updateSession/isSessionCancelled) | Already works on PG |
+| Step lifecycle | `agent-session.js` (createStep/completeStep/failStep) | Already works on PG, extend step_type whitelist |
+| Cancellation | Redis `cancelled-workers:{book}` + `agent_sessions.status` | Same contract, must call `checkCancelled` in parallel-batch |
+| Progress pub/sub | `progress-pubsub.cjs` | Extend payload (new `type='analysis'`) |
+| Workspace provider encryption | `workspace-ai-provider.encryptSecret/decryptSecret` | No changes |
 
-### 5.2 Переиспользуем **принципы**, но НЕ код
+### 5.2 Reuse **principles**, but NOT code
 
-| Из `runtime/` | Принцип | Как применяем к Parallel |
+| From `runtime/` | Principle | How applied to Parallel |
 |---|---|---|
-| `circuit-breaker.js` | Stop dispatching when downstream fails | Можно обернуть AI call в breaker per provider |
-| `retry-budget-manager.js` | Глобальный лимит ретраев на book | Для LLM это менее релевантно (у нас уже per-step retry), но глобальный budget на book избежит «убегания» |
-| `dispatch-engine.js` leases | Mutual exclusion на GPU jobs | **Не применимо** — LLM-вызовы не занимают GPU leases, конкурентность регулируется семафором |
-| `reconciliation-engine.js` startup recovery | Пересоздать state на старте | Для Parallel: cleanup stale parallel tasks на startup, восстановить intermediate result из `agent_steps.result` |
+| `circuit-breaker.js` | Stop dispatching when downstream fails | Can wrap AI call in breaker per provider |
+| `retry-budget-manager.js` | Global retry limit per book | Less relevant for LLM (we already have per-step retry), but global budget prevents "runaway" |
+| `dispatch-engine.js` leases | Mutual exclusion on GPU jobs | **Not applicable** — LLM calls don't hold GPU leases, concurrency controlled by semaphore |
+| `reconciliation-engine.js` startup recovery | Recreate state on startup | For Parallel: cleanup stale parallel tasks on startup, restore intermediate result from `agent_steps.result` |
 
-### 5.3 Что **точно нужно сделать своё**
+### 5.3 What **definitely needs custom implementation**
 
-- **Concurrency control.** Нет p-limit/semaphore. ~30 LOC wrapper.
-- **Per-task dependency DAG.** Существующий `dependency-graph.js` —
-  про layer-regen (image/audio/video), не про agent tasks. Расширять его
-  смысла нет: разные domain. Делаем **отдельный** `analysis-scheduler.js`
-  с topological sort + batch grouping.
-- **Partial-failure aggregation.** Sequential режим валится на первой
-  ошибке. Parallel должен решать: какие tasks optional, какие mandatory,
-  какие fallback'ить на deterministic (как `buildFallbackScenes`).
-- **Intermediate result persistence.** Чтобы crash не терял результат
-  characters — сохраняем `agent_steps.result` сразу после каждой task
-  (через существующий `completeStep`).
+- **Concurrency control.** No p-limit/semaphore. ~30 LOC wrapper.
+- **Per-task dependency DAG.** Existing `dependency-graph.js` —
+  about layer-regen (image/audio/video), not agent tasks. Extending it
+  pointless: different domain. Build **separate** `analysis-scheduler.js`
+  with topological sort + batch grouping.
+- **Partial-failure aggregation.** Sequential mode fails on first
+  error. Parallel must decide: which tasks optional, which mandatory,
+  which fallback to deterministic (like `buildFallbackScenes`).
+- **Intermediate result persistence.** So crash doesn't lose
+  characters result — save `agent_steps.result` immediately after each task
+  (via existing `completeStep`).
 
 ---
 
 ## 6. API/Config recommendations
 
-### 6.1 Public API — НЕ менять
+### 6.1 Public API — don't change
 
-Существующие routes остаются без правок:
+Existing routes remain unchanged:
 - `POST /api/v1/book/import-txt` (RAW_IMPORTED)
 - `POST /api/v1/book/:bookId/bootstrap` (run analysis)
 - `POST /api/v1/book/:bookId/bootstrap-next-window` (continue)
 - `GET /api/v1/book/:bookId/agent-status` (poll для UI)
 
-### 6.2 SSE payload — additive расширение
+### 6.2 SSE payload — additive extension
 
-Добавляем в publishProgress новое событие:
+Add new event to publishProgress:
 ```js
 publishProgress(redis, bookId, {
   type: 'analysis',           // new
@@ -466,19 +466,19 @@ publishProgress(redis, bookId, {
 });
 ```
 
-Frontend может игнорировать это событие (back-compat) или показать новый
+Frontend can ignore this event (back-compat) or show new
 "2/4 tasks completed" indicator.
 
 ### 6.3 Config — env + hardcoded workflow
 
-- `TXT_IMPORT_PARALLEL_ANALYSIS_ENABLED` (env, bool) — kill switch для
-  всей Parallel-фичи, default ON в dev / OFF в prod до стабилизации.
+- `TXT_IMPORT_PARALLEL_ANALYSIS_ENABLED` (env, bool) — kill switch for
+  entire Parallel feature, default ON in dev / OFF in prod until stabilized.
 - `TXT_IMPORT_PARALLEL_MAX_CONCURRENCY` (env, int, default 3) — per-book
-  concurrency limit (для rate-limit handling).
+  concurrency limit (for rate-limit handling).
 - `TXT_IMPORT_PARALLEL_TASK_TIMEOUT_MS` (env, int, default 180000) —
-  per-task timeout (override 180s дефолт `ai-caller`).
-- `WORKFLOW_TXT_IMPORT` — hardcoded JS-объект (как `PROGRESS_STAGES`).
-  Никакой DB в первой итерации.
+  per-task timeout (override 180s default `ai-caller`).
+- `WORKFLOW_TXT_IMPORT` — hardcoded JS object (like `PROGRESS_STAGES`).
+  No DB in first iteration.
 
 ### 6.4 Per-task provider/model routing (future)
 
@@ -500,7 +500,7 @@ module.exports = {
 };
 ```
 
-Resolution в `agent-bootstrap.js`:
+Resolution in `agent-bootstrap.js`:
 ```js
 // parallel-future (НЕ в первой итерации)
 const profile = profiles[task.agentProfile];
@@ -514,39 +514,39 @@ const callOptions = {
 
 ---
 
-## 7. Файлы, которые нужно будет изменить / создать
+## 7. Files to change / create
 
-### 7.1 Создать (новые)
+### 7.1 Create (new)
 
-| Файл | Назначение | LOC est. |
+| File | Purpose | LOC est. |
 |---|---|---|
-| `backend/src/services/agent/concurrency.js` | Простой семафор (Promise-queue) | ~30 |
+| `backend/src/services/agent/concurrency.js` | Simple semaphore (Promise-queue) | ~30 |
 | `backend/src/services/agent/analysis-workflow.js` | Definition of `WORKFLOW_TXT_IMPORT_V1` (hardcoded DAG) | ~80 |
 | `backend/src/services/agent/analysis-scheduler.js` | Topological sort → batch grouping → plan | ~100 |
 | `backend/src/services/agent/analysis-runner.js` | Executor: per-batch `Promise.allSettled` + cancellation + write to PG | ~150 |
-| `docs/04-planning/TXT_IMPORT_PARALLEL_ANALYSIS.md` | **Этот документ** | — |
+| `docs/04-planning/TXT_IMPORT_PARALLEL_ANALYSIS.md` | **This document** | — |
 
-### 7.2 Изменить (минимально-инвазивно)
+### 7.2 Change (minimally invasive)
 
-| Файл | Изменение |
+| File | Change |
 |---|---|
-| `backend/src/services/agent/pipeline-runner.js` | Заменить sequential-блок шагов 1/1b/2 на вызов `analysis-runner.runBatch({ phase: 'extract-entities', text, existingChars })`. Возвращаемая форма должна быть совместима с существующим `stepCreateScenes` (character/locations/mentions). |
-| `backend/src/services/agent/bootstrap.js` | После `stepAnalyzeStructure` (всё ещё sequential), передать `text` в новый orchestrator. Никаких других правок. |
-| `backend/src/services/agent-prompts.js` | Добавить `STEP_RETRIES_PER_TASK` опционально (default 3). Никаких других правок. |
-| `backend/src/services/agent/ai-caller.js` | **Минимально:** добавить параметр `cancelledChecker` (async fn) в `callAI`, чтобы проверять между retry-iterations. Альтернатива: вызывающий код сам делает `checkCancelled` между task'ами. Рекомендую второе. |
-| `backend/src/storage/postgres/schema.js` | Расширить `agent_steps.step_type` CHECK constraint: добавить `analyze_scenes`, `analyze_voices` (если ещё нет). **Без миграции данных** — constraint уже поддерживает `IF NOT EXISTS`. |
-| `backend/src/config/runtime-config.js` | Новые env flags (`TXT_IMPORT_PARALLEL_*`). |
+| `backend/src/services/agent/pipeline-runner.js` | Replace sequential block of steps 1/1b/2 with `analysis-runner.runBatch({ phase: 'extract-entities', text, existingChars })` call. Return shape must be compatible with existing `stepCreateScenes` (character/locations/mentions). |
+| `backend/src/services/agent/bootstrap.js` | After `stepAnalyzeStructure` (still sequential), pass `text` to new orchestrator. No other changes. |
+| `backend/src/services/agent-prompts.js` | Add optional `STEP_RETRIES_PER_TASK` (default 3). No other changes. |
+| `backend/src/services/agent/ai-caller.js` | **Minimal:** add `cancelledChecker` parameter (async fn) to `callAI` to check between retry iterations. Alternative: calling code does `checkCancelled` between tasks. Recommend latter. |
+| `backend/src/storage/postgres/schema.js` | Extend `agent_steps.step_type` CHECK constraint: add `analyze_scenes`, `analyze_voices` (if not present). **No data migration** — constraint already supports `IF NOT EXISTS`. |
+| `backend/src/config/runtime-config.js` | New env flags (`TXT_IMPORT_PARALLEL_*`). |
 
-### 7.3 НЕ менять
+### 7.3 Don't change
 
-- `backend/src/runtime/*` — всё про GPU jobs. Не наш домен.
-- `backend/src/orchestration/orchestrator.js` и `scene-orchestrator.js` —
-  scene-level lifecycle, не agent-task lifecycle.
-- `backend/src/dependency-graph.js` — про layer-regen (image/audio/video),
-  не agent tasks.
-- Существующие шаги `pipeline-steps.js` — переиспользуем без правок.
-- Frontend — additive расширение SSE payload. Старые клиенты игнорируют
-  новые поля.
+- `backend/src/runtime/*` — all about GPU jobs. Not our domain.
+- `backend/src/orchestration/orchestrator.js` and `scene-orchestrator.js` —
+  scene-level lifecycle, not agent-task lifecycle.
+- `backend/src/dependency-graph.js` — about layer-regen (image/audio/video),
+  not agent tasks.
+- Existing `pipeline-steps.js` steps — reuse without changes.
+  Frontend — additive SSE payload extension. Old clients ignore
+  new fields.
 
 ---
 
@@ -554,42 +554,42 @@ const callOptions = {
 
 ### 8.1 Concurrency
 
-- **Rate limiting на API:** workspace provider может иметь rate-limit.
-  Semaphore `maxConcurrency=3` снижает риск, но не убирает. Нужен
-  backoff/retry (уже есть в `ai-service.callAI`). В перспективе — circuit
+- **API rate limiting:** workspace provider may have rate-limit.
+  Semaphore `maxConcurrency=3` reduces risk, but doesn't eliminate.
+  Need backoff/retry (already in `ai-service.callAI`). Future — circuit
   breaker per provider.
-- **Sequential-mode side-effects:** characters merge зависит от порядка
-  (mentions dict записи могут shadow'ить друг друга). Parallel режим
-  заменяет шаги 1/1b/2 единым batch'ом, но merge ordering внутри шагов
-  должен сохраниться (sequential внутри одной task).
+- **Sequential-mode side-effects:** characters merge depends on order
+  (mentions dict entries may shadow each other). Parallel mode
+  replaces steps 1/1b/2 with single batch, but merge ordering within steps
+  must be preserved (sequential within one task).
 
 ### 8.2 Cancellation
 
-- **Race:** task A завершилась, task B выполняется, пользователь жмёт Stop.
-  Нужно: после каждого batch completion вызвать `checkCancelled`; если
-  cancelled — дропаем pending results, помечаем session cancelled,
-  публикуем `import_complete` (cancelled).
-- **Hang в одной task:** нужен per-task `AbortController` + timeout
-  (180s default). При timeout task помечается failed, продолжаем если
-  optional; иначе весь workflow fails.
+- **Race:** task A completed, task B running, user clicks Stop.
+  Need: after each batch completion call `checkCancelled`; if
+  cancelled — drop pending results, mark session cancelled,
+  publish `import_complete` (cancelled).
+  **Hang in one task:** need per-task `AbortController` + timeout
+  (180s default). On timeout task marked failed, continue if
+  optional; otherwise entire workflow fails.
 
 ### 8.3 Partial failure
 
-- **Mandatory task fails:** весь workflow fails (как сегодня). Retry policy
-  применяется (3 attempts), потом fail.
-- **Optional task fails:** помечаем `agent_steps.status='failed'`,
-  продолжаем с пустым/частичным результатом. Помечаем в
+- **Mandatory task fails:** entire workflow fails (as today). Retry policy
+  applies (3 attempts), then fail.
+- **Optional task fails:** mark `agent_steps.status='failed'`,
+  continue with empty/partial result. Record in
   `agent_sessions.window_data.partial_failures[]`.
-- **Reconciliation:** при resume (`bootstrapNextWindow`) — восстановить
-  `agent_steps.result` последней completed task, не перезапускать.
+- **Reconciliation:** on resume (`bootstrapNextWindow`) — restore
+  `agent_steps.result` of last completed task, don't restart.
 
 ### 8.4 Provider failure
 
-- Если workspace AI down, **все** параллельные tasks упадут. Надёжное
-  решение: **provider-aware fan-out** — каждая task знает свой provider;
-  если провайдер один, failure задевает все. Это и есть желаемое поведение
-  (одна модель — единая семантика).
-- Multi-provider: future, не первая итерация.
+- If workspace AI down, **all** parallel tasks fail. Reliable
+  solution: **provider-aware fan-out** — each task knows its provider;
+  if single provider, failure affects all. This is desired behavior
+  (single model — unified semantics).
+- Multi-provider: future, not first iteration.
 
 ### 8.5 Step type whitelist migration
 
@@ -638,71 +638,71 @@ const callOptions = {
 
 ---
 
-## 9. Пошаговый план реализации (small commits)
+## 9. Step-by-step implementation plan (small commits)
 
-> Каждый коммит ≤300 LOC изменений в существующем коде + новый файл ≤200 LOC.
-> Каждый коммит — отдельный, откатываемый.
+> Each commit ≤300 LOC changes in existing code + new file ≤200 LOC.
+> Each commit — separate, rollbackable.
 
 ### Commit 1 — Foundation (this doc + base scaffolding)
-- Создать `docs/04-planning/TXT_IMPORT_PARALLEL_ANALYSIS.md` (этот документ).
-- Создать `backend/src/services/agent/concurrency.js` — простой семафор
-  (no dependencies). Тесты: ~5 unit-tests.
+- Create `docs/04-planning/TXT_IMPORT_PARALLEL_ANALYSIS.md` (this document).
+- Create `backend/src/services/agent/concurrency.js` — simple semaphore
+  (no dependencies). Tests: ~5 unit-tests.
 - **No behavior change.**
 
 ### Commit 2 — Workflow definition (no runner)
-- Создать `backend/src/services/agent/analysis-workflow.js` с
-  `WORKFLOW_TXT_IMPORT_V1`. Hardcoded JS-объект, тот же набор шагов, что
-  сейчас. Только definition, **no executor**.
-- Тесты: snapshot of `WORKFLOW_TXT_IMPORT_V1`.
+- Create `backend/src/services/agent/analysis-workflow.js` with
+  `WORKFLOW_TXT_IMPORT_V1`. Hardcoded JS object, same step set as
+  current. Definition only, **no executor**.
+  Tests: snapshot of `WORKFLOW_TXT_IMPORT_V1`.
 
 ### Commit 3 — Scheduler (DAG → batches)
-- Создать `backend/src/services/agent/analysis-scheduler.js`. Topological
-  sort + batch grouping. **НЕ вызывает** AI, только строит план.
-- Тесты: 4-5 unit-tests на разных DAG-формах (linear, diamond, fan-out).
+- Create `backend/src/services/agent/analysis-scheduler.js`. Topological
+  sort + batch grouping. **Does NOT call** AI, only builds plan.
+  Tests: 4-5 unit-tests on different DAG shapes (linear, diamond, fan-out).
 - **No behavior change.**
 
 ### Commit 4 — Runner (sequential execution via new path)
-- Создать `backend/src/services/agent/analysis-runner.js`. Executor берёт
-  план от scheduler и запускает tasks **sequentially** (maxConcurrency=1).
-  Использует существующий `ai-caller.callAI` + `agent-session.createStep/completeStep/failStep`.
-- Тесты: 4 unit-tests на mock-AI-call (success / fail / retry / cancel).
-- **No behavior change** — sequential execution = текущий pipeline.
+- Create `backend/src/services/agent/analysis-runner.js`. Executor takes
+  plan from scheduler and runs tasks **sequentially** (maxConcurrency=1).
+  Uses existing `ai-caller.callAI` + `agent-session.createStep/completeStep/failStep`.
+  Tests: 4 unit-tests on mock-AI-call (success / fail / retry / cancel).
+- **No behavior change** — sequential execution = current pipeline.
 
 ### Commit 5 — Wire in (parallel=off, flag-gated)
-- Подключить orchestrator в `pipeline-runner.js`: шаги 1/1b/2
-  заменяются вызовом `analysis-runner.runBatch(phase='extract-entities')`.
-- Флаг `TXT_IMPORT_PARALLEL_ANALYSIS_ENABLED=false` (default) → orchestrator
-  использует maxConcurrency=1 = sequential.
-- Расширить `agent_steps.step_type` whitelist.
-- Тесты: integration test TXT-import с flag=off, должен пройти ровно
-  как раньше.
+- Connect orchestrator in `pipeline-runner.js`: steps 1/1b/2
+  replaced with `analysis-runner.runBatch(phase='extract-entities')` call.
+- Flag `TXT_IMPORT_PARALLEL_ANALYSIS_ENABLED=false` (default) → orchestrator
+  uses maxConcurrency=1 = sequential.
+- Extend `agent_steps.step_type` whitelist.
+  Tests: integration test TXT-import with flag=off, must pass exactly
+  as before.
 
 ### Commit 6 — Parallel enable
-- maxConcurrency=3 по умолчанию при flag=on.
-- Тесты: integration test TXT-import с flag=on, проверка:
-  - 3 параллельных AI calls (mock delays)
-  - character/voice/location результаты идентичны sequential
-  - cancellation работает
-  - 1 task fail (optional) — workflow продолжается
+- maxConcurrency=3 default when flag=on.
+  Tests: integration test TXT-import with flag=on, verify:
+  - 3 parallel AI calls (mock delays)
+  - character/voice/location results identical to sequential
+  - cancellation works
+  - 1 task fail (optional) — workflow continues
 
 ### Commit 7 — Progress event extension
-- Добавить publishProgress с `type='analysis'` events.
-- Frontend (опционально): progress bar "2/4 tasks completed".
-- **Back-compat:** старый UI игнорирует новый тип.
+- Add publishProgress with `type='analysis'` events.
+- Frontend (optional): progress bar "2/4 tasks completed".
+- **Back-compat:** old UI ignores new type.
 
 ### Commit 8 — Recovery semantics
-- При resume (bootstrapNextWindow): если parallel tasks уже completed
-  в прошлой сессии — пропускаем, не перезапускаем.
-- reconcile: cleanup stale parallel tasks on startup.
+- On resume (bootstrapNextWindow): if parallel tasks already completed
+  in previous session — skip, don't restart.
+  reconcile: cleanup stale parallel tasks on startup.
 
 ### Commit 9 — Observability
-- Метрики: `analysis_tasks_completed_total`, `analysis_tasks_failed_total`,
+- Metrics: `analysis_tasks_completed_total`, `analysis_tasks_failed_total`,
   `analysis_batch_duration_seconds`.
-- Tests: 1 chaos test (random task fail).
+  Tests: 1 chaos test (random task fail).
 
 ### Commit 10 (future) — Per-task provider routing
-- AgentProfile config (file-based или DB), provider override per task.
-- Только после стабилизации базового Parallel.
+- AgentProfile config (file-based or DB), provider override per task.
+  Only after basic Parallel stabilized.
 
 ---
 
@@ -710,7 +710,7 @@ const callOptions = {
 
 ### 10.1 Unit tests
 
-- `concurrency.js`: семафор acquire/release, FIFO ordering, max N.
+- `concurrency.js`: semaphore acquire/release, FIFO ordering, max N.
 - `analysis-scheduler.js`: topological sort correctness; cycle detection;
   batch grouping.
 - `analysis-runner.js`: mock AI calls; success / fail / retry / cancel.
@@ -718,71 +718,71 @@ const callOptions = {
 ### 10.2 Integration tests
 
 - **Sequential back-compat:** `TXT_IMPORT_PARALLEL_ANALYSIS_ENABLED=false` →
-  бутстрап импорта produces same result как до изменений (snapshot test
-  на fixtures). Это критический backstop — если sequential mode ломается,
-  CI должен это поймать.
-- **Parallel equivalence:** с flag=on, сравнить character/locations/voices
-  extraction на тех же fixtures. Параллельный режим может давать
-  недетерминированные результаты из-за race на merge order → использовать
-  fuzzy-match на множествах, не exact-equality.
-- **Cancellation:** запустить import, на середине cancel → должен
-  остановиться, померить cancelled state в `agent_sessions`.
+  import bootstrap produces same result as before changes (snapshot test
+  on fixtures). This is critical backstop — if sequential mode breaks,
+  CI must catch it.
+- **Parallel equivalence:** with flag=on, compare character/locations/voices
+  extraction on same fixtures. Parallel mode may produce
+  non-deterministic results due to merge order race → use
+  fuzzy-match on sets, not exact-equality.
+- **Cancellation:** start import, cancel mid-way → must
+  stop, check cancelled state in `agent_sessions`.
 
 ### 10.3 Manual smoke
 
-- Реальный TXT import (RU, ~5 глав) с flag=off и flag=on — визуально
-  сравнить chapters/scenes/characters/locations.
-- Метрики wall-clock: parallel должен быть на 60-120s быстрее на 1-м окне.
+- Real TXT import (RU, ~5 chapters) with flag=off and flag=on — visually
+  compare chapters/scenes/characters/locations.
+  Wall-clock metrics: parallel should be 60-120s faster on 1st window.
 
-### 10.4 Что НЕ нужно тестировать (первая итерация)
+### 10.4 What NOT to test (first iteration)
 
-- Multi-provider routing (будущая фича).
-- Dynamic workflow definition (будет hardcoded).
-- Cross-book parallelism (всё ещё serial — `book_id → CANCELLED` tombstone).
+- Multi-provider routing (future feature).
+- Dynamic workflow definition (will be hardcoded).
+  Cross-book parallelism (still serial — `book_id → CANCELLED` tombstone).
 
 ---
 
-## 11. Что НЕ нужно делать на первом этапе
+## 11. What NOT to do in first phase
 
-> **Out of scope для commit'ов 1-9.** Явно фиксируем, чтобы не
-> «расползтись».
+> **Out of scope for commits 1-9.** Explicitly documented to prevent
+> scope creep.
 
-| Не делаем | Почему |
+| Don't do | Why |
 |---|---|
-| Multi-workspace parallel orchestration | Один book = один run. Параллелизм внутри **одного** book_id, не между book_id. |
-| Per-scene parallel units/visuals | Стабильность coverage/source_offsets. Отдельная задача, за пределами recon. |
-| DB-driven workflow definition | Hardcoded JS — достаточно. DB добавляет сложность без явной выгоды на этом этапе. |
-| Multi-provider per-task routing | У большинства users один workspace AI. Сначала Parallel-с-одним-провайдером, потом routing. |
-| UI «tasks completed» indicator | Только если пользователи попросят. Back-compat важнее красоты. |
-| Полный рефакторинг orchestrator.js / dispatch-engine.js | Не наш домен. AI-task scheduling ≠ GPU-job scheduling. |
-| Замена AsyncLocalStorage на другой context | Работает, не трогаем. |
-| Новые AI providers (multi-modal, multi-API) | Уже поддержано через workspace-ai-provider. Наш слой не зависит от конкретного provider. |
-| Dynamic step retry budget per task | Используем существующий `STEP_RETRIES=3`. |
-| Subagent self-reflection / quality loops | Это уже существует как `polish_*` шаги. Не часть Parallel-orchestrator. |
-| Замена `pipeline-steps.js` | Переиспользуем **as-is**. Только добавляем обёртку. |
-| Изменения публичного API | Никаких breaking changes в routes/SSE. |
+| Multi-workspace parallel orchestration | One book = one run. Parallelism within **single** book_id, not between book_id. |
+| Per-scene parallel units/visuals | Stability of coverage/source_offsets. Separate task, outside recon. |
+| DB-driven workflow definition | Hardcoded JS — sufficient. DB adds complexity without clear benefit at this stage. |
+| Multi-provider per-task routing | Most users have single workspace AI. First Parallel-with-single-provider, then routing. |
+| UI "tasks completed" indicator | Only if users request. Back-compat more important than aesthetics. |
+| Full refactor of orchestrator.js / dispatch-engine.js | Not our domain. AI-task scheduling ≠ GPU-job scheduling. |
+| Replace AsyncLocalStorage with other context | Works, don't touch. |
+| New AI providers (multi-modal, multi-API) | Already supported via workspace-ai-provider. Our layer doesn't depend on specific provider. |
+| Dynamic step retry budget per task | Use existing `STEP_RETRIES=3`. |
+| Subagent self-reflection / quality loops | Already exists as `polish_*` steps. Not part of Parallel-orchestrator. |
+| Replace `pipeline-steps.js` | Reuse **as-is**. Only add wrapper. |
+| Public API changes | No breaking changes in routes/SSE. |
 
 ---
 
 ## 12. Open questions
 
-1. **Tasks batching внутри окна:** может ли `stepAnalyzeStructure` идти
-   параллельно с extract-characters? Сейчас он sequential ДО runPipeline.
-   Выигрыш мал, риск есть — **оставляем sequential**.
+1. **Tasks batching within window:** can `stepAnalyzeStructure` run
+   parallel with extract-characters? Currently sequential BEFORE runPipeline.
+   Gain small, risk exists — **keep sequential**.
 
-2. **Voices / locations merge ordering:** если characters завершится ПОСЛЕ
-   voices (parallel race), нужно ли retry voices? **Нет** — voices
-   идемпотентен (override weak voice). Merge order зафиксирован в
-   `mergeCharacterLists` post-merge, а не в order of completion.
+2. **Voices / locations merge ordering:** if characters completes AFTER
+   voices (parallel race), need to retry voices? **No** — voices
+   idempotent (override weak voice). Merge order fixed in
+   `mergeCharacterLists` post-merge, not in completion order.
 
-3. **Test coverage для Parallel mode:** какой baseline использовать?
-   Рекомендую `data/seed-fixtures/` (если есть) или создать в commit 5
-   synthetic fixtures с известным ground-truth.
+3. **Test coverage for Parallel mode:** which baseline to use?
+   Recommend `data/seed-fixtures/` (if exists) or create in commit 5
+   synthetic fixtures with known ground-truth.
 
-4. **Reconciliation при Parallel partial failure:** если characters OK,
-   locations failed (optional), scenes стартует с пустым locations →
-   scenes AI должен сам извлечь environment. Текущий pipeline
-   обрабатывает это (см. `mergeCharacterLists` skipGeneric).
+4. **Reconciliation on Parallel partial failure:** if characters OK,
+   locations failed (optional), scenes starts with empty locations →
+   scenes AI must extract environment itself. Current pipeline
+   handles this (see `mergeCharacterLists` skipGeneric).
 
 ---
 
