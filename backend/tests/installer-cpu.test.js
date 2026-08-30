@@ -1541,6 +1541,183 @@ collectAsync('24. engine: adopt partial root + COMFY_PORT + worker start (end-to
 });
 
 // ==========================================================================
+// 25–27. Broken-node self-repair: a fully-present custom node whose Python
+// dependencies an earlier run left incomplete must heal on re-run even
+// though the plan step is a noop (resolver keys presence off the directory),
+// and the managed ComfyUI must be restarted so /object_info picks the node
+// classes up. Regression for "IMPORT FAILED: No module named 'soundfile'"
+// surfacing as "ComfyUI node classes — missing: Qwen3TTS…" with everything
+// reported ✓ on disk.
+// ==========================================================================
+
+collectAsync('25. engine: re-run heals a present-but-broken node (deps retry + managed ComfyUI restart)', async () => {
+    const manifestMod = require('../src/installer/install-manifest');
+    const manifests = [manifestMod.loadManifest('audio/qwen-tts')];
+    const { spawn } = require('child_process');
+    // A real, killable process stands in for the stale managed ComfyUI so the
+    // restart loop sees a live pid that SIGTERM can actually retire. Async
+    // spawn on purpose: spawnSync would BLOCK the whole test process (and the
+    // sibling CLI test's child) for the full sleep duration.
+    const stale = spawn('sleep', ['30'], { stdio: 'ignore', detached: true });
+    stale.unref();
+    assert.ok(stale.pid, 'stale stand-in process spawned');
+    const stalePid = stale.pid;
+    // wait until the pid is actually live (spawn is async)
+    for (let i = 0; i < 100; i++) {
+        try { process.kill(stalePid, 0); break; } catch (_) { await new Promise((r) => setTimeout(r, 20)); }
+    }
+
+    // The stale instance predates the repair: /object_info lacks the classes
+    // until the restart (spawnDaemon) flips this flag.
+    let restarted = false;
+    const classRegistry = {
+        Qwen3TTSVoiceDesign: {}, Qwen3TTSLoader: {}, Qwen3TTSVoiceClonePrompt: {},
+        Qwen3TTSRoleBank: {}, Qwen3TTSAdvancedDialogue: {}, Qwen3TTSScriptProcessor: {},
+        SaveAudioMP3: {},
+    };
+    const repoRootReal = path.resolve(__dirname, '..', '..');
+    const workflowContent = (f) => realFs.readFileSync(path.join(repoRootReal, `backend/ai/workflows/${f}`), 'utf8');
+    const { io, calls, fs } = createRealManifestEngineIo({
+        files: {
+            // fully-present managed install (ComfyUI + venv + node dir complete)
+            '/tmp/comfy/main.py': '# comfy fork',
+            '/tmp/comfy/requirements.txt': 'torchsde\n',
+            '/tmp/comfy/venv/bin/python': '#!/bin/sh',
+            '/tmp/comfy/custom_nodes/qwen3-tts/__init__.py': '# node',
+            '/tmp/comfy/custom_nodes/qwen3-tts/nodes.py': '# node',
+            '/tmp/comfy/custom_nodes/qwen3-tts/requirements.txt': 'soundfile\nfunasr\n',
+            '/tmp/comfy/models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-Base/model.safetensors': 'm',
+            '/tmp/comfy/models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-Base/speech_tokenizer/model.safetensors': 'm',
+            '/tmp/comfy/models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/model.safetensors': 'm',
+            '/tmp/comfy/models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/speech_tokenizer/model.safetensors': 'm',
+            '/tmp/comfy/user/default/workflows/animastor/audio/tts-qwen-narrator.json': workflowContent('tts-qwen-narrator.json'),
+            '/tmp/comfy/user/default/workflows/animastor/audio/tts-qwen-dialogue.json': workflowContent('tts-qwen-dialogue.json'),
+            // state written by the earlier run that broke the node deps
+            '/tmp/comfy/.animastor-installer/install-state.json': JSON.stringify({
+                state_version: 1, mode: 'managed', profiles: ['audio/qwen-tts'],
+                installer_options: { comfyPort: 8288, startComfyui: true, startWorker: true },
+                artifacts: {
+                    runtime: { status: 'installed' },
+                    comfyui: { status: 'installed', detail: { ref: 'c4cfee7ad16cfeb082e12f43cf4751b4a67a4e11' } },
+                    'custom-node:comfyui-qwen3-tts': { status: 'installed', detail: { reason: 'already present; python dependencies incomplete — see warnings' } },
+                    'model-repo:qwen3-tts-12hz-1.7b-voicedesign': { status: 'installed' },
+                    'model-repo:qwen3-tts-12hz-1.7b-base': { status: 'installed' },
+                    'workflow:tts-qwen-narrator': { status: 'verified' },
+                    'workflow:tts-qwen-dialogue': { status: 'verified' },
+                    'worker:audio/qwen-tts': { status: 'installed' },
+                    env: { status: 'installed' },
+                },
+            }),
+            // fake /proc entry for the stale managed instance
+            [`/proc/${stalePid}/cmdline`]: ['venv/bin/python', 'main.py', '--listen', '127.0.0.1', '--port', '8288', '--cpu'].join('\0'),
+        },
+        httpResults: {
+            'http://127.0.0.1:8288/system_stats': { status: 200, json: () => ({ system: {} }) },
+            // function handlers return the FETCHED shape: json is the object
+            'http://127.0.0.1:8288/object_info': () => ({ status: 200, json: restarted ? { ...classRegistry } : { SaveAudioMP3: {} } }),
+        },
+    });
+    // /proc cwd resolution — memory fs has no symlinks
+    io.fs.readlinkSync = (p) => `/tmp/comfy`;
+    io.spawnDaemon = (cmd, args, opts) => {
+        calls.spawn.push({ cmd, args, opts });
+        if (args[0] === 'main.py') restarted = true;
+        return restarted && args[0] === 'main.py' ? 9001 : 555;
+    };
+
+    const log = createMockLogger();
+    const result = await runInstallation({
+        manifests, mode: 'managed', io,
+        roots: {
+            comfyuiRoot: '/tmp/comfy', workerDir: '/tmp/animastor/worker',
+            statePath: '/tmp/comfy/.animastor-installer/install-state.json',
+            repoRoot: '/tmp/repo', hubUrl: 'https://animastor.in/gpu',
+        },
+        decisions: {
+            comfyui_update: 'yes', install_custom_nodes: true, install_models: true,
+            workflows: 'all', worker_setup: true, worker_key_provided: true,
+            accept_reference_runtime: true,
+        },
+        secretProvider: async () => 'wrk.repair-test-token',
+        logger: log, crypto: require('crypto'),
+        options: { comfyPort: 8288, startWorker: true, verifyTimeoutMs: 300 },
+    });
+
+    // 1) the deps retry ran even though the plan step was a noop
+    assert.ok(log.lines.some((l) => l.includes('STEP: install custom nodes')), `repair step ran: ${log.lines.join('\n')}`);
+    const pipRetry = calls.exec.find((c) => c.cmd === '/tmp/comfy/venv/bin/python'
+        && c.args.join(' ').includes('-r /tmp/comfy/custom_nodes/qwen3-tts/requirements.txt'));
+    assert.ok(pipRetry, 'pip retried for the node requirements');
+
+    // 2) the managed ComfyUI was restarted so the node registry refreshes
+    assert.ok(log.lines.some((l) => l.includes('STEP: restart ComfyUI')), `restart step ran: ${log.lines.join('\n')}`);
+    assert.ok(restarted, 'ComfyUI respawned');
+    assert.ok(calls.spawn.some((s) => s.args[0] === 'main.py' && s.args.includes('--cpu') && s.args.includes('8288')), 'restarted with --cpu on the managed port');
+    let st = JSON.parse(fs.readFileSync('/tmp/comfy/.animastor-installer/install-state.json', 'utf8'));
+    assert.ok(st.comfyui_runtime && st.comfyui_runtime.port === 8288, `runtime recorded: ${JSON.stringify(st.comfyui_runtime)}`);
+
+    // 3) the node artifact healed (stale reason cleared)
+    st = JSON.parse(fs.readFileSync('/tmp/comfy/.animastor-installer/install-state.json', 'utf8'));
+    const nodeArtifact = st.artifacts['custom-node:comfyui-qwen3-tts'];
+    assert.ok(nodeArtifact.status === 'installed' && !nodeArtifact.detail.reason, `node healed: ${JSON.stringify(nodeArtifact)}`);
+
+    // 4) verification now sees the node classes — no stale-instance FAIL
+    const text = result.verification && result.verification.text || '';
+    assert.ok(!text.includes('missing: Qwen3TTS'), `no missing node classes in verification:\n${text}`);
+    assert.ok(text.includes('ComfyUI node classes') === false, 'no node-class failure line');
+    assert.ok(!['failed', 'blocked'].includes(result.status), `status: ${result.status}`);
+    try { process.kill(stalePid, 'SIGKILL'); } catch (_) { /* already retired */ }
+});
+
+collectAsync('26. comfyui: findManagedComfyUIPids filters by main.py, port, and cwd (root ownership)', async () => {
+    const { spawnSync } = require('child_process');
+    const comfyMod = require('../src/installer/engine/comfyui');
+    const { io } = createMockIo({
+        files: {
+            '/proc/111/cmdline': ['python', 'main.py', '--listen', '127.0.0.1', '--port', '8288', '--cpu'].join('\0'),
+            '/proc/222/cmdline': ['python', 'main.py', '--listen', '127.0.0.1', '--port', '8188'].join('\0'),
+            '/proc/333/cmdline': ['python', 'main.py', '--listen', '127.0.0.1', '--port', '8288'].join('\0'),
+            '/proc/444/cmdline': ['node', 'worker.cjs'].join('\0'),
+        },
+    });
+    io.fs.readlinkSync = (p) => (p.endsWith('/333/cwd') ? '/elsewhere' : '/tmp/comfy');
+    const pids = comfyMod.findManagedComfyUIPids(io, { root: '/tmp/comfy', port: 8288 });
+    assert.deepStrictEqual(pids, [111], `only our root+port main.py: ${JSON.stringify(pids)}`);
+    const allPorts = comfyMod.findManagedComfyUIPids(io, { root: '/tmp/comfy', port: null });
+    assert.deepStrictEqual(allPorts.sort(), [111, 222], `no port filter: ${JSON.stringify(allPorts)}`);
+    assert.deepStrictEqual(comfyMod.findManagedComfyUIPids(io, { root: '/nonexistent', port: 8288 }), [], 'foreign root excluded');
+});
+
+collectAsync('27. verification report: nodes on disk + classes missing → precise stale-instance detail', async () => {
+    const m = minimalManifest('audio/qwen-tts', {
+        dependencies: [{
+            id: 'custom-node:x', kind: 'custom_node', name: 'X', requirement: 'required',
+            install: { directory: 'x', source: { kind: 'github', repository: 'https://example.com/x.git' } },
+            provides_classes: ['XClass'],
+        }],
+    });
+    const env = resolver.createEmptyEnvironment('/tmp/comfy');
+    env.device = 'cpu';
+    env.custom_nodes = [{ directory: 'x', is_git: true }];
+    const report = resolver.resolveInstallation({ manifests: [m], environment: env, mode: 'existing' });
+    const live = {
+        comfyui: { running: true, api_reachable: true, missing_node_classes: ['XClass'] },
+    };
+    const ver = buildVerificationReport({ report, live });
+    const line = ver.lines.find((l) => l.includes('ComfyUI node classes'));
+    assert.ok(line && line.startsWith('\u2717'), `fail line present: ${JSON.stringify(ver.lines)}`);
+    assert.ok(line.includes('node files are present'), `stale-instance hint: ${line}`);
+    assert.ok(line.includes('restart ComfyUI'), `remediation: ${line}`);
+
+    // control: with the node actually missing, no stale-instance hint
+    env.custom_nodes = [];
+    const report2 = resolver.resolveInstallation({ manifests: [m], environment: env, mode: 'existing' });
+    const ver2 = buildVerificationReport({ report: report2, live });
+    const line2 = ver2.lines.find((l) => l.includes('ComfyUI node classes'));
+    assert.ok(line2 && !line2.includes('node files are present'), `no hint when node absent: ${line2}`);
+});
+
+// ==========================================================================
 
 Promise.all(testPromises).then(() => {
     console.log(`\nCPU installer tests: ${passed} passed, ${failed} failed`);

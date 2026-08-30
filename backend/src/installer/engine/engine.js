@@ -557,7 +557,18 @@ async function runInstallation(args) {
 
         // 4.3 Custom nodes --------------------------------------------------------
         const nodesStep = stepById(plan, 'custom-nodes');
-        if (!runtimeFatal && nodesStep && nodesStep.action && nodesStep.decision === 'yes') {
+        // Nodes an earlier run left with "python dependencies incomplete" get
+        // an idempotent pip retry. This MUST also run when the plan step is a
+        // noop: the resolver keys node presence off the directory, so a
+        // present-but-broken node produces no install action and without this
+        // pass the broken state would never heal (ComfyUI logs IMPORT FAILED
+        // and /object_info lacks the node classes).
+        const retryDeps = Object.keys(st.artifacts || {}).filter((id) => {
+            const a = st.artifacts[id];
+            return !!(a && a.detail && /python dependencies incomplete/.test(a.detail.reason || ''));
+        });
+        const nodesApproved = !runtimeFatal && nodesStep && nodesStep.action && nodesStep.decision === 'yes';
+        if (!runtimeFatal && (nodesApproved || retryDeps.length > 0)) {
             const python = path.join(comfyuiRoot, 'venv', 'bin', 'python');
             // Check for C build tools (gcc, python3-dev, libsndfile1-dev) that
             // packages like funasr/soundfile need. Missing tools produce opaque
@@ -574,17 +585,18 @@ async function runInstallation(args) {
                     command: buildCheck.remediation.command,
                 };
             }
-            // Nodes an earlier run left with "python dependencies incomplete"
-            // get an idempotent pip retry — the resolver keys node presence off
-            // the directory, so without this the broken state would never heal.
-            const retryDeps = (nodesStep.missing || []).map((x) => x.id)
-                .filter((id) => {
-                    const a = st.artifacts[id];
-                    return !!(a && a.detail && /python dependencies incomplete/.test(a.detail.reason || ''));
-                });
+            const approvedIds = ((nodesStep && nodesStep.missing) || []).map((x) => x.id);
+            const repairOnlyIds = retryDeps.filter((id) => !approvedIds.includes(id));
+            const effectiveStep = nodesApproved
+                ? { ...nodesStep, missing: [...(nodesStep.missing || []), ...repairOnlyIds.map((id) => ({ id }))] }
+                : {
+                    ...(nodesStep || { id: 'custom-nodes', title: 'Custom nodes' }),
+                    missing: retryDeps.map((id) => ({ id })),
+                    review: [],
+                };
             const nodeTorchSpec = pickTorchSpec(manifests, decisions, result.warnings, device);
             const r = await log.step('install custom nodes', async () => nodes.installCustomNodes(io, {
-                root: comfyuiRoot, manifests, planStep: nodesStep,
+                root: comfyuiRoot, manifests, planStep: effectiveStep,
                 python: io.fs.existsSync(python) ? python : null,
                 torchSpec: nodeTorchSpec ? nodeTorchSpec.spec : null,
                 retryDeps, log,
@@ -598,6 +610,31 @@ async function runInstallation(args) {
                 state.setArtifact(st, item.id, item.status === 'installed' ? 'installed' : item.status === 'failed' ? 'failed' : 'missing', { reason: item.reason || null });
             }
             save();
+            // ComfyUI imports custom nodes ONLY at startup. When this run
+            // actually changed a node (fresh clone or repaired deps — both
+            // report no reason), restart the managed instance so the live
+            // /object_info registry reflects the files on disk; otherwise
+            // verification below would check a stale process and fail.
+            const nodesChanged = result.results.custom_nodes.some((x) => x.status === 'installed' && !x.reason);
+            if (nodesChanged && options.startComfyui !== false) {
+                const port = options.comfyPort || 8188;
+                const rr = await log.step('restart ComfyUI', async () => comfyui.restartManagedComfyUI(io, {
+                    root: comfyuiRoot, port, device, log,
+                    verifyTimeoutMs: options.verifyTimeoutMs || 120000,
+                    pollIntervalMs: options.pollIntervalMs || 2000,
+                }));
+                const res = rr.ok ? rr.value : null;
+                if (res && res.restarted && res.up) {
+                    st.comfyui_runtime = { port, pid: res.pid, started_at: io.now() };
+                    log.info('ComfyUI restarted — custom node registry refreshed');
+                    save();
+                } else if (res && res.restarted) {
+                    log.warn(`ComfyUI restart did not come up cleanly: ${res.reason}`);
+                } else {
+                    const why = res ? res.reason : String(rr.error && rr.error.message);
+                    log.warn(`custom nodes changed but the managed ComfyUI was not restarted (${why}) — restart it manually so the new nodes are imported`);
+                }
+            }
         }
 
         // 4.4 Models ---------------------------------------------------------------

@@ -362,6 +362,69 @@ async function systemStats(io, baseUrl) {
     return null;
 }
 
+/**
+ * PIDs of ComfyUI processes running from `root` (cwd check via /proc), by
+ * default on `port`. The cwd check means the installer only ever touches an
+ * instance it manages — a foreign ComfyUI (different root) is never signaled.
+ */
+function findManagedComfyUIPids(io, { root, port = null }) {
+    const out = [];
+    let dirs = [];
+    try { dirs = io.fs.readdirSync('/proc').filter((n) => /^\d+$/.test(n)); } catch (_) { return out; }
+    for (const dir of dirs) {
+        const pid = Number(dir);
+        if (!Number.isFinite(pid) || pid === process.pid) continue;
+        let parts;
+        try {
+            parts = io.fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
+        } catch (_) { continue; }
+        if (!parts.some((a) => a === 'main.py' || a.endsWith('/main.py'))) continue;
+        if (port != null) {
+            const portIdx = parts.indexOf('--port');
+            const procPort = portIdx !== -1 ? Number(parts[portIdx + 1]) : 8188;
+            if (procPort !== Number(port)) continue;
+        }
+        try {
+            if (io.fs.readlinkSync(`/proc/${pid}/cwd`) !== root) continue;
+        } catch (_) { continue; } // foreign process or already gone
+        out.push(pid);
+    }
+    return out;
+}
+
+/**
+ * Restart the managed ComfyUI instance: stop the processes running from
+ * `root`, start a fresh one, and wait for the API. Used after custom nodes
+ * changed — ComfyUI imports custom nodes ONLY at startup, so a node
+ * installed or repaired while it runs never appears in /object_info.
+ */
+async function restartManagedComfyUI(io, { root, port, device = null, log = null, verifyTimeoutMs = 120000, pollIntervalMs = 2000 }) {
+    const pids = findManagedComfyUIPids(io, { root, port });
+    if (pids.length === 0) {
+        return { restarted: false, reason: 'no running ComfyUI process found for this installation root' };
+    }
+    const doKill = (pid, signal) => {
+        if (typeof io.kill === 'function') io.kill(pid, signal);
+        else process.kill(pid, signal);
+    };
+    for (const pid of pids) {
+        if (log) log.info(`stopping ComfyUI (pid ${pid}) so the new custom nodes are imported on startup`);
+        try { doKill(pid, 'SIGTERM'); } catch (_) { /* already gone */ }
+    }
+    const alive = () => pids.filter((pid) => { try { process.kill(pid, 0); return true; } catch (_) { return false; } });
+    const deadline = io.now() + 15000;
+    while (alive().length > 0 && io.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 300));
+    }
+    for (const pid of alive()) {
+        try { doKill(pid, 'SIGKILL'); } catch (_) { /* gone */ }
+    }
+    const { pid } = startComfyUI(io, { root, port, device });
+    const up = await waitForApi(io, `http://127.0.0.1:${port}`, { timeoutMs: verifyTimeoutMs, intervalMs: pollIntervalMs });
+    if (!up.ok) return { restarted: true, pid, up: false, reason: up.reason };
+    return { restarted: true, pid, up: true };
+}
+
 /** Set of available node class_type names (for workflow validation). */
 async function objectInfoClasses(io, baseUrl) {
     try {
@@ -421,5 +484,7 @@ module.exports = {
     waitForApi,
     systemStats,
     objectInfoClasses,
+    findManagedComfyUIPids,
+    restartManagedComfyUI,
     validateWorkflowStatic,
 };

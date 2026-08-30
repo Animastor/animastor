@@ -41,6 +41,7 @@ function createRealIo() {
                 return { size: s.size, isFile: s.isFile(), isDirectory: s.isDirectory(), uid: s.uid, gid: s.gid };
             },
             readdirSync: (p) => fs.readdirSync(p),
+            readlinkSync: (p) => fs.readlinkSync(p),
         },
         /** Synchronous command execution (git, pip, npm, nvidia-smi…). */
         exec(command, args = [], opts = {}) {
@@ -72,6 +73,10 @@ function createRealIo() {
             });
             child.unref();
             return child.pid;
+        },
+        /** Signal a process by pid (used to restart the managed ComfyUI). */
+        kill(pid, signal = 'SIGTERM') {
+            process.kill(pid, signal);
         },
         /** Global fetch (Node 20+). */
         fetch: (url, opts) => fetch(url, opts),
@@ -325,6 +330,7 @@ function createDryRunIo(io) {
         },
         exec: guard('exec'),
         spawnDaemon: guard('spawnDaemon'),
+        kill: guard('kill'),
         fetch: guard('fetch'),
         http: {
             download: guard('http.download'),

@@ -114,7 +114,16 @@ function buildVerificationReport({ report, live = {} }) {
         push(tri(c.running), 'ComfyUI running');
         push(tri(c.api_reachable), 'ComfyUI API');
         if (Array.isArray(c.missing_node_classes) && c.missing_node_classes.length > 0) {
-            push(false, 'ComfyUI node classes', `missing: ${c.missing_node_classes.join(', ')}`);
+            // When the providing custom node files ARE on disk (resolver says
+            // installed) but the live registry lacks the classes, the running
+            // instance is stale or the node import failed — say so precisely
+            // instead of implying the node is absent.
+            const nodeEntriesAll = byKind('custom_node');
+            const presentButUnregistered = nodeEntriesAll.length > 0
+                && nodeEntriesAll.every((e) => e.status === 'installed');
+            push(false, 'ComfyUI node classes', `missing: ${c.missing_node_classes.join(', ')}${presentButUnregistered
+                ? ' — the node files are present, but the running ComfyUI did not register them (import failed — see <ComfyUI>/comfyui-installer.log — or the instance predates the install); restart ComfyUI and re-run verify'
+                : ''}`);
         }
     } else {
         push(null, 'ComfyUI API', 'not checked (start ComfyUI and re-run verification)');
