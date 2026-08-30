@@ -56,6 +56,7 @@
 | [`WORKFLOW_ROADMAP.md`](04-planning/WORKFLOW_ROADMAP.md) | Roadmap Workflow Manager: стадии 1-5 (бэкенд, фронтенд, параметры, dev mode, AI) |
 | [`GOLDEN_BOOK_EVOLUTION.md`](04-planning/GOLDEN_BOOK_EVOLUTION.md) | **Концепция «Эволюционное пахтание»:** Raw/Golden Books, Quality Delta, эволюционный цикл + честная критика (видение на будущее) |
 | [`NEAR_HORIZONS_GAP_ANALYSIS.md`](04-planning/NEAR_HORIZONS_GAP_ANALYSIS.md) | **НОВЫЙ.** Gap-анализ видения «Близкие горизонты» vs код: что уже реализовано (Cloud + workers), что частично, что нет |
+| [`INSTALLER_ARCHITECTURE.md`](04-planning/INSTALLER_ARCHITECTURE.md) | **НОВЫЙ.** Canonical архитектура Animastor Installer: компоненты, lifecycle, инварианты, тесты как контракты |
 
 ---
 
@@ -175,6 +176,7 @@ docs/
 │   ├── MIGRATION_PLAN.md
 │   ├── ROADMAP_6M.md
 │   ├── WORKFLOW_ROADMAP.md
+│   ├── INSTALLER_ARCHITECTURE.md       ← canonical архитектура Installer
 │   └── GOLDEN_BOOK_EVOLUTION.md        ← концепция «Эволюционное пахтание» (видение)
 │
 ├── 05-frontend/                       ← фронтенд
