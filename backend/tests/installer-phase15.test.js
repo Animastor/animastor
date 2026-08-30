@@ -127,36 +127,41 @@ describe('Phase 1.5 — installer scenarios', () => {
     // ── 1–3: clean machine per profile ────────────────────────────────────
 
     describe('scenario 1: clean machine + Image', () => {
-        it('plans runtime, node, models, baseline workflow and worker installs', () => {
+        it('plans runtime, node, models and worker installs; the optional workflow is only offered, never required', () => {
             const r = resolver.resolveInstallation({ manifests: [IMAGE()], environment: resolver.createEmptyEnvironment(), mode: 'managed' });
-            expect(r.summary.missing_required).to.equal(11);
+            expect(r.summary.missing_required).to.equal(10); // profile workflows are OPTIONAL — never counted as missing required
             expect(entry(r, 'workflow:img-qwen-image').status).to.equal('missing');
+            expect(entry(r, 'workflow:img-qwen-image').requirement).to.equal('optional');
             expect(entry(r, 'workflow:img-qwen-image').expected.path)
                 .to.equal('user/default/workflows/animastor/image/img-qwen-image.json');
             expect(entry(r, 'worker:image/qwen-image').status).to.equal('missing');
             const plan = planBuilder.buildInstallPlan({ report: r, manifests: [IMAGE()] });
             expect(plan.plan_text).to.match(/Missing:/);
-            expect(plan.plan_text).to.match(/Qwen Image \(baseline workflow\)/);
+            // the optional workflow is rendered neutrally, never as a ✗ failure
+            expect(plan.plan_text).to.match(/Optional \(not installed — NOT required\):/);
+            expect(plan.plan_text).to.match(/Qwen Image \(optional profile workflow\)/);
+            expect(plan.plan_text).to.not.match(/\u2717 .*optional profile workflow/);
             expect(plan.plan_text).to.match(/Continue\?/);
             assertNeverDestructive(r);
         });
     });
 
     describe('scenario 2: clean machine + Video', () => {
-        it('plans all four LTX baseline workflows among required installs', () => {
+        it('offers all four LTX optional workflows; only runtime/nodes/models/worker are required installs', () => {
             const r = resolver.resolveInstallation({ manifests: [VIDEO()], environment: resolver.createEmptyEnvironment(), mode: 'managed' });
-            expect(r.summary.missing_required).to.equal(19);
+            expect(r.summary.missing_required).to.equal(15); // 4 optional workflows are NOT counted
             const wfIds = r.entries.filter((e) => e.kind === 'workflow').map((e) => e.id).sort();
             expect(wfIds).to.deep.equal(['workflow:video-ltx-1p', 'workflow:video-ltx-2p', 'workflow:video-ltx-3p', 'workflow:video-ltx-4p']);
+            for (const id of wfIds) expect(entry(r, id).requirement).to.equal('optional');
             expect(r.summary.by_kind.worker).to.equal(1);
             assertNeverDestructive(r);
         });
     });
 
     describe('scenario 3: clean machine + Audio', () => {
-        it('plans narrator + dialogue baseline workflows and the audio worker', () => {
+        it('offers narrator + dialogue optional workflows and plans the audio worker', () => {
             const r = resolver.resolveInstallation({ manifests: [AUDIO()], environment: resolver.createEmptyEnvironment(), mode: 'managed' });
-            expect(r.summary.missing_required).to.equal(10);
+            expect(r.summary.missing_required).to.equal(8); // 2 optional workflows are NOT counted
             expect(entry(r, 'workflow:tts-qwen-narrator').action).to.equal('install');
             expect(entry(r, 'workflow:tts-qwen-dialogue').action).to.equal('install');
             expect(entry(r, 'worker:audio/qwen-tts').status).to.equal('missing');
@@ -258,16 +263,18 @@ describe('Phase 1.5 — installer scenarios', () => {
     });
 
     describe('scenario 9: missing workflow', () => {
-        it('flags the missing baseline workflow and offers to download it', () => {
+        it('flags the missing optional workflow, offers to download it, but never counts it as required', () => {
             const env = imageExistingEnv();
             env.workflows = [];
             const m = IMAGE();
             const r = resolver.resolveInstallation({ manifests: [m], environment: env, mode: 'existing' });
             const wf = entry(r, 'workflow:img-qwen-image');
             expect(wf.status).to.equal('missing');
-            expect(wf.action).to.equal('install');
+            expect(wf.action).to.equal('install'); // an OFFER — the user decides
+            expect(wf.requirement).to.equal('optional');
             expect(wf.notes.join(' ')).to.match(/never touches existing user workflows/);
-            expect(r.summary.missing_required).to.equal(1);
+            expect(r.summary.missing_required).to.equal(0); // optional — NOT a missing required component
+            expect(r.summary.blocking).to.equal(0); // the profile stays fully usable for API-based generation
 
             const plans = workflows.planWorkflowDownloads(m, env, 'all');
             expect(plans).to.have.length(1);
@@ -280,6 +287,26 @@ describe('Phase 1.5 — installer scenarios', () => {
             expect(step.action.op).to.equal('download_workflows');
             expect(step.action.never_overwrites).to.be.true;
             assertNeverDestructive(r);
+        });
+
+        it('declining the optional workflows keeps the plan complete and unblocked (installation stays successful)', () => {
+            const env = imageExistingEnv();
+            env.workflows = [];
+            const m = IMAGE();
+            const r = resolver.resolveInstallation({ manifests: [m], environment: env, mode: 'existing' });
+            const plan = planBuilder.buildInstallPlan({ report: r, manifests: [m], decisions: { workflows: 'none' } });
+            const step = plan.steps.find((s) => s.id === 'workflows');
+            expect(step.decision).to.equal('none');
+            expect(step.skipped_by_user).to.be.true;
+            expect(step.action).to.be.undefined;
+            expect(step.result).to.match(/installation stays complete/);
+            expect(plan.blocked).to.be.an('array').that.is.empty;
+            expect(plan.awaiting_decisions).to.be.an('array').that.is.empty;
+            expect(plan.complete).to.be.true;
+            expect(plan.safe_to_proceed).to.be.true;
+            // and the rendered plan never frames the skipped workflows as broken
+            expect(plan.plan_text).to.not.match(/\u2717 Qwen Image/);
+            expect(plan.plan_text).to.not.match(/\u2717 .*optional profile workflow/);
         });
 
         it('user may select which baselines to download (video 1P+3P only)', () => {
@@ -355,11 +382,15 @@ describe('Phase 1.5 — installer scenarios', () => {
 
             const env = imageExistingEnv();
             env.custom_nodes.push({ directory: 'qwen3-tts', commit: '2ee1131' });
+            // model_repo completeness: every expected file of each audio repo
+            const audio = AUDIO();
+            const repoFiles = (depId) => {
+                const dep = audio.dependencies.find((d) => d.id === depId);
+                return (dep.expected_files || []).map((f) => ({ path: `${dep.target_dir}/${f}`, size_bytes: 1 }));
+            };
             env.models.push(
-                { path: 'models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/model.safetensors', size_bytes: 3833258312 },
-                { path: 'models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/speech_tokenizer/model.safetensors', size_bytes: 682297917 },
-                { path: 'models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-Base/model.safetensors', size_bytes: 3854733148 },
-                { path: 'models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-Base/speech_tokenizer/model.safetensors', size_bytes: 682297917 }
+                ...repoFiles('model-repo:qwen3-tts-12hz-1.7b-voicedesign'),
+                ...repoFiles('model-repo:qwen3-tts-12hz-1.7b-base'),
             );
             env.workflows.push(
                 { path: 'user/default/workflows/animastor/audio/tts-qwen-narrator.json', sha256: '87180aee01288be6e23240b2d873ce2d451f63cf404dec331a3b221bb9f8b8c1' },
@@ -604,9 +635,12 @@ describe('Phase 1.5 — installer scenarios', () => {
             expect(ver.fails).to.equal(0);
             expect(ver.text).to.match(/INSTALLATION COMPLETE WITH WARNINGS/);
             expect(ver.text).to.match(/! VRAM — minimum unknown/);
-            for (const label of ['GPU', 'ComfyUI', 'Runtime', 'Custom Nodes', 'Models', 'Workflows', 'Worker', 'GPU Hub registration']) {
+            for (const label of ['GPU', 'ComfyUI', 'Runtime', 'Custom Nodes', 'Models', 'Worker', 'GPU Hub registration']) {
                 expect(ver.text).to.match(new RegExp(`\u2713 ${label}`));
             }
+            // optional workflows are informational, never scored
+            expect(ver.text).to.match(/\[i\] Profile workflows — 1 installed/);
+            expect(ver.text).to.match(/\[i\] Profile workflows — not required for API-based generation/);
         });
 
         it('missing model and unconfigured worker → precise FAIL lines', () => {
@@ -637,6 +671,55 @@ describe('Phase 1.5 — installer scenarios', () => {
             expect(ver.fails).to.equal(0); // customized baseline is allowed — not a failure
             expect(ver.text).to.match(/INSTALLATION COMPLETE/);
             expect(ver.text).to.match(/1 customized by user \(allowed\)/);
+        });
+
+        it('profile workflows not installed (user declined) → neutral info, NO warning and NO failure', () => {
+            const env = imageExistingEnv();
+            env.workflows = [];
+            const r = resolver.resolveInstallation({ manifests: [IMAGE()], environment: env, mode: 'existing' });
+            const ver = verification.buildVerificationReport({
+                report: r,
+                live: {
+                    comfyui: { running: true, api_reachable: true },
+                    worker: { process_alive: true, registered: true, health: true },
+                    hub: { connection: true, registration: true },
+                },
+            });
+            const verWithWorkflows = verification.buildVerificationReport({
+                report: resolver.resolveInstallation({ manifests: [IMAGE()], environment: imageExistingEnv(), mode: 'existing' }),
+                live: {
+                    comfyui: { running: true, api_reachable: true },
+                    workflow: { accepted: true },
+                    worker: { process_alive: true, registered: true, health: true },
+                    hub: { connection: true, registration: true },
+                },
+            });
+            // identical severity to a system where workflows ARE installed —
+            // their absence neither fails nor warns the verdict
+            expect(ver.fails).to.equal(verWithWorkflows.fails);
+            expect(ver.warns).to.equal(verWithWorkflows.warns);
+            expect(ver.status).to.equal(verWithWorkflows.status);
+            expect(ver.text).to.match(/\[i\] Profile workflows — 1 not installed — optional/);
+            expect(ver.text).to.match(/not required for API-based generation/);
+            expect(ver.text).to.not.match(/missing baselines/);
+            expect(r.summary.missing_required).to.equal(0);
+        });
+
+        it('broken installed workflow copy is an informational note — never a runtime failure of the installation', () => {
+            const env = imageExistingEnv();
+            const r = resolver.resolveInstallation({ manifests: [IMAGE()], environment: env, mode: 'existing' });
+            const ver = verification.buildVerificationReport({
+                report: r,
+                live: {
+                    comfyui: { running: true, api_reachable: true },
+                    workflow: { accepted: false, problems: ['img-qwen-image.json: unexpected token'] },
+                    worker: { process_alive: true, registered: true, health: true },
+                    hub: { connection: true, registration: true },
+                },
+            });
+            expect(ver.fails).to.equal(0); // optional local copy — cannot fail the installation
+            expect(ver.text).to.match(/\[i\] Workflow accepted by ComfyUI — installed workflow copies have problems/);
+            expect(ver.text).to.match(/generation via the API is unaffected|optional local copies/);
         });
     });
 

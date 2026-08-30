@@ -274,14 +274,14 @@
   "workflows": {
     "policy": "editable-baseline",
     "baseline_dir": "user/default/workflows/animastor",
-    "note": "Baseline workflows are first-class install artifacts (Phase 1.5). They are editable starting points, NOT immutable configuration: the installer downloads them once, never modifies them afterwards, and never overwrites a user-customized copy. In production the workflow JSON is delivered with each task via GPU Hub (task.params); installed copies serve the user's local ComfyUI (open/edit/debug) and offline use. A fresh official copy can always be downloaded separately under a distinct name without touching the user's version.",
+    "note": "OPTIONAL profile workflows (Phase 1.5). They are demo/test copies of the profile's production workflows, NOT a runtime requirement: Animastor sends workflow JSON with each task via the API/GPU Hub (task.params), so generation works without any locally installed copies. Locally installed copies are useful to test the installed ComfyUI in its Web UI (nodes/models present, workflow opens) and as editable starting points for the user's own workflows. They are editable starting points, NOT immutable configuration: the installer downloads them once, never modifies them afterwards, and never overwrites a user-customized copy. A fresh official copy can always be downloaded separately under a distinct name without touching the user's version.",
     "artifacts": [
       {
         "id": "workflow:tts-qwen-narrator",
         "name": "Qwen TTS narrator",
         "filename": "tts-qwen-narrator.json",
-        "requirement": "required",
-        "basis": "required",
+        "requirement": "optional",
+        "basis": "optional",
         "editable": true,
         "target_dir": "user/default/workflows/animastor/audio",
         "baseline_sha256": "87180aee01288be6e23240b2d873ce2d451f63cf404dec331a3b221bb9f8b8c1",
@@ -305,8 +305,8 @@
         "id": "workflow:tts-qwen-dialogue",
         "name": "Qwen TTS dialogue",
         "filename": "tts-qwen-dialogue.json",
-        "requirement": "required",
-        "basis": "required",
+        "requirement": "optional",
+        "basis": "optional",
         "editable": true,
         "target_dir": "user/default/workflows/animastor/audio",
         "baseline_sha256": "7dcdc6997d36aaeb1a54e1578c69f0c534be29698c7a7b48813f637c740e69db",

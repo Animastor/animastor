@@ -238,7 +238,7 @@ t('C8: REGRESSION interactive CPU install (audio/qwen-tts, managed) rebuilds the
         [/Install this reference ComfyUI\? \[Yes\/No\]/, 'yes'], // D1 consent
         [/component\(s\) missing\. Install\?[\s\S]*?\[Yes\/No\]/, 'yes'], // custom nodes
         [/component\(s\) missing\. Install\?[\s\S]*?\[Yes\/No\]/, 'yes'], // models
-        [/Which baseline workflows to download\?[\s\S]*?\[Yes\/No\]/, 'no'],
+        [/Install optional profile workflows\?[\s\S]*?\[Yes\/No\]/, 'no'],
         [/Worker setup:[\s\S]*?\[Yes\/No\]/, 'yes'],
         [/Enter ANIMASTOR_WORKER_TOKEN \(hidden input\): /, TOKEN],
     ];

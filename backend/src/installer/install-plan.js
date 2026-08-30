@@ -12,6 +12,10 @@
  *   5  resolve-dependencies 11  worker-key (secret prompt, never logged)
  *   6  comfyui-update       12  verify
  *
+ * Profile workflows (step 9) are OPTIONAL demo/test artifacts: declining
+ * them never blocks the plan and never makes the installation incomplete —
+ * Animastor sends workflow JSON with each task via the ComfyUI API.
+ *
  * The module is PURE: it builds the plan data structure and renders the
  * human-readable plan text. It performs no I/O and no mutation. Steps that
  * could disrupt the user's environment are gated:
@@ -67,7 +71,7 @@ function entryLabel(e) {
     if (!e) return '?';
     switch (e.kind) {
         case 'runtime': return RUNTIME_LABELS[e.component] || e.component;
-        case 'workflow': return `${e.name || e.id} (baseline workflow)`;
+        case 'workflow': return `${e.name || e.id} (optional profile workflow)`;
         case 'worker': return `Animastor worker (${e.worker_type || 'unknown type'})`;
         default: return e.name || e.id;
     }
@@ -78,7 +82,7 @@ function actionLine(e) {
         case 'custom_node': return `Install custom node ${e.name || e.id}`;
         case 'model':
         case 'model_repo': return `Download model ${e.name || e.id}`;
-        case 'workflow': return `Download baseline workflow ${e.name || e.id}`;
+        case 'workflow': return `Download optional profile workflow ${e.name || e.id}`;
         case 'worker': return `Install Animastor worker bundle (${e.worker_type})`;
         case 'runtime': return `Install ${RUNTIME_LABELS[e.component] || e.component}`;
         default: return `Install ${e.id}`;
@@ -256,7 +260,10 @@ function buildWorkflowsStep({ report, manifests, decisions }) {
 
     const step = {
         id: 'workflows',
-        title: 'Baseline workflows (editable starting points)',
+        // OPTIONAL component: Animastor sends workflow JSON with each task via
+        // the API, so local copies are demo/test material only. Declining this
+        // step leaves the installation complete.
+        title: 'Profile workflows (optional)',
         kind: 'prompt',
         available: report.entries.filter((e) => e.kind === 'workflow').map((e) => ({ id: e.id, name: e.name })),
         installed: installed.map((e) => e.id),
@@ -267,13 +274,13 @@ function buildWorkflowsStep({ report, manifests, decisions }) {
     if (missing.length === 0) {
         step.kind = 'noop';
         step.result = customized.length > 0
-            ? 'all baselines present; user-customized copies are kept untouched'
-            : 'all baseline workflows present';
+            ? 'all optional profile workflows present; user-customized copies are kept untouched'
+            : 'all optional profile workflows present';
         return step;
     }
 
     step.prompt = {
-        question: `Which baseline workflows to download?\n${missing.map((e) => `  - ${e.name} [${e.id}]`).join('\n')}\n(A baseline is an editable starting point — you can customize it locally afterwards)`,
+        question: `Install optional profile workflows?\n${missing.map((e) => `  - ${e.name} [${e.id}]`).join('\n')}\n(Not required for Animastor — tasks are sent to ComfyUI via the API. Local copies are useful to test ComfyUI in its Web UI or as a starting point for your own workflows. Each one is an editable starting point you can customize freely.)`,
         options: ['All', 'Select', 'None'],
     };
 
@@ -281,7 +288,7 @@ function buildWorkflowsStep({ report, manifests, decisions }) {
     if (selection === 'none' || selection === false) {
         step.decision = 'none';
         step.skipped_by_user = true;
-        step.result = 'user declined baseline workflows — nothing downloaded';
+        step.result = 'user declined optional profile workflows — nothing downloaded; the installation stays complete (workflows are optional)';
         return step;
     }
     if (selection === 'all' || Array.isArray(selection)) {
@@ -301,7 +308,7 @@ function buildWorkflowsStep({ report, manifests, decisions }) {
             requires_confirmation: true,
             never_overwrites: true,
         };
-        step.result = `user selected ${selected.length - freshCopies.length} baseline workflow(s)${freshCopies.length ? ` + ${freshCopies.length} fresh copy(ies) of customized baselines (distinct paths)` : ''}`;
+        step.result = `user selected ${selected.length - freshCopies.length} optional profile workflow(s)${freshCopies.length ? ` + ${freshCopies.length} fresh copy(ies) of customized baselines (distinct paths)` : ''}`;
         return step;
     }
     step.awaiting_decision = true;
@@ -569,7 +576,7 @@ function buildInstallPlan({ report, manifests = [], decisions = {} }) {
         id: 'verify',
         title: 'Verify installation',
         kind: 'verify',
-        checks: ['GPU', 'ComfyUI', 'Runtime', 'Custom Nodes', 'Models', 'Workflows', 'Worker', 'GPU Hub registration'],
+        checks: ['GPU', 'ComfyUI', 'Runtime', 'Custom Nodes', 'Models', 'Profile workflows (optional)', 'Worker', 'GPU Hub registration'],
     });
 
     const awaiting = steps.filter((s) => s.awaiting_decision).map((s) => s.id);
@@ -641,10 +648,22 @@ function renderPlanText(plan, report) {
         lines.push('');
     }
 
-    const missing = report.entries.filter((e) => e.status === 'missing');
+    // Optional profile workflows are deliberately NOT shown as ✗ Missing:
+    // they are demo/test artifacts, and their absence must never look like
+    // an incomplete or broken installation.
+    const missing = report.entries.filter((e) => e.status === 'missing' && e.kind !== 'workflow');
     if (missing.length > 0) {
         lines.push('Missing:');
         for (const e of missing) lines.push(`\u2717 ${entryLabel(e)}`);
+        lines.push('');
+    }
+
+    const missingWorkflows = report.entries.filter((e) => e.status === 'missing' && e.kind === 'workflow');
+    if (missingWorkflows.length > 0) {
+        lines.push('Optional (not installed — NOT required):');
+        for (const e of missingWorkflows) {
+            lines.push(`  - ${entryLabel(e)} — useful only to test ComfyUI locally in its Web UI or as a starting point for your own workflows`);
+        }
         lines.push('');
     }
 

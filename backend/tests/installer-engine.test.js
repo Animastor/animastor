@@ -524,6 +524,60 @@ collectAsync('10. existing customized workflow not overwritten', async () => {
     assert.ok(result.plan.plan_text.includes('customized') || result.plan.plan_text.includes('kept') || result.status === 'ready');
 });
 
+// ============ 10b. Optional workflows: decline vs install = same verdict ======
+collectAsync('10b. declining optional workflows installs nothing and keeps the SAME verdict severity as installing them', async () => {
+    const makeManifest = () => minimalManifest('video/ltx-2.3', {
+        workflows: {
+            policy: 'editable-baseline',
+            artifacts: [{
+                id: 'wf1', name: 'Baseline', target_dir: 'user/default/workflows', filename: 'baseline.json',
+                baseline_sha256: require('crypto').createHash('sha256').update(JSON.stringify({ nodes: [] })).digest('hex'),
+                source: { repository_path: 'backend/ai/workflows/video/baseline.json' },
+            }],
+        },
+    });
+    const mkEnv = () => createMockIo({
+        files: {
+            '/tmp/comfy/main.py': '',
+            '/tmp/repo/backend/ai/workflows/video/baseline.json': JSON.stringify({ nodes: [] }),
+            '/tmp/worker/worker.cjs': '// worker stub',
+            '/tmp/worker/package.json': '{}',
+        }, preDirs: ['/tmp/comfy/.git', '/tmp/worker'],
+        execResults: {
+            'nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits': { code: 0, stdout: 'NVIDIA A100, 81920, 535.129.03' },
+            'node --version': { code: 0, stdout: 'v22.0.0' },
+            'git -C /tmp/comfy remote get-url origin': { code: 0, stdout: 'https://github.com/comfyanonymous/ComfyUI' },
+            'git -C /tmp/comfy rev-parse HEAD': { code: 0, stdout: 'abc123' },
+            'git -C /tmp/comfy describe --tags --exact-match': { code: 0, stdout: 'v0.27.0' },
+            'python3 --version': { code: 0, stdout: 'Python 3.11.0' },
+            'python3 -c import torch; print(torch.__version__)': { code: 0, stdout: '2.6.0+cu124' },
+        },
+        httpResults: {
+            'http://127.0.0.1:8188/system_stats': { status: 200, json: () => ({ system: {} }) },
+        },
+    });
+    const runOpts = (workflows) => ({
+        manifests: [makeManifest()], mode: 'existing', io: mkEnv().io,
+        roots: { comfyuiRoot: '/tmp/comfy', workerDir: '/tmp/worker', statePath: '/tmp/state.json', repoRoot: '/tmp/repo' },
+        decisions: { comfyui_update: 'yes', install_custom_nodes: false, install_models: false, workflows, worker_setup: false },
+        logger: createMockLogger(), crypto: require('crypto'),
+    });
+
+    // A. User declines the optional workflows → nothing downloaded
+    const declined = await runInstallation(runOpts('none'));
+    const declRes = declined.results.workflows || [];
+    assert.strictEqual(declRes.length, 0, 'no workflow install attempted');
+    assert.ok(!/missing baselines/i.test(declined.verification.text), 'no "missing baselines" verdict');
+    assert.ok(declined.verification.text.includes('[i] Profile workflows'), 'neutral info line shown');
+
+    // B. Same setup with workflows: 'all' → file installed; verdict severity
+    //    must be IDENTICAL (workflows never change the outcome)
+    const installed = await runInstallation(runOpts('all'));
+    assert.ok(installed.results.workflows.some((w) => w.status === 'installed'), 'workflow installed when approved');
+    assert.strictEqual(installed.verification.fails, declined.verification.fails, 'same fail count');
+    assert.strictEqual(installed.verification.status, declined.verification.status, 'same verdict status');
+});
+
 // ========================== 11. Shared compatible ============================
 collectAsync('11. shared compatible profiles (single plan)', async () => {
     const m1 = minimalManifest('image/qwen-image', { dependencies: [] });

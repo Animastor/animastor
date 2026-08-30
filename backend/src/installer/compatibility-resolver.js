@@ -624,8 +624,15 @@ function checkDependency(slot, env) {
 // ---------------------------------------------------------------------------
 
 /**
- * A baseline workflow is an EDITABLE starting point:
- *   - absent at the baseline path            → missing (download a copy);
+ * A baseline workflow is an OPTIONAL demo/test artifact and an EDITABLE
+ * starting point — never a runtime requirement: Animastor sends workflow JSON
+ * with each task via the API/GPU Hub, so a profile is fully usable for
+ * API-based generation without any locally installed copies. Local copies
+ * exist only to test ComfyUI in its Web UI or as a starting point for the
+ * user's own workflows. Consequences:
+ *   - absent at the baseline path            → missing (OFFERED for download,
+ *     but optional: it is never counted as a missing required component and
+ *     never blocks or fails the installation);
  *   - present, hash matches baseline_sha256  → installed / canonical-baseline;
  *   - present, hash differs                  → installed / customized —
  *     this is ALLOWED, never an error, and NEVER overwritten;
@@ -638,12 +645,14 @@ function checkWorkflow(wf, env, profiles) {
         id: wf.id,
         kind: 'workflow',
         name: wf.name,
-        requirement: wf.requirement || 'required',
-        basis: wf.basis || 'required',
+        // Workflows are ALWAYS optional regardless of what a manifest says:
+        // no locally installed workflow file is ever a runtime dependency.
+        requirement: 'optional',
+        basis: wf.basis || 'optional',
         profiles,
     };
     if (env.workflows === undefined) {
-        return { ...base, status: 'required', action: 'review', notes: ['environment not probed for workflows'] };
+        return { ...base, status: 'unknown', action: 'none', notes: ['environment not probed for workflows (optional artifacts)'] };
     }
     const expectedPath = `${normPath(wf.target_dir)}/${wf.filename}`;
     const found = (env.workflows || []).find((w) => normPath(w.path) === expectedPath);
@@ -651,9 +660,13 @@ function checkWorkflow(wf, env, profiles) {
         return {
             ...base,
             status: 'missing',
-            action: missingAction({ requirement: base.requirement }),
+            // 'install' is an OFFER for the interactive plan (the user may
+            // download a copy), not a required install: requirement stays
+            // 'optional', so missing workflows never reach missing_required
+            // or blocking and never fail verification.
+            action: 'install',
             expected: { path: expectedPath },
-            notes: ['baseline workflow download writes a NEW file only; it never touches existing user workflows'],
+            notes: ['optional demo workflow — download writes a NEW file only; it never touches existing user workflows'],
         };
     }
     if (wf.baseline_sha256 && found.sha256) {

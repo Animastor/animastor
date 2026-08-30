@@ -15,6 +15,11 @@
  * or precise FAIL/WARN lines. Live checks that were not performed are
  * reported as WARN "not checked" — never silently assumed passed.
  *
+ * EXCEPTION — profile workflows: they are OPTIONAL demo/test artifacts
+ * (Animastor sends workflow JSON with each task via the API), so their
+ * absence is reported as a neutral [i] info line and never as a FAIL/WARN,
+ * and workflow problems never fail the whole installation verdict.
+ *
  * Secret safety: this module only ever receives key NAMES and boolean
  * flags; a Worker Key value must never be passed in or rendered.
  */
@@ -22,10 +27,16 @@
 const OK = '\u2713';
 const FAIL = '\u2717';
 const WARN = '!';
+const INFO = 'i';
 
 function line(ok, label, detail) {
     const mark = ok === true ? OK : ok === false ? FAIL : WARN;
     return detail ? `${mark} ${label} — ${detail}` : `${mark} ${label}`;
+}
+
+/** Neutral, non-scored line: neither a fail nor a warning (severity-free). */
+function infoLine(label, detail) {
+    return detail ? `[${INFO}] ${label} — ${detail}` : `[${INFO}] ${label}`;
 }
 
 /** tri-state normalizer: true | false | null(unknown) */
@@ -137,22 +148,31 @@ function buildVerificationReport({ report, live = {} }) {
     const modelEntries = byKind('model').concat(byKind('model_repo')).filter((e) => e.requirement === 'required' || e.status === 'incompatible');
     push(verdictOf(modelEntries), 'Models', detailOf(modelEntries));
 
-    // --- Workflows -----------------------------------------------------------
+    // --- Workflows (OPTIONAL demo/test artifacts — never scored) -----------
+    // Missing profile workflows are NOT a failure, incomplete state, or
+    // warning: the runtime sends workflow JSON with each task via the API.
+    // They are only reported neutrally so the user knows what was skipped.
     const wfEntries = byKind('workflow');
     const wfMissing = wfEntries.filter((e) => e.status === 'missing');
     const customized = wfEntries.filter((e) => e.grade === 'customized');
-    push(wfMissing.length === 0, 'Workflows', wfMissing.length > 0
-        ? `missing baselines: ${wfMissing.map((e) => e.name || e.id).join(', ')}`
-        : customized.length > 0 ? `${customized.length} customized by user (allowed)` : null);
-
+    const wfInstalled = wfEntries.filter((e) => e.status === 'installed');
+    if (wfEntries.length > 0) {
+        lines.push(infoLine('Profile workflows', wfInstalled.length > 0
+            ? `${wfInstalled.length} installed${customized.length > 0 ? `, ${customized.length} customized by user (allowed)` : ''}${wfMissing.length > 0 ? `, ${wfMissing.length} not installed` : ''} — optional; needed only to test ComfyUI locally or as a starting point for your own workflows`
+            : wfMissing.length > 0
+                ? `${wfMissing.length} not installed — optional; they are only needed to test ComfyUI locally or as a starting point for your own workflows`
+                : 'optional; none declared by the selected profile(s)'));
+        lines.push(infoLine('Profile workflows', 'not required for API-based generation (workflow JSON is delivered with each task)'));
+    }
     if (live.workflow) {
         const w = live.workflow;
-        push(tri(w.accepted), 'Workflow accepted by ComfyUI');
-        if (Array.isArray(w.missing_node_classes) && w.missing_node_classes.length > 0) {
-            push(false, 'Workflow node classes', `the workflow needs node classes that are not available: ${w.missing_node_classes.join(', ')} — install the providing custom node(s)`);
+        if (Array.isArray(w.problems) && w.problems.length > 0) {
+            lines.push(infoLine('Workflow accepted by ComfyUI', `installed workflow copies have problems: ${w.problems.join('; ')} — optional local copies; replace or re-download them if you want to test in the ComfyUI Web UI`));
+        } else if (w.accepted === false) {
+            lines.push(infoLine('Workflow accepted by ComfyUI', 'not verified — optional local copies; generation via the API is unaffected'));
+        } else {
+            lines.push(infoLine('Workflow accepted by ComfyUI', 'installed copies are valid JSON (optional local copies)'));
         }
-    } else {
-        push(null, 'Workflow accepted by ComfyUI', 'not checked');
     }
 
     // --- Worker --------------------------------------------------------------

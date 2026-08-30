@@ -173,14 +173,18 @@ describe('Compatibility Resolver', () => {
         it('plans installation of everything required, nothing destructive', () => {
             const r = resolver.resolveInstallation({ manifests: [AUDIO()], environment: resolver.createEmptyEnvironment(), mode: 'managed' });
             expect(r.mode).to.equal('managed');
-            expect(r.summary.missing_required).to.equal(10); // comfyui, torch, python, nodejs + 1 node + 2 model repos + 2 workflows + worker
+            // workflows are OPTIONAL demo artifacts — never counted as missing required
+            expect(r.summary.missing_required).to.equal(8); // comfyui, torch, python, nodejs + 1 node + 2 model repos + worker
             expect(r.summary.by_status.incompatible).to.equal(0);
-            expect(r.summary.by_status.missing).to.equal(11); // + optional manager (action none)
+            expect(r.summary.by_status.missing).to.equal(11); // + 2 optional workflows (install offered) + optional manager (action none)
             for (const id of ['runtime:comfyui', 'runtime:torch', 'custom-node:comfyui-qwen3-tts',
                 'model-repo:qwen3-tts-12hz-1.7b-voicedesign', 'model-repo:qwen3-tts-12hz-1.7b-base',
                 'workflow:tts-qwen-narrator', 'workflow:tts-qwen-dialogue', 'worker:audio/qwen-tts']) {
                 expect(entry(r, id).status).to.equal('missing');
                 expect(entry(r, id).action).to.equal('install');
+            }
+            for (const id of ['workflow:tts-qwen-narrator', 'workflow:tts-qwen-dialogue']) {
+                expect(entry(r, id).requirement).to.equal('optional');
             }
             expect(r.summary.install_plan).to.not.include('custom-node:comfyui-manager');
             expect(r.safe_to_proceed).to.be.true;
@@ -191,7 +195,7 @@ describe('Compatibility Resolver', () => {
     describe('scenario 2: clean managed machine + image/qwen-image', () => {
         it('plans installation of ComfyUI runtime, GGUF node, 4 models, baseline workflow and worker', () => {
             const r = resolver.resolveInstallation({ manifests: [IMAGE()], environment: resolver.createEmptyEnvironment(), mode: 'managed' });
-            expect(r.summary.missing_required).to.equal(11); // 4 runtime + 1 node + 4 models + 1 workflow + worker
+            expect(r.summary.missing_required).to.equal(10); // 4 runtime + 1 node + 4 models + worker (workflows are optional, not counted)
             for (const id of ['custom-node:comfyui-gguf', 'model:image.unet.qwen-image-2512-q4-k-m',
                 'model:image.clip.qwen2.5-vl-7b-instruct-q8-0', 'model:image.vae.qwen-image-vae',
                 'model:image.loras.wuli-qwen-image-2512-turbo-4steps',
@@ -204,9 +208,9 @@ describe('Compatibility Resolver', () => {
     });
 
     describe('scenario 3: clean managed machine + video/ltx-2.3', () => {
-        it('plans 19 required installs; unresolved VHS is review, not auto-install', () => {
+        it('plans 15 required installs; 4 optional workflows are offered, unresolved VHS is review, not auto-install', () => {
             const r = resolver.resolveInstallation({ manifests: [VIDEO()], environment: resolver.createEmptyEnvironment(), mode: 'managed' });
-            expect(r.summary.missing_required).to.equal(19); // 4 runtime + GGUF + gguf + kjnodes + 7 models + 4 workflows + worker
+            expect(r.summary.missing_required).to.equal(15); // 4 runtime + GGUF + gguf + kjnodes + 7 models + worker (workflows optional, not counted)
             const vhs = entry(r, 'custom-node:comfyui-videohelpersuite');
             expect(vhs.status).to.equal('missing');
             expect(vhs.requirement).to.equal('unknown');

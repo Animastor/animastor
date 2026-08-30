@@ -1018,20 +1018,25 @@ async function runVerification({ io, manifests, roots, options, log, crypto, tok
             const missingClasses = Array.from(manifestClasses).filter((c) => !classes.has(c));
             if (missingClasses.length > 0) live.comfyui.missing_node_classes = missingClasses;
         }
-        // workflow static validation (no generation)
+        // workflow static validation (no generation) — only meaningful when
+        // at least one OPTIONAL profile workflow copy is actually installed;
+        // absent optional copies are never checked and never reported as a
+        // problem (Animastor sends workflow JSON with each task via the API)
         if (crypto) {
             const wfProblems = [];
+            let wfChecked = 0;
             for (const m of manifests) {
                 for (const wf of (m.workflows && m.workflows.artifacts) || []) {
                     const abs = path.join(comfyuiRoot, `${wf.target_dir}/${wf.filename}`);
                     if (!io.fs.existsSync(abs)) continue;
+                    wfChecked += 1;
                     try {
                         const problems = comfyui.validateWorkflowStatic(io.fs.readFileSync(abs, 'utf8'), { availableClasses: null });
                         if (problems.parse_error) wfProblems.push(`${wf.filename}: ${problems.parse_error}`);
                     } catch (_) { /* unreadable */ }
                 }
             }
-            live.workflow = { accepted: wfProblems.length === 0, problems: wfProblems };
+            if (wfChecked > 0) live.workflow = { accepted: wfProblems.length === 0, problems: wfProblems };
         }
     } else if (!live.comfyui) {
         live.comfyui = { running: false, api_reachable: false };

@@ -518,6 +518,73 @@ t('S1: user-modified baseline workflow survives install byte-for-byte', async ()
 });
 
 // ---------------------------------------------------------------------------
+// R9 — declined OPTIONAL workflows stay declined on resume; never re-installed
+// ---------------------------------------------------------------------------
+
+t('R9: workflows declined → resume keeps the decision, installs nothing, verification stays clean', async () => {
+    const m = baseManifest();
+    const canonical = '{"nodes": []}';
+    const canonicalSha = crypto.createHash('sha256').update(Buffer.from(canonical)).digest('hex');
+    m.workflows = {
+        policy: 'editable-baseline',
+        artifacts: [{
+            id: 'wf-opt', name: 'Optional demo', target_dir: 'user/default/workflows', filename: 'demo.json',
+            baseline_sha256: canonicalSha,
+            source: { repository_path: 'backend/ai/workflows/demo.json' },
+        }],
+    };
+    const roots = { comfyuiRoot: '/comfy', workerDir: '/worker', statePath: '/state/install-state.json', repoRoot: '/repo', hubUrl: null };
+
+    // Run 1 — fresh install; user answers "No" to the optional workflows prompt
+    const shared = createIo(existingComfy({
+        files: {
+            ...workerRepoFiles(),
+            '/repo/backend/ai/workflows/demo.json': canonical,
+            '/comfy/custom_nodes/ComfyUI-GGUF/index.js': '// node stub',
+        },
+        http: MODEL_URLS,
+        exec: {
+            ...EXEC_BASE(),
+            'git -C /comfy/custom_nodes/ComfyUI-GGUF rev-parse HEAD': { code: 0, stdout: 'abc123' },
+        },
+    }));
+    const result1 = await runInstallation({
+        manifests: [m], mode: 'existing', io: shared,
+        roots, decisions: { ...ALL_YES, workflows: 'none' },
+        logger: createLogger({ io: shared, quiet: true }), crypto,
+        secretProvider: secretProvider('wrk.test.local-secret-value'),
+        options: { startComfyui: false },
+    });
+    assert.ok(!shared.fs.existsSync('/comfy/user/default/workflows/demo.json'), 'declined workflow never written');
+    assert.strictEqual(result1.verification.fails, 0, 'declining OPTIONAL workflows is NOT a failure');
+    assert.ok(!/missing baselines/i.test(result1.verification.text), 'no "missing baselines" verdict');
+    assert.ok(result1.verification.text.includes('[i] Profile workflows'), 'neutral info line shown instead');
+
+    // Run 2 — resume over the same disk; the recorded decision is restored
+    const io2 = createIo(existingComfy());
+    io2.fs = shared.fs;
+    const loaded = loadResumableState(io2, '/state/install-state.json');
+    assert.ok(loaded.ok, 'state file survived');
+    assert.strictEqual(loaded.state.decisions.workflows, 'none', 'decline persisted in state');
+    const log2 = createLogger({ io: io2, quiet: true });
+    // On resume the CLI merges state decisions into the decisions object
+    // before passing it to runInstallation — simulate the same flow.
+    const result2 = await runInstallation({
+        manifests: [m], mode: 'existing', io: io2,
+        roots, decisions: { ...(loaded.state.decisions || {}) },
+        logger: log2, crypto,
+        secretProvider: secretProvider('wrk.test.local-secret-value'),
+        initialState: loaded.state,
+        options: { startComfyui: false },
+    });
+    assert.ok(!io2.fs.existsSync('/comfy/user/default/workflows/demo.json'), 'resume did NOT install the declined workflows');
+    assert.strictEqual(io2.calls.http.filter((c) => c.op === 'download').length, 0, 'no downloads on resume');
+    assert.strictEqual(result2.verification.fails, 0, 'verification still clean on resume');
+    assert.ok(!/missing baselines/i.test(result2.verification.text), 'workflows still not framed as missing required');
+    assert.ok(['ready', 'warn'].includes(result2.status), `status: ${result2.status}`);
+});
+
+// ---------------------------------------------------------------------------
 // S2 — newer ComfyUI never auto-downgraded
 // ---------------------------------------------------------------------------
 
