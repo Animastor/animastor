@@ -1,11 +1,11 @@
 # GPU Hub Cleanup: Animastor
 
-> Механизмы очистки stale-задач GPU Hub при регенерации и отмене генерации.
-> Последнее обновление: июль 2026
+> GPU Hub stale task cleanup mechanisms during regeneration and generation cancellation.
+> Last updated: July 2026
 
 ---
 
-## 1. Зачем нужна очистка
+## 1. Why Cleanup Is Needed
 
 При регенерации (POST /regenerate) или отмене (POST /cancel-generation) необходимо
 остановить старые задачи в GPU Hub, иначе:
@@ -20,7 +20,7 @@
 
 ---
 
-## 2. Функция `clearGpuHubQueues(redis, bookId, sceneFilter?)`
+## 2. Function `clearGpuHubQueues(redis, bookId, sceneFilter?)`
 
 **Файл:** `backend/src/routes/book/generation-routes.cjs`
 
@@ -34,7 +34,7 @@ async function clearGpuHubQueues(redis, bookId, sceneFilter = null)
 - `bookId` — ID книги (например, `import_1783656905372_1783656918982`)
 - `sceneFilter` — опциональный массив `{ chapter_id, scene_id }[]`. Если передан — очищаются только задачи для указанных сцен. Если `null` — очищаются все задачи для `bookId`.
 
-### 2.1 Шаг 1: Dedup-ключи `animastor:job:*`
+### 2.1 Step 1: Dedup Keys `animastor:job:*`
 
 ```javascript
 // SCAN по pattern animastor:job:{bookId}_*
@@ -51,7 +51,7 @@ SCAN может зацепить книги с пересекающимися п
 `import_123` может совпасть с `import_1234`). Post-filter проверяет точное
 вхождение `bookId_` через JavaScript.
 
-### 2.2 Шаг 2: Result-processed dedup `animastor:result-processed:*`
+### 2.2 Step 2: Result-processed Dedup `animastor:result-processed:*`
 
 ```javascript
 // SCAN по pattern animastor:result-processed:{bookId}_*
@@ -67,7 +67,7 @@ SCAN может зацепить книги с пересекающимися п
 Но при регенерации старый результат — это stale-данные. Новый результат будет
 отклонён, если dedup-ключ не очищен.
 
-### 2.3 Шаг 3: Очереди GPU Hub `animastor:queue:audio|image|video`
+### 2.3 Step 3: GPU Hub Queues `animastor:queue:audio|image|video`
 
 ```javascript
 // Для каждого типа (audio, image, video):
@@ -85,7 +85,7 @@ SCAN может зацепить книги с пересекающимися п
 может запушить новую задачу. В таких случаях задача теряется. Для regenerate
 это приемлемо — regenerate ожидает, что все задачи будут отправлены заново.
 
-### 2.4 Шаг 4: Running задачи `animastor:running`
+### 2.4 Step 4: Running Tasks `animastor:running`
 
 ```javascript
 // HSCAN animastor:running
@@ -97,7 +97,7 @@ SCAN может зацепить книги с пересекающимися п
 Если задача зависла и воркер не ответил, hub requeue-ет её после таймаута.
 Удаление из running prevents requeue.
 
-### 2.5 Шаг 5: Кэш результатов `animastor:result:*`
+### 2.5 Step 5: Result Cache `animastor:result:*`
 
 ```javascript
 // SCAN по pattern animastor:result:*:{bookId}_*
@@ -110,7 +110,7 @@ SCAN может зацепить книги с пересекающимися п
 
 ---
 
-## 3. Функция `removeScenesFromActiveIndex(redis, bookId, scenes)`
+## 3. Function `removeScenesFromActiveIndex(redis, bookId, scenes)`
 
 **Файл:** `backend/src/runtime/runtime-scheduler.js`
 
@@ -132,7 +132,7 @@ async function removeScenesFromActiveIndex(redis, bookId, scenes)
 
 ---
 
-## 4. Функция `clearLeasesForScenes(redis, bookId, scenes)`
+## 4. Function `clearLeasesForScenes(redis, bookId, scenes)`
 
 **Файл:** `backend/src/runtime/dispatch-engine.js`
 
@@ -155,7 +155,7 @@ async function clearLeasesForScenes(redis, bookId, scenes)
 
 ---
 
-## 5. Полный протокол регенерации (с очисткой)
+## 5. Full Regeneration Protocol (with cleanup)
 
 ```
 POST /api/v1/book/:bookId/regenerate
@@ -244,7 +244,7 @@ animastor:worker:heartbeat:{type}:{id}       # String — heartbeat воркер
 
 ---
 
-## 8. Файлы
+## 8. Files
 
 | Файл | Функция | Роль |
 |------|---------|------|

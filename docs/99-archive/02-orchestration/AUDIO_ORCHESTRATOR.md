@@ -1,12 +1,12 @@
 # Audio Orchestrator
 
-> Единая state machine для управления жизненным циклом аудио сцены.
-> Устраняет race condition между `setImmediate`, `triggerAudioMerge` и `generateSceneAudio`.
+> Unified state machine for managing the audio scene lifecycle.
+> Eliminates race conditions between `setImmediate`, `triggerAudioMerge`, and `generateSceneAudio`.
 
-## Проблема
+## Problem
 
-Сейчас аудио-пайплайн управляется тремя независимыми источниками истины,
-которые не синхронизированы:
+Currently the audio pipeline is managed by three independent sources of truth
+that are not synchronized:
 
 | Слой | Кто пишет | Кто читает |
 |------|-----------|------------|
@@ -32,11 +32,11 @@
 3. **Невозможно отличить placeholder от real audio на FS:** оба — `.mp3` файлы. Только PG знает
    разницу, но `triggerAudioMerge` в PG не ходит.
 
-## Решение: Audio Orchestrator
+## Solution: Audio Orchestrator
 
-Вводится **Redis-ключ `animastor:audio-orch`** — единственный арбитр состояния аудио-генерации сцены.
+A **Redis key `animastor:audio-orch`** is introduced — the single arbiter of the audio generation state.
 
-### Ключ
+### Key
 
 ```
 animastor:audio-orch:{bookId}:{chapterId}:{sceneId}
@@ -54,7 +54,7 @@ animastor:audio-orch:{bookId}:{chapterId}:{sceneId}
 }
 ```
 
-### Phase machine
+### Phase Machine
 
 ```
   ┌──────────────────────────────────────────────────┐
@@ -86,7 +86,7 @@ NEW ──→ PLACEHOLDER_READY ──→ GENERATING             │
 | `DONE` | Merge завершён, PG status = `ready` |
 | `FAILED` | Все retry исчерпаны, сцена нуждается в передиспатче |
 
-### Владелец каждого перехода
+### Owner of Each Transition
 
 | Transition | Кто меняет | Когда |
 |------------|-----------|-------|
@@ -121,7 +121,7 @@ NEW ──→ PLACEHOLDER_READY ──→ GENERATING             │
 > принимается на основе **проверки FS** (список .mp3 файлов на диске), а не счётчика.
 > Такой подход надёжнее: не зависит от порядка arrival callback'ов и устойчив к дубликатам.
 
-### Изменения в компонентах
+### Component Changes
 
 #### `startScene()` (scene-window.js)
 
@@ -259,7 +259,7 @@ Redis key.
 | **Startup recovery** | FS scan → guess | Redis scan → exact state |
 | **PG query per chunk** | Да (наш workaround) | Нет (вся информация в Redis) |
 
-## Аудит мёртвого кода
+## Dead Code Audit
 
 После рефакторинга проверены все функции на неиспользуемость:
 
@@ -275,7 +275,7 @@ Redis key.
 > **Примечание:** `areSceneAudioChunksReady()` — предшествующий мёртвый код,
 > не связанный с этим рефакторингом. Удаление — в отдельную задачу.
 
-## Аудит оставшихся FS-проверок
+## Remaining FS Check Audit
 
 После рефакторинга `triggerAudioMerge` больше не использует `fs.existsSync` для принятия
 решения. Оставшиеся FS-проверки в audio-слое делятся на 3 категории:
@@ -297,7 +297,7 @@ Redis key.
 **Вывод:** ни одна FS-проверка не принимает решений об оркестрации аудио.
 Все решения проходят через Redis phase machine.
 
-## Результаты тестирования
+## Test Results
 
 - **Все тесты:** 550/550 ✅ (предыдущие 529 + 21 новый)
 - **Новые тесты для audio-orchestrator:** 21 тест

@@ -1,11 +1,11 @@
 # Regeneration System: Animastor
 
-> Система частичной/полной перегенерации контента после редактирования vbook.
-> Последнее обновление: июль 2026
+> Partial/full content regeneration system after vbook editing.
+> Last updated: July 2026
 
 ---
 
-## 1. Общая схема
+## 1. Overview
 
 ```
 Edit → Save → PUT /api/v1/book/:bookId → disk
@@ -41,7 +41,7 @@ Regenerate → POST /api/v1/book/:bookId/regenerate
 
 ---
 
-## 2. Участники системы
+## 2. System Participants
 
 ### 2.1 Frontend (Android)
 
@@ -88,7 +88,7 @@ Regenerate → POST /api/v1/book/:bookId/regenerate
 
 ---
 
-## 3. Происхождение данных внутри сцены (Data Provenance)
+## 3. Data Provenance Within a Scene
 
 ### 3.1 Как на самом деле собирается Final Image Prompt
 
@@ -323,7 +323,7 @@ const IMAGE_PROMPT_SOURCES = {
 
 ---
 
-## 4. Детальный протокол перегенерации
+## 4. Detailed Regeneration Protocol
 
 ### 4.1 Trigger: Save → Regenerate
 
@@ -406,7 +406,7 @@ External (cross-cutting):
 
 ---
 
-## 5. Архитектурный фундамент: разделение ответственности
+## 5. Architectural Foundation: Separation of Concerns
 
 ### 5.1 Текущая проблема
 
@@ -570,7 +570,7 @@ animastor:result:<build_id>:<bookId>:<...> # Кэш результатов GPU h
 
 ---
 
-## 8. Файлы
+## 8. Files
 
 | Файл | Размер | Роль |
 |---|---|---|
