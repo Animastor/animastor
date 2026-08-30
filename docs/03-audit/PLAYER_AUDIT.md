@@ -1,12 +1,12 @@
-# Аудит плеера: архитектура, сетевая предзагрузка и кэширование
+# Player Audit: Architecture, Network Preloading and Caching
 
-Дата: 17 июня 2026
+Date: June 17, 2026
 
 ---
 
-## 1. Архитектура воспроизведения
+## 1. Playback Architecture
 
-### 1.1. Жизненный цикл плеера
+### 1.1. Player Lifecycle
 
 ```
 [MainActivity]
@@ -46,55 +46,55 @@
                     [SCENE_READY] (end of queue)
 ```
 
-### 1.2. Ключевые компоненты
+### 1.2. Key Components
 
-| Компонент | Файл | Роль |
+| Component | File | Role |
 |-----------|------|------|
-| **MainActivity** | `MainActivity.kt` | Координатор. Слушает `GenerateViewModel.playbackPrepared` и вызывает `PlaybackViewModel.preparePlayback()` |
-| **PlaybackViewModel** | `PlaybackViewModel.kt` | Управляет очередью, предзагрузкой, состоянием плеера |
-| **PlayFragment** | `PlayFragment.kt` | UI плеера: MediaPlayer, IU cycling, SurfaceView для видео |
-| **GenerateViewModel** | `GenerateViewModel.kt` | Генерация контента, импорт, сигнал `playbackPrepared` |
-| **Repository** | `Repository.kt` | Слой данных: HTTP вызовы + LruCache + SimpleDiskCache |
-| **SimpleDiskCache** | `util/SimpleDiskCache.kt` | Дисковый кэш с типами audio/video/image/preview/iu |
-| **MediaDecoder** | `util/MediaDecoder.kt` | Декодирует `ByteArray` в `Bitmap` |
-| **BackendApi** | `repository/BackendApi.kt` | Retrofit-интерфейс со всеми API эндпоинтами |
+| **MainActivity** | `MainActivity.kt` | Coordinator. Listens to `GenerateViewModel.playbackPrepared` and calls `PlaybackViewModel.preparePlayback()` |
+| **PlaybackViewModel** | `PlaybackViewModel.kt` | Manages queue, preloading, player state |
+| **PlayFragment** | `PlayFragment.kt` | Player UI: MediaPlayer, IU cycling, SurfaceView for video |
+| **GenerateViewModel** | `GenerateViewModel.kt` | Content generation, import, `playbackPrepared` signal |
+| **Repository** | `Repository.kt` | Data layer: HTTP calls + LruCache + SimpleDiskCache |
+| **SimpleDiskCache** | `util/SimpleDiskCache.kt` | Disk cache with audio/video/image/preview/iu types |
+| **MediaDecoder** | `util/MediaDecoder.kt` | Decodes `ByteArray` to `Bitmap` |
+| **BackendApi** | `repository/BackendApi.kt` | Retrofit interface with all API endpoints |
 
-### 1.3. Формирование очереди воспроизведения
+### 1.3. Playback Queue Formation
 
-Очередь формируется в `PlaybackViewModel.chunkQueue` — это `MutableList<String>` (список chunk_id).
+Queue formed in `PlaybackViewModel.chunkQueue` — a `MutableList<String>` (chunk_id list).
 
-**Путь формирования:**
-1. `GenerateViewModel` получает `chunkIds` из ответа `/api/v1/generate` или `/api/v1/book/{bookId}/chunks`
-2. Эмитит `PlaybackPreparation(bookId, buildId, chunkIds, positions)` через `playbackPrepared`
-3. `MainActivity` подхватывает и вызывает `PlaybackViewModel.preparePlayback(bookId, buildId, chunkIds, chunkPositions)`
-4. `preparePlayback` очищает кэш (`_repository.clearCache()`), сохраняет chunkIds в `chunkQueue`, устанавливает `phase = SCENE_READY`
+**Formation path:**
+1. `GenerateViewModel` receives `chunkIds` from `/api/v1/generate` or `/api/v1/book/{bookId}/chunks`
+2. Emits `PlaybackPreparation(bookId, buildId, chunkIds, positions)` via `playbackPrepared`
+3. `MainActivity` catches and calls `PlaybackViewModel.preparePlayback(bookId, buildId, chunkIds, chunkPositions)`
+4. `preparePlayback` clears cache (`_repository.clearCache()`), saves chunkIds to `chunkQueue`, sets `phase = SCENE_READY`
 
-**А также через `ensureInitialized()`:** если плеер ещё не инициализирован, загружает чанки через `/api/v1/book/{bookId}/chunks` и вызывает `preparePlayback`.
+**Also via `ensureInitialized()`:** if player not yet initialized, loads chunks via `/api/v1/book/{bookId}/chunks` and calls `preparePlayback`.
 
-### 1.4. Переход между элементами очереди
+### 1.4. Queue Item Transition
 
-Переход реализован через **`playNext()`** + **`onAudioCompleted()`**:
+Transition implemented via **`playNext()`** + **`onAudioCompleted()`**:
 
 1. **`playNext()`** (PlaybackViewModel):
-   - Берёт `chunkQueue[currentIndex]`
-   - Сначала проверяет `preloadCache` — если есть, использует готовые данные
-   - Если нет — запускает `fetchSceneData(id)` в корутине
-   - Вызывает `emitChunk(audio, video, iuSequence)` — устанавливает phase = PLAYING
+   - Takes `chunkQueue[currentIndex]`
+   - First checks `preloadCache` — if exists, uses ready data
+   - If not — launches `fetchSceneData(id)` in coroutine
+   - Calls `emitChunk(audio, video, iuSequence)` — sets phase = PLAYING
 
-2. **PlayFragment** реагирует на phase = PLAYING:
-   - В `observeState()` при `state.chunkSequence > lastProcessedChunkSequence` вызывает `handleChunk()` или `handleSilentChunk()`
-   - `handleChunk()` создаёт/цепит MediaPlayer, запускает IU cycling
+2. **PlayFragment** reacts to phase = PLAYING:
+   - In `observeState()` when `state.chunkSequence > lastProcessedChunkSequence`, calls `handleChunk()` or `handleSilentChunk()`
+   - `handleChunk()` creates/chains MediaPlayer, starts IU cycling
 
-3. **Завершение трека:**
-   - MediaPlayer `setOnCompletionListener` → `onTrackEnd()` в PlayFragment
-   - `onTrackEnd()` переключает `currentPlayer = nextPlayer`, вызывает `playbackViewModel.onAudioCompleted()`
-   - `onAudioCompleted()` инкрементит `currentIndex++`, вызывает `playNext()`
+3. **Track completion:**
+   - MediaPlayer `setOnCompletionListener` → `onTrackEnd()` in PlayFragment
+   - `onTrackEnd()` switches `currentPlayer = nextPlayer`, calls `playbackViewModel.onAudioCompleted()`
+   - `onAudioCompleted()` increments `currentIndex++`, calls `playNext()`
 
-4. **Двойной механизм перехода:**
-   - `setNextMediaPlayer(nextPlayer)` — для бесшовного перехода между двумя подготовленными MediaPlayer
-   - `onTrackEnd()` + `onAudioCompleted()` — для случая, когда `setNextMediaPlayer` не сработал
+4. **Double transition mechanism:**
+   - `setNextMediaPlayer(nextPlayer)` — for gapless transition between two prepared MediaPlayers
+   - `onTrackEnd()` + `onAudioCompleted()` — for when `setNextMediaPlayer` didn't fire
 
-### 1.5. Текстовая схема потока данных
+### 1.5. Data Flow Text Diagram
 
 ```
                 ┌──────────────┐
@@ -140,37 +140,37 @@
 
 ---
 
-## 2. Сетевая предзагрузка (САМЫЙ ВАЖНЫЙ ПУНКТ)
+## 2. Network Preloading (MOST IMPORTANT SECTION)
 
-### 2.1. Текущая реализация
+### 2.1. Current Implementation
 
-Предзагрузка реализована в `PlaybackViewModel.preloadAhead()`:
+Preloading implemented in `PlaybackViewModel.preloadAhead()`:
 
 ```kotlin
-private const val PRELOAD_AHEAD = 3  // предзагрузка на 3 сцены вперёд
+private const val PRELOAD_AHEAD = 3  // preload 3 scenes ahead
 private val preloadCache = mutableMapOf<String, PreloadedScene>()
 ```
 
-**Как работает:**
-1. После `playSceneQueue()` или `playNext()` вызывается `preloadAhead()`
-2. Для каждого `offset` от 1 до `PRELOAD_AHEAD` (3 сцены):
-   - Вычисляет `idx = currentIndex + offset`
-   - Если `preloadCache` уже содержит chunk_id — пропускает
-   - Иначе запускает `fetchSceneData(id)` в той же корутине
-   - Сохраняет результат в `preloadCache[id]`
-3. Когда `playNext()` получает запрошенный chunk, он сначала проверяет `preloadCache`
-4. Если кэш есть — использует готовые данные без сетевого запроса
-5. Если нет — синхронно грузит через `fetchSceneData()`
+**How it works:**
+1. After `playSceneQueue()` or `playNext()`, `preloadAhead()` is called
+2. For each `offset` from 1 to `PRELOAD_AHEAD` (3 scenes):
+   - Calculates `idx = currentIndex + offset`
+   - If `preloadCache` already contains chunk_id — skips
+   - Otherwise launches `fetchSceneData(id)` in same coroutine
+   - Saves result in `preloadCache[id]`
+3. When `playNext()` gets requested chunk, it first checks `preloadCache`
+4. If cache hit — uses ready data without network request
+5. If miss — synchronously loads via `fetchSceneData()`
 
-**Проблема с последовательностью:**
-- `preloadAhead()` использует **одну корутину** для ВСЕХ предзагрузок (цикл `for`)
-- Предзагрузки запускаются последовательно: сначала offset=1, потом offset=2, потом offset=3
-- Это означает, что adj(следующая сцена будет загружена только после offset=1)
-- Если сцена с offset=1 большая (аудио + IU изображения), загрузка offset=2 начнётся только после её завершения
+**Sequential problem:**
+- `preloadAhead()` uses **single coroutine** for ALL preloads (`for` loop)
+- Preloads launch sequentially: first offset=1, then offset=2, then offset=3
+- This means next scene (offset=2) only loads after offset=1 completes
+- If offset=1 scene is large (audio + IU images), offset=2 starts only after completion
 
-### 2.2. Что загружается
+### 2.2. What Gets Loaded
 
-`fetchSceneData(id)` загружает **три компонента параллельно** через `async`:
+`fetchSceneData(id)` loads **three components in parallel** via `async`:
 
 ```kotlin
 val audioDeferred = async { 
@@ -182,211 +182,211 @@ val videoDeferred = async {
     else null 
 }
 val iuDeferred = async { 
-    fetchIuSequence(id)  // storyboard + IU изображения
+    fetchIuSequence(id)  // storyboard + IU images
 }
 ```
 
-**IU изображения** загружаются последовательно внутри `fetchIuSequence()`:
+**IU images** load sequentially inside `fetchIuSequence()`:
 ```kotlin
 storyboard.ius.map { iu ->
-    repository.getIuImage(bkId, chId, scId, iu.unit_id, bldId)  // каждый вызов — отдельный HTTP запрос
+    repository.getIuImage(bkId, chId, scId, iu.unit_id, bldId)  // each call = separate HTTP request
 }
 ```
 
 ### 2.3. HTTP Range Requests
 
-**НЕ ИСПОЛЬЗУЮТСЯ.** Все медиа-эндпоинты помечены `@Streaming`:
-- `GET /chunk/{id}/audio` — загружает весь MP3 файл целиком
-- `GET /chunk/{id}/image` — загружает всё PNG изображение
-- `GET /chunk/{id}/video` — загружает весь MP4 файл
-- `GET /iu-image/{book}/{ch}/{sc}/{iu}` — загружает каждое IU изображение отдельным запросом
+**NOT USED.** All media endpoints marked `@Streaming`:
+- `GET /chunk/{id}/audio` — downloads entire MP3 file
+- `GET /chunk/{id}/image` — downloads entire PNG image
+- `GET /chunk/{id}/video` — downloads entire MP4 file
+- `GET /iu-image/{book}/{ch}/{sc}/{iu}` — downloads each IU image as separate request
 
-Никакие `Range: bytes=...` заголовки не используются. Это означает:
-- Аудиофайл загружается **полностью** перед началом воспроизведения
-- Видеофайл загружается **полностью** перед началом показа
-- Каждое IU изображение — отдельный полный HTTP запрос
+No `Range: bytes=...` headers used. This means:
+- Audio file downloads **completely** before playback starts
+- Video file downloads **completely** before display starts
+- Each IU image — separate full HTTP request
 
-### 2.4. Локальное сохранение
+### 2.4. Local Storage
 
-Да, загруженные данные сохраняются:
+Yes, downloaded data is saved:
 
 **1. In-memory cache (LruCache):**
-- `Repository` содержит `LruCache<String, ByteArray>(50 * 1024 * 1024)` — 50MB
-- Ключи: `"audio_$chunkId"`, `"image_$chunkId"`, `"video_$chunkId"`, `"iu_${book}_${ch}_${sc}_${iu}"`
-- Хранит сырые байты в памяти
+- `Repository` has `LruCache<String, ByteArray>(50 * 1024 * 1024)` — 50MB
+- Keys: `"audio_$chunkId"`, `"image_$chunkId"`, `"video_$chunkId"`, `"iu_${book}_${ch}_${sc}_${iu}"`
+- Stores raw bytes in memory
 
-**2. SimpleDiskCache (диск):**
-- Путь: `app.cacheDir/media-cache/{audio,video,image,preview,iu}/`
-- Лимит: 256MB
-- При достижении лимита удаляет самые старые файлы (LRU)
-- Типы: audio (mp3), video (mp4), image (png), preview (png), iu (png)
+**2. SimpleDiskCache (disk):**
+- Path: `app.cacheDir/media-cache/{audio,video,image,preview,iu}/`
+- Limit: 256MB
+- On limit reached, oldest files deleted (LRU)
+- Types: audio (mp3), video (mp4), image (png), preview (png), iu (png)
 
-**3. Временные файлы для MediaPlayer (PlayFragment):**
-- Аудио: `cacheDir/chunk-{timestamp}.mp3` или через `repository.cacheAudioFile()`
-- Видео: `cacheDir/video-{timestamp}.mp4` или через `repository.cacheVideoFile()`
+**3. Temp files for MediaPlayer (PlayFragment):**
+- Audio: `cacheDir/chunk-{timestamp}.mp3` or via `repository.cacheAudioFile()`
+- Video: `cacheDir/video-{timestamp}.mp4` or via `repository.cacheVideoFile()`
 
-### 2.5. Узкие места и паузы между треками
+### 2.5. Bottlenecks and Track Gaps
 
-**Проблема 1: Последовательная загрузка IU изображений**
-В `fetchIuSequence()` все IU изображения для сцены загружаются последовательно, каждое отдельным HTTP запросом. Для сцены с 10 IU — это 10 последовательных HTTP round-trips. При сетевой задержке 100-200ms это добавляет 1-2 секунды на сцену.
+**Problem 1: Sequential IU image loading**
+In `fetchIuSequence()`, all IU images for scene load sequentially, each as separate HTTP request. Scene with 10 IU = 10 sequential HTTP round-trips. At 100-200ms network latency, adds 1-2 seconds per scene.
 
-**Проблема 2: Нет частичной загрузки аудио**
-Аудио загружается полностью через `repository.getChunkAudio()` → `body.bytes()`. До начала воспроизведения нужно дождаться полной загрузки. Для сцены с 30-секундным аудио (~500KB MP3) при медленной сети это может быть 5-10 секунд ожидания.
+**Problem 2: No partial audio loading**
+Audio loads completely via `repository.getChunkAudio()` → `body.bytes()`. Must wait for full download before playback. For scene with 30-second audio (~500KB MP3), slow network can mean 5-10 seconds waiting.
 
-**Проблема 3: preloadAhead() работает в одной корутине**
+**Problem 3: preloadAhead() runs in single coroutine**
 ```kotlin
 for (offset in start..PRELOAD_AHEAD) {
-    val data = fetchSceneData(id)  // последовательно
+    val data = fetchSceneData(id)  // sequential
     preloadCache[id] = data
 }
 ```
-Это значит, что загрузка сцены+3 начинается только после полной загрузки сцены+1. Нет параллельной предзагрузки нескольких сцен.
+This means scene+3 loading starts only after scene+1 fully loads. No parallel multi-scene preloading.
 
-**Проблема 4: Двойное кэширование с разными стратегиями**
-- `LruCache` (50MB) — эвикция по размеру, без учёта давности использования
-- `SimpleDiskCache` (256MB) — эвикция по дате последней модификации (LRU)
-- Между ними нет синхронизации: данные могут быть в диске, но не в памяти, и наоборот
+**Problem 4: Double caching with different strategies**
+- `LruCache` (50MB) — eviction by size, no recency consideration
+- `SimpleDiskCache` (256MB) — eviction by last modified date (LRU)
+- No synchronization between them: data may be on disk but not in memory, and vice versa
 
-**Проблема 5: MediaPlayer требует полный файл**
-`MediaPlayer.setDataSource(file.absolutePath)` требует наличия полного аудиофайла на диске. Нет стримингового воспроизведения. Это значит:
-- Файл должен быть полностью записан на диск перед началом воспроизведения
-- Для перехода к следующей сцене, её аудиофайл тоже должен быть полностью на диске
+**Problem 5: MediaPlayer requires full file**
+`MediaPlayer.setDataSource(file.absolutePath)` requires complete audio file on disk. No streaming playback. This means:
+- File must be fully written to disk before playback starts
+- For next scene transition, its audio file must also be fully on disk
 
 ---
 
-## 3. Кэширование на Android
+## 3. Android Caching
 
-### 3.1. Где хранятся настройки пользователя
+### 3.1. Where User Settings Are Stored
 
 **SharedPreferences:**
-- `animastor` (стандартный XML shared preferences)
-- Хранятся: `bookId`, `buildId` (для восстановления после перезапуска)
+- `animastor` (standard XML shared preferences)
+- Stored: `bookId`, `buildId` (for restart recovery)
 
-### 3.2. Многоуровневое кэширование
+### 3.2. Multi-level Caching
 
 ```
-Запрос данных
+Data request
      │
      ▼
 ┌─────────────┐
-│  LruCache   │  ← 50MB в памяти (первичный)
+│  LruCache   │  ← 50MB in-memory (primary)
 │  (mem)      │
 └──────┬──────┘
        │ miss
        ▼
 ┌─────────────┐
-│ SimpleDisk  │  ← 256MB на диске (вторичный)
-│ Cache       │   LRU эвикция
+│ SimpleDisk  │  ← 256MB on disk (secondary)
+│ Cache       │   LRU eviction
 └──────┬──────┘
        │ miss
        ▼
 ┌─────────────┐
-│   Backend   │  ← HTTP запрос через Retrofit
+│   Backend   │  ← HTTP request via Retrofit
 │   API       │
 └─────────────┘
 ```
 
-**Данные, которые кэшируются:**
+**Cached data:**
 
-| Тип | In-memory (LruCache) | Disk (SimpleDiskCache) | Стратегия инвалидации |
+| Type | In-memory (LruCache) | Disk (SimpleDiskCache) | Invalidation Strategy |
 |-----|---------------------|----------------------|----------------------|
-| Аудио чанка | `audio_$id` | `audio/` (mp3) | LruCache: по заполнению 50MB. Disk: LRU при 256MB |
-| Изображение чанка | `image_$id` | `image/` (png) | Аналогично |
-| Видео чанка | `video_$id` | `video/` (mp4) | Аналогично |
-| IU изображение | `iu_${b}_${ch}_${sc}_${iu}` | `iu/` (png) | Аналогично |
-| Preview изображение | `pr_${b}_${ch}_${sc}_${iu}` | `preview/` (png) | Аналогично |
-| Storyboard (IU метаданные) | НЕ кэшируется | НЕ кэшируется | Всегда запрос к серверу |
+| Chunk audio | `audio_$id` | `audio/` (mp3) | LruCache: at 50MB capacity. Disk: LRU at 256MB |
+| Chunk image | `image_$id` | `image/` (png) | Same |
+| Chunk video | `video_$id` | `video/` (mp4) | Same |
+| IU image | `iu_${b}_${ch}_${sc}_${iu}` | `iu/` (png) | Same |
+| Preview image | `pr_${b}_${ch}_${sc}_${iu}` | `preview/` (png) | Same |
+| Storyboard (IU metadata) | NOT cached | NOT cached | Always server request |
 
-**Данные, которые НЕ кэшируются и загружаются повторно:**
-1. `getChunkStoryboard(id)` — каждый раз GET запрос
-2. `getAllChunks(bookId)` — каждый раз GET запрос
-3. `getBook(bookId)` — каждый раз GET запрос
-4. `getChunk(id)` — каждый раз GET запрос (проверка `audio_ready`, `image_ready`, `video_ready`)
+**Data NOT cached and reloaded each time:**
+1. `getChunkStoryboard(id)` — every time GET request
+2. `getAllChunks(bookId)` — every time GET request
+3. `getBook(bookId)` — every time GET request
+4. `getChunk(id)` — every time GET request (checking `audio_ready`, `image_ready`, `video_ready`)
 
-### 3.3. Инвалидация кэша
+### 3.3. Cache Invalidation
 
-**Когда кэш очищается:**
-1. **`preparePlayback()`** — вызывает `_repository.clearCache()` → очищает LruCache + SimpleDiskCache
-   - Это происходит при каждом новом проигрывании
-   - Проблема: даже если данные не изменились, кэш полностью сбрасывается
-2. **`clearCache()` в Repository** — `cache.evictAll()` + `diskCache?.evictAll()`
-3. **`trim()` в SimpleDiskCache** — автоматически при превышении 256MB удаляются самые старые файлы
-4. **LruCache** — автоматическая эвикция по достижении 50MB (алгоритм LRU встроенный в Android)
+**When cache is cleared:**
+1. **`preparePlayback()`** — calls `_repository.clearCache()` → clears LruCache + SimpleDiskCache
+   - Happens on every new playback
+   - Problem: even if data unchanged, cache fully reset
+2. **`clearCache()` in Repository** — `cache.evictAll()` + `diskCache?.evictAll()`
+3. **`trim()` in SimpleDiskCache** — automatically deletes oldest files on exceeding 256MB
+4. **LruCache** — automatic eviction at 50MB (Android built-in LRU algorithm)
 
-### 3.4. Критические проблемы кэширования
+### 3.4. Critical Caching Issues
 
-**Проблема А: Полная очистка кэша при preparePlayback**
+**Issue A: Full cache clear on preparePlayback**
 ```kotlin
 fun preparePlayback(...) {
-    _repository.clearCache()  // ← удаляет ВСЕ кэшированные IU изображения, аудио, видео
-    preloadCache.clear()      // ← очищает предзагруженные данные
+    _repository.clearCache()  // ← deletes ALL cached IU images, audio, video
+    preloadCache.clear()      // ← clears preloaded data
 ```
-При повторном открытии той же книги все IU изображения будут загружены заново.
+On reopening same book, all IU images reload from scratch.
 
-**Проблема Б: Storyboard не кэшируется**
-`getChunkStoryboard(id)` запрашивается:
-- В `ensureInitialized()` для всех чанков
-- В `playSceneQueue()` через `loadCoverIntoState()`
-- В `fetchIuSequence()` для каждого чанка при предзагрузке
+**Issue B: Storyboard not cached**
+`getChunkStoryboard(id)` requested:
+- In `ensureInitialized()` for all chunks
+- In `playSceneQueue()` via `loadCoverIntoState()`
+- In `fetchIuSequence()` for each chunk during preloading
 
-Storyboard содержит IU метаданные (длительности, тексты) — они не меняются, но загружаются каждый раз.
+Storyboard contains IU metadata (durations, texts) — unchanged, but loaded every time.
 
-**Проблема В: getChunk() запрашивается многократно**
-В `fetchSceneData()`:
+**Issue C: getChunk() called multiple times**
+In `fetchSceneData()`:
 ```kotlin
-val chunk = runCatching { _repository.getChunk(id) }.getOrNull()  // ← 1-й запрос
+val chunk = runCatching { _repository.getChunk(id) }.getOrNull()  // ← 1st request
 // ...
 if (chunk?.audio_ready == true) {
-    val audio = repository.getChunkAudio(id)  // ← 2-й запрос (streaming)
+    val audio = repository.getChunkAudio(id)  // ← 2nd request (streaming)
 }
 if (chunk?.video_ready == true) {
-    val video = repository.getChunkVideo(id)  // ← 3-й запрос (streaming)
+    val video = repository.getChunkVideo(id)  // ← 3rd request (streaming)
 }
 ```
-При этом `getChunk(id)` возвращает `ChunkResponse` (JSON) — эта информация **не кэшируется**.
+Meanwhile `getChunk(id)` returns `ChunkResponse` (JSON) — this info **not cached**.
 
 ---
 
-## 4. Анализ эффективности
+## 4. Efficiency Analysis
 
-### 4.1. Что реализовано хорошо
+### 4.1. What Works Well
 
-1. **Параллельная загрузка аудио/видео/IU** — внутри `fetchSceneData()` используется `async` для параллельной загрузки трёх компонентов
-2. **Двухуровневое кэширование** — in-memory (LruCache) + disk (SimpleDiskCache)
-3. **Предзагрузка на 3 сцены вперёд** — `PRELOAD_AHEAD = 3` даёт запас
-4. **Бесшовный переход через setNextMediaPlayer** — Android MediaPlayer поддерживает предварительную цепочку
-5. **Timer-based IU cycling для silent сцен** — когда аудио нет, IU переключаются по таймеру
-6. **Чистое разделение GenerateVM и PlaybackVM** — плеер не зависит от генерации
+1. **Parallel audio/video/IU loading** — `fetchSceneData()` uses `async` for parallel loading of three components
+2. **Two-level caching** — in-memory (LruCache) + disk (SimpleDiskCache)
+3. **3-scene ahead preloading** — `PRELOAD_AHEAD = 3` provides buffer
+4. **Gapless transition via setNextMediaPlayer** — Android MediaPlayer supports pre-chaining
+5. **Timer-based IU cycling for silent scenes** — when no audio, IU switches by timer
+6. **Clean GenerateVM/PlaybackVM separation** — player independent of generation
 
-### 4.2. Что реализовано неэффективно
+### 4.2. Inefficient Implementations
 
-1. **Последовательная загрузка IU изображений** — каждое IU изображение = отдельный HTTP запрос, все последовательно
-2. **Полная загрузка аудио перед воспроизведением** — нет streaming/progressive download
-3. **Одна корутина на всю предзагрузку** — `preloadAhead()` загружает сцены по одной, а не параллельно
-4. **Полная очистка кэша при preparePlayback** — сбрасывает все кэшированные данные
-5. **Storyboard не кэшируется** — IU метаданные загружаются повторно
-6. **HTTP logging Level.BODY** — логирует в base64 все медиа-файлы, создавая гигантские строки и нагрузку на GC
+1. **Sequential IU image loading** — each IU image = separate HTTP request, all sequential
+2. **Full audio download before playback** — no streaming/progressive download
+3. **Single coroutine for all preloading** — `preloadAhead()` loads scenes one-by-one, not in parallel
+4. **Full cache clear on preparePlayback** — resets all cached data
+5. **Storyboard not cached** — IU metadata reloaded repeatedly
+6. **HTTP logging Level.BODY** — logs all media files in base64, creating huge strings and GC pressure
 
-### 4.3. Потенциальные источники лагов
+### 4.3. Potential Lag Sources
 
-| Источник | Описание | Степень |
+| Source | Description | Severity |
 |----------|----------|---------|
-| **Последовательные HTTP запросы IU** | Для сцены с 10 IU = 10 последовательных round-trips | **Высокая** |
-| **PreloadAhead в одной корутине** | Сцена+2 ждёт полной загрузки сцены+1 | **Средняя** |
-| **Нет стриминга аудио** | Полная загрузка MP3 перед стартом | **Средняя** |
-| **Storyboard не кэшируется** | Повторные запросы метаданных | **Низкая** |
-| **Level.BODY логгирование** | Конвертация бинарных данных в строку, нагрузка на GC | **Средняя** (доказано эмпирически) |
-| **clearCache при preparePlayback** | Сброс всех кэшированных IU изображений | **Средняя** |
+| **Sequential IU HTTP requests** | Scene with 10 IU = 10 sequential round-trips | **High** |
+| **PreloadAhead in single coroutine** | Scene+2 waits for scene+1 to fully load | **Medium** |
+| **No audio streaming** | Full MP3 download before start | **Medium** |
+| **Storyboard not cached** | Repeated metadata requests | **Low** |
+| **Level.BODY logging** | Binary data conversion to string, GC pressure | **Medium** (empirically proven) |
+| **clearCache on preparePlayback** | Reset of all cached IU images | **Medium** |
 
-### 4.4. Рекомендуемые улучшения (в порядке приоритета)
+### 4.4. Recommended Improvements (priority order)
 
-1. **Paralleльная предзагрузка сцен** — запускать `fetchSceneData()` для offset=1,2,3 параллельно, а не последовательно
-2. **Кэширование storyboard** — добавить `IuItem` данные в LruCache/DiskCache, они не меняются
-3. **Частичная загрузка аудио** — использовать `Range: bytes=0-...` для начала воспроизведения до полной загрузки
-4. **Параллельная загрузка IU изображений** — для всех IU сцены запускать `async { fetchIuImage() }` параллельно
-5. **Избранная инвалидация кэша** — не чистить весь кэш при preparePlayback, только если buildId изменился
-6. **Level.HEADERS** — включить для production (но нужно понять, почему ломает)
+1. **Parallel scene preloading** — launch `fetchSceneData()` for offset=1,2,3 in parallel, not sequentially
+2. **Storyboard caching** — add `IuItem` data to LruCache/DiskCache, they don't change
+3. **Partial audio loading** — use `Range: bytes=0-...` to start playback before full download
+4. **Parallel IU image loading** — launch `async { fetchIuImage() }` in parallel for all scene IU
+5. **Selective cache invalidation** — don't clear all cache on preparePlayback, only if buildId changed
+6. **Level.HEADERS** — enable for production (but need to understand why it breaks)
 
 ---
 
-*Аудит проведён без внесения изменений в код. Основан на анализе файлов: PlayFragment.kt, PlaybackViewModel.kt, Repository.kt, BackendApi.kt, RetrofitClient.kt, SimpleDiskCache.kt, MediaDecoder.kt, GenerateViewModel.kt, ChunkResponse.kt, StoryboardResponse.kt.*
+*Audit performed without code changes. Based on analysis of: PlayFragment.kt, PlaybackViewModel.kt, Repository.kt, BackendApi.kt, RetrofitClient.kt, SimpleDiskCache.kt, MediaDecoder.kt, GenerateViewModel.kt, ChunkResponse.kt, StoryboardResponse.kt.*
