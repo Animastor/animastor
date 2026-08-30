@@ -34,6 +34,7 @@ const readline = require('readline');
 const { createRealIo, createDryRunIo } = require('./engine/io');
 const { createLogger } = require('./engine/logger');
 const { createTermRenderer } = require('./engine/term');
+const platforms = require('./platform');
 const { probeEnvironment, renderDetection } = require('./engine/probe');
 const { runInstallation, loadResumableState, renderResumeSummary } = require('./engine/engine');
 const prereq = require('./engine/prereq');
@@ -45,13 +46,46 @@ const manifest = require('./install-manifest');
 const uninstaller = require('./uninstaller');
 
 // ---------------------------------------------------------------------------
-// Paths
+// Paths (platform-specific defaults; the platform adapter owns them)
 // ---------------------------------------------------------------------------
 
 const CLI_ROOT = path.resolve(__dirname, '..', '..');
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
-const DEFAULT_ROOT = path.join(process.env.HOME || '/root', 'ComfyUI');
-const DEFAULT_WORKER_DIR = path.join(process.env.HOME || '/root', 'animastor', 'worker');
+
+/**
+ * The platform adapter is auto-detected ONCE at CLI startup. An unsupported
+ * host (e.g. macOS) fails here — clearly, early, before any side effect —
+ * instead of somewhere inside a Linux-only code path.
+ * (Resolution is silent; support notices are printed by main().)
+ */
+function bootPlatform() {
+    return platforms.resolveRuntime();
+}
+
+const PLATFORM_RUNTIME = bootPlatform();
+const PLATFORM_ADAPTER = PLATFORM_RUNTIME.adapter;
+
+/** Support notices: preview platform / experimental deployment. */
+function printPlatformNotices() {
+    if (!PLATFORM_ADAPTER.productionReady) {
+        console.error('=========================================================================');
+        console.error(`  PREVIEW PLATFORM: ${PLATFORM_ADAPTER.displayName}`);
+        console.error(`  ${PLATFORM_ADAPTER.previewNotice || 'This platform is not production-supported yet.'}`);
+        console.error('=========================================================================');
+    }
+    if (PLATFORM_RUNTIME.deployment === 'docker' && !PLATFORM_RUNTIME.deploymentAdapter.productionReady) {
+        console.error(`[notice] docker deployment detected (${PLATFORM_RUNTIME.deploymentAdapter.displayName}) — experimental, NOT production-supported yet.`);
+    }
+}
+
+/** Home directory, respecting the platform's env variable. */
+function homeDir() {
+    return process.env[PLATFORM_ADAPTER.HOME_ENV]
+        || require('os').homedir();
+}
+
+const DEFAULT_ROOT = PLATFORM_ADAPTER.defaultRoot(homeDir());
+const DEFAULT_WORKER_DIR = PLATFORM_ADAPTER.defaultWorkerDir(homeDir());
 const DEFAULT_HUB_URL = 'https://animastor.in/gpu';
 
 // ---------------------------------------------------------------------------
@@ -292,7 +326,6 @@ async function cmdDetect(flags) {
     const env = probeEnvironment(io, { root, workerDir, crypto: require('crypto') });
     console.log(renderDetection(env));
 }
-
 async function cmdPlan(flags) {
     if (flags.profiles.length === 0) {
         console.error('error: --profile is required');
@@ -621,7 +654,7 @@ function yesDecisions() {
 async function cmdUninstall(flags) {
     const io = createRealIo();
     const statePath = resolveStatePath(flags);
-    const home = flags.home || process.env.HOME || null;
+    const home = flags.home || homeDir() || null;
     const dryRun = flags['dry-run'] || false;
     const yes = flags.yes || false;
     const full = flags.all || false;
@@ -965,7 +998,8 @@ async function cmdRebootComfyUI(flags) {
 async function main() {
     const args = parseArgs(process.argv);
     const pkg = require('./package.json');
-    console.log(`animastor-installer v${pkg.version}`);
+    console.log(`animastor-installer v${pkg.version} (platform: ${PLATFORM_RUNTIME.platform}, deployment: ${PLATFORM_RUNTIME.deployment})`);
+    printPlatformNotices();
     switch (args.command) {
         case 'detect':
             await cmdDetect(args.flags);
@@ -1030,4 +1064,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseArgs, cmdDetect, cmdPlan, cmdInstall, cmdVerify, cmdValidateManifests, cmdResume, cmdUninstall, cmdStatus, cmdMonitor, cmdRebootWorker, cmdRebootComfyUI, resolveAndPlan, makeSecretProvider, resolveToolsDecision, resolveToolsDir };
+module.exports = { parseArgs, cmdDetect, cmdPlan, cmdInstall, cmdVerify, cmdValidateManifests, cmdResume, cmdUninstall, cmdStatus, cmdMonitor, cmdRebootWorker, cmdRebootComfyUI, resolveAndPlan, makeSecretProvider, resolveToolsDecision, resolveToolsDir, PLATFORM_RUNTIME, printPlatformNotices, homeDir };

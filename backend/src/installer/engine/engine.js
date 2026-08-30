@@ -22,6 +22,7 @@
 
 const path = require('path');
 
+const platforms = require('../platform');
 const resolver = require('../compatibility-resolver');
 const { buildInstallPlan } = require('../install-plan');
 const { confirmationGate } = require('../safety-rules');
@@ -225,7 +226,12 @@ async function runInstallation(args) {
         decisions = {}, secretProvider = null,
         logger = null, crypto = null, env: preEnv = null,
         dryRun = false, initialState = null, options = {},
+        platformAdapter: platformAdapterOpt = null,
     } = args;
+
+    // Platform adapter (auto-detected unless injected): every OS-specific
+    // behaviour below (venv layout, process ops, build tools) goes through it.
+    const platformAdapter = platformAdapterOpt || platforms.getPlatformAdapter();
 
     const log = logger || { info: () => {}, warn: () => {}, error: () => {}, output: () => {}, step: async (n, fn) => ({ ok: true, value: await fn() }), registerSecret: () => {} };
     const {
@@ -479,7 +485,7 @@ async function runInstallation(args) {
         const pythonEntry = report.entries.find((e) => e.id === 'runtime:python');
         const needRuntime = [torchEntry, pythonEntry].some((e) => e && (e.status === 'missing' || e.status === 'incompatible'));
         if (needRuntime && io.fs.existsSync(comfyuiRoot)) {
-            const hasManagedVenv = io.fs.existsSync(path.join(comfyuiRoot, 'venv', 'bin', 'python'));
+            const hasManagedVenv = io.fs.existsSync(platformAdapter.venvPythonBin(path.join(comfyuiRoot, 'venv')));
             const presentRuntime = [torchEntry, pythonEntry].some((e) => e && e.status === 'incompatible');
             if (presentRuntime && hasManagedVenv && decisions.accept_runtime_change !== true) {
                 result.blocked.push({
@@ -501,6 +507,7 @@ async function runInstallation(args) {
                         torchSpec: torchSpec ? torchSpec.spec : null,
                         log,
                         term,
+                        platformAdapter,
                     })));
                     result.results.runtime = r.ok ? { device, grade: torchSpec ? torchSpec.grade : null, ...r.value } : { failed: String(r.error && r.error.message) };
                     if (r.ok) {
@@ -530,7 +537,7 @@ async function runInstallation(args) {
                     save();
                 }
             }
-        } else if (!runtimeFatal && io.fs.existsSync(path.join(comfyuiRoot, 'venv', 'bin', 'python'))) {
+        } else if (!runtimeFatal && io.fs.existsSync(platformAdapter.venvPythonBin(path.join(comfyuiRoot, 'venv')))) {
             // Runtime looks complete (torch+python already present — e.g. an
             // ADOPTED ComfyUI), so the full prepare step was skipped. The fork's
             // own requirements may still be missing from the old venv (the
@@ -580,12 +587,13 @@ async function runInstallation(args) {
         });
         const nodesApproved = !runtimeFatal && nodesStep && nodesStep.action && nodesStep.decision === 'yes';
         if (!runtimeFatal && (nodesApproved || retryDeps.length > 0)) {
-            const python = path.join(comfyuiRoot, 'venv', 'bin', 'python');
+            const python = platformAdapter.venvPythonBin(path.join(comfyuiRoot, 'venv'));
             // Check for C build tools (gcc, python3-dev, libsndfile1-dev) that
             // packages like funasr/soundfile need. Missing tools produce opaque
             // metadata-generation-failed errors from pip — catch early and give
-            // a precise remediation command.
-            const buildCheck = prereq.checkBuildPrerequisites(io, {
+            // a precise remediation command. (Which tools/packages to check is
+            // a platform concern — the adapter answers it.)
+            const buildCheck = platformAdapter.checkBuildPrerequisites(io, {
                 python: io.fs.existsSync(python) ? python : 'python3', log,
             });
             if (!buildCheck.ok) {
@@ -923,6 +931,7 @@ async function runInstallation(args) {
                     root: comfyuiRoot,
                     workerDir,
                     log,
+                    platformAdapter,
                 })));
                 result.results.management_tools = r;
                 for (const f of r.files) {
@@ -1065,8 +1074,16 @@ async function runVerification({ io, manifests, roots, options, log, crypto, tok
     // A worker started by this run is checked for real — a pid that died
     // before verification is a FAIL, never a silent pass.
     if (workerPid) {
-        const chk = io.exec('ps', ['-p', String(workerPid), '-o', 'args=']);
-        const alive = chk.code === 0 && /worker\.cjs/.test(chk.stdout);
+        // Platform-appropriate liveness check (Linux: ps -o args= grep,
+        // Windows: pid marker + tasklist).
+        const adapter = platforms.getPlatformAdapter();
+        const alive = typeof adapter.checkDaemonAlive === 'function'
+            ? adapter.checkDaemonAlive(io, { pid: workerPid, workerDir })
+            : (() => {
+                const chkCmd = adapter.psCheckCommand(workerPid);
+                const chk = io.exec(chkCmd.cmd, chkCmd.args);
+                return chk.code === 0 && /worker\.cjs/.test(chk.stdout);
+            })();
         live.worker = live.worker || {};
         live.worker.process_alive = alive;
         if (!alive) log.warn(`worker process (pid ${workerPid}) is not running — see the worker log`);

@@ -33,12 +33,22 @@
  */
 
 const path = require('path');
+const platforms = require('./platform');
 const comfyui = require('./engine/comfyui');
 const workerMod = require('./engine/worker');
 const stateMod = require('./engine/state');
 const prereq = require('./engine/prereq');
 
-/** The installed command-line tools (wrapper script → CLI subcommand). */
+/** Adapter for one call (explicit override wins over auto-detect). */
+function adapterOf(opts = {}) {
+    return (opts && opts.platformAdapter) || platforms.getPlatformAdapter();
+}
+
+/**
+ * The installed command-line tools (wrapper script → CLI subcommand).
+ * `file` is the canonical (historical, Linux) file name; the platform
+ * adapter maps it to the platform-appropriate script name (.sh → .cmd).
+ */
 const TOOL_SCRIPTS = Object.freeze([
     { file: 'status.sh', command: 'status' },
     { file: 'reboot-worker.sh', command: 'reboot-worker' },
@@ -93,13 +103,13 @@ function checkAccess(io, targets, { currentUid = null, home = null } = {}) {
     });
 }
 
-/** Extract the --port value from a process cmdline (/proc/<pid>/cmdline). */
-function readPidPort(io, pid) {
-    try {
-        const parts = io.fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
+/** Extract the --port value from a process cmdline (platform adapter). */
+function readPidPort(io, pid, opts = {}) {
+    const parts = adapterOf(opts).readProcessCmdline(io, pid);
+    if (parts && Array.isArray(parts)) {
         const i = parts.indexOf('--port');
         if (i !== -1 && parts[i + 1]) return Number(parts[i + 1]);
-    } catch (_) { /* gone or unreadable */ }
+    }
     return null;
 }
 
@@ -116,17 +126,18 @@ function readPidPort(io, pid) {
  *   - Queue: GET /queue
  * Never throws on unreachable components — unreachable IS the status.
  */
-async function collectStatus(io, targets) {
+async function collectStatus(io, targets, opts = {}) {
+    const adapter = adapterOf(opts);
     const workerPid = targets.workerDir
-        ? workerMod.findRunningWorkerPid(io, targets.workerDir)
+        ? workerMod.findRunningWorkerPid(io, targets.workerDir, { platformAdapter: adapter })
         : null;
     const comfyRootPresent = !!(targets.comfyuiRoot && io.fs.existsSync(targets.comfyuiRoot));
     const comfyPids = comfyRootPresent
-        ? comfyui.findManagedComfyUIPids(io, { root: targets.comfyuiRoot })
+        ? comfyui.findManagedComfyUIPids(io, { root: targets.comfyuiRoot, platformAdapter: adapter })
         : [];
     let port = targets.port || null;
     if (comfyPids.length > 0) {
-        port = readPidPort(io, comfyPids[0]) || port;
+        port = readPidPort(io, comfyPids[0], { platformAdapter: adapter }) || port;
     }
     const baseUrl = port ? `http://127.0.0.1:${port}` : null;
     const stats = baseUrl ? await comfyui.systemStats(io, baseUrl) : null;
@@ -185,20 +196,20 @@ function statusExitCode(snapshot) {
  * handles the already-stopped case (skips the stop step and just starts).
  * @returns {{ ok: boolean, healthy: boolean, detail: string|null }}
  */
-async function restartWorker(io, targets, { term = null, log = null, stopTimeoutMs = 15000 } = {}) {
+async function restartWorker(io, targets, { term = null, log = null, stopTimeoutMs = 15000, platformAdapter = null } = {}) {
     const withBusy = (label, fn) => (term ? term.withBusy(label, fn) : fn());
     const withBusySync = (label, fn) => (term ? term.withBusySync(label, fn) : fn());
-    const wasRunning = !!workerMod.findRunningWorkerPid(io, targets.workerDir);
+    const wasRunning = !!workerMod.findRunningWorkerPid(io, targets.workerDir, { platformAdapter });
 
     if (wasRunning) {
         await withBusy('Stopping Worker', async () => {
-            const stop = await workerMod.stopManagedWorker(io, { workerDir: targets.workerDir, stopTimeoutMs, log });
+            const stop = await workerMod.stopManagedWorker(io, { workerDir: targets.workerDir, stopTimeoutMs, log, platformAdapter });
             if (!stop.stopped) throw new Error(stop.reason || 'worker could not be stopped');
             return stop;
         });
     }
     const start = withBusySync(wasRunning ? 'Starting Worker' : 'Starting Worker (was stopped)', () =>
-        workerMod.startWorker(io, { workerDir: targets.workerDir, log }));
+        workerMod.startWorker(io, { workerDir: targets.workerDir, log, platformAdapter }));
     if (!start.started) {
         return { ok: false, healthy: false, detail: start.reason || 'worker could not be started' };
     }
@@ -218,16 +229,17 @@ async function restartWorker(io, targets, { term = null, log = null, stopTimeout
  *                primitives the installer's verification step uses).
  * @returns {{ ok: boolean, port: number|null, detail: string|null }}
  */
-async function restartComfyUI(io, targets, { term = null, log = null, verifyTimeoutMs = 120000, pollIntervalMs = 2000 } = {}) {
+async function restartComfyUI(io, targets, { term = null, log = null, verifyTimeoutMs = 120000, pollIntervalMs = 2000, platformAdapter = null } = {}) {
+    const adapter = adapterOf({ platformAdapter });
     const withBusy = (label, fn) => (term ? term.withBusy(label, fn, { minShowMs: 200 }) : fn());
     if (!targets.comfyuiRoot || !io.fs.existsSync(targets.comfyuiRoot)) {
         return { ok: false, port: null, detail: `ComfyUI root not found${targets.comfyuiRoot ? ` (${targets.comfyuiRoot})` : ''}` };
     }
     const me = prereq.currentUid();
     const allowedUids = me != null ? [me] : null;
-    const pids = comfyui.findManagedComfyUIPids(io, { root: targets.comfyuiRoot });
+    const pids = comfyui.findManagedComfyUIPids(io, { root: targets.comfyuiRoot, platformAdapter: adapter });
     let port = targets.port || null;
-    if (pids.length > 0) port = readPidPort(io, pids[0]) || port;
+    if (pids.length > 0) port = readPidPort(io, pids[0], { platformAdapter: adapter }) || port;
 
     if (pids.length > 0) {
         const res = await withBusy('Restarting ComfyUI', () => comfyui.restartManagedComfyUI(io, {
@@ -238,6 +250,7 @@ async function restartComfyUI(io, targets, { term = null, log = null, verifyTime
             verifyTimeoutMs,
             pollIntervalMs,
             allowedUids,
+            platformAdapter: adapter,
         }));
         if (!res.restarted) {
             return { ok: false, port, detail: res.reason || 'managed ComfyUI was not restarted' };
@@ -253,6 +266,7 @@ async function restartComfyUI(io, targets, { term = null, log = null, verifyTime
             root: targets.comfyuiRoot,
             port: port || 8188,
             device: targets.device || null,
+            platformAdapter: adapter,
         });
         const up = await comfyui.waitForApi(io, `http://127.0.0.1:${started.port}`, { timeoutMs: verifyTimeoutMs, intervalMs: pollIntervalMs });
         return { started, up };
@@ -423,45 +437,34 @@ function renderMonitor(data) {
 // Tools installation (installer component)
 // ---------------------------------------------------------------------------
 
-/** Escape a single-quoted shell word. */
-function shQuote(s) {
-    return `'${String(s).replace(/'/g, `'\\''`)}'`;
-}
-
 /**
  * Render one tool wrapper. The wrapper is a THIN shim: all runtime behaviour
  * lives in the installer CLI (`management.js`), so there is exactly one
  * implementation of discovery/restart logic for installer and tools.
+ * Delegates to the platform adapter (#!/bin/sh on Linux, .cmd on Windows).
  */
-function renderToolScript({ command, nodePath, cliPath, statePath, root, workerDir }) {
-    const parts = [
-        '#!/bin/sh',
-        '# Animastor management tool — generated by animastor-installer.',
-        '# Do not edit: re-run the installer to refresh (paths are recorded at install time).',
-        `exec ${shQuote(nodePath)} ${shQuote(cliPath)} ${command} \\`,
-        `  --state ${shQuote(statePath)} \\`,
-        `  --root ${shQuote(root || '')} \\`,
-        `  --worker-dir ${shQuote(workerDir || '')} "$@"`,
-        '',
-    ];
-    return parts.join('\n');
+function renderToolScript({ command, nodePath, cliPath, statePath, root, workerDir, platformAdapter = null }) {
+    return adapterOf({ platformAdapter }).renderToolScript({ command, nodePath, cliPath, statePath, root, workerDir });
 }
 
 /**
  * Install (or idempotently refresh) the command-line management tools next
- * to the worker. Re-running the installer overwrites the same four files —
- * no duplicates, no broken state.
+ * to the worker. Re-running the installer overwrites the same files —
+ * no duplicates, no broken state. Script filenames/extensions and content
+ * are platform-specific (platform adapter).
  * @returns {{ toolsDir, files: string[] }}
  */
-function installManagementTools(io, { toolsDir, nodePath, cliPath, statePath, root, workerDir, log = null }) {
+function installManagementTools(io, { toolsDir, nodePath, cliPath, statePath, root, workerDir, log = null, platformAdapter = null }) {
+    const adapter = adapterOf({ platformAdapter });
     io.fs.mkdirSync(toolsDir, { recursive: true });
     const files = [];
     for (const t of TOOL_SCRIPTS) {
-        const p = path.join(toolsDir, t.file);
+        const p = path.join(toolsDir, adapter.toolScriptName(t.file));
         io.fs.writeFileSync(p, renderToolScript({
             command: t.command, nodePath, cliPath, statePath, root, workerDir,
+            platformAdapter: adapter,
         }));
-        io.fs.chmodSync(p, 0o755);
+        io.fs.chmodSync(p, adapter.TOOL_SCRIPT_MODE);
         files.push(p);
     }
     if (log && log.info) log.info(`management tools installed at ${toolsDir} (${files.length} commands)`);

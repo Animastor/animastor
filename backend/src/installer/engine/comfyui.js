@@ -14,7 +14,13 @@
  */
 
 const path = require('path');
+const platforms = require('../platform');
 const { PrerequisiteError, classifyVenvCreateFailure, classifyVenvDir, debianVenvPackage } = require('./prereq');
+
+/** Platform adapter for one call (explicit override wins over auto-detect). */
+function adapterOf(opts = {}) {
+    return (opts && opts.platformAdapter) || platforms.getPlatformAdapter();
+}
 
 /**
  * Choose the install source for a clean install.
@@ -184,19 +190,20 @@ function makeLongRunner(io, { term = null, log = null } = {}) {
 }
 
 /** Install ComfyUI python requirements + torch pin into a venv. */
-async function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log, term = null }) {
+async function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log, term = null, platformAdapter = null }) {
+    const adapter = adapterOf({ platformAdapter });
     const venvDir = path.join(root, 'venv');
-    const py = path.join(venvDir, 'bin', 'python');
+    const py = adapter.venvPythonBin(venvDir);
     const execLong = makeLongRunner(io, { term, log });
 
     let venvCreated = false;
     let quarantined = null;
 
     // A directory that LOOKS like a venv is not a working runtime: classify
-    // it first. A directory without bin/python is a broken/incomplete
+    // it first. A directory without a python interpreter is a broken/incomplete
     // managed runtime — quarantine it and recreate instead of failing later
     // (or worse, silently treating its presence as success).
-    const existing = classifyVenvDir(io, venvDir);
+    const existing = classifyVenvDir(io, venvDir, adapter);
     if (existing.state === 'incomplete') {
         quarantined = quarantineBrokenVenv(io, venvDir, existing.reason, log);
     }
@@ -206,7 +213,7 @@ async function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log, t
         if (r.code !== 0) {
             const versionRes = io.exec('python3', ['--version']);
             const vMatch = /Python\s+([0-9][0-9.]*)/.exec(String(versionRes.stdout) + String(versionRes.stderr));
-            const failure = classifyVenvCreateFailure(String(r.stderr || r.stdout || ''), vMatch ? vMatch[1] : null);
+            const failure = classifyVenvCreateFailure(String(r.stderr || r.stdout || ''), vMatch ? vMatch[1] : null, adapter);
             throw new PrerequisiteError({
                 code: failure.code,
                 summary: failure.summary,
@@ -234,7 +241,7 @@ async function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log, t
                 summary: 'the Python venv prerequisite is missing (venv has neither pip nor a working ensurepip)',
                 message: `pip is unavailable in the venv and ensurepip failed (code ${boot.code}): ${String(boot.stderr || boot.stdout || '').slice(-500)}`,
                 hostPackage: pkg,
-                remediationCommand: `sudo apt install ${pkg}`,
+                remediationCommand: adapter.hostPackageCommand(pkg),
             });
         }
         if (log) log.info('pip bootstrapped into the venv via ensurepip');
@@ -290,8 +297,8 @@ async function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log, t
  * pip skips satisfied deps in seconds, so this is safe on every run.
  * @returns {{ skipped: boolean }}
  */
-async function syncComfyUIRequirements(io, { root, torchSpec = null, log = null, term = null }) {
-    const py = path.join(root, 'venv', 'bin', 'python');
+async function syncComfyUIRequirements(io, { root, torchSpec = null, log = null, term = null, platformAdapter = null }) {
+    const py = adapterOf({ platformAdapter }).venvPythonBin(path.join(root, 'venv'));
     const req = path.join(root, 'requirements.txt');
     if (!io.fs.existsSync(py) || !io.fs.existsSync(req)) return { skipped: true };
     const execLong = makeLongRunner(io, { term, log });
@@ -350,8 +357,8 @@ async function syncComfyUIRequirements(io, { root, torchSpec = null, log = null,
  * Start ComfyUI. In CPU-only mode the `--cpu` flag forces the CPU execution
  * path (ComfyUI's own device selector) — required on hosts without a GPU.
  */
-function startComfyUI(io, { root, port = 8188, logFile = null, device = null }) {
-    const py = path.join(root, 'venv', 'bin', 'python');
+function startComfyUI(io, { root, port = 8188, logFile = null, device = null, platformAdapter = null }) {
+    const py = adapterOf({ platformAdapter }).venvPythonBin(path.join(root, 'venv'));
     const python = io.fs.existsSync(py) ? py : 'python3';
     const args = ['main.py', '--listen', '127.0.0.1', '--port', String(port)];
     if (device === 'cpu') args.push('--cpu');
@@ -383,33 +390,14 @@ async function systemStats(io, baseUrl) {
 }
 
 /**
- * PIDs of ComfyUI processes running from `root` (cwd check via /proc), by
- * default on `port`. The cwd check means the installer only ever touches an
+ * PIDs of ComfyUI processes running from `root` (managed-instance check), by
+ * default on `port`. Process discovery is a platform concern (Linux: cwd
+ * check via /proc; Windows: venv python ExecutablePath under the root) —
+ * the platform adapter guarantees the installer only ever touches an
  * instance it manages — a foreign ComfyUI (different root) is never signaled.
  */
-function findManagedComfyUIPids(io, { root, port = null }) {
-    const out = [];
-    let dirs = [];
-    try { dirs = io.fs.readdirSync('/proc').filter((n) => /^\d+$/.test(n)); } catch (_) { return out; }
-    for (const dir of dirs) {
-        const pid = Number(dir);
-        if (!Number.isFinite(pid) || pid === process.pid) continue;
-        let parts;
-        try {
-            parts = io.fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
-        } catch (_) { continue; }
-        if (!parts.some((a) => a === 'main.py' || a.endsWith('/main.py'))) continue;
-        if (port != null) {
-            const portIdx = parts.indexOf('--port');
-            const procPort = portIdx !== -1 ? Number(parts[portIdx + 1]) : 8188;
-            if (procPort !== Number(port)) continue;
-        }
-        try {
-            if (io.fs.readlinkSync(`/proc/${pid}/cwd`) !== root) continue;
-        } catch (_) { continue; } // foreign process or already gone
-        out.push(pid);
-    }
-    return out;
+function findManagedComfyUIPids(io, { root, port = null, platformAdapter = null }) {
+    return adapterOf({ platformAdapter }).findComfyUIPids(io, { root, port });
 }
 
 /**
@@ -421,16 +409,13 @@ function findManagedComfyUIPids(io, { root, port = null }) {
  * processes owned by those uids are signaled — a foreign account's ComfyUI
  * running from the same root (shared host) is left alone.
  */
-async function restartManagedComfyUI(io, { root, port, device = null, log = null, verifyTimeoutMs = 120000, pollIntervalMs = 2000, allowedUids = null }) {
-    let pids = findManagedComfyUIPids(io, { root, port });
+async function restartManagedComfyUI(io, { root, port, device = null, log = null, verifyTimeoutMs = 120000, pollIntervalMs = 2000, allowedUids = null, platformAdapter = null }) {
+    const adapter = adapterOf({ platformAdapter });
+    let pids = findManagedComfyUIPids(io, { root, port, platformAdapter: adapter });
     if (allowedUids && pids.length > 0) {
         pids = pids.filter((pid) => {
-            try {
-                const st = io.fs.statSync(`/proc/${pid}`);
-                return typeof st.uid === 'number' ? allowedUids.includes(st.uid) : true;
-            } catch (_) {
-                return false; // already gone
-            }
+            const uid = adapter.pidUid(io, pid);
+            return uid != null ? allowedUids.includes(uid) : true;
         });
     }
     if (pids.length === 0) {

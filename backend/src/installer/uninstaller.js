@@ -26,6 +26,7 @@
  */
 
 const path = require('path');
+const platforms = require('./platform');
 
 /**
  * System directory prefixes: nothing inside these may ever be deleted.
@@ -57,11 +58,6 @@ const GROUPS = Object.freeze([
 // ---------------------------------------------------------------------------
 // Path safety
 // ---------------------------------------------------------------------------
-
-/** Escape a single-quoted shell word. */
-function shQuote(s) {
-    return `'${String(s).replace(/'/g, `'\\''`)}'`;
-}
 
 /**
  * Guard every deletion target.
@@ -416,17 +412,14 @@ function renderUninstallPlan(plan, { state = null } = {}) {
 
 /**
  * Find live processes whose working directory is under any of the paths
- * (ComfyUI server, worker). Read-only /proc scan.
+ * (ComfyUI server, worker). Delegated to the platform adapter (Linux: a
+ * read-only /proc scan; on Windows cwd-based discovery is unsupported and
+ * the adapter reports no pids — running workers must be stopped first).
  * @returns {number[]} pids
  */
-function findProcessesUsingPaths(io, paths) {
+function findProcessesUsingPaths(io, paths, platformAdapter = null) {
     if (!paths || paths.length === 0) return [];
-    const script = 'for p in /proc/[0-9]*; do '
-        + 'cwd=$(readlink "$p/cwd" 2>/dev/null) || continue; '
-        + `case "$cwd" in ${paths.map((p) => `${shQuote(p)}*`).join('| ')}) echo "\${p#/proc/}";; esac; done`;
-    const r = io.exec('sh', ['-c', script]);
-    if (r.code !== 0) return [];
-    return r.stdout.split('\n').map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0);
+    return platforms.getPlatformAdapter(platformAdapter).findPidsByCwdPrefix(io, paths);
 }
 
 /**

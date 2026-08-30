@@ -246,10 +246,17 @@ function createMemoryFs(initial = {}) {
     for (const [p, data] of Object.entries(initial)) {
         files.set(norm(p), { data, mode: 0o644 });
         let d = path.dirname(norm(p));
-        while (d && d !== '/') { dirs.add(d); d = path.dirname(d); }
+        // guard: dirname('.') === '.' on POSIX (a Windows-style path with no
+        // posix separator) — the loop must always make progress
+        while (d && d !== '/' && d !== path.dirname(d)) { dirs.add(d); d = path.dirname(d); }
     }
 
-    function norm(p) { return path.posix.normalize(String(p)); }
+    function norm(p) {
+        // Backslashes are normalized to slashes so the in-memory fs can be
+        // used as a cross-platform test double (Windows-style paths in
+        // platform-adapter tests behave exactly like POSIX ones).
+        return path.posix.normalize(String(p).replace(/\\/g, '/'));
+    }
     function assertParent(p) {
         const d = path.dirname(norm(p));
         if (d !== '/' && !dirs.has(d)) throw Object.assign(new Error(`ENOENT: no such directory ${d}`), { code: 'ENOENT' });

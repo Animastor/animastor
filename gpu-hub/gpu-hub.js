@@ -27,7 +27,7 @@ const crypto = require("crypto")
 const fs = require("fs")
 const path = require("path")
 const { buildTarGz, walkDir } = require("./tarball")
-const { buildBootstrapScript, BOOTSTRAP_VERSION } = require("./bootstrap")
+const { buildBootstrapScript, buildWindowsBootstrapScript, BOOTSTRAP_VERSION } = require("./bootstrap")
 
 // SYNC: backend/src/runtime/job-schema.js (PROTOCOL_VERSION)
 const PROTOCOL_VERSION = 2;
@@ -1285,8 +1285,8 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   // ======================================================
   // BOOTSTRAP INSTALLER (Private Worker onboarding — Phase 3.2)
   // ======================================================
-  // GET /installer serves a small, auditable bootstrap SHELL SCRIPT (not a
-  // tarball): the user downloads and runs it on the GPU machine and it does
+  // GET /installer serves a small, auditable bootstrap LAUNCHER SCRIPT (not
+  // a tarball): the user downloads and runs it on the GPU machine and it does
   // the whole flow — download the installer bundle (GET /installer/bundle),
   // verify its sha256 against the hub-published checksum (GET
   // /installer/sha256), unpack into a temp dir and run the real installer
@@ -1295,8 +1295,15 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   // canonical manifest allowlist — they are NOT secrets). The Worker Key is
   // NEVER part of this exchange: the installer asks for it interactively.
   //
-  //   GET /installer            bootstrap script (animastor-installer.sh)
-  //                             ?profile=<id>&mode=<mode> (optional)
+  // The launcher script ITSELF is the platform choice (the platform is
+  // auto-detected by which script the user runs — never a CLI flag):
+  //   ?platform=linux   → bash launcher (animastor-installer.sh, default)
+  //   ?platform=windows → PowerShell launcher (animastor-installer.ps1)
+  // Without ?platform the hub sniffs the User-Agent: a Windows browser
+  // download gets the PowerShell launcher automatically.
+  //
+  //   GET /installer            bootstrap launcher script
+  //                             ?profile=<id>&mode=<mode>&platform=<p>
   //   GET /installer/bundle     self-contained installer package (tar.gz)
   //   GET /installer/sha256     installer checksum + version metadata
 
@@ -1364,17 +1371,37 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
         return res.status(400).json({ error: "invalid_mode" });
       }
     }
-    const script = buildBootstrapScript({
+    // Platform choice (bash vs PowerShell launcher). Explicit query param
+    // wins; otherwise a Windows User-Agent gets the PowerShell launcher.
+    const ua = typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : "";
+    const platformParam = req.query.platform !== undefined ? String(req.query.platform) : null;
+    let targetPlatform = "linux";
+    if (platformParam === "windows") targetPlatform = "windows";
+    else if (platformParam === "linux") targetPlatform = "linux";
+    else if (platformParam !== null) return res.status(400).json({ error: "invalid_platform" });
+    else if (/Windows/i.test(ua)) targetPlatform = "windows";
+    const common = {
       hubUrl: publicHubUrl(req),
       profile,
       mode,
       installerVersion: meta.version,
-    });
+    };
+    const headers = {
+      "Cache-Control": "no-store",
+      "X-Animastor-Bootstrap-Version": BOOTSTRAP_VERSION,
+      "X-Animastor-Artifact-Version": meta.version,
+    };
+    if (targetPlatform === "windows") {
+      const script = buildWindowsBootstrapScript(common);
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader("Content-Disposition", 'attachment; filename="animastor-installer.ps1"');
+      Object.entries(headers).forEach(([k, v]) => res.setHeader(k, v));
+      return res.send(script);
+    }
+    const script = buildBootstrapScript(common);
     res.setHeader("Content-Type", "text/x-shellscript; charset=utf-8");
     res.setHeader("Content-Disposition", 'attachment; filename="animastor-installer.sh"');
-    res.setHeader("Cache-Control", "no-store");
-    res.setHeader("X-Animastor-Bootstrap-Version", BOOTSTRAP_VERSION);
-    res.setHeader("X-Animastor-Artifact-Version", meta.version);
+    Object.entries(headers).forEach(([k, v]) => res.setHeader(k, v));
     res.send(script);
   });
 

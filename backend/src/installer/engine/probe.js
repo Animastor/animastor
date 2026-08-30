@@ -16,6 +16,7 @@
  */
 
 const path = require('path');
+const platforms = require('../platform');
 
 const MODEL_DIRS = [
     'models/unet', 'models/clip', 'models/vae', 'models/loras',
@@ -61,49 +62,13 @@ function probeNvidiaGpu(io) {
 }
 
 /**
- * AMD GPU detection with positive evidence only:
- *   1. rocm-smi runtime (Card series: …), or
- *   2. kernel drm sysfs vendor 0x1002 (amdgpu), name via lspci when available.
- * Empty/unknown output is treated as "not detected" — never guessed.
+ * AMD GPU detection with positive evidence only. The detection mechanism is
+ * a platform concern (Linux: rocm-smi/drm sysfs/lspci; Windows: wmic) —
+ * delegated to the platform adapter. Empty/unknown output is treated as
+ * "not detected" — never guessed.
  */
-function probeAmdGpu(io) {
-    const rocm = io.exec('rocm-smi', ['--showproductname']);
-    if (rocm.code === 0) {
-        const m = /Card series:\s*(.+)/.exec(rocm.stdout);
-        if (m && m[1].trim()) {
-            return { vendor: 'amd', name: m[1].trim(), vram_mib: null, driver_version: null, detection: 'rocm-smi' };
-        }
-    }
-    try {
-        const drm = '/sys/class/drm';
-        if (io.fs.isDirectory(drm)) {
-            for (const entry of io.fs.readdirSync(drm)) {
-                if (!/^card\d+$/.test(entry)) continue;
-                const vendorPath = `${drm}/${entry}/device/vendor`;
-                if (!io.fs.existsSync(vendorPath)) continue;
-                const vendor = String(io.fs.readFileSync(vendorPath, 'utf8')).trim().toLowerCase();
-                if (vendor !== '0x1002') continue;
-                let name = null;
-                const productPath = `${drm}/${entry}/device/product_name`;
-                if (io.fs.existsSync(productPath)) {
-                    name = String(io.fs.readFileSync(productPath, 'utf8')).trim() || null;
-                }
-                if (!name) {
-                    const lspci = io.exec('lspci', []);
-                    if (lspci.code === 0) {
-                        const m = /VGA compatible controller[^\n]*\[AMD\/ATI\][^\n]*/.exec(lspci.stdout)
-                            || /Display controller[^\n]*\[AMD\/ATI\][^\n]*/.exec(lspci.stdout);
-                        if (m) {
-                            const chip = m[0].split(':').slice(2).join(':').trim();
-                            if (chip) name = chip;
-                        }
-                    }
-                }
-                return { vendor: 'amd', name: name || 'AMD GPU', vram_mib: null, driver_version: null, detection: 'sysfs-vendor' };
-            }
-        }
-    } catch (_) { /* sysfs unavailable — not detected */ }
-    return null;
+function probeAmdGpu(io, platformAdapter = null) {
+    return (platformAdapter || platforms.getPlatformAdapter()).probeAmdGpu(io);
 }
 
 function probeGpu(io) {
@@ -147,10 +112,11 @@ function probeComfyui(io, root) {
     };
 }
 
-function pythonBin(io, root) {
-    // prefer a venv next to ComfyUI, then python3
+function pythonBin(io, root, platformAdapter = null) {
+    // prefer a venv next to ComfyUI, then python3 (venv layout is a
+    // platform concern: bin/python on Linux, Scripts/python.exe on Windows)
     if (root) {
-        const venvPy = path.join(root, 'venv', 'bin', 'python');
+        const venvPy = (platformAdapter || platforms.getPlatformAdapter()).venvPythonBin(path.join(root, 'venv'));
         if (io.fs.existsSync(venvPy)) return venvPy;
     }
     return 'python3';

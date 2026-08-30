@@ -15,8 +15,18 @@
  */
 
 const path = require('path');
+const platforms = require('../platform');
 const { parseEnvKeys } = require('./probe');
 const { currentUid } = require('./prereq');
+
+/**
+ * Platform adapter resolution for one call. Explicit `platformAdapter` /
+ * `platform` wins; otherwise the running OS is auto-detected. Never called
+ * at module load so tests and callers stay free to inject.
+ */
+function adapterOf(opts = {}) {
+    return opts.platformAdapter || platforms.getPlatformAdapter(opts.platform);
+}
 
 function findWorkerManifest(manifests, workerEntryId) {
     return manifests.find((m) => `worker:${m.profile.id}` === workerEntryId) || null;
@@ -249,36 +259,37 @@ async function fetchHubWorkerBundle(io, { hubUrl, tmpRoot = null }) {
 }
 
 /**
- * Find a RUNNING worker process for this exact workerDir. `pgrep -f worker.cjs`
- * matches every worker on the host (several users may run one), so each
- * candidate pid is confirmed via /proc/<pid>/cwd — the worker always runs with
- * cwd=workerDir (both the installer spawn and a manual `node worker.cjs`).
+ * Find a RUNNING worker process for this exact workerDir. Discovery is a
+ * platform concern: on Linux `pgrep -f worker.cjs` matches every worker on
+ * the host (several users may run one), so the platform adapter confirms
+ * each candidate via /proc/<pid>/cwd — the worker always runs with
+ * cwd=workerDir. On Windows the managed marker is the pid file written at
+ * start (no /proc there). Foreign installations are never returned.
  * @returns {number|null} pid of the running worker in this dir
  */
-function findRunningWorkerPid(io, workerDir) {
-    const out = io.exec('pgrep', ['-f', 'worker\\.cjs']);
-    if (!out || out.code !== 0 || !out.stdout) return null;
-    for (const line of String(out.stdout).split('\n')) {
-        const pid = Number(line.trim());
-        if (!Number.isFinite(pid) || pid <= 0) continue;
-        const cwd = io.exec('readlink', [`/proc/${pid}/cwd`]);
-        if (cwd && cwd.code === 0 && path.resolve(String(cwd.stdout).trim()) === path.resolve(workerDir)) {
-            return pid;
-        }
-    }
-    return null;
+function findRunningWorkerPid(io, workerDir, opts = {}) {
+    const adapter = adapterOf(opts);
+    const pids = adapter.findPidsByCmdlineAndCwd(io, { cmdPattern: 'worker\\.cjs', cwd: workerDir });
+    return pids.length > 0 ? pids[0] : null;
 }
 
 /**
  * True when .env was modified AFTER the worker process started: the running
  * worker loaded the OLD configuration (its process.env is fixed at startup)
  * and would keep the stale wiring (e.g. the pre-COMFY_PORT default port)
- * forever. /proc/<pid> mtime is the process start time on Linux.
+ * forever. Process start time comes from the platform adapter (/proc mtime
+ * on Linux, the pid marker on Windows); without any marker the check is
+ * inconclusive → false (never kill on a guess).
  */
-function workerEnvIsNewer(io, { workerDir, pid }) {
+function workerEnvIsNewer(io, { workerDir, pid, platformAdapter = null }) {
     try {
+        const adapter = platformAdapter || adapterOf({});
         const envM = io.fs.statSync(path.join(workerDir, '.env')).mtimeMs;
-        const procM = io.fs.statSync(`/proc/${pid}`).mtimeMs;
+        let procM = adapter.processStartMs(io, pid);
+        if (procM == null && typeof adapter.workerStartMarkerMs === 'function') {
+            procM = adapter.workerStartMarkerMs(io, workerDir);
+        }
+        if (procM == null) return false;
         return envM > procM + 1000; // 1s tolerance for same-second writes
     } catch (_) {
         return false;
@@ -291,42 +302,62 @@ function workerEnvIsNewer(io, { workerDir, pid }) {
  * the environment or argv here. Returns whether the process is still alive
  * after a short grace period. Idempotent: a worker already running for this
  * directory is left alone (re-runs must never spawn a second instance).
+ * Platform specifics (kill/sleep/alive commands, pid marker) come from the
+ * platform adapter — the flow itself is universal.
  */
-function startWorker(io, { workerDir, logFile = null, graceMs = 3000, sleep = null }) {
+function startWorker(io, { workerDir, logFile = null, graceMs = 3000, sleep = null, platformAdapter = null }) {
+    const adapter = platformAdapter || adapterOf({});
     const can = checkWorkerCanStart(io, { workerDir });
     if (!can.ok) return { started: false, alive: false, reason: can.reason };
-    const existing = findRunningWorkerPid(io, workerDir);
-    if (existing && !workerEnvIsNewer(io, { workerDir, pid: existing })) {
+    const existing = findRunningWorkerPid(io, workerDir, { platformAdapter: adapter });
+    if (existing && !workerEnvIsNewer(io, { workerDir, pid: existing, platformAdapter: adapter })) {
         return { started: true, already_running: true, pid: existing, alive: true, reason: null };
     }
     if (existing) {
         // .env changed after this worker started — it is running on the OLD
         // configuration (its env is fixed at process start). Restart it so
         // re-runs with a new --comfy-port etc. actually take effect.
-        io.exec('kill', [String(existing)]);
-        io.exec(sleep || 'sleep', ['1']);
+        const kc = adapter.killCommand(existing);
+        io.exec(kc.cmd, kc.args);
+        runSleep(io, adapter, sleep, 1);
     }
     const pid = io.spawnDaemon('node', ['worker.cjs'], {
         cwd: workerDir,
         logFile: logFile || path.join(workerDir, 'worker-installer.log'),
     });
+    // Platform post-start bookkeeping (Windows: write the managed pid marker)
+    if (typeof adapter.onWorkerSpawned === 'function') {
+        try { adapter.onWorkerSpawned(io, { workerDir, pid }); } catch (_) { /* best effort */ }
+    }
     // sync grace pause (installer is already a synchronous-step CLI)
-    io.exec(sleep || 'sleep', [String(Math.max(1, Math.ceil(graceMs / 1000)))]);
-    const chk = io.exec('ps', ['-p', String(pid), '-o', 'args=']);
-    const alive = chk.code === 0 && /worker\.cjs/.test(chk.stdout);
+    runSleep(io, adapter, sleep, Math.max(1, Math.ceil(graceMs / 1000)));
+    let alive;
+    if (typeof adapter.checkDaemonAlive === 'function') {
+        alive = adapter.checkDaemonAlive(io, { pid, workerDir });
+    } else {
+        const chkCmd = adapter.psCheckCommand(pid);
+        const chk = io.exec(chkCmd.cmd, chkCmd.args);
+        alive = chk.code === 0 && /worker\.cjs/.test(chk.stdout);
+    }
     return { started: true, pid, alive, reason: alive ? null : 'worker exited immediately — see the log file' };
 }
 
-/**
- * Uid of a process (from /proc/<pid> stat) or null when unavailable.
- */
-function pidUid(io, pid) {
-    try {
-        const st = io.fs.statSync(`/proc/${pid}`);
-        return typeof st.uid === 'number' ? st.uid : null;
-    } catch (_) {
-        return null;
+/** Grace sleep through the adapter (test-injectable `sleep` command wins). */
+function runSleep(io, adapter, sleepOverride, seconds) {
+    if (sleepOverride) {
+        io.exec(sleepOverride, [String(seconds)]);
+        return;
     }
+    const sc = adapter.sleepCommand(seconds);
+    io.exec(sc.cmd, sc.args);
+}
+
+/**
+ * Uid of a process (platform adapter: /proc stat on Linux, null on Windows)
+ * or null when unavailable.
+ */
+function pidUid(io, pid, opts = {}) {
+    return adapterOf(opts).pidUid(io, pid);
 }
 
 /**
@@ -336,11 +367,12 @@ function pidUid(io, pid) {
  * refused (shared host with several Animastor installations).
  * @returns {{ stopped: boolean, pid: number|null, reason: string|null }}
  */
-async function stopManagedWorker(io, { workerDir, stopTimeoutMs = 15000, pollMs = 300, log = null }) {
-    const pid = findRunningWorkerPid(io, workerDir);
+async function stopManagedWorker(io, { workerDir, stopTimeoutMs = 15000, pollMs = 300, log = null, platformAdapter = null }) {
+    const adapter = platformAdapter || adapterOf({});
+    const pid = findRunningWorkerPid(io, workerDir, { platformAdapter: adapter });
     if (!pid) return { stopped: false, pid: null, reason: 'no running worker process found for this installation' };
     const me = currentUid();
-    const owner = pidUid(io, pid);
+    const owner = pidUid(io, pid, { platformAdapter: adapter });
     if (me != null && owner != null && me !== 0 && owner !== me) {
         return { stopped: false, pid, reason: `worker process ${pid} is owned by uid ${owner} — refusing to signal a foreign process` };
     }
@@ -371,15 +403,15 @@ async function stopManagedWorker(io, { workerDir, stopTimeoutMs = 15000, pollMs 
  * @returns {{ restarted: boolean, previously_running: boolean, pid: number|null,
  *             alive: boolean, reason: string|null }}
  */
-async function restartManagedWorker(io, { workerDir, log = null, stopTimeoutMs = 15000, pollMs = 300, graceMs = 3000 }) {
-    const previouslyRunning = !!findRunningWorkerPid(io, workerDir);
+async function restartManagedWorker(io, { workerDir, log = null, stopTimeoutMs = 15000, pollMs = 300, graceMs = 3000, platformAdapter = null }) {
+    const previouslyRunning = !!findRunningWorkerPid(io, workerDir, { platformAdapter });
     if (previouslyRunning) {
-        const stop = await stopManagedWorker(io, { workerDir, stopTimeoutMs, pollMs, log });
+        const stop = await stopManagedWorker(io, { workerDir, stopTimeoutMs, pollMs, log, platformAdapter });
         if (!stop.stopped) {
             return { restarted: false, previously_running: true, pid: stop.pid, alive: false, reason: stop.reason };
         }
     }
-    const start = startWorker(io, { workerDir, graceMs, log });
+    const start = startWorker(io, { workerDir, graceMs, log, platformAdapter });
     if (!start.started) {
         return { restarted: true, previously_running: previouslyRunning, pid: null, alive: false, reason: start.reason };
     }

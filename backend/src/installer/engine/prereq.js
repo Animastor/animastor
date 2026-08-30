@@ -21,6 +21,15 @@
  */
 
 const path = require('path');
+const platforms = require('../platform');
+
+/**
+ * Platform adapter for one call (explicit override wins over auto-detect).
+ * Package remediation commands and the venv layout are platform concerns.
+ */
+function adapterOf(opts = {}) {
+    return (opts && opts.platformAdapter) || platforms.getPlatformAdapter();
+}
 
 /**
  * Structured prerequisite failure. Carries the host package and the exact
@@ -51,15 +60,24 @@ function debianVenvPackage(pythonVersion) {
     return m ? `python${m[1]}.${m[2]}-venv` : 'python3-venv';
 }
 
-function aptCommand(pkg) {
-    return `sudo apt install ${pkg}`;
+/**
+ * Host package install command — delegated to the platform adapter
+ * (Debian/Ubuntu apt on Linux; winget/choco hints on Windows).
+ * The explicit `platform` argument keeps the historical apt behaviour for
+ * tests and Linux-only remediation classifiers.
+ */
+function aptCommand(pkg, platform = 'linux') {
+    return platforms.getPlatformAdapter(platform).hostPackageCommand(pkg);
 }
 
 /**
  * Classify a failed `python3 -m venv` run.
+ * The remediation command comes from the platform adapter when one is
+ * provided (apt on Linux, package-manager hints on Windows).
  * @returns {{ code, summary, hostPackage, remediationCommand }}
  */
-function classifyVenvCreateFailure(output, pythonVersion = null) {
+function classifyVenvCreateFailure(output, pythonVersion = null, platformAdapter = null) {
+    const pkgCmd = (pkg) => (platformAdapter ? platformAdapter.hostPackageCommand(pkg) : aptCommand(pkg));
     const text = String(output || '');
     if (/ensurepip is not available|python3(\.\d+)?-venv|ensurepip/i.test(text)) {
         const pkg = debianVenvPackage(pythonVersion);
@@ -67,7 +85,7 @@ function classifyVenvCreateFailure(output, pythonVersion = null) {
             code: 'MISSING_VENV_PACKAGE',
             summary: 'the Python venv prerequisite is missing',
             hostPackage: pkg,
-            remediationCommand: aptCommand(pkg),
+            remediationCommand: pkgCmd(pkg),
         };
     }
     const pkg = debianVenvPackage(pythonVersion);
@@ -75,7 +93,7 @@ function classifyVenvCreateFailure(output, pythonVersion = null) {
         code: 'VENV_CREATE_FAILED',
         summary: 'the Python venv could not be created on this host',
         hostPackage: pkg,
-        remediationCommand: aptCommand(pkg),
+        remediationCommand: pkgCmd(pkg),
     };
 }
 
@@ -103,11 +121,13 @@ function renderRemediation(failure) {
 
 /**
  * Classify an existing venv directory WITHOUT mutating it.
+ * The interpreter layout inside the venv (bin/python vs Scripts/python.exe)
+ * is a platform concern (platform adapter).
  * @returns {{ state: 'missing'|'incomplete'|'has-python', reason?: string }}
  */
-function classifyVenvDir(io, venvDir) {
+function classifyVenvDir(io, venvDir, platformAdapter = null) {
     if (!io.fs.existsSync(venvDir)) return { state: 'missing' };
-    const py = path.join(venvDir, 'bin', 'python');
+    const py = adapterOf({ platformAdapter }).venvPythonBin(venvDir);
     if (!io.fs.existsSync(py)) {
         return { state: 'incomplete', reason: `directory exists but ${py} is missing (broken/incomplete venv)` };
     }
@@ -128,7 +148,8 @@ function classifyVenvDir(io, venvDir) {
  *           { ok: false, failure: { code, summary, message, remediation: { package, command } } }}
  */
 function checkPythonPrerequisites(io, opts = {}) {
-    const { python = 'python3', tmpRoot = null, deep = true, existingVenvDir = null } = opts;
+    const { python = 'python3', tmpRoot = null, deep = true, existingVenvDir = null, platformAdapter = null } = opts;
+    const adapter = adapterOf({ platformAdapter });
     const os = require('os');
 
     const versionRes = io.exec(python, ['--version']);
@@ -139,7 +160,7 @@ function checkPythonPrerequisites(io, opts = {}) {
                 code: 'NO_PYTHON',
                 summary: 'Python 3 is not available on this host',
                 message: `${python} is not usable (code ${versionRes.code})`,
-                remediation: { package: 'python3', command: aptCommand('python3') },
+                remediation: { package: 'python3', command: adapter.hostPackageCommand('python3') },
             },
         };
     }
@@ -149,9 +170,9 @@ function checkPythonPrerequisites(io, opts = {}) {
     // A working existing venv at the target makes venv-creation capability
     // irrelevant (the installer reuses it as-is).
     if (existingVenvDir) {
-        const cls = classifyVenvDir(io, existingVenvDir);
+        const cls = classifyVenvDir(io, existingVenvDir, adapter);
         if (cls.state === 'has-python') {
-            const existingPy = path.join(existingVenvDir, 'bin', 'python');
+            const existingPy = adapter.venvPythonBin(existingVenvDir);
             const pipCheck = io.exec(existingPy, ['-m', 'pip', '--version']);
             if (pipCheck.code === 0) {
                 return { ok: true, python_version: pythonVersion, deep_checked: false, existing_venv_usable: true };
@@ -174,7 +195,7 @@ function checkPythonPrerequisites(io, opts = {}) {
     const created = io.exec(python, ['-m', 'venv', probeVenv]);
     if (created.code !== 0) {
         cleanup();
-        const f = classifyVenvCreateFailure(String(created.stderr || created.stdout || created.error || ''), pythonVersion);
+        const f = classifyVenvCreateFailure(String(created.stderr || created.stdout || created.error || ''), pythonVersion, adapter);
         return {
             ok: false,
             failure: {
@@ -191,7 +212,7 @@ function checkPythonPrerequisites(io, opts = {}) {
         return { ok: true, python_version: pythonVersion, deep_checked: false };
     }
 
-    const probePy = path.join(probeVenv, 'bin', 'python');
+    const probePy = adapter.venvPythonBin(probeVenv);
     if (!io.fs.existsSync(probePy)) {
         cleanup();
         const pkg = debianVenvPackage(pythonVersion);
@@ -201,7 +222,7 @@ function checkPythonPrerequisites(io, opts = {}) {
                 code: 'VENV_INCOMPLETE',
                 summary: 'the Python venv prerequisite is missing (venv was created without a usable python)',
                 message: `venv probe produced no interpreter at ${probePy}`,
-                remediation: { package: pkg, command: aptCommand(pkg) },
+                remediation: { package: pkg, command: adapter.hostPackageCommand(pkg) },
             },
         };
     }
@@ -218,7 +239,7 @@ function checkPythonPrerequisites(io, opts = {}) {
                     code: 'MISSING_ENSUREPIP',
                     summary: 'the Python venv prerequisite is missing (venv has neither pip nor ensurepip)',
                     message: `probe venv has no pip and ensurepip failed (code ${boot.code}): ${String(boot.stderr || boot.stdout || '').slice(-400)}`,
-                    remediation: { package: pkg, command: aptCommand(pkg) },
+                    remediation: { package: pkg, command: adapter.hostPackageCommand(pkg) },
                 },
             };
         }
@@ -356,39 +377,11 @@ function checkOwnership(io, { paths = [], home = null, currentUid: uidInput = nu
 
 /**
  * Check for C build tools required by packages with native extensions
- * (funasr, soundfile, etc.). Returns a list of missing packages with
- * the exact apt install command to fix them.
+ * (funasr, soundfile, etc.). Delegates to the platform adapter — the
+ * tool set and package names are OS-specific.
  */
-function checkBuildPrerequisites(io, { python = 'python3', log = null } = {}) {
-    const missing = [];
-    const versionRes = io.exec(python, ['--version']);
-    const vMatch = /Python\s+([0-9][0-9.]*)/.exec(String(versionRes.stdout) + String(versionRes.stderr));
-    const pyVer = vMatch ? vMatch[1] : null;
-    const pyMajor = pyVer ? pyVer.split('.').slice(0, 2).join('.') : null;
-
-    // gcc — required by C extensions
-    const gcc = io.exec('gcc', ['--version']);
-    if (gcc.code !== 0) missing.push({ pkg: 'build-essential', check: 'gcc --version' });
-
-    // python3-dev / python3.X-dev — headers for compiling C extensions against Python
-    const devPkg = pyMajor ? `python${pyMajor}-dev` : 'python3-dev';
-    const devCheck = io.exec(python, ['-c', 'import sysconfig; print(sysconfig.get_path("include"))']);
-    if (devCheck.code !== 0 || !String(devCheck.stdout).trim()) {
-        missing.push({ pkg: devPkg, check: `${python} -c "import sysconfig; print(sysconfig.get_path('include'))"` });
-    }
-
-    // libsndfile1-dev — required by soundfile (used by funasr)
-    const sndfile = io.exec('pkg-config', ['--exists', 'sndfile']);
-    if (sndfile.code !== 0) missing.push({ pkg: 'libsndfile1-dev', check: 'pkg-config --exists sndfile' });
-
-    if (missing.length === 0) return { ok: true, missing: [] };
-
-    const pkgList = missing.map((m) => m.pkg).join(' ');
-    const cmd = `sudo apt-get install -y ${pkgList}`;
-    const msg = `Missing C build tools required by Python packages with native extensions: ${missing.map((m) => m.pkg).join(', ')}. `
-        + `Run: ${cmd}`;
-    if (log) log.warn(msg);
-    return { ok: false, missing, remediation: { package: pkgList, command: cmd }, message: msg };
+function checkBuildPrerequisites(io, { python = 'python3', log = null, platformAdapter = null } = {}) {
+    return adapterOf({ platformAdapter }).checkBuildPrerequisites(io, { python, log });
 }
 
 module.exports = {
