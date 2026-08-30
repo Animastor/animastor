@@ -1,17 +1,17 @@
-# 📦 TODO — Ближайшие дни (26–30 июня 2026) — ВСЁ ВЫПОЛНЕНО
+# 📦 TODO — Next Days (June 26–30, 2026) — ALL COMPLETED
 
-> **Статус: АРХИВ.** Все задачи H.0–H.9, Д.0–Д.3 выполнены.
-> Закрытые баги: C1, C2, C3, C4, M1, M2, M3, M4, §5.1.
-> Результаты интегрированы в основные документы `docs/`. Оставлен как историческая запись.
+> **Status: ARCHIVE.** All tasks N.0–N.9, D.0–D.3 completed.
+> Closed bugs: C1, C2, C3, C4, M1, M2, M3, M4, §5.1.
+> Results integrated into main `docs/` documents. Kept as historical record.
 
-> Основано на `06_Roadmap.md` (Неделя — «стоп кровотечению» + безопасность),
-> `02_Claude_Audit.md` (C1–C4, M1–M2) и `04_Migration_Plan.md` (Шаги 0–3).
+> Based on `06_Roadmap.md` (Week — "stop the bleeding" + safety),
+> `02_Claude_Audit.md` (C1–C4, M1–M2) and `04_Migration_Plan.md` (Steps 0–3).
 
-Приоритет: сначала тесты (сеть безопасности), затем критичные баги (C1, C4), затем квоты (C1/M2).
+Priority: tests first (safety net), then critical bugs (C1, C4), then quotas (C1/M2).
 
 ---
 
-## ✅ Н.0: Сеть безопасности (тесты) — выполнено
+## ✅ N.0: Safety Net (Tests) — Completed
 
 **Коммит:** `15978e6` — создан `backend/tests/happy-path.test.js` (30+ тестов)
 
@@ -24,7 +24,7 @@
 
 ---
 
-## ✅ Н.1: Идемпотентность `/gpu/task/result` (C4) — выполнено
+## ✅ N.1: `/gpu/task/result` Idempotency (C4) — Completed
 
 **Коммит:** `d804a77`
 
@@ -34,7 +34,7 @@
 
 ---
 
-## ✅ Н.2: Один владелец release квоты (C1) — выполнено
+## ✅ N.2: Single Quota Release Owner (C1) — Completed
 
 **Коммит:** `4e007e2`
 
@@ -44,7 +44,7 @@
 
 ---
 
-## ✅ Н.3: Атомарность квот (M2) — выполнено
+## ✅ N.3: Quota Atomicity (M2) — Completed
 
 **Коммит:** `636da04`
 
@@ -54,7 +54,7 @@
 
 ---
 
-## ✅ Н.4: Error-safe markDispatchCompleted — выполнено
+## ✅ N.4: Error-safe markDispatchCompleted — Completed
 
 **Коммит:** `fbb6493`
 
@@ -65,7 +65,7 @@
 
 ---
 
-## ✅ Н.5: Запись PG `status='ready'` (C2) — выполнено
+## ✅ N.5: PG `status='ready'` Write (C2) — Completed
 
 **Коммит:** `cf0a48a`
 
@@ -76,7 +76,7 @@
 
 ---
 
-## ✅ Н.6: Атомарность per-asset RMW (M1) — выполнено
+## ✅ N.6: Per-asset RMW Atomicity (M1) — Completed
 
 **Коммит:** `1a0867d`
 
@@ -86,7 +86,7 @@
 
 ---
 
-## ✅ Н.7: GENERATING per-asset при диспатче (§5.1) — выполнено
+## ✅ N.7: GENERATING Per-asset at Dispatch (§5.1) — Completed
 
 **Коммит:** `f0b81de`
 
@@ -96,7 +96,7 @@
 
 ---
 
-## ✅ Н.8: Развести два registry (C3) — выполнено
+## ✅ N.8: Separate Two Registries (C3) — Completed
 
 **Коммит:** `5182455`
 
@@ -106,7 +106,7 @@
 
 ---
 
-## ✅ Н.9: Убрать мертвый дубль MAX_CONCURRENT (M4) — выполнено
+## ✅ N.9: Remove Dead MAX_CONCURRENT Duplicate (M4) — Completed
 
 **Коммит:** `0adc930`
 
@@ -116,7 +116,7 @@
 
 ---
 
-## 🏆 Итог: Все критические баги закрыты
+## 🏆 Summary: All Critical Bugs Closed
 
 | Проблема | Статус | Коммит |
 |---|---|---|
@@ -131,9 +131,9 @@
 
 ---
 
-## 🔧 Н.10: Доработки по итогам ревью — выполнено
+## 🔧 N.10: Post-review Fixes — Completed
 
-Аудит Н.0–Н.9 выявил три недочёта; исправлены:
+Audit N.0–N.9 revealed three issues; fixed:
 
 1. **C4 — потеря результата при ошибке обработки.** Dedup-ключ ставился до `handleTaskResult` и не снимался при исключении → ретрай Hub'а молча отбрасывался (`deduped:true`), результат терялся на 1ч. Теперь при ошибке ключ удаляется (`redis.del`), и следующий ретрай переобрабатывает. +1 тест.
 2. **M1 — пропадание fallback на linear-state.** `getAssetStates` после перехода на Hash трактовал пустой хэш `{}` (который ioredis возвращает для отсутствующего ключа) как авторитетный «всё new», минуя fallback на линейное состояние. Добавлена проверка `Object.keys(raw).length > 0`. Плюс самолечение: стейл JSON-ключ (старый формат) удаляется при `WRONGTYPE`. +1 тест.
@@ -143,9 +143,9 @@
 
 ---
 
-## ✅ Д.0–Д.3: Подготовительные шаги к M3/M5 — выполнено
+## ✅ D.0–D.3: Preparatory Steps for M3/M5 — Completed
 
-### ✅ Д.0: Карта писателей состояния
+### ✅ D.0: State Writers Map
 
 **Коммит:** `8369a04` — создан `docs/STATE_WRITERS_MAP.md`
 
@@ -155,7 +155,7 @@
 
 ---
 
-### ✅ Д.1: markDispatchCompleted идемпотентен по dispatch
+### ✅ D.1: markDispatchCompleted Idempotent per Dispatch
 
 **Коммит:** `58a8577`
 
@@ -165,7 +165,7 @@
 
 ---
 
-### ✅ Д.2: shouldScheduleAssets — чистая функция
+### ✅ D.2: shouldScheduleAssets — Pure Function
 
 **Коммит:** `b485c73`
 
@@ -176,7 +176,7 @@
 
 ---
 
-### ✅ Д.3: Диск — факт, не решение (M3)
+### ✅ D.3: Disk — Fact, Not Decision (M3)
 
 **Коммиты:** `91f104f` (fix) + `cc7d706` (tests)
 
@@ -206,29 +206,29 @@
 
 ---
 
-## 🔭 Дальнейшие планы
+## 🔭 Future Plans
 
-### 🔜 M5: Свести writers к Orchestrator
+### 🔜 M5: Consolidate Writers to Orchestrator
 - P2 (scene-callbacks: setAssetState READY) → `completeStage`
 - P4 (reconciliation-engine: setAssetState DIRTY) → `reconcile`
 - P5 (startup-recovery: setAssetStates DIRTY) → `reconcile`
 - P6 (scene-restoration: setAssetState READY/DIRTY) → частично исправлено (Д.3)
 
-### 🔜 O1: Принять 03_Orchestrator.md как архитектурный стандарт
+### 🔜 O1: Adopt 03_Orchestrator.md as Architectural Standard
 - Использовать концепцию Orchestrator как единого владельца lifecycle при новых изменениях
 - Направлять новые изменения через фасад вместо прямого вызова state/scene-callbacks/...
 
-### 🔜 O2: Улучшить observability
+### 🔜 O2: Improve Observability
 - Добавить метрики (prometheus) по: quota utilisation, lease age, tick duration
 - Мониторинг дрифта квот после каждого релиза
 
-### 🔜 O3: Привести в порядок docs
+### 🔜 O3: Clean Up Documentation
 - Синхронизировать `ARCHITECTURAL_DEBT.md`, `LLM_AUDIT_CONTEXT.md` с текущим состоянием кода
 - Добавить диаграмму потоков для Orchestrator
 
 ---
 
-## Сводка зависимостей (историческая)
+## Dependency Summary (Historical)
 
 ```
 Н.0 (тесты) ─── фундамент для всего

@@ -1,14 +1,14 @@
-# M5: Устранение конкуренции за состояние сцены
+# M5: Eliminating Scene State Competition
 
-> **Дата:** 2026-06-28
-> **Цель:** Свести все 8 точек записи per-asset состояния к единому фасаду (Orchestrator), устранив конкуренцию между dirty-системой, window-системой, recovery и reconciliation engine.
-> **Основание:** `docs/ARCHITECTURAL_AUDIT_CONFLICTING_SUBSYSTEMS.md`, `docs/STATE_WRITERS_MAP.md`
+> **Date:** 2026-06-28
+> **Goal:** Consolidate all 8 per-asset state write points to a single facade (Orchestrator), eliminating competition between the dirty system, window system, recovery, and reconciliation engine.
+> **Basis:** `docs/ARCHITECTURAL_AUDIT_CONFLICTING_SUBSYSTEMS.md`, `docs/STATE_WRITERS_MAP.md`
 
 ---
 
-## 1. Проблема
+## 1. Problem
 
-Четыре независимых механизма могут устанавливать per-asset состояние сцены, не зная о намерениях друг друга:
+Four independent mechanisms can set per-asset scene state without knowing each other's intentions:
 
 | # | Подсистема | Что пишет | Когда |
 |---|---|---|---|
@@ -25,7 +25,7 @@
 
 ---
 
-## 2. Текущее состояние миграции
+## 2. Current Migration Status
 
 ### ✅ Уже за фасадом (orchestrator.markDirtyScene / orchestrator.markDirty)
 
@@ -73,7 +73,7 @@
 
 ---
 
-## 3. План миграции (5 шагов)
+## 3. Migration Plan (5 Steps)
 
 ### ✅ Шаг 1 выполнен: completeStage — единый владелец перехода в READY
 
@@ -166,7 +166,7 @@
 
 ---
 
-## 4. Итоговый статус
+## 4. Final Status
 
 ```
 Шаг 1 (completeStage → READY) ──────── ✅ ВЫПОЛНЕН
@@ -196,7 +196,7 @@
 
 ---
 
-## 5. Тестирование
+## 5. Testing
 
 ### 5.1 Существующие тесты
 
@@ -238,7 +238,7 @@ npm test
 
 ---
 
-## 6. Критерии завершения
+## 6. Completion Criteria
 
 Система достигла цели, когда:
 
@@ -257,7 +257,7 @@ npm test
 
 ---
 
-## 7. Риски и mitigation
+## 7. Risks and Mitigation
 
 | Риск | Mitigation |
 |---|---|
@@ -268,7 +268,7 @@ npm test
 
 ---
 
-## 8. Приложение: полная карта вызовов state.setAssetState
+## 8. Appendix: Complete state.setAssetState Call Map
 
 ### ✅ За фасадом (orchestrator facade — Шаги 0-2)
 

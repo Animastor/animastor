@@ -6,7 +6,7 @@
 
 ---
 
-## 🔴 Critical (v2 — entity-level diff) — ВСЁ ВЫПОЛНЕНО ✅
+## 🔴 Critical (v2 — entity-level diff) — ALL COMPLETED ✅
 
 ### [R0] Audio→Video dependency ✅
 
@@ -109,7 +109,7 @@
 
 ---
 
-## 🟡 High (v2) — ВСЁ ВЫПОЛНЕНО ✅
+## 🟡 High (v2) — ALL COMPLETED ✅
 
 ### [R10] Placeholder audio ≠ valid content ✅
 
@@ -208,14 +208,14 @@
 ## ⚪ Low
 
 ### [R20] Dependency Graph integration
-### [R21] Убрать дублирование event-журналов
-### [R22] Мёртвый governance код
-### [R23] Cancel→Regenerate cleanup
-### [R24] Hardcoded константы
+### [R21] Remove Duplicate Event Journals
+### [R22] Dead Governance Code
+### [R23] Cancel→Regenerate Cleanup
+### [R24] Hardcoded Constants
 
 ---
 
-## Приоритеты (актуальные)
+## Priorities (Current)
 
 ```
 ✅ ВЫПОЛНЕНО (v2 — все 13 задач):
@@ -293,19 +293,19 @@
 
 ---
 
-## Общая хронология исправлений
+## General Fix Timeline
 
-### 2026-06 — Массовое исправление per-unit regeneration
+### 2026-06 — Mass per-unit regeneration fix
 
-1. **Worker toggle fix:** GPU hub heartbeat refresh + lease fallback removal. Worker toggle показывает только реальную занятость GPU, не время жизни lease.
+1. **Worker toggle fix:** GPU hub heartbeat refresh + lease fallback removal. Worker toggle shows only real GPU utilization, not lease lifetime.
 
-2. **`ensureSceneRow`:** Строки в таблице `scenes` никогда не создавались — `bumpSceneVersions` и `setDirtyUnitIds` делали UPDATE на несуществующую строку (silent no-op). `getDirtyUnitIds` возвращал null → все юниты cache hit → GPU ничего не делал.
+2. **`ensureSceneRow`:** Rows in `scenes` table were never created — `bumpSceneVersions` and `setDirtyUnitIds` did UPDATE on non-existent row (silent no-op). `getDirtyUnitIds` returned null → all units cache hit → GPU did nothing.
 
-3. **GPU hub dedup key:** GPU hub использует `SET NX EX 3600` для дедупликации задач. При перегенерации `job_id` тот же (базируется на unit_id) → задача тихо игнорируется как `⚠️ Duplicate job ignored`. Backend теперь чистит dedup key перед dispatch.
+3. **GPU hub dedup key:** GPU hub uses `SET NX EX 3600` for task deduplication. On regeneration `job_id` is identical (based on unit_id) → task silently ignored as `⚠️ Duplicate job ignored`. Backend now cleans dedup key before dispatch.
 
-4. **In-flight tracking:** Redis marker `animastor:iu-in-flight:{id}` (TTL 20min) предотвращает повторный dispatch на следующих scheduler tick-ах.
+4. **In-flight tracking:** Redis marker `animastor:iu-in-flight:{id}` (TTL 20min) prevents duplicate dispatch on subsequent scheduler ticks.
 
-5. **Progress display:** `/regenerate` handler синхронно удаляет stale PNG для dirty units до возврата ответа. Первый frontend poll сразу видит 3/4, без ложного 4/4.
+5. **Progress display:** `/regenerate` handler synchronously removes stale PNG for dirty units before returning response. First frontend poll immediately sees 3/4, without false 4/4.
 
-**Архитектурный урок:** GPU hub не должен был иметь долгоживущий (1h) dedup key на job_id. Для per-unit regeneration job_id идентичен при изменении того же unit — dedup блокирует легитимную перегенерацию. Решение: очищать dedup перед dispatch для dirty units.
+**Architectural lesson:** GPU hub should not have had a long-lived (1h) dedup key on job_id. For per-unit regeneration, job_id is identical when modifying the same unit — dedup blocks legitimate regeneration. Solution: clean dedup before dispatch for dirty units.
 ```

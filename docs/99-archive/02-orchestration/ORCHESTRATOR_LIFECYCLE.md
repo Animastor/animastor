@@ -1,13 +1,13 @@
-# 03. Единый Orchestrator — жизненный цикл генерации
+# 03. Unified Orchestrator — Generation Lifecycle
 
-> Фокус строго на жизненном цикле генерации ассетов (audio / image / video).
-> Импорт, AI-анализ книги, чат-ассистент и плеер — вне рамок этого документа.
-> Часть 1 (§1–§7) — анализ «как есть» по коду. Часть 2 (§8–§13) — предлагаемая архитектура.
-> Дата: 2026-06-25. Основано на чтении исходного кода, а не документации.
+> Focus strictly on the asset generation lifecycle (audio / image / video).
+> Import, AI book analysis, chat assistant, and player are out of scope.
+> Part 1 (§1–§7) — "as-is" analysis from code. Part 2 (§8–§13) — proposed architecture.
+> Date: 2026-06-25. Based on source code review, not documentation.
 
 ---
 
-## 1. Что вообще считается «жизненным циклом генерации»
+## 1. What Counts as "Generation Lifecycle"
 
 Речь об одной сцене и трёх её ассетах. Каждый ассет проходит независимый путь состояний
 (per-asset модель, канон с v2.1.0):
@@ -27,7 +27,7 @@ audio и image идут параллельно и независимо.
 
 ---
 
-## 2. Как сейчас принимается решение «что нужно генерировать»
+## 2. How "What to Generate" Is Currently Decided
 
 Решение принимается **в момент тика** (раз в 5 сек), для каждой сцены из активного индекса.
 
@@ -64,7 +64,7 @@ runtime-loop.executeTick (каждые 5с, setInterval в backend)
 
 ---
 
-## 3. Как определяется «что готово» и «что dirty»
+## 3. How "Ready" and "Dirty" Are Determined
 
 Здесь — корень проблемы. **«Готово» и «dirty» вычисляются из разных хранилищ разными модулями,
 и они не согласованы между собой.**
@@ -106,7 +106,7 @@ runtime-loop.executeTick (каждые 5с, setInterval в backend)
 
 ---
 
-## 4. Как работает очередь и backpressure
+## 4. How Queues and Backpressure Work
 
 Здесь две разные сущности, которые легко спутать.
 
@@ -148,7 +148,7 @@ INCR — две операции). Тик защищён single-flight локо�
 
 ---
 
-## 5. Кто меняет статусы (полная карта писателей)
+## 5. Who Changes Statuses (Complete Writer Map)
 
 Per-asset состояние одной сцены пишут **семь** разных мест. Это и есть главный диагноз.
 
@@ -182,7 +182,7 @@ Per-asset состояние одной сцены пишут **семь** ра�
 
 ---
 
-## 6. Как обновляется прогресс
+## 6. How Progress Is Updated
 
 Прогресс генерации собирается из нескольких источников, ни один из которых не является
 единым счётчиком:
@@ -204,7 +204,7 @@ per-asset (`allDone`); task-handler для картинок — по числу 
 
 ---
 
-## 7. Кто владелец состояния сейчас — короткий ответ
+## 7. Who Owns State Now — Short Answer
 
 **Единого владельца нет.** Формально владельцем объявлен `runtime-scheduler`
 (комментарий в коде: «The ONLY authority for scene lifecycle progression»). Фактически:
@@ -224,12 +224,12 @@ per-asset (`allDone`); task-handler для картинок — по числу 
 
 ---
 
-# Часть 2. Единый Orchestrator
+# Part 2. Unified Orchestrator
 
-## 8. Принципы (что меняем, чего НЕ трогаем)
+## 8. Principles (What We Change, What We Don't Touch)
 
-Цель: **один модуль владеет жизненным циклом генерации**. Не переписываем проект —
-вводим арбитра и сводим к нему всех писателей состояния.
+Goal: **one module owns the generation lifecycle**. We're not rewriting the project —
+we're introducing an arbiter and consolidating all state writers to it.
 
 **НЕ трогаем** (работает и не относится к владению состоянием):
 - GPU Hub, очереди Redis, воркеры, ComfyUI — транспорт оставляем как есть;
@@ -248,7 +248,7 @@ per-asset (`allDone`); task-handler для картинок — по числу 
 
 ---
 
-## 9. Граница Orchestrator: единственный API записи
+## 9. Orchestrator Boundary: Single Write API
 
 Вводим один модуль `orchestration/orchestrator.js` с узким командным API. **Только он**
 пишет per-asset состояние и трогает квоты/lease. Все остальные модули вызывают его команды,
@@ -287,7 +287,7 @@ per-asset (`allDone`); task-handler для картинок — по числу 
 
 ---
 
-## 10. Источник истины и роль каждого хранилища
+## 10. Source of Truth and Role of Each Store
 
 После введения Orchestrator роли фиксируются жёстко:
 
@@ -308,7 +308,7 @@ per-asset (`allDone`); task-handler для картинок — по числу 
 
 ---
 
-## 11. Жизненный цикл через Orchestrator (целевой поток)
+## 11. Lifecycle Through Orchestrator (Target Flow)
 
 ```
 1. Пользователь / window-generator
@@ -339,7 +339,7 @@ per-asset (`allDone`); task-handler для картинок — по числу 
 
 ---
 
-## 12. Путь внедрения без переписывания проекта
+## 12. Implementation Path Without Rewriting the Project
 
 Orchestrator вводится поверх существующего кода: тонкий фасад + перенаправление писателей.
 Никакой замены GPU Hub, генераторов или плеера. Порядок шагов — от самых дешёвых к крупным.
@@ -377,7 +377,7 @@ Orchestrator вводится поверх существующего кода: 
 
 ---
 
-## 13. Итог
+## 13. Summary
 
 Сейчас жизненным циклом генерации управляют **семь писателей состояния, три хранилища
 и три разных определения «готово»**, без арбитра. Это распределённая модель на одном
