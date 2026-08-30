@@ -99,6 +99,14 @@ const dict = {
     vbook_settings_scenes_per_pass: 'Сцен за раз',
     vbook_settings_scenes_per_pass_desc: 'Сколько сцен AI создаёт за один проход (1-5). Большие значения обрабатывают больше текста за проход, но увеличивают время на окно.',
     vbook_settings_default: 'По умолчанию',
+    // Parallel / Subagent AI Analysis (Milestone #2 — frontend wiring)
+    vbook_settings_analysis_mode: 'Режим AI-анализа',
+    vbook_settings_analysis_mode_sequential: 'Последовательный',
+    vbook_settings_analysis_mode_parallel: 'Параллельный',
+    vbook_settings_analysis_mode_desc: 'Как AI выполняет задачи извлечения (персонажи, локации, голоса). Параллельный режим ускоряет анализ, но не меняет итоговый результат.',
+    vbook_settings_analysis_parallelism: 'Макс. параллельных задач',
+    vbook_settings_analysis_parallelism_desc: 'Максимум одновременно выполняемых AI-задач. Это concurrency-лимит, а не количество отдельных API-агентов.',
+    vbook_settings_analysis_disabled: 'Доступно только в параллельном режиме.',
     // Worker Settings (strings.xml ru)
     worker_settings_title_audio: 'Настройки генерации аудио',
     worker_settings_title_image: 'Настройки генерации изображений',
@@ -567,6 +575,20 @@ const dict = {
     progress_vbook_stage_video_action_polish: '⟳ Полирую непрерывность движений...',
     progress_vbook_stage_fantasy_snake_repair: '⟳ Восстанавливаю естественные обозначения персонажей...',
     progress_vbook_stage_cancelled: '✗ Отменено',
+    // Parallel AI Analysis — per-task labels + status (Milestone #2)
+    progress_analysis_section_title: 'AI-анализ — параллельный режим',
+    progress_analysis_section_title_seq: 'AI-анализ',
+    progress_analysis_task_characters: 'Персонажи',
+    progress_analysis_task_locations: 'Локации',
+    progress_analysis_task_voices: 'Голоса',
+    progress_analysis_status_pending: 'В очереди',
+    progress_analysis_status_running: 'Выполняется',
+    progress_analysis_status_completed: 'Завершено',
+    progress_analysis_status_failed: 'Ошибка',
+    progress_analysis_status_cancelled: 'Отменено',
+    progress_analysis_failed_detail: 'Не удалось: {0}',
+    progress_analysis_overall: 'Итого',
+    progress_analysis_total_time: 'Общее время анализа: {0}',
     generate_audio_disabled: 'Генерация аудио отключена. Включите переключатель выше.',
     generate_image_disabled: 'Генерация изображений отключена. Включите переключатель выше.',
     generate_video_disabled: 'Генерация видео отключена. Включите переключатель выше.',
@@ -699,6 +721,14 @@ const dict = {
     vbook_settings_scenes_per_pass: 'Scenes per pass',
     vbook_settings_scenes_per_pass_desc: 'How many scenes the AI agent creates per generation pass (1-5). Larger values process more text per pass but take longer per window.',
     vbook_settings_default: 'Default',
+    // Parallel / Subagent AI Analysis (Milestone #2 — frontend wiring)
+    vbook_settings_analysis_mode: 'AI Analysis Mode',
+    vbook_settings_analysis_mode_sequential: 'Sequential',
+    vbook_settings_analysis_mode_parallel: 'Parallel',
+    vbook_settings_analysis_mode_desc: 'How the AI runs the extraction tasks (characters, locations, voices). Parallel mode speeds up analysis without changing the final result.',
+    vbook_settings_analysis_parallelism: 'Max parallel tasks',
+    vbook_settings_analysis_parallelism_desc: 'Maximum number of AI analysis tasks that can run simultaneously. This is a concurrency limit, not the number of separate API agents.',
+    vbook_settings_analysis_disabled: 'Only available in parallel mode.',
     // Worker Settings (strings.xml en)
     worker_settings_title_audio: 'Audio Generation Settings',
     worker_settings_title_image: 'Image Generation Settings',
@@ -1167,6 +1197,20 @@ const dict = {
     progress_vbook_stage_video_action_polish: '⟳ Polishing motion continuity...',
     progress_vbook_stage_fantasy_snake_repair: '⟳ Restoring natural character references...',
     progress_vbook_stage_cancelled: '✗ Cancelled',
+    // Parallel AI Analysis — per-task labels + status (Milestone #2)
+    progress_analysis_section_title: 'AI Analysis — Parallel',
+    progress_analysis_section_title_seq: 'AI Analysis',
+    progress_analysis_task_characters: 'Characters',
+    progress_analysis_task_locations: 'Locations',
+    progress_analysis_task_voices: 'Voices',
+    progress_analysis_status_pending: 'Waiting',
+    progress_analysis_status_running: 'Running',
+    progress_analysis_status_completed: 'Completed',
+    progress_analysis_status_failed: 'Failed',
+    progress_analysis_status_cancelled: 'Cancelled',
+    progress_analysis_failed_detail: 'Failed: {0}',
+    progress_analysis_overall: 'Overall',
+    progress_analysis_total_time: 'Total analysis time: {0}',
     generate_audio_disabled: 'Audio generation is disabled. Enable it in the switches above.',
     generate_image_disabled: 'Image generation is disabled. Enable it in the switches above.',
     generate_video_disabled: 'Video generation is disabled. Enable it in the switches above.',
@@ -1277,4 +1321,35 @@ export function vbookStageLabel(stage: string | null | undefined, sceneIndex: nu
   if (!key) return null;
   if (VBOOK_STAGE_WITH_SCENE.has(key)) return tf(key, Math.max(1, sceneIndex + 1));
   return t(key);
+}
+
+// ── Parallel AI Analysis — per-task labels (Milestone #2) ─────────────
+// The parallel-analysis-orchestrator on the backend emits one
+// { type: 'analysis', task: '<id>', ... } event per AI analysis task.
+// The task ids below are exactly the canonical names defined in
+// backend/src/services/agent/parallel-analysis-orchestrator.js (ANALYZERS
+// table). Keep them in sync.
+
+const ANALYSIS_TASK_LABEL_KEYS: Record<string, StrKey> = {
+  characters: 'progress_analysis_task_characters',
+  locations:  'progress_analysis_task_locations',
+  voices:     'progress_analysis_task_voices',
+};
+
+/** Localized task name for a parallel-analysis task id (backend wire id). */
+export function analysisTaskLabel(task: string): string {
+  const key = ANALYSIS_TASK_LABEL_KEYS[task];
+  return key ? t(key) : task;
+}
+
+/** Short status suffix for an analysis task row. */
+export function analysisTaskStatusLabel(status: string): string {
+  switch (status) {
+    case 'pending':   return t('progress_analysis_status_pending');
+    case 'running':   return t('progress_analysis_status_running');
+    case 'completed': return t('progress_analysis_status_completed');
+    case 'failed':    return t('progress_analysis_status_failed');
+    case 'cancelled': return t('progress_analysis_status_cancelled');
+    default:          return status;
+  }
 }

@@ -1214,6 +1214,11 @@ button { font: inherit; color: inherit; }
 .card__hint--wrap { white-space: pre-line; }
 .card__row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem; }
 .card__row--between { justify-content: space-between; }
+/* Soft-disable a whole row (label + select) when a parent toggle is off.
+   Used by AI Analysis Mode → Max Parallel Tasks (disabled when mode=sequential).
+   Matches the existing .select:disabled opacity pattern but applied at the
+   row level so the surrounding label + helper text fade together. */
+.card__row--disabled { opacity: 0.55; pointer-events: none; }
 .card__value { font-size: 0.875rem; color: var(--text); font-weight: 600; }
 /* Workers availability panel (wf-card__count scale: 0.8125rem). Compact info
    typography — labels in secondary text, counts emphasized by weight. */

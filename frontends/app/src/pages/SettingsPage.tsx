@@ -483,12 +483,21 @@ type LayerConfig = {
   audio_timeout_minutes?: number | null;
   image_timeout_minutes?: number | null;
   video_timeout_minutes?: number | null;
+  // Parallel / Subagent AI Analysis (Milestone #2 — frontend wiring).
+  // Matches the backend layer-config schema (`analysis_mode` ∈
+  // {'sequential','parallel'}, `analysis_parallelism` ∈ [1,8]).
+  analysis_mode?: 'sequential' | 'parallel';
+  analysis_parallelism?: number | null;
 };
 
 const DEFAULT_CHUNK_SIZE = 3;
+const DEFAULT_ANALYSIS_MODE: 'sequential' | 'parallel' = 'sequential';
+const DEFAULT_ANALYSIS_PARALLELISM = 3;
 
 function VBookSection() {
   const [chunk, setChunk] = useState(DEFAULT_CHUNK_SIZE);
+  const [analysisMode, setAnalysisMode] = useState<'sequential' | 'parallel'>(DEFAULT_ANALYSIS_MODE);
+  const [analysisParallelism, setAnalysisParallelism] = useState(DEFAULT_ANALYSIS_PARALLELISM);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -500,7 +509,13 @@ function VBookSection() {
       if (!currentBook) return;
       try {
         const cfg = await getJson<LayerConfig>(`/book/${encodeURIComponent(currentBook)}/layer-config`);
-        if (alive) setChunk(Math.min(5, Math.max(1, cfg.chunk_size ?? DEFAULT_CHUNK_SIZE)));
+        if (!alive) return;
+        setChunk(Math.min(5, Math.max(1, cfg.chunk_size ?? DEFAULT_CHUNK_SIZE)));
+        // analysis_mode defaults to sequential — backend authoritative.
+        setAnalysisMode(cfg.analysis_mode === 'parallel' ? 'parallel' : 'sequential');
+        setAnalysisParallelism(
+          Math.min(8, Math.max(1, cfg.analysis_parallelism ?? DEFAULT_ANALYSIS_PARALLELISM))
+        );
       } catch (e) {
         if (alive) setError((e as Error).message);
       }
@@ -514,6 +529,35 @@ function VBookSection() {
     setSaving(true); setError('');
     try {
       await putJson(`/book/${encodeURIComponent(currentBook)}/layer-config`, { chunk_size: value });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveAnalysisMode = async (value: 'sequential' | 'parallel') => {
+    if (!currentBook || saving) return;
+    setSaving(true); setError('');
+    setAnalysisMode(value);
+    try {
+      await putJson(`/book/${encodeURIComponent(currentBook)}/layer-config`, { analysis_mode: value });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveAnalysisParallelism = async (value: number) => {
+    if (!currentBook || saving) return;
+    const clamped = Math.min(8, Math.max(1, value));
+    setSaving(true); setError('');
+    setAnalysisParallelism(clamped);
+    try {
+      await putJson(`/book/${encodeURIComponent(currentBook)}/layer-config`, {
+        analysis_parallelism: clamped,
+      });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -551,6 +595,42 @@ function VBookSection() {
           <p class="card__hint">{t('vbook_settings_scenes_per_pass_desc')}</p>
           {error && <p class="settings-page__error">{error}</p>}
         </div>
+
+        {/* AI Analysis Mode — sequential vs parallel (Milestone #2) */}
+        <div class="card">
+          <h3 class="card__title">{t('vbook_settings_analysis_mode')}</h3>
+          <div class="card__row">
+            <Segmented
+              value={analysisMode}
+              options={[
+                ['sequential', t('vbook_settings_analysis_mode_sequential')],
+                ['parallel',   t('vbook_settings_analysis_mode_parallel')],
+              ]}
+              onChange={(v) => void saveAnalysisMode(v as 'sequential' | 'parallel')}
+            />
+          </div>
+          <p class="card__hint">{t('vbook_settings_analysis_mode_desc')}</p>
+
+          {/* Max parallel tasks — only enabled when analysis_mode === 'parallel' */}
+          <div
+            class={'card__row' + (analysisMode !== 'parallel' ? ' card__row--disabled' : '')}
+          >
+            <select
+              class="select"
+              value={analysisParallelism}
+              disabled={!currentBook || saving || analysisMode !== 'parallel'}
+              aria-label={t('vbook_settings_analysis_parallelism')}
+              title={analysisMode !== 'parallel' ? t('vbook_settings_analysis_disabled') : undefined}
+              onChange={(e) => {
+                const v = Number((e.target as HTMLSelectElement).value);
+                void saveAnalysisParallelism(v);
+              }}
+            >
+              {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
+          <p class="card__hint">{t('vbook_settings_analysis_parallelism_desc')}</p>
+        </div>
       </div>
     </section>
   );
@@ -571,7 +651,11 @@ const TIMEOUT_OPTIONS: Record<WorkerType, number[]> = {
   video: [10, 15, 20, 30, 45, 60, 90, 120, 150, 180],
 };
 const TIMEOUT_DEFAULT: Record<WorkerType, number> = { audio: 30, image: 30, video: 60 };
-const TIMEOUT_FIELD: Record<WorkerType, keyof LayerConfig> = {
+// Narrow the keyof to just the timeout fields — LayerConfig also carries
+// analysis_mode / analysis_parallelism (Milestone #2) which are NOT valid
+// timeout keys. Using keyof LayerConfig directly would let TS infer those
+// union members into TIMEOUT_DEFAULT indexing, breaking the state setter.
+const TIMEOUT_FIELD: Record<WorkerType, 'audio_timeout_minutes' | 'image_timeout_minutes' | 'video_timeout_minutes'> = {
   audio: 'audio_timeout_minutes',
   image: 'image_timeout_minutes',
   video: 'video_timeout_minutes',
