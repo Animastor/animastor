@@ -1,167 +1,167 @@
 # Architecture Review: Animastor
 
-## Что уже хорошо
+## What's Already Good
 
-### 1. Dual-storage стратегия (PostgreSQL + Redis)
+### 1. Dual-storage Strategy (PostgreSQL + Redis)
 
-Разделение ответственности верное: PostgreSQL — каноническая истина, Redis — runtime-состояние и очереди. Redis-персистентность через docker volume `redis-data:/data` — дополнительная защита.
+Correct separation of concerns: PostgreSQL is the canonical truth, Redis is runtime state and queues. Redis persistence via docker volume `redis-data:/data` — additional protection.
 
-### 2. Lease-based dispatch
+### 2. Lease-based Dispatch
 
-Механизм аренды через Redis `SET NX` + TTL (30min audio, 60min image, 120min video) — надёжная защита от дублирования dispatch'а. Очистка stale leases при старте — правильная практика.
+Lease mechanism via Redis `SET NX` + TTL (30min audio, 60min image, 120min video) — reliable protection against dispatch duplication. Stale lease cleanup on startup — correct practice.
 
-### 3. Per-asset state machine (DUAL MODEL)
+### 3. Per-asset State Machine (DUAL MODEL)
 
-Внедрена Dual State Model: per-asset состояния (NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER) стали каноническим источником истины. Linear FSM сохранён как производная проекция для обратной совместимости. Audio и image могут диспатчиться независимо (параллельно). Video правильно зависит от image=READY.
+Dual State Model implemented: per-asset states (NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER) are the canonical source of truth. Linear FSM retained as a derived projection for backward compatibility. Audio and image can be dispatched independently (in parallel). Video correctly depends on image=READY.
 
-### 4. Governance слой (хотя в DEBUG)
+### 4. Governance Layer (although in DEBUG)
 
-Circuit breaker, retry budget, fairness engine, policy engine — зрелый набор механизмов, загружаемых лениво. Не в core pipeline, но готовы к активации.
+Circuit breaker, retry budget, fairness engine, policy engine — mature set of mechanisms, lazily loaded. Not in core pipeline, but ready for activation.
 
-### 5. Scene window + scope-aware генерация
+### 5. Scene Window + Scope-aware Generation
 
-Оконная обработка (3 сцены за раз) + scope (`current_scene`, `current_chapter`, `from_current_scene`, `whole_book`). Добавлена проверка контента на диске (`sceneHasValidContent`), восстановление статусов чанков (`reconcileWindowStatuses`, `restoreChunkStatusForScene`), cancel-флаг.
+Windowed processing (3 scenes at a time) + scope (`current_scene`, `current_chapter`, `from_current_scene`, `whole_book`). Added content-on-disk verification (`sceneHasValidContent`), chunk status reconciliation (`reconcileWindowStatuses`, `restoreChunkStatusForScene`), cancel flag.
 
-### 6. Workflow Loader + deep clone
+### 6. Workflow Loader + Deep Clone
 
-Шаблоны immutable — каждый вызов `getWorkflow()` возвращает `JSON.parse(JSON.stringify(template))`.
+Templates are immutable — each `getWorkflow()` call returns `JSON.parse(JSON.stringify(template))`.
 
-### 7. Архитектурная эссенция (`architectural-essence.md`)
+### 7. Architectural Essence (`architectural-essence.md`)
 
-Философия проекта (книга = процесс последовательного чтения) — чёткая и продуманная модель.
+Project philosophy (book = sequential reading process) — clear and well-designed model.
 
-### 8. Graceful shutdown — ИСПРАВЛЕНО
+### 8. Graceful Shutdown — FIXED
 
-Добавлены SIGTERM-обработчики в backend.cjs И gpu-hub.js. Последовательное завершение: HTTP → Redis → PostgreSQL.
+SIGTERM handlers added to backend.cjs AND gpu-hub.js. Sequential termination: HTTP → Redis → PostgreSQL.
 
-### 9. Startup resume
+### 9. Startup Resume
 
-Добавлен механизм возобновления прерванных сессий генерации при старте (startup-resume.js). PostgreSQL запрос active sessions → перезапуск.
+Mechanism added to resume interrupted generation sessions on startup (startup-resume.js). PostgreSQL queries active sessions → restart.
 
 ### 10. Book Source / Sync / Integrity
 
-Внедрены три новых сервиса для поддержания консистентности Book JSON ↔ PostgreSQL:
-- **Book Source** — канонический индекс сцен
-- **Book Sync** — синхронизация через scene_hash (added/changed/removed detection)
-- **Book Integrity** — orphan detection во всех scene-keyed таблицах
+Three new services implemented to maintain Book JSON ↔ PostgreSQL consistency:
+- **Book Source** — canonical scene index
+- **Book Sync** — synchronization via scene_hash (added/changed/removed detection)
+- **Book Integrity** — orphan detection across all scene-keyed tables
 
 ---
 
-## Что стоит изменить
+## What Should Be Changed
 
-### 🔴 Критично (риск отказа системы)
+### 🔴 Critical (system failure risk)
 
-#### 1. GPU Hub — единая точка отказа
+#### 1. GPU Hub — Single Point of Failure
 
-Все GPU-задачи проходят через единственный экземпляр GPU Hub.
+All GPU tasks pass through a single GPU Hub instance.
 
-**Улучшено:** Health check с auto-restart, requeue при timeout (10 min), дедупликация, graceful shutdown.
+**Improved:** Health check with auto-restart, requeue on timeout (10 min), deduplication, graceful shutdown.
 
-**Что делать:**
-- Добавить multi-instance GPU Hub с Redis Pub/Pub для синхронизации состояния
-- Или, как минимум, задокументировать RTO/RPO
+**What to do:**
+- Add multi-instance GPU Hub with Redis Pub/Sub for state synchronization
+- Or, at minimum, document RTO/RPO
 
-**Затрагиваемые компоненты:** `gpu-hub/gpu-hub.js`, `docker-compose.yml`
+**Affected components:** `gpu-hub/gpu-hub.js`, `docker-compose.yml`
 
-#### 2. Dual State Model — избыточная сложность
+#### 2. Dual State Model — Excessive Complexity
 
-Per-asset + linear FSM. Per-asset — канонический, linear — производная проекция. Требует `syncLinearState()` после каждого `setAssetState()`.
+Per-asset + linear FSM. Per-asset is canonical, linear is a derived projection. Requires `syncLinearState()` after every `setAssetState()`.
 
-**Что делать:** После полного перехода на per-asset модель — удалить linear FSM и все `syncLinearState` вызовы.
+**What to do:** After full migration to per-asset model — remove linear FSM and all `syncLinearState` calls.
 
-**Затрагиваемые компоненты:** `scene-state.js`, `scene-orchestrator.js`
+**Affected components:** `scene-state.js`, `scene-orchestrator.js`
 
-#### 3. Два event-журнала (Redis + PostgreSQL)
+#### 3. Two Event Journals (Redis + PostgreSQL)
 
-Redis event-journal.js (TTL 7 дней) дублирует функциональность book-event-log.js (PostgreSQL).
+Redis event-journal.js (TTL 7 days) duplicates book-event-log.js (PostgreSQL) functionality.
 
-**Что делать:** Удалить Redis event journal, оставить только PostgreSQL.
+**What to do:** Remove Redis event journal, keep only PostgreSQL.
 
-**Затрагиваемые компоненты:** `event-journal.js`, `book-event-log.js`
-
----
-
-### 🟡 Высокий приоритет (качество кода)
-
-#### 4. Нет единой абстракции генераторов
-
-Audio, Image, Video — три независимых сервиса с разными интерфейсами. Добавление нового типа генерации требует изменений в 5+ файлах.
-
-**Что делать:** Ввести интерфейс Generator с registry, заставить orchestrator работать через registry.
-
-#### 5. Отсутствие тестов на критических компонентах
-
-Из 14 тестовых файлов ни один не покрывает scene-orchestrator, dispatch-engine, runtime-scheduler, agent-service.
-
-**Что делать:** scene-state.js (dual model) — чистые функции, с них и начать.
-
-#### 6. book-routes.cjs — чрезмерная ответственность (~1800+ строк)
-
-~30 endpoint'ов в одном файле.
-
-**Что делать:** Разделить на import-routes, agent-routes, book-routes.
+**Affected components:** `event-journal.js`, `book-event-log.js`
 
 ---
 
-### 🟢 Средний приоритет (долгосрочные улучшения)
+### 🟡 High Priority (code quality)
 
-#### 7. Нет абстракции AI-провайдера
+#### 4. No Unified Generator Abstraction
 
-OpenRouter API и Nvidia API — оба поддерживаются, но механизм автоматического переключения отсутствует.
+Audio, Image, Video — three independent services with different interfaces. Adding a new generation type requires changes in 5+ files.
 
-**Что делать:** `class AIProvider` с `call()` → OpenRouterProvider, NvidiaProvider. Стратегия: primary → fallback → error.
+**What to do:** Introduce a Generator interface with registry, make orchestrator work through the registry.
 
-#### 8. Governance модули в DEBUG
+#### 5. Missing Tests for Critical Components
 
-15+ модулей на диске, загружаются через safeRequire (могут быть не загружены). Мёртвый код.
+Of 14 test files, none covers scene-orchestrator, dispatch-engine, runtime-scheduler, agent-service.
 
-**Что делать:** Либо интегрировать в core pipeline, либо удалить с диска.
+**What to do:** scene-state.js (dual model) — pure functions, start there.
 
-#### 9. База знаний AI не используется
+#### 6. book-routes.cjs — Excessive Responsibility (~1800+ lines)
 
-knowledge-base.js + ai-loader.js загружают rules/skills, но не используют в промптах. (Исключение: refineDraft использует examples.)
+~30 endpoints in one file.
 
-**Что делать:** Либо использовать, либо удалить.
-
-#### 10. Нет версионирования API
-
-Все `/api/v1/`, но механизма обратной совместимости нет.
+**What to do:** Split into import-routes, agent-routes, book-routes.
 
 ---
 
-### ⚪ Низкий приоритет (опционально)
+### 🟢 Medium Priority (long-term improvements)
 
-#### 11. Русские progress-сообщения
-PROGRESS_STAGES на русском. Вынести в locale-файлы.
+#### 7. No AI Provider Abstraction
 
-#### 12. Логи через console.log
-Заменить на pino/winston с JSON-форматом.
+OpenRouter API and Nvidia API both supported, but no automatic switching mechanism.
 
-#### 13. Размер окна AI-пайплайна
-WINDOW_SIZE=3, MAX_WINDOW_CHARS=4000 — консервативно. Сделать динамическим.
+**What to do:** `class AIProvider` with `call()` → OpenRouterProvider, NvidiaProvider. Strategy: primary → fallback → error.
+
+#### 8. Governance Modules in DEBUG
+
+15+ modules on disk, loaded via safeRequire (may not be loaded). Dead code.
+
+**What to do:** Either integrate into core pipeline or remove from disk.
+
+#### 9. AI Knowledge Base Not Used
+
+knowledge-base.js + ai-loader.js load rules/skills but don't use them in prompts. (Exception: refineDraft uses examples.)
+
+**What to do:** Either use or remove.
+
+#### 10. No API Versioning
+
+All `/api/v1/`, but no backward compatibility mechanism.
 
 ---
 
-## Резюме
+### ⚪ Low Priority (optional)
 
-### НЕ ТРОГАТЬ
-- Философию проекта (книга = процесс чтения)
-- Dual-storage стратегию (PG + Redis)
+#### 11. Russian Progress Messages
+PROGRESS_STAGES in Russian. Move to locale files.
+
+#### 12. Logs via console.log
+Replace with pino/winston with JSON format.
+
+#### 13. AI Pipeline Window Size
+WINDOW_SIZE=3, MAX_WINDOW_CHARS=4000 — conservative. Make dynamic.
+
+---
+
+## Summary
+
+### DO NOT TOUCH
+- Project philosophy (book = reading process)
+- Dual-storage strategy (PG + Redis)
 - Lease-based dispatch
 - Scene window + scope-aware generation
 - Multi-file book format (v2.1)
 
-### СДЕЛАТЬ В ПЕРВУЮ ОЧЕРЕДЬ (дни, не недели)
-1. Очистить мёртвый код: governance modules из DEBUG (либо интегрировать, либо удалить)
-2. Очистить дублирующиеся event-журналы
-3. Тесты на state machine (dual model)
+### DO FIRST (days, not weeks)
+1. Clean dead code: governance modules from DEBUG (integrate or remove)
+2. Clean duplicate event journals
+3. Tests for state machine (dual model)
 
-### ЗАПЛАНИРОВАТЬ (спринты)
-4. Единый интерфейс генераторов (Generator interface + registry)
-5. Абстракция AI-провайдера (OpenRouter ↔ Nvidia ↔ local)
-6. Полный переход на per-asset модель (удаление linear FSM)
+### PLAN (sprints)
+4. Unified Generator interface (Generator interface + registry)
+5. AI provider abstraction (OpenRouter ↔ Nvidia ↔ local)
+6. Full migration to per-asset model (remove linear FSM)
 
-### ОБСУДИТЬ
-7. Версионирование API
-8. Redis persistence для очередей
-9. Мультиязычность
+### DISCUSS
+7. API versioning
+8. Redis persistence for queues
+9. Multilingualism
