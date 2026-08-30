@@ -1,91 +1,91 @@
-# ⛔ Изменения, которые НЕЛЬЗЯ делать
+# ⛔ Changes That Must NOT Be Made
 
-Этот файл содержит перечень изменений, которые в прошлом вызывали критические регрессии в плеере, очереди воспроизведения или событийной модели. **Ни в коем случае не повторять.**
+This file contains a list of changes that previously caused critical regressions in the player, playback queue, or event model. **Never repeat these.**
 
-## Плеер (PlayFragment.kt)
+## Player (PlayFragment.kt)
 
-### 1. Stall/retry механизм для IU изображений
-**Запрещено:** Добавлять логику stall/retry в цикл IU cycling, которая приостанавливает аудио при отсутствии изображения и ждёт его загрузки.
+### 1. Stall/retry mechanism for IU images
+**Forbidden:** Adding stall/retry logic to the IU cycling loop that pauses audio when an image is missing and waits for it to load.
 
-- `4c25fad` — IU stall/retry: аудио ждёт картинку
+- `4c25fad` — IU stall/retry: audio waits for image
 - `9d1f7f6` — stall hang fix
-- Причина: блокирует цикл воспроизведения, вызывает зависания плеера
+- Reason: blocks the playback loop, causes player hangs
 
 ### 2. Sliding window preload
-**Запрещено:** Полностью перерабатывать механизм предзагрузки окон (sliding window).
+**Forbidden:** Completely rewriting the sliding window preload mechanism.
 
 - `663e598` — sliding window preload
-- Причина: переработанный preload ломает последовательное воспроизведение очереди
+- Reason: rewritten preload breaks sequential queue playback
 
-### 3. Сложная логика при отсутствии IU изображения
-**Запрещено:** Добавлять условные проверки `nextIu.bitmap == null || nextIu.status != IuStatus.READY` в цикл IU cycling с пропуском IU.
+### 3. Complex logic for missing IU images
+**Forbidden:** Adding conditional checks `nextIu.bitmap == null || nextIu.status != IuStatus.READY` in the IU cycling loop with IU skipping.
 
 - `c80e53f` — keep previous image when IU is not generated
-- Причина: приводит к неконсистентному состоянию индекса IU и зависанию на одном кадре
+- Reason: leads to inconsistent IU index state and hanging on a single frame
 
-### 4. Двойной вызов switchToPlayTab() (NavigationEvent)
-**Запрещено:** Добавлять `setupNavigationEventObserver()` в MainActivity, который вызывает `switchToPlayTab()`, если FileFragment уже делает то же самое через `navigationEvent.collect` или `uiState.collect`.
+### 4. Double call to switchToPlayTab() (NavigationEvent)
+**Forbidden:** Adding `setupNavigationEventObserver()` in MainActivity that calls `switchToPlayTab()` if FileFragment already does the same via `navigationEvent.collect` or `uiState.collect`.
 
-- `ddc4f1b` (revert) — NavigationEvent ломал плеер
-- Причина: `FragmentTransaction.commit()` — асинхронный. Когда `switchToPlayTab()` вызывается дважды подряд, создаются **два** PlayFragment, которые конфликтуют. Только FileFragment должен обрабатывать навигацию.
+- `ddc4f1b` (revert) — NavigationEvent broke the player
+- Reason: `FragmentTransaction.commit()` is asynchronous. When `switchToPlayTab()` is called twice in a row, **two** PlayFragment instances are created which conflict. Only FileFragment should handle navigation.
 
-**Правильный подход:** NavigationEvent должен собираться только в FileFragment, НЕ в MainActivity. MainActivity НЕ должен иметь `setupNavigationEventObserver()`.
+**Correct approach:** NavigationEvent should only be collected in FileFragment, NOT in MainActivity. MainActivity should NOT have `setupNavigationEventObserver()`.
 
-## Кэширование
+## Caching
 
-### 5. Удаление clearCache в preparePlayback
-**Запрещено:** Убирать вызов `_repository.clearCache()` в `preparePlayback()`.
+### 5. Removing clearCache in preparePlayback
+**Forbidden:** Removing the `_repository.clearCache()` call in `preparePlayback()`.
 
 - `be49b84` — remove aggressive clearCache
-- Причина: приводит к показу устаревших/чужих изображений при переходе между книгами
+- Reason: causes stale/wrong images to appear when switching between books
 
-## Изменения в подходах
+## Approach Changes
 
-### 6. Удаление функций без проверки всех референсов
-**Запрещено:** Удалять экспортированные функции, не проверив все места их вызова через code search.
+### 6. Deleting functions without checking all references
+**Forbidden:** Deleting exported functions without verifying all call sites via code search.
 
-- `ff1809e` — удалены `unregisterAudio/Image/Video`, `saveBookJson`, `deleteBookJson`, `getBookContentHash`
-- Причина: функции могут вызываться из динамического require или через prototype chain
+- `ff1809e` — deleted `unregisterAudio/Image/Video`, `saveBookJson`, `deleteBookJson`, `getBookContentHash`
+- Reason: functions may be called from dynamic require or via prototype chain
 
-### 7. Изменение типа поля data class с `var` на `val`
-**Запрещено:** Менять `var` на `val` в data class, если поле может обновляться из другого места (например, `IuImageItem.bitmap`).
+### 7. Changing data class field type from `var` to `val`
+**Forbidden:** Changing `var` to `val` in a data class if the field may be updated from elsewhere (e.g., `IuImageItem.bitmap`).
 
-- `ffd420b` — revert включал изменение `var bitmap` → `val bitmap` в `IuImageItem`
-- Причина: field может обновляться in-place из stall-retry механизма
+- `ffd420b` — revert included changing `var bitmap` → `val bitmap` in `IuImageItem`
+- Reason: field may be updated in-place by the stall-retry mechanism
 
-### 8. helmet/rate-limit без тестирования совместимости с Android WebView
-**Запрещено:** Добавлять helmet middleware без проверки, что security-заголовки (Content-Type, CSP) совместимы с фронтендом.
+### 8. helmet/rate-limit without Android WebView compatibility testing
+**Forbidden:** Adding helmet middleware without verifying that security headers (Content-Type, CSP) are compatible with the frontend.
 
-- `d6ac6c1` — добавлены helmet и express-rate-limit
-- Причина: helmet может блокировать заголовки, ожидаемые Android-клиентом
+- `d6ac6c1` — added helmet and express-rate-limit
+- Reason: helmet may block headers expected by the Android client
 
-### 9. graceful-shutdown с redis.quit() без проверки активных операций
-**Запрещено:** Вызывать `redis.quit()` в graceful-shutdown без гарантии, что нет активных операций.
+### 9. graceful-shutdown with redis.quit() without checking active operations
+**Forbidden:** Calling `redis.quit()` in graceful-shutdown without guaranteeing no active operations.
 
-- `d6ac6c1` — graceful-shutdown с redis.quit()
-- Причина: может прерывать активные генерации и приводить к потере данных
+- `d6ac6c1` — graceful-shutdown with redis.quit()
+- Reason: may interrupt active generations and cause data loss
 
-### 10. Изменение уровня HTTP логгирования с BODY на HEADERS
-**Запрещено:** Менять `HttpLoggingInterceptor.Level.BODY` на `LEVEL.HEADERS` в RetrofitClient.kt.
+### 10. Changing HTTP logging level from BODY to HEADERS
+**Forbidden:** Changing `HttpLoggingInterceptor.Level.BODY` to `LEVEL.HEADERS` in RetrofitClient.kt.
 
-- Шаг 1.2 — BODY → HEADERS
-- Причина: после этого изменения плеер перестал воспроизводить очередь (не установлена прямая связь, но откат исправил проблему)
+- Step 1.2 — BODY → HEADERS
+- Reason: after this change the player stopped playing the queue (direct causal link not established, but reverting fixed the problem)
 
-### 11. Возврат зависимости Player от `video_start_ms`
-**Запрещено:** Заставлять Player (Android `PlayFragment.kt` / Web `playbackStore.ts`) читать, вычислять или потреблять `video_start_ms`.
+### 11. Restoring Player dependency on `video_start_ms`
+**Forbidden:** Forcing Player (Android `PlayFragment.kt` / Web `playbackStore.ts`) to read, compute, or consume `video_start_ms`.
 
-- Контракт (audio master timeline): **Audio = semantic master timeline (`start_ms`), Storyboard = selected unit, Video = visual follower** — Player живёт только на `start_ms`. `video_start_ms` считается в backend (`backend/src/video/video-timeline.js`) как best-effort и используется ТОЛЬКО в Final Assembly (точные границы при экспорте).
-- Не вводить `videoStartMs` в `IuImageItem`/`IuItem`/`StoryboardIu`/`RawIu` и в состояние Player.
-- Даже если в конкретном LTX-тесте (8N+1) снова проявится рассинхрон границ — править выравнивание в подготовке/assembly видео, а не добавлять вторую временную модель в Player.
-- Причина: вторая временная шкала создавала второй таймлайн и рассогласование; убрано в рамках рефактора audio master timeline.
+- Contract (audio master timeline): **Audio = semantic master timeline (`start_ms`), Storyboard = selected unit, Video = visual follower** — Player lives only on `start_ms`. `video_start_ms` is computed in backend (`backend/src/video/video-timeline.js`) as best-effort and used ONLY in Final Assembly (precise boundaries on export).
+- Do not introduce `videoStartMs` in `IuImageItem`/`IuItem`/`StoryboardIu`/`RawIu` and in Player state.
+- Even if boundary desync reappears in a specific LTX test (8N+1), fix alignment in video preparation/assembly, not by adding a second time model to Player.
+- Reason: the second time scale created a second timeline and desynchronization; removed as part of the audio master timeline refactor.
 
-## Проверка перед любым изменением
+## Pre-Change Checklist
 
-Перед тем как вносить любое изменение в файлы плеера (PlayFragment.kt, PlaybackViewModel.kt, Repository.kt), необходимо:
+Before making any changes to player files (PlayFragment.kt, PlaybackViewModel.kt, Repository.kt):
 
-1. ✅ Проверить через code search, не используется ли удаляемый код
-2. ✅ Собрать APK (`./gradlew assembleDebug`)
-3. ✅ Проверить, что плеер открывается
-4. ✅ Проверить, что воспроизведение очереди работает
-5. ✅ Проверить, что пауза/возобновление работают
-6. ✅ Проверить, что переход между сценами работает
+1. ✅ Verify via code search that the deleted code is not used
+2. ✅ Build APK (`./gradlew assembleDebug`)
+3. ✅ Verify the player opens
+4. ✅ Verify queue playback works
+5. ✅ Verify pause/resume works
+6. ✅ Verify scene transitions work
