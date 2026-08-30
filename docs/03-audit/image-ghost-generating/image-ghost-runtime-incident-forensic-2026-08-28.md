@@ -1,16 +1,16 @@
-# Forensic: runtime-инцидент "ghost image task 0/9" — 2026-08-28
+# Forensic: Runtime Incident "Ghost Image Task 0/9" — 2026-08-28
 
-Follow-up forensic расследование реального runtime-инцидента, обнаруженного после
-деплоя fix `226178f0` / `70e55fd3` (audit `6929ba5`).
+Follow-up forensic investigation of a real runtime incident discovered after
+deploying fix `226178f0` / `70e55fd3` (audit `6929ba5`).
 
-## Симптомы
+## Symptoms
 
-- Frontend: "Воркеры изображений: 0".
-- Прогресс зависшей задачи: "0/9".
-- Задача отображается после пересборки и restart backend.
-- "Стоп всё" не убирает и не завершает задачу.
+- Frontend: "Image workers: 0".
+- Stuck task progress: "0/9".
+- Task displayed after rebuild and backend restart.
+- "Stop All" does not remove or complete the task.
 
-## Идентификация задачи
+## Task Identification
 
 - book: `import_1786345731767_1786345734345`
 - chapter: `ch-1bb5123c`
@@ -18,9 +18,9 @@ Follow-up forensic расследование реального runtime-инц�
 - stage: **image**
 - image units: 9 (`iu-0c92b6b9` … `iu-ec4410b8`, PG `image_units`)
 
-## 1. Фактическое состояние (UI → DB → Redis → scheduler → dispatch → worker)
+## 1. Actual State (UI → DB → Redis → scheduler → dispatch → worker)
 
-| Уровень | Состояние |
+| Level | State |
 |---|---|
 | UI | "0/9", "Воркеры изображений: 0" — polls `/progress-panel` + `/worker/counts` |
 | PG `generation_tasks` | **нет image-задачи** для sc-45c789c6 (только audio completed 25.08) |
@@ -33,7 +33,7 @@ Follow-up forensic расследование реального runtime-инц�
 | Scheduler | каждый тик `Active: 1, Skipped: 1` — dispatch невозможен |
 | Workers | 0 живых heartbeats (нет ни одного worker'а любого типа) |
 
-## 2. Почему UI показывает "0/9"
+## 2. Why UI Shows "0/9"
 
 `progress-panel` (`backend/src/routes/book/progress-panel.cjs:387-389`): progress-задач
 в Redis нет (Stop All их стёр через `generationProgress.clear`) → fallback `legacyTasks()`
@@ -42,9 +42,9 @@ Follow-up forensic расследование реального runtime-инц�
 
 Frontend ни при чём — он рендерит ответ backend.
 
-## 3. Почему задача пережила backend restart
+## 3. Why the Task Survived Backend Restart
 
-Ghost-создающее событие зафиксировано в event-journal сцены (3668 записей):
+The ghost-creating event was recorded in the event journal сцены (3668 записей):
 
 ```
 26.08 03:03:05.167  SCENE_GENERATING        (image, dispatch-1787713385164)
@@ -60,9 +60,9 @@ Ghost-создающее событие зафиксировано в event-jour
 состояние пережило все restart'ы. Каждый restart `rebuildWorkList` re-add'ил сцену
 в active index (`needsWork=true`: image-файла на диске нет → PENDING-таргет).
 
-## 4. Что происходит при "Stop All"
+## 4. What Happens on "Stop All"
 
-Нажатие зафиксировано в логах: `2026-08-28 06:04:01 POST /cancel-generation → 200`.
+The click was recorded in logs: `2026-08-28 06:04:01 POST /cancel-generation → 200`.
 
 Выполнено (`backend/src/routes/book/generation-routes.cjs:226-302`):
 
@@ -80,14 +80,14 @@ GENERATING только через `cancelActiveDispatch` → `rollbackStageToPe
 **найденных lease**. Lease ghost'а давно истёк → откатывать нечего →
 `image: generating` остался.
 
-## 5. Где ломается cancellation — три независимых дефекта
+## 5. Where Cancellation Breaks — Three Independent Defects
 
-### 5.1 Stop All не чистит orphan-GENERATING
+### 5.1 Stop All Does Not Clean orphan-GENERATING
 
 Нет sweep'а asset-state'ов книги после очистки lease'ов: GENERATING без
 lease/meta/in-flight маркера переживает cancel-generation.
 
-### 5.2 Reconciliation воскрешает отменённую сцену
+### 5.2 Reconciliation Resurrects the Cancelled Scene
 
 Fix-action `REGENERATE_MISSING_ASSET`
 (`backend/src/runtime/reconciliation-engine.js:1044-1052`) делает
@@ -103,7 +103,7 @@ Fix-action `REGENERATE_MISSING_ASSET`
 `/data/output/build_import_1786345731767_1786345734345/…` → false positive
 каждые 60 сек (3648 записей `INVALID_STATE_CALLBACK` audio ready→pending в journal).
 
-### 5.3 Self-heal не может починить orphan-GENERATING
+### 5.3 Self-Heal Cannot Fix orphan-GENERATING
 
 - rebuild-guard "GENERATING/PENDING не трогаем" (строка 2041) — корректен для
   живого dispatch, но блокирует ремонт orphan-состояния;
@@ -111,7 +111,7 @@ Fix-action `REGENERATE_MISSING_ASSET`
 - action `MOVE_TO_PENDING` для `stuck_state` (строка 901-907) **не реализован**
   в `executeFix` — уходит в `default → unknown_action`.
 
-## 6. Почему worker count = 0
+## 6. Why Worker Count = 0
 
 `/worker/counts` (`backend/src/routes/generation-routes.cjs:565`) считает по живым
 heartbeats (`worker-health.getAvailability`, `scanFreshHeartbeats`). В Redis **нет
@@ -121,7 +121,7 @@ PG `workers` (5 строк) — регистрации, не liveness.
 
 **Вариант A: и реальный ghost, и реальное отсутствие worker'ов — обе проблемы настоящие.**
 
-## 7. Связь с lifecycle 6929ba5 → 226178f0 → 70e55fd
+## 7. Connection to Lifecycle 6929ba5 → 226178f0 → 70e55fd
 
 Это **тот же bug** из audit `6929ba5` (no_jobs_sent → setScenePending rejected →
 проглочен → вечный GENERATING). Ghost создан **26.08 — за 2 дня до деплоя фикса**
@@ -137,7 +137,7 @@ Fix закрывает создание новых ghost'ов в dispatch cancel
 Regression tests проходили, потому что покрывают создание ghost'а, а не
 выживание/воскрешение pre-fix ghost'а.
 
-## 8. Root cause
+## 8. Root Cause
 
 Pre-fix `no_jobs_sent` ghost (26.08) + отсутствие repair-пути:
 
@@ -146,7 +146,7 @@ Pre-fix `no_jobs_sent` ghost (26.08) + отсутствие repair-пути:
 - FSM-валидного self-heal для orphan-GENERATING нет;
 - ложный `orphan_audio_state` (hardcoded `buildId='default'`) служит триггером воскрешения.
 
-## 9. Минимальный план фикса
+## 9. Minimal Fix Plan
 
 1. **Одноразовая очистка ghost'а** (ops): `rollbackStageToPending(image)` для
    sc-45c789c6 (GENERATING→DIRTY→PENDING) + SREM из active-scenes; tombstone
@@ -161,7 +161,7 @@ Pre-fix `no_jobs_sent` ghost (26.08) + отсутствие repair-пути:
 4. **checkOrphanAudioState / checkOrphanImageState**: брать реальный `build_id`
    из manifest вместо `'default'`.
 
-## 10. Нужные regression tests
+## 10. Required Regression Tests
 
 - Stop All при GENERATING без lease → state откачен, сцена не воскресает,
   progress-panel пуст после N reconcile-циклов;
@@ -171,7 +171,7 @@ Pre-fix `no_jobs_sent` ghost (26.08) + отсутствие repair-пути:
 - orphan-audio/image-check без false-positive при реальном build_id;
 - end-to-end: ghost → restart → Stop All → reconcile ×3 → задача не возвращается.
 
-## Приложение: ключевые evidence
+## Appendix: Key Evidence
 
 - Event journal сцены: `animastor:event-journal:import_1786345731767_1786345734345:ch-1bb5123c:sc-45c789c6`
   (3668 записей; ghost-создание ts=1787713385167-174; 3648 audio / 3 image INVALID_STATE_CALLBACK).

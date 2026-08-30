@@ -4,23 +4,23 @@
 Книга: `import_1786345731767_1786345734345`
 Сцена: `ch-1bb5123c / sc-45c789c6`, stage=`image`
 
-## Симптом в production UI
+## Symptom in Production UI
 
-- «Воркеры изображений: 0»
-- задача показывает «0/9»
-- прогресс «0%»
-- время «00:00:00»
-- блок генерации выглядит как активная/незавершённая задача
+- "Image workers: 0"
+- task shows "0/9"
+- progress "0%"
+- time "00:00:00"
+- generation block looks like an active/incomplete task
 
-## Вердикт
+## Verdict
 
 **Orphaned/ghost image-состояние. Реальной выполняемой задачи НЕТ — но это не глюк UI.**
 UI честно отражает зомби-состояние asset state в backend: строка задачи синтезируется
 legacyTasks()-fallback'ом progress-panel из active-scenes index + asset state `image=generating`.
 
-## Источники каждого значения UI
+## Source of Each UI Value
 
-| UI | Источник | Реальность |
+| UI | Source | Reality |
 |---|---|---|
 | «Воркеры изображений: 0» | `/worker/counts` → `image:0 + private_image:0` (`frontends/app/src/pages/GeneratePage.tsx:177,350`) | Реально 0 зарегистрированных image-воркеров (нет heartbeat), не stale |
 | «0/9» | progress-panel: `total=9` = 9 строк `image_units` в PG для `sc-45c789c6` (созданы 2026-08-13 14:35:40 UTC); `ready=0` — нет counter'а `animastor:iu-progress:*` и нет `dirty_unit_ids` (`backend/src/routes/book/iu-progress-utils.cjs:26-39`) | Реально 9 IU, 0 готово |
@@ -32,7 +32,7 @@ progress-panel использует `legacyTasks()` (`progress-panel.cjs:339-382
 с asset state PENDING/GENERATING синтезирует строку с `task_id: null`, `started_at: null`,
 `visible: true`, `done: false`.
 
-## Факты из runtime (Redis / PG / journal)
+## Facts from Runtime (Redis / PG / journal)
 
 - PG `generation_tasks`: строки для image этой сцены НЕТ (только audio 2026-08-25, completed).
 - Lease: нет. Dispatch metadata: нет. Worker: нет. Retry: нет. Stale lease: нет
@@ -47,7 +47,7 @@ progress-panel использует `legacyTasks()` (`progress-panel.cjs:339-382
   не виден в UI, т.к. не в active-index.
 - Дополнительно: в очередях 214 сиротских audio-job и 8 image-job от старых книг — отдельный мусор.
 
-## Хронология поломки (event-journal сцены, 2026-08-26 UTC)
+## Breakage Timeline (scene event-journal, 2026-08-26 UTC)
 
 1. `03:02:55.054` — DISPATCH_STARTED image, `dispatch-1787713375053-7e0e0124a551002a31a8f3158febcee3`.
    `03:02:55.056` — `INVALID_STATE_CALLBACK: image new→generating rejected` — гонка:
@@ -63,14 +63,14 @@ progress-panel использует `legacyTasks()` (`progress-panel.cjs:339-382
    → `03:03:05.174` DISPATCH_CANCELLED: **`no_jobs_sent`**.
 5. После этого — ни одной попытки dispatch. Состояние `generating` заморожено навсегда.
 
-## Где застряла цепочка
+## Where the Chain Broke
 
-`UI task created → backend queue → dispatch → [РАЗРЫВ] → generation → result → completion`
+`UI task created → backend queue → dispatch → [BREAK] → generation → result → completion`
 
-Разрыв между **dispatch** и **generation**: последний dispatch перевёл state в GENERATING,
-но не отправил ни одного GPU job, и при отмене не смог вернуть state обратно.
+The break is between **dispatch** and **generation**: the last dispatch transitioned state to GENERATING,
+but sent zero GPU jobs, and on cancellation could not roll the state back.
 
-## Причина (механизм)
+## Root Cause (Mechanism)
 
 1. **`no_jobs_sent`:** в dispatch #3 все 9 IU были пропущены по fast-path за 7 мс
    (сетевой сбой исключён — `gpu.send` имеет 30 с timeout × 3 retry): сработали маркеры
@@ -89,7 +89,7 @@ progress-panel использует `legacyTasks()` (`progress-panel.cjs:339-382
    Для image аналога нет. Reconciliation лишь повторно добавляет сцену в active-index (каждые 60 с),
    но задиспатчить не может.
 
-### Способствующие дефекты
+### Contributing Defects
 
 - **Неатомарный `RESET_SCENE_LUA`** (`backend/src/services/book-diff.cjs:307-310`):
   `DEL` asset-state hash + пошаговый `HSET` — конкурентный читатель в этом окне видит
@@ -98,9 +98,9 @@ progress-panel использует `legacyTasks()` (`progress-panel.cjs:339-382
   (TTL 120 с), который scheduler применяет ко ВСЕМ сценам книги — force-reset чужих
   активных dispatch становится возможным.
 
-## Связь с последним lease fix (37e21c22 / 487bc4a0)
+## Connection to Recent Lease Fix (37e21c22 / 487bc4a0)
 
-**Не связана — доказано:**
+**Not connected — proven:**
 
 - Зависание произошло 2026-08-26 03:03 UTC; фикс задеплоен 2026-08-28 04:19+ UTC.
 - Фикс меняет только liveness-детекцию ПРИ СУЩЕСТВУЮЩЕМ lease (TTL вместо `started_at`).
@@ -109,7 +109,7 @@ progress-panel использует `legacyTasks()` (`progress-panel.cjs:339-382
 - Косвенно фикс подтверждает пробел: в нём задокументировано, что «hung jobs ловит
   stall-failsafe», — а для image stage этот failsafe отсутствует. Это и есть дыра.
 
-## Что нужно исправить
+## What Needs to Be Fixed
 
 1. **`no_jobs_sent` rollback:** при отмене dispatch после установки GENERATING откатывать
    состояние FSM-валидным путём `generating→dirty→pending` (сейчас прямой `setScenePending`
