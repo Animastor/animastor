@@ -174,10 +174,11 @@ describe('applyAnalysisEvent — pure transition', () => {
     s = applyAnalysisEvent(s, { type: 'analysis', task: 'characters', status: 'completed' });
     s = applyAnalysisEvent(s, { type: 'analysis', task: 'locations', status: 'completed' });
     s = applyAnalysisEvent(s, { type: 'analysis', task: 'voices', status: 'pending' });
+    const before = s.completedTasks;
     // Late event with bogus total — must NOT reduce completedTasks.
-    const late = { ...s, completed_tasks: 99 };
-    const _ignored = applyAnalysisEvent(s, late);
-    expect(s.completedTasks).toBe(2);  // unchanged from before the late event
+    const late = { type: 'analysis', task: 'voices', status: 'pending', completed_tasks: 99 };
+    applyAnalysisEvent(s, late);
+    expect(s.completedTasks).toBe(before);
   });
 
   it('idempotent transition for already-completed tasks (re-emitting completed)', () => {
