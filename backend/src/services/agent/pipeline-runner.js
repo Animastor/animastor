@@ -396,8 +396,52 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 
     publishVBook({ stage: 'analyzing', scene_index: 0, total_scenes: 0, window_size: effectiveChunkSize, message: PROGRESS_STAGES.analyzing_structure });
 
-    const charResult = await pipelineSteps.stepExtractCharacters(sessionId, text, stepIndex, _progress, language);
+    // ── Analysis phase dispatch (Milestone #1) ──
+    // Sequential mode: characters → voices → locations, one AI call at a time.
+    // Parallel mode: characters + locations fire concurrently via the
+    // parallel-analysis-orchestrator; voices runs sequentially after characters
+    // (it consumes the merged character set) in commit #5.
+    // Merge logic for both modes lives in _applyCharactersResult and
+    // _applyLocationsResult below — they are PURE: same input → same output,
+    // so deterministic merge is guaranteed regardless of execution order.
     let mentions = options.existingMentions || {};
+    let charResult = null;
+    let newLocations = null;
+    let analysisOrchestratorResult = null;
+    const tAnalysisStart = Date.now();
+    if (analysisMode === layerConfig.ANALYSIS_MODES.PARALLEL) {
+        const parallelOrchestrator = require('./parallel-analysis-orchestrator');
+        publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: effectiveChunkSize, message: PROGRESS_STAGES.extracting_chars });
+        try {
+            analysisOrchestratorResult = await parallelOrchestrator.run({
+                taskIds: ['characters', 'locations'],  // voices is commit #5
+                analyzers: pipelineSteps,
+                sessionId,
+                text,
+                characters,
+                existingLocations: locations,
+                existingMentions: mentions,
+                language,
+                promptProfiles: options.promptProfiles,
+                stepIndex,
+                publishVBook: _progress,
+                checkCancelled,
+                parallelism: analysisParallelism,
+            });
+            const charsTask = analysisOrchestratorResult.tasks.find((t) => t.id === 'characters');
+            const locsTask  = analysisOrchestratorResult.tasks.find((t) => t.id === 'locations');
+            charResult    = charsTask && charsTask.status === parallelOrchestrator.TASK_STATUS.COMPLETED ? charsTask.result : null;
+            newLocations  = locsTask  && locsTask.status  === parallelOrchestrator.TASK_STATUS.COMPLETED ? locsTask.result  : null;
+        } catch (err) {
+            // The orchestrator's failure mode already marks each task as
+            // failed/cancelled; the outer pipeline just propagates so the
+            // existing catch in bootstrap.js preserves 'cancelled' status.
+            throw err;
+        }
+    } else {
+        const charResultSeq = await pipelineSteps.stepExtractCharacters(sessionId, text, stepIndex, _progress, language);
+        charResult = charResultSeq;
+    }
     if (!charResult || !charResult.characters || charResult.characters.length === 0) {
         // No info ≠ 'unknown': when nothing is extracted and nothing exists,
         // keep the EMPTY set. A synthesized placeholder character would be seen
@@ -426,6 +470,12 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     // extraction with focused, vivid voice descriptions.
     // In subsequent windows, skips characters that already have meaningful voices
     // and only generates for newly discovered characters.
+    //
+    // Parallel mode (Milestone #1, commit #5 will route voices through the
+    // orchestrator so it runs concurrently with whatever else is allowed to).
+    // Until then, parallel mode runs voices here in the legacy slot, AFTER the
+    // parallel character+location merge — voices depends on characters, never
+    // the other way around.
     if (characters.length > 0) {
         const voiceResult = await pipelineSteps.stepGenerateVoices(sessionId, text, characters, stepIndex, _progress, language, options.promptProfiles);
         if (voiceResult && voiceResult.voices) {
@@ -438,7 +488,11 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 
     publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: effectiveChunkSize, message: PROGRESS_STAGES.extracting_chars });
 
-    const newLocations = await pipelineSteps.stepExtractLocations(sessionId, text, characters, stepIndex, _progress, language);
+    // Sequential mode runs locations now. Parallel mode already received its
+    // locations result from the orchestrator above (`newLocations` is non-null).
+    if (!analysisOrchestratorResult) {
+        newLocations = await pipelineSteps.stepExtractLocations(sessionId, text, characters, stepIndex, _progress, language);
+    }
     if (!newLocations || newLocations.length === 0) {
         // Same rule as characters: no info ≠ 'unknown' location.
         console.warn('[AGENT] No locations extracted from window, keeping existing set');
@@ -486,6 +540,22 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     }
 
     await checkCancelled();
+
+    // Performance instrumentation (Milestone #1, Commit 4). After both
+    // sequential and parallel branches complete their analysis merge, log
+    // a single structured event so we can compare sequential vs parallel
+    // wall-clock durations across the rollout.
+    const tAnalysisEnd = Date.now();
+    console.log(JSON.stringify({
+        event: 'analysis_phase_duration',
+        mode: analysisMode,
+        parallelism: analysisParallelism,
+        duration_ms: tAnalysisEnd - tAnalysisStart,
+        characters_extracted: charResult && charResult.characters ? charResult.characters.length : 0,
+        locations_extracted: newLocations ? newLocations.length : 0,
+        characters_failed: analysisOrchestratorResult ? analysisOrchestratorResult.tasks.find((t) => t.id === 'characters')?.status === 'failed' : false,
+        locations_failed:  analysisOrchestratorResult ? analysisOrchestratorResult.tasks.find((t) => t.id === 'locations')?.status  === 'failed' : false,
+    }));
 
     // ── Scene split with coverage-only validation ──
     // Duration validation is delegated to video chunking (selectWorkflowGroups).
