@@ -1,68 +1,59 @@
-# Рекомендации по стабилизации системы оркестрации
+# Orchestration System Stabilization Recommendations
 
-> **Дата:** 26 июля 2026
-> **Последнее обновление:** 27 июля 2026 — реализованы R1, R3 (частично), R6, R7
-> **Основание:** анализ `backend/src/orchestration/*`, `backend/src/runtime/*`, `backend/src/state/scene-state.js`
-> **Принцип:** хирургические точечные правки без переусложнения. Никаких новых state-machine'ов,
-> очередей, сервисов. Текущая архитектура (фасад + dispatch-engine + per-asset state) — корректна,
-> нужно лишь закрыть несколько щелей на стыках.
+> **Date:** July 26, 2026
+> **Last updated:** July 27, 2026 — R1, R3 (partial), R6, R7 implemented
+> **Basis:** Analysis of `backend/src/orchestration/*`, `backend/src/runtime/*`, `backend/src/state/scene-state.js`
+> **Principle:** Surgical, targeted fixes without over-engineering. No new state machines, queues, or services. The current architecture (facade + dispatch-engine + per-asset state) is correct; only a few gaps at the seams need to be closed.
 
 ---
 
-## TL;DR — что не так (статус на 27 июля 2026)
+## TL;DR — What's Wrong (Status as of July 27, 2026)
 
-| # | Проблема | Серьёзность | Статус |
-|---|---------|------------|--------|
-| R1 | `setScene*` в фасаде пишут state без `validateAssetTransition` и без journal events | **Высокая** | ✅ **Реализовано** |
-| R2 | Deprec­ated aliases `setAssetState`/`setAssetStates` висят в экспортах `scene-state.js` | Низкая | ❓ Отложено: алиасы всё ещё используются в тестах |
-| R3 | `reconciliation-engine.js` и `scene-window.js` напрямую зовут `audioOrch.*` в обход фасада | Средняя | 🟡 **Частично**: добавлен sync после `audioOrch.setDone()` в recovery |
-| R4 | `completeStage`/`failStage` на каждый вызов делают 4–6 lazy `require()` внутри тел | Низкая | ❓ Отложено: косметика, без изменения поведения |
-| R5 | `resetScenes` смешивает 10 слоёв ответственности (journal + fs + redis + lua-итд) в одном теле | Средняя | ❓ Отложено: функция уже хорошо структурирована комментариями |
-| R6 | Нет тестов на invariant `audio-orch.phase == DONE ⇔ asset.audio == READY` | Средняя | ✅ **Реализовано** (3 теста) |
-| R7 | Fallback по `bookDiff = null` в `resetScenes` дублирует логику `markDirtyScene` | Низкая | ✅ **Реализовано** (throw вместо fallback) |
-| R8 | `completeStage` совершает inline PG-запрос вместо `sceneAssetsRepo` метода | Низкая | ❓ Отложено: низкий приоритет, SELECT стабилен |
+| # | Problem | Severity | Status |
+|---|---------|----------|--------|
+| R1 | `setScene*` in the facade writes state without `validateAssetTransition` and without journal events | **High** | ✅ **Implemented** |
+| R2 | Deprecated aliases `setAssetState`/`setAssetStates` hang in `scene-state.js` exports | Low | ❓ Deferred: aliases still used in tests |
+| R3 | `reconciliation-engine.js` and `scene-window.js` call `audioOrch.*` directly, bypassing the facade | Medium | 🟡 **Partial**: sync added after `audioOrch.setDone()` in recovery |
+| R4 | `completeStage`/`failStage` do 4–6 lazy `require()` on every call | Low | ❓ Deferred: cosmetic, no behavior change |
+| R5 | `resetScenes` mixes 10 layers of responsibility (journal + fs + redis + lua etc.) in one body | Medium | ❓ Deferred: function is already well-structured with comments |
+| R6 | No tests for invariant `audio-orch.phase == DONE ⇔ asset.audio == READY` | Medium | ✅ **Implemented** (3 tests) |
+| R7 | Fallback on `bookDiff = null` in `resetScenes` duplicates `markDirtyScene` logic | Low | ✅ **Implemented** (throw instead of fallback) |
+| R8 | `completeStage` does inline PG query instead of `sceneAssetsRepo` method | Low | ❓ Deferred: low priority, SELECT is stable |
 
-Все рекомендации укладываются в существующий контур из 13 команд фасада — расширять фасад не нужно.
+All recommendations fit within the existing contour of 13 facade commands — no facade extension needed.
 
 ---
 
-## R1. setScene* терминалы в фасаде без валидации и журнала
+## R1. setScene* Terminals in Facade Without Validation or Journaling
 
-### Что наблюдается
+### What's Observed
 
-В `orchestrator.js`:
-- `completeStage` → `validateAssetTransition` (косвенно через `unsafeRestoreAssetState` после gate) + journal event ✓
+In `orchestrator.js`:
+- `completeStage` → `validateAssetTransition` (indirectly via `unsafeRestoreAssetState` after gate) + journal event ✓
 - `failStage` → `state.validateAssetTransition(current, FAILED)` + journal ✓
-- `markDirtyScene` → direct write, journal event ✓ (через PG markStale)
+- `markDirtyScene` → direct write, journal event ✓ (via PG markStale)
 
-НО:
-- `setScenePending` (стр. 328) — голый `unsafeRestoreAssetState(..., PENDING)`, без `validateAssetTransition` и **без journal event**
-- `setSceneGenerating` (стр. 349) — то же самое для `GENERATING`
-- `setSceneAllReady` (стр. 337) — все три ассета в `READY` без journal
-- `setScenePlaceholder` (стр. 357) — голый write
+But:
+- `setScenePending` (line 328) — bare `unsafeRestoreAssetState(..., PENDING)`, no `validateAssetTransition` and **no journal event**
+- `setSceneGenerating` (line 349) — same for `GENERATING`
+- `setSceneAllReady` (line 337) — all three assets set to `READY` without journal
+- `setScenePlaceholder` (line 357) — bare write
 
-### Чем это опасно
+### Why This Is Dangerous
 
-`AssetTransitions` в `scene-state.js:50` существует именно для того, чтобы отсекать невалидные
-переходы (например, `READY → PENDING` напрямую, без `DIRTY`). Сейчас это соблюдается только в
-двух «тяжёлых» командах. Любой race condition или ошибочный вызов `setScenePending` на уже `READY`
-ассете молча запишет `PENDING` — scheduler подхватит и запустит повторную генерацию готового контента.
-Это именно тот класс багов, который «не проявляется в тестах, но стреляет в проде».
+`AssetTransitions` in `scene-state.js:50` exists specifically to block invalid transitions (e.g., `READY → PENDING` directly, without `DIRTY`). Currently this is only enforced in the two "heavy" commands. Any race condition or erroneous `setScenePending` call on an already `READY` asset will silently write `PENDING` — the scheduler will pick it up and trigger re-generation of already-complete content. This is exactly the class of bugs that "doesn't appear in tests but fires in production."
 
-Журнал событий (`event-journal.js`, TTL 7 дней) — единственный способ расследовать
-«как сцена оказалась в PENDING в 03:14 ночи». Сейчас переходы через `setScene*` невидимы.
+The event journal (`event-journal.js`, TTL 7 days) is the only way to investigate "how did this scene end up PENDING at 3:14 AM." Currently transitions via `setScene*` are invisible.
 
-### Предлагаемое исправление
+### Proposed Fix
 
-Не добавлять новые команды. Внутри существующих `setScene*` дописать:
+Do not add new commands. Within existing `setScene*`, add:
 
-1. Прочитать текущее состояние `getAssetStates`.
-2. `validateAssetTransition(current, target)` — если `valid:false`, warn + journal `INVALID_STATE_*` + вернуть `{ changed: false, reason }`.
-3. После `unsafeRestoreAssetState` вызывать `journal.appendSceneEvent` с подходящим типом
-   (`SCENE_PENDING`, `SCENE_GENERATING`, `SCENE_ALL_READY` — типы уже есть в `event-journal.js`,
-   либо переиспользовать `INVALID_STATE_CALLBACK`/`SCENE_RESET` по смыслу).
+1. Read current state via `getAssetStates`.
+2. `validateAssetTransition(current, target)` — if `valid:false`, warn + journal `INVALID_STATE_*` + return `{ changed: false, reason }`.
+3. After `unsafeRestoreAssetState`, call `journal.appendSceneEvent` with appropriate type (`SCENE_PENDING`, `SCENE_GENERATING`, `SCENE_ALL_READY` — types already exist in `event-journal.js`, or reuse `INVALID_STATE_CALLBACK`/`SCENE_RESET` by meaning).
 
-Шаблон (для `setScenePending`):
+Template (for `setScenePending`):
 
 ```js
 async function setScenePending(redis, bookId, chapterId, sceneId, asset, buildId = null) {
@@ -86,78 +77,55 @@ async function setScenePending(redis, bookId, chapterId, sceneId, asset, buildId
 }
 ```
 
-Это **точечная** правка в 4 функциях — около 30 строк суммарно, без изменения контракта.
-Callers продолжают звать те же методы, теперь просто нечем «протолкнуть» невалидный переход.
+This is a **targeted** fix in 4 functions — approximately 30 lines total, no contract change. Callers continue calling the same methods; they simply can no longer "push through" invalid transitions.
 
-**Не делать:** вводить middleware/hook-систему для всех writes. Только явная валидация в терминальных
-функциях, где её сейчас нет.
+**Do not:** Introduce a middleware/hook system for all writes. Only explicit validation in terminal functions where it is currently missing.
 
 ---
 
-## R2. Удалить deprecated aliases из scene-state.js
+## R2. Remove Deprecated Aliases from scene-state.js
 
-`scene-state.js:196-197` оставляет:
+`scene-state.js:196-197` keeps:
 ```js
 const setAssetState = unsafeRestoreAssetState;
 const setAssetStates = unsafeRestoreAssetStates;
 ```
-с комментарием «REMOVE after S2.3 migration». Согласно `ORCHESTRATION_TODO.md` S2.3 завершён.
-grep по коду показывает, что **0 вызвов** `state.setAssetState` / `state.setAssetStates` вне
-самого `scene-state.js` (в codebase остались только `unsafeRestoreAsset*`).
+with the comment "REMOVE after S2.3 migration." According to `ORCHESTRATION_TODO.md`, S2.3 is complete. Codebase grep shows **0 calls** to `state.setAssetState` / `state.setAssetStates` outside `scene-state.js` itself (only `unsafeRestoreAsset*` remain).
 
-**Действие:** удалить alias-экспорты и упоминание в JSDoc. Это −2 строки + одно место меньше для
-ошибочного вызова в новых файлах. Никакой миграции не требуется.
+**Action:** Delete alias exports and JSDoc mention. This is −2 lines and one fewer place for erroneous calls in new files. No migration required.
 
 ---
 
-## R3. Reconciliation/window идут в audioOrch мимо фасада
+## R3. Reconciliation/Window Call audioOrch Bypassing the Facade
 
-`reconciliation-engine.js` содержит **18 прямых вызовов** `audioOrch.*` (`scanAllStates`,
-`failWaitingScene`, `completeChunk`, `setState`, `setFailed`, `setDone`, `deleteState`).
-`scene-window.js:766` зовёт `audioOrch.initPlaceholderReady` напрямую.
+`reconciliation-engine.js` contains **18 direct calls** to `audioOrch.*` (`scanAllStates`, `failWaitingScene`, `completeChunk`, `setState`, `setFailed`, `setDone`, `deleteState`). `scene-window.js:766` calls `audioOrch.initPlaceholderReady` directly.
 
-Это перечит инварианту, провозглашённому в `ORCHESTRATION.md` §2.1: «Никто не вызывает
-`audioOrch.*()` напрямую — только через фасад». Соответственно фазы 7–9 в TODO отмечены 🔴
-как невыполненные.
+This is a violation of the invariant proclaimed in `ORCHESTRATION.md` §2.1: "Nobody calls `audioOrch.*()` directly — only through the facade." Accordingly, phases 7–9 in TODO are marked 🔴 as incomplete.
 
-### Почему это важно
+### Why This Matters
 
-Аудио-инвариант `audio-orch.phase == DONE ⇔ asset.audio == READY` поддерживается **только**
-ручной синхронизацией в `completeStage`/`failStage`. Если reconciliation меняет `audioOrch.phase`
-на `DONE` (например, `setDone` после recovery), а asset state при этом остаётся `GENERATING`,
-следующий tick scheduler'а увидит `GENERATING` и попытается снова диспатчить готовое аудио —
-получим цикл.
+The audio invariant `audio-orch.phase == DONE ⇔ asset.audio == READY` is maintained **only** by manual synchronization in `completeStage`/`failStage`. If reconciliation changes `audioOrch.phase` to `DONE` (e.g., `setDone` after recovery) while asset state remains `GENERATING`, the next scheduler tick sees `GENERATING` and tries to dispatch completed audio again — creating a loop.
 
-### Что предлагается (без reflow)
+### What's Proposed (Without Reflow)
 
-Не переносить весь reconciliation на фасад — это большая работа и явное усложнение. Вместо этого:
+Do not move all reconciliation to the facade — that's significant work and clear over-engineering. Instead:
 
-1. Ввести **одну** новую операцию фасада: `reconcileAudioPhase(redis, bookId, chapterId, sceneId, action, payload)`
-   с actions: `{ setDone, setFailed, completeChunkRecovery, deleteStateIfNeeded }`. Это **не** 13-я
-   команда жизненного цикла — это **recovery-helper**, который:
-   - вызывает `audioOrch.*` 
-   -kraftvoll синхронизирует `asset.audio` (`unsafeRestoreAssetState`) сразу же
-   - пишет journal event `AUDIO_RECONCILED`
+1. Introduce **one** new facade operation: `reconcileAudioPhase(redis, bookId, chapterId, sceneId, action, payload)` with actions: `{ setDone, setFailed, completeChunkRecovery, deleteStateIfNeeded }`. This is **not** a 14th lifecycle command — it's a **recovery-helper** that:
+   - calls `audioOrch.*`
+   - synchronizes `asset.audio` (`unsafeRestoreAssetState`) immediately
+   - writes journal event `AUDIO_RECONCILED`
 
-   **Контроверсия:** это нарушает «не расширять фасад». Контраргумент — это не lifecycle-команда,
-   а атомарная единица reconciliation. Сейчас reconciliation уже дёргает audioOrch +
-   unsafeRestoreAssetState через фасад в одном месте (`line 869`), просто раскидано.
-   
-   **Альтернатива без новой команды:** в `reconciliation-engine.js` сразу после каждого
-   `audioOrch.setDone/setFailed/completeChunk` вызывать `orchestrator.completeStage`/
-   `failStage` (уже сделано в части мест, нужно протащить везде одинаково).
+   **Controversy:** this violates "don't extend the facade." Counter-argument — it's not a lifecycle command but an atomic reconciliation unit. Currently reconciliation already calls audioOrch + unsafeRestoreAssetState through the facade in one place (`line 869`), just scattered.
 
-**Рекомендация:** пойти альтернативным путём — выровнять все 18 мест под единый паттерн
-`audioOrch.X() → orchestrator.completeStage/failStage/markDirtyScene()`. Это не добавляет
-новых команд, а только замыкает существующий контракт. Объём: ~30 строк правок в
-`reconciliation-engine.js`, без нового API.
+   **Alternative without new command:** In `reconciliation-engine.js`, immediately after each `audioOrch.setDone/setFailed/completeChunk`, call `orchestrator.completeStage`/`failStage` (already done in some places, needs to be uniformly applied everywhere).
+
+**Recommendation:** go with the alternative — align all 18 call sites under a unified pattern `audioOrch.X() → orchestrator.completeStage/failStage/markDirtyScene()`. This adds no new commands, only closes the existing contract. Scope: ~30 lines of changes in `reconciliation-engine.js`, no new API.
 
 ---
 
-## R4. Lazy require внутри функций — переусложнение
+## R4. Lazy Require Inside Functions — Over-Engineering
 
-В `orchestrator.js` (`completeStage`, `failStage`, `markDirtyScene`, `resetScenes`) каждый
-вызов делает 4–6 lazy `require()` внутри тела:
+In `orchestrator.js` (`completeStage`, `failStage`, `markDirtyScene`, `resetScenes`), each call does 4–6 lazy `require()` inside the body:
 
 ```js
 async function completeStage(...) {
@@ -170,88 +138,70 @@ async function completeStage(...) {
 }
 ```
 
-Это сознательный компромисс Шага 0 (комментарий в `orchestrator.js:16-19`) для разрыва цикла
-`orchestration ↔ runtime`. Проблема: цикл уже разорван паттерном lazy-require в
-`dispatch-engine.js` и `runtime-scheduler.js` (которые тоже require'ят orchestrator внутри функций).
-То есть lazy-require здесь **работает только в одну сторону** — facade ≠ cycle break.
-Модульная система Node кэширует require после первого вызова, поэтому runtime-cost нулевой,
-но readability страдает.
+This was a deliberate Step 0 compromise (comment in `orchestrator.js:16-19`) to break the `orchestration ↔ runtime` cycle. The problem: the cycle is already broken by the lazy-require pattern in `dispatch-engine.js` and `runtime-scheduler.js` (which also require orchestrator inside functions). So lazy-require here **only works one way** — facade ≠ cycle breaker. Node's module system caches require after the first call, so runtime cost is zero, but readability suffers.
 
-### Что предлагается
+### What's Proposed
 
-Топ-level require для неучаствующих в цикле модулей:
-- `scene-callbacks`, `scene-utils`, `state`, `scene-assets-repo`, `event-journal`,
-  `audio-orchestrator`, `failure-taxonomy` — безопасно, циклов нет.
-- `dispatch-engine`, `runtime-scheduler`, `reconciliation-engine`, `runtime-config` (если он
-  require'ит что-то из orchestration) — оставить lazy, они действительно циклические.
+Top-level require for modules not participating in cycles:
+- `scene-callbacks`, `scene-utils`, `state`, `scene-assets-repo`, `event-journal`, `audio-orchestrator`, `failure-taxonomy` — safe, no cycles.
+- `dispatch-engine`, `runtime-scheduler`, `reconciliation-engine`, `runtime-config` (if it requires anything from orchestration) — keep lazy, they are truly cyclic.
 
-Объём: ~10 строк перемещается вверх, тело функций становится чище на 4-5 строк.
-Без изменения поведения, чисто читаемость +1.
+Scope: ~10 lines moved up, function bodies become 4–5 lines cleaner. No behavior change, purely readability +1.
 
 ---
 
-## R5. resetScenes — слоёный пирог из 10 шагов
+## R5. resetScenes — 10-Step Layer Cake
 
-`orchestrator.js:413-549` — одна функция на 136 строк делает:
+`orchestrator.js:413-549` — a single 136-line function does:
 1. force-dispatch flag in Redis
 2. journal event SCENE_RESET
 3. removeScenesFromActiveIndex (scheduler)
 4. clearLeasesForScenes (dispatch-engine)
 5. clearHubDispatches (HTTP DELETE /queue/clear)
-6. fs.unlinkSync stale PNGs (цикл по scene×units)
+6. fs.unlinkSync stale PNGs (loop over scene×units)
 7. redis.scan + redis.del iu-progress + iu-in-flight
-8. markDirty через bookDiff или fallback
+8. markDirty via bookDiff or fallback
 9. addSceneToActiveIndex (scheduler)
 10. journal event SCENE_RESET_COMPLETED
 
-Шаги 1, 6, 7 — это **gather/cleanup** инфраструктурных артефактов (force flags, файлы, счётчики).
-Шаги 3, 4, 5, 9 — **scheduler/dispatch contract**. Шаги 2, 10 — наблюдаемость.
-Шаг 8 — сам lifecycle write (через `markDirty`, который уже фасад).
+Steps 1, 6, 7 are **gather/cleanup** of infrastructure artifacts (force flags, files, counters). Steps 3, 4, 5, 9 are **scheduler/dispatch contract**. Steps 2, 10 are observability. Step 8 is the lifecycle write itself (via `markDirty`, which is already part of the facade).
 
-### Что предлагается (без разбиения на 5 файлов)
+### What's Proposed (Without Splitting Into 5 Files)
 
-Вынести в два локальных helper'а в том же файле `orchestrator.js`:
+Extract two local helpers in the same `orchestrator.js` file:
 
-- `_cleanupRegenerationArtifacts(redis, bookId, buildId, scenes, cleanPngUnitIds)` — шаги 6+7
-  (файлы + iu-progress/in-flight). Это чистая платформенная операция, не касается lifecycle.
-- `_emitResetLifecycleEvents(redis, bookId, chapterId, sceneId, scope, scenesCount, marked)` —
-  шаги 2+10. Просто чтобы убрать дублирование формата journal events в начале и конце.
+- `_cleanupRegenerationArtifacts(redis, bookId, buildId, scenes, cleanPngUnitIds)` — steps 6+7 (files + iu-progress/in-flight). Pure platform operation, not lifecycle.
+- `_emitResetLifecycleEvents(redis, bookId, chapterId, sceneId, scope, scenesCount, marked)` — steps 2+10. Just to remove journal event format duplication at start and end.
 
-`resetScenes` останется оркестратором шагов, но тело сократится с 136 → ~70 строк, и каждое
-действие будет явно поименовано helper'ом. Контракт не меняется.
+`resetScenes` remains the orchestrator of steps, but the body shrinks from 136 → ~70 lines, and each action is explicitly named by a helper. Contract unchanged.
 
-**Не делать:** создавать класс `RegenerationFlow` или middleware pipeline. Это переусложнение.
-Достаточно двух локальных функций.
+**Do not:** Create a `RegenerationFlow` class or middleware pipeline. That's over-engineering. Two local functions suffice.
 
 ---
 
-## R6. Тест на audio-orch инвариант
+## R6. Test for Audio-Orch Invariant
 
-В `backend/tests/orchestration-stabilization.test.js` есть тесты на dispatch ownership
-(lease token mismatch, stale dispatch, duplicate finalization) — это хорошо. Но нет теста на
-**основной инвариант** системы:
+In `backend/tests/orchestration-stabilization.test.js` there are tests for dispatch ownership (lease token mismatch, stale dispatch, duplicate finalization) — good. But there is no test for the system's **core invariant**:
 
 ```
 audio-orch.phase == DONE   ⇔   asset.audio == READY
 audio-orch.phase == FAILED ⇒   asset.audio ∈ {FAILED, PENDING}
 ```
 
-Без него любое изменение в `completeStage`/`failStage` рискует молча нарушить синхронизацию.
+Without it, any change in `completeStage`/`failStage` risks silently breaking synchronization.
 
-### Что предлагается
+### What's Proposed
 
-Один `describe('audio-orch invariant')` с тремя `it`:
-1. `completeStage('audio')` переводит asset в READY **и** audio-orch.phase в DONE.
-2. `failStage('audio')` переводит asset в FAILED→PENDING **и** audio-orch.phase в FAILED.
-3. `completeStage('audio')` с `handler.ok:false` НЕ трогает ни asset, ни audio-orch (NEVER READY).
+One `describe('audio-orch invariant')` with three `it`:
+1. `completeStage('audio')` transitions asset to READY **and** audio-orch.phase to DONE.
+2. `failStage('audio')` transitions asset to FAILED→PENDING **and** audio-orch.phase to FAILED.
+3. `completeStage('audio')` with `handler.ok:false` touches NEITHER asset NOR audio-orch (NEVER READY).
 
-Моки для audio-orch и sceneAssetsRepo в `mocks/` уже есть (S4 завершён). Объём — ~80 строк теста,
-в один файл. Это единственная рекомендация, которая **создаёт** код, а не перерабатывает существующий —
-но без неё остальные правки не защищены регрессией.
+Mocks for audio-orch and sceneAssetsRepo already exist in `mocks/` (S4 complete). Scope — ~80 lines of test, in one file. This is the only recommendation that **creates** code rather than refactoring existing — but without it, the other fixes have no regression protection.
 
 ---
 
-## R7. Двойной путь markDirty в resetScenes
+## R7. Dual markDirty Path in resetScenes
 
 `orchestrator.js:518-529`:
 
@@ -268,32 +218,25 @@ if (bookDiff && typeof bookDiff.markDirtyScenes === 'function') {
 }
 ```
 
-Эти два пути **семантически разные**:
-- `bookDiff.markDirtyScenes` — Lua-атомарная операция, пишет chunks + state + active index одним
-  скриптом (см. ORCHESTRATION.md §2.8 R7).
-- Fallback — поэлементный `markDirtyScene`, который НЕ пишет chunks и не активирует index атомарно.
+These two paths are **semantically different**:
+- `bookDiff.markDirtyScenes` — Lua-atomic operation, writes chunks + state + active index in one script (see ORCHESTRATION.md §2.8 R7).
+- Fallback — element-by-element `markDirtyScene`, which does NOT write chunks or activate index atomically.
 
-Если в проде кто-то забудет передать `bookDiff` (DI от route), система молча откатится на
-неатомарный путь — и при конкурентной regenerate появится race. Внутренние контракты нельзя
-держать на «опциональной» DI.
+If someone in production forgets to pass `bookDiff` (DI from route), the system silently falls back to the non-atomic path — and concurrent regeneration introduces a race. Internal contracts should not depend on "optional" DI.
 
-### Предложение
+### Proposal
 
-Сделать `bookDiff` обязательным: `if (!bookDiff) throw new Error('resetScenes: bookDiff is required')`.
-Все caller'ы уже его передают (через DI из route). Fallback удалить.
+Make `bookDiff` mandatory: `if (!bookDiff) throw new Error('resetScenes: bookDiff is required')`. All callers already pass it (via DI from route). Remove fallback.
 
-Альтернатива — сохранить fallback, но логировать как `ERROR` (не `log`), и добавить метрику в
-Prometheus: `reset_scenes_fallback_total`. Это позволит увидеть, если fallback всё же стреляет.
-Второй вариант мягче, на случай если есть редкий caller без bookDiff.
+Alternative — keep fallback but log as `ERROR` (not `log`), and add Prometheus metric: `reset_scenes_fallback_total`. This allows seeing if fallback still fires. Softer option, in case there's a rare caller without bookDiff.
 
-**Рекомендация:** первый вариант (throw). Это явный контракт. grep callers подскажет, если
-что-то пропущено — лучше упасть в start, чем тихо разъезжаться.
+**Recommendation:** First option (throw). This is an explicit contract. grep callers will reveal if anything is missed — better to fail at start than silently diverge.
 
 ---
 
-## R8. PG-запрос inline в completeStage
+## R8. Inline PG Query in completeStage
 
-`orchestrator.js:132-154` — встроенный SQL в теле функции:
+`orchestrator.js:132-154` — inline SQL in function body:
 
 ```js
 const sceneResult = await pgQuery(`
@@ -302,56 +245,51 @@ const sceneResult = await pgQuery(`
 `, [bookId, chapterId, sceneId]);
 ```
 
-Это делает фасад зависимым от структуры PG-схемы. Любой рефакторинг `scenes` ломает `orchestrator`.
+This makes the facade dependent on PG schema structure. Any `scenes` refactoring breaks `orchestrator`.
 
-### Что предлагается
+### What's Proposed
 
-Добавить метод `scene-assets-repo.getSceneVersions(bookId, chapterId, sceneId)` (или
-`scenes-repo`, если он есть), возвращающий `{ content_version, audio_config_version }`.
-Вынести туда этот SELECT. Фасад зовёт repo.
+Add method `scene-assets-repo.getSceneVersions(bookId, chapterId, sceneId)` (or `scenes-repo` if it exists), returning `{ content_version, audio_config_version }`. Extract this SELECT there. Facade calls repo.
 
-Объём — 1 метод в repo, замена inline SQL на вызов. Никаких новых абстракций.
+Scope — 1 method in repo, replace inline SQL with call. No new abstractions.
 
 ---
 
-## Чего НЕ делать (дополнение к существующему списку)
+## What NOT to Do (Addition to Existing List)
 
-- Не вводить event-sourcing для asset state. Redis hash + PG canonical — достаточно.
-- Не добавлять централизованный `validateTransition` interceptor для всего facade — достаточно точечно в `setScene*`.
-- Не расщеплять `orchestrator.js` на 3 файла (markDirty/complete/fail). 13 команд помещаются в одном файле ~600 строк.
-- Не делать circuit-breaker для PG (сейчас fail-closed на PG error — корректно).
-- Не мигрировать `audioOrch.*` вызовы из reconciliation одним PR — медленно, по 2-3 места за раз.
-
----
-
-## Приоритеты и порядок внедрения
-
-| Этап | Задачи | Объём | Риск |
-|------|--------|------|------|
-| **Phase A (сутки)** | R2 (удалить alias), R6 (тест инварианта), R4 (top-level require) | ~120 строк | Низкий |
-| **Phase B (неделя)** | R1 (validate+journal в setScene*), R7 (bookDiff required), R8 (вынести SQL в repo) | ~80 строк | Средний |
-| **Phase C (2 недели)** | R3 (выровнять 18 audioOrch вызовов), R5 (split resetScenes на 2 helper'а) | ~150 строк | Средний |
-
-Все три фазы **суммарно меньше**, чем один `reconciliation-engine.js` (1541 строка).
-Новая функциональность не добавляется, новая сложность не вводится.
+- Do not introduce event-sourcing for asset state. Redis hash + PG canonical is sufficient.
+- Do not add a centralized `validateTransition` interceptor for the entire facade — targeted validation in `setScene*` is enough.
+- Do not split `orchestrator.js` into 3 files (markDirty/complete/fail). 13 commands fit in one ~600-line file.
+- Do not add circuit-breaker for PG (current fail-closed on PG error is correct).
+- Do not migrate `audioOrch.*` calls from reconciliation in one PR — do it slowly, 2–3 sites at a time.
 
 ---
 
-## Контрольные критерии «стабильно»
+## Priorities and Implementation Order
 
-| Критерий | Сейчас | После |
-|----------|-------|------|
-| `validateAssetTransition` вызывается во всех 13 lifecycle writes фасада | 2 из 13 | 13 из 13 |
-|journal event пишется на каждое изменение asset state | ~5 мест | все терминальные |
-| Deprec­ated API в `state.js` | 2 alias | 0 |
-| Прямой `audioOrch.*` вне `orchestrator.js` и `scene-orchestrator.js` | 18 вызовов | 0 |
-| Тест на audio-orch инвариант | нет | 3 кейса |
-| Inline SQL в `orchestrator.js` | 1 SELECT | 0 |
+| Phase | Tasks | Scope | Risk |
+|-------|-------|-------|------|
+| **Phase A (1 day)** | R2 (delete alias), R6 (invariant test), R4 (top-level require) | ~120 lines | Low |
+| **Phase B (1 week)** | R1 (validate+journal in setScene*), R7 (bookDiff required), R8 (extract SQL to repo) | ~80 lines | Medium |
+| **Phase C (2 weeks)** | R3 (align 18 audioOrch calls), R5 (split resetScenes into 2 helpers) | ~150 lines | Medium |
 
-После выполнения Phase A+B+C система остаётся в **тех же границах сложности**, что и сейчас:
-один Node-процесс, Redis, PG, те же 13 команд фасада, тот же dispatch-engine. Только щели
-между ними становятся наблюдаемыми и валидируемыми.
+All three phases **combined are smaller** than a single `reconciliation-engine.js` (1541 lines). No new functionality is added, no new complexity introduced.
+
+---
+
+## "Stable" Criteria
+
+| Criterion | Current | After |
+|-----------|---------|-------|
+| `validateAssetTransition` called in all 13 lifecycle facade writes | 2 of 13 | 13 of 13 |
+| Journal event written on every asset state change | ~5 places | all terminals |
+| Deprecated API in `state.js` | 2 aliases | 0 |
+| Direct `audioOrch.*` outside `orchestrator.js` and `scene-orchestrator.js` | 18 calls | 0 |
+| Audio-orch invariant test | none | 3 cases |
+| Inline SQL in `orchestrator.js` | 1 SELECT | 0 |
+
+After completing Phases A+B+C, the system remains within the **same complexity bounds** as now: one Node process, Redis, PG, the same 13 facade commands, the same dispatch-engine. Only the gaps between them become observable and validatable.
 
 <!-- === Footer === -->
 ---
-*Рекомендации по стабилизации. 26 июля 2026. Основание: кодовый ревизия `2026-07-26`.*
+*Stabilization recommendations. July 26, 2026. Basis: code review `2026-07-26`.*
