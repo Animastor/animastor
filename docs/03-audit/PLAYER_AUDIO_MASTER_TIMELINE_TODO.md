@@ -1,144 +1,144 @@
 # Player Audio Master Timeline — TODO
 
-> **Легенда:** 🟡 High | 🟢 Medium | ⚪ Low
-> **Статус:** 📝 Plan | 🔧 In progress | ✅ Done | ❌ Skipped
+> **Legend:** 🟡 High | 🟢 Medium | ⚪ Low
+> **Status:** 📝 Plan | 🔧 In progress | ✅ Done | ❌ Skipped
 
-Источник: `docs/03-audit/PLAYER_AUDIO_MASTER_TIMELINE.md`
+Source: `docs/03-audit/PLAYER_AUDIO_MASTER_TIMELINE.md`
 
 ---
 
-## Этап 1: Reveal-гейт ограничить границами юнита (🟡 High)
+## Phase 1: Constrain reveal gate to unit boundaries (🟡 High)
 
-**Проблема:** `pendingRevealPosMs = startPosMs + 150` (Android `PlayFragment.kt:1237,1245`;
-Web `playbackStore.ts:1434,1494`) проверяет только нижнюю границу. Короткий юнит (< 150 ms)
-раскрывает видео уже в следующем юните.
+**Problem:** `pendingRevealPosMs = startPosMs + 150` (Android `PlayFragment.kt:1237,1245`;
+Web `playbackStore.ts:1434,1494`) only checks the lower bound. A short unit (< 150 ms)
+reveals the video in the next unit.
 
-### [T1.1] Ввести верхнюю границу reveal-гейта
-- [x] Android: в `startIuCycling` добавить `pos < unitEnd` (или `min(start + tol, unitEnd - safety)`)
-  к условию reveal (`PlayFragment.kt:1076-1082`). Границу брать из `startMs` следующего юнита
-  или `end_ms` (`StoryboardResponse.kt:21`).
-- [x] Web: в `onVideoTimeUpdate` добавить верхнюю границу (`playbackStore.ts:1556-1564`).
-- [x] Fallback: если у последнего юнита нет следующего `startMs` — использовать
+### [T1.1] Add upper bound to reveal gate
+- [x] Android: in `startIuCycling`, add `pos < unitEnd` (or `min(start + tol, unitEnd - safety)`)
+  to the reveal condition (`PlayFragment.kt:1076-1082`). Take the bound from the next unit's
+  `startMs` or `end_ms` (`StoryboardResponse.kt:21`).
+- [x] Web: in `onVideoTimeUpdate`, add upper bound (`playbackStore.ts:1556-1564`).
+- [x] Fallback: if the last unit has no next `startMs` — use
   `startMs + durationMs`.
 
-### [T1.2] Проверить границу на последнем юните сцены
-- [x] Seek в последний юнит сцены: reveal не должен улетать за конец сцены / в `ended`
-  (закрыто `unitEndMs`: последний юнит → `startMs + durationMs`; ручная проверка — в T4).
+### [T1.2] Verify bound on the last unit of a scene
+- [x] Seek to the last unit of a scene: reveal must not fly past scene end / into `ended`
+  (covered by `unitEndMs`: last unit → `startMs + durationMs`; manual check — in T4).
 
 ---
 
-## Этап 2: Race first-frame vs position gate (🟡 High)
+## Phase 2: Race first-frame vs position gate (🟡 High)
 
-**Проблема:** на Web `onVideoTimeUpdate` раскрывает по одному `currentTime` без проверки
-фактического декодированного кадра (`playbackStore.ts:1556-1564`, `videoHasFrame = true`
-ставится по позиции). Android раскрывает по позиции без `onRenderedFirstFrame` в seek-пути.
+**Problem:** On Web, `onVideoTimeUpdate` reveals based on `currentTime` alone without checking
+the actual decoded frame (`playbackStore.ts:1556-1564`, `videoHasFrame = true` is set
+purely by position). Android reveals based on position without `onRenderedFirstFrame` in the seek path.
 
-### [T2.1] Привести оба платформы к AND
-- [x] Web: в `onVideoTimeUpdate` перед reveal убеждаться, что кадр реально декодирован
-  (например, `videoHasFrame || readyState >= HAVE_CURRENT_DATA`).
-- [x] Android: зафиксировать решение — seek-reveal по позиции достаточен (README/комментарий),
-  либо добавить проверку рендера.
+### [T2.1] Align both platforms to AND
+- [x] Web: in `onVideoTimeUpdate`, before reveal, ensure the frame is actually decoded
+  (e.g., `videoHasFrame || readyState >= HAVE_CURRENT_DATA`).
+- [x] Android: document the decision — seek-reveal by position is sufficient (README/comment),
+  or add a render check.
 
-### [T2.2] Тест-сценарии
-- [x] Seek → первый кадр есть, позиция < гейта → не показываем.
-- [x] Позиция >= гейта, первый кадр ещё не готов → не показываем.
-- [x] Оба условия выполнены → показываем.
+### [T2.2] Test scenarios
+- [x] Seek → first frame present, position < gate → don't show.
+- [x] Position >= gate, first frame not ready → don't show.
+- [x] Both conditions met → show.
 
-Реализовано как юнит-тесты на ОБЕИХ платформах (логика гейта вынесена в чистые
-модули, `shouldRevealSeekVideo` — чистая AND-функция, используется в рантайме
+Implemented as unit tests on BOTH platforms (gate logic extracted to pure
+modules, `shouldRevealSeekVideo` — pure AND function, used in runtime
 Android: `startIuCycling`; Web: `onVideoTimeUpdate`):
 - Web: `frontends/app/src/state/playbackGate.ts` + `playbackGate.test.ts` (vitest —
-  14 тестов: 3 сценария AND-гейта + клампинг `unitRevealGateSec` — короткий юнит,
-  последний юнит, legacy-cumulative, fallback без границ).
+  14 tests: 3 AND gate scenarios + `unitRevealGateSec` clamping — short unit,
+  last unit, legacy-cumulative, fallback without bounds).
 - Android: `PlayerGate.kt` + `PlayerGateTest.kt` (JUnit 4, `:app:testDebugUnitTest` —
-  16 тестов: те же сценарии + `unitRevealGateMs`/`unitStartMs`/`unitEndMs`).
+  16 tests: same scenarios + `unitRevealGateMs`/`unitStartMs`/`unitEndMs`).
 
 ---
 
-## Этап 3: Инвариант currentIuIndex vs unitId (🟡 High)
+## Phase 3: Invariant currentIuIndex vs unitId (🟡 High)
 
-**Проблема:** index остаётся операционным состоянием; возможен старый index после
+**Problem:** index remains operational state; stale index possible after
 pause/resume/rotation/restore.
 
-### [T3.1] Проверить invariant
-- [x] После каждого перехода (seek, pause, resume, rotation, scene transition, Navigator)
-  проверять: `ius[currentIuIndex].unitId == targetUnit.unitId`.
-- [x] Особо покрыть guard `idx == 0 && currentIuIndex != 0` (`PlayFragment.kt:1109`).
+### [T3.1] Verify invariant
+- [x] After every transition (seek, pause, resume, rotation, scene transition, Navigator)
+  verify: `ius[currentIuIndex].unitId == targetUnit.unitId`.
+- [x] Cover guard `idx == 0 && currentIuIndex != 0` (`PlayFragment.kt:1109`).
 
-**Вывод:** invariant выполнен конструктивно — оба платформы в `handleChunk` выводят
-`currentIuIndex` из `resolveUnitIndexForSequence` (unitId-first, fallback index),
-то есть индекс пере-вычисляется на каждом заходе сцены, а не копируется из store.
-Guard `idx == 0 && currentIuIndex != 0` — корректная защита от транзиентного `pos == 0`
-сразу после seek в более поздний юнит (его `start_ms > 0`); при seek в юнит 0
-`currentIuIndex == 0`, и guard не срабатывает. Ручной регресс — T4.
+**Conclusion:** Invariant holds constructively — both platforms derive
+`currentIuIndex` from `resolveUnitIndexForSequence` in `handleChunk` (unitId-first, fallback index),
+meaning the index is re-computed on each scene entry, not copied from the store.
+Guard `idx == 0 && currentIuIndex != 0` is correct protection against transient `pos == 0`
+immediately after seeking to a later unit (its `start_ms > 0`); when seeking to unit 0
+`currentIuIndex == 0`, and the guard doesn't fire. Manual regression — T4.
 
 ---
 
-## Этап 4: Регрессионные сценарии (🟡 Test)
+## Phase 4: Regression scenarios (🟡 Test)
 
-Прогнать после этапов 1-3 на обеих платформах:
+Run after phases 1-3 on both platforms:
 
-- [ ] Cold start → Navigator → очень быстрый tap → Start → pause → другой unit.
+- [ ] Cold start → Navigator → very fast tap → Start → pause → different unit.
 - [ ] Pause → Navigator → unit → Play.
-- [ ] Последний unit → первый unit той же сцены.
-- [ ] Scene A → Scene B → быстро обратно Scene A.
-- [ ] Positioned-pause на границе юнита (Android vs Web поведение).
-- [ ] Короткий юнит (< 150 ms): reveal не в следующем юните.
+- [ ] Last unit → first unit of the same scene.
+- [ ] Scene A → Scene B → quickly back to Scene A.
+- [ ] Positioned-pause at a unit boundary (Android vs Web behavior).
+- [ ] Short unit (< 150 ms): reveal not in the next unit.
 
 ---
 
-## Этап 5: Разделить две смысловые `150` (🟢 Medium)
+## Phase 5: Separate the two semantic `150` values (🟢 Medium)
 
-- [x] Android: переименовать/вынести `delay(150)` в `revealVideoAfterReturn`
-  (`PlayFragment.kt:1482`) в отдельную именованную константу (например
-  `SURFACE_RE_RENDER_FALLBACK_MS`), отдельно от `UNIT_REVEAL_TOLERANCE_MS`.
-- [x] Web: убедиться, что `UNIT_REVEAL_TOLERANCE_MS` — единственная величина 150.
+- [x] Android: rename/extract `delay(150)` in `revealVideoAfterReturn`
+  (`PlayFragment.kt:1482`) into a separate named constant (e.g.,
+  `SURFACE_RE_RENDER_FALLBACK_MS`), distinct from `UNIT_REVEAL_TOLERANCE_MS`.
+- [x] Web: confirm `UNIT_REVEAL_TOLERANCE_MS` is the only 150 value.
 
 ---
 
-## Этап 6: Формализация state machine Player (🟢 Later)
+## Phase 6: Formalize Player state machine (🟢 Later)
 
-**Проблема:** множество независимых флагов (`PlayFragment.kt:85-140`) вместо одного
-источника истины для selectedUnit.
+**Problem:** Many independent flags (`PlayFragment.kt:85-140`) instead of a single
+source of truth for selectedUnit.
 
-- [x] Описать состояния: `IDLE / LOADING_SCENE / SHOWING_STORYBOARD / SEEKING /
+- [x] Document states: `IDLE / LOADING_SCENE / SHOWING_STORYBOARD / SEEKING /
   VIDEO_READY / PLAYING / PAUSED`.
-- [x] Свести флаги к одному источнику истины для selectedUnit: пара
-  `currentIuSequence`/`currentIuIndex` заменена единым `selectedUnit`
-  (Android: `SelectedUnit(sequence, index)` в `PlayFragment.kt`; Web: `selectedUnit`
-  в `playbackStore.ts`). 7 состояний реализованы как хранимое состояние
-  (`playerState` + `transition()`; таблица переходов — в дизайн-доке).
-- [x] Снести семантические флаги: `isPaused`, `videoReadyToShow`/`videoHasFrame`,
-  `videoSeekInFlight`, `pendingRevealPosMs`/`pendingVideoRevealSec` — стали
-  read-only accessor'ами состояния; все записи заменены на `transition()`
-  (`SEEKING` несёт payload: `revealGateMs` / `seekLanded` / `paused`).
-  Guard/one-shot поля (`advancePending`, `pendingLoad`, `pendingRevealGen`,
-  поколения, `videoSurfaceAlive`, `sceneTransitionPending`/`nextChainReady`,
-  `videoEnded`) остаются полями по таблице дизайн-дока.
-- [x] Не добавлять новые флаги до этого рефактора.
+- [x] Consolidate flags into a single source of truth for selectedUnit: the
+  `currentIuSequence`/`currentIuIndex` pair replaced by a unified `selectedUnit`
+  (Android: `SelectedUnit(sequence, index)` in `PlayFragment.kt`; Web: `selectedUnit`
+  in `playbackStore.ts`). 7 states implemented as stored state
+  (`playerState` + `transition()`; transition table in the design doc).
+- [x] Demote semantic flags: `isPaused`, `videoReadyToShow`/`videoHasFrame`,
+  `videoSeekInFlight`, `pendingRevealPosMs`/`pendingVideoRevealSec` became
+  read-only state accessors; all writes replaced by `transition()`
+  (`SEEKING` carries payload: `revealGateMs` / `seekLanded` / `paused`).
+  Guard/one-shot fields (`advancePending`, `pendingLoad`, `pendingRevealGen`,
+  generations, `videoSurfaceAlive`, `sceneTransitionPending`/`nextChainReady`,
+  `videoEnded`) remain as per the design doc table.
+- [x] No new flags before this refactor.
 
-Дизайн: `docs/05-frontend/PLAYER_STATE_MACHINE_DESIGN.md`.
-
----
-
-## Этап 7: Правило на будущее — video_start_ms (⚪ Doc)
-
-- [x] Зафиксировать в DONT_DO.md: **Player никогда не зависит от `video_start_ms`**;
-  LTX 8N+1 решается при подготовке/assembly видео.
-- [x] Проверить чистоту моделей frontends (нигде не осталось `videoStartMs`).
+Design: `docs/05-frontend/PLAYER_STATE_MACHINE_DESIGN.md`.
 
 ---
 
-## Прогресс
+## Phase 7: Future rule — video_start_ms (⚪ Doc)
 
-| Задача | Статус |
+- [x] Document in DONT_DO.md: **Player must never depend on `video_start_ms`**;
+  LTX 8N+1 is resolved during video preparation/assembly.
+- [x] Verify frontend models are clean (no `videoStartMs` remaining).
+
+---
+
+## Progress
+
+| Task | Status |
 |---|---|
-| T1.1 Reveal-гейт с верхней границей | ✅ Done |
-| T1.2 Последний юнит сцены | ✅ Done (код; ручной тест — T4) |
+| T1.1 Reveal gate with upper bound | ✅ Done |
+| T1.2 Last unit of scene | ✅ Done (code; manual test — T4) |
 | T2.1 AND first-frame + position | ✅ Done |
-| T2.2 Тест-сценарии gate | ✅ Done (Web: vitest 14/14; Android: JUnit 16/16) |
-| T3.1 Инвариант index vs unitId | ✅ Done (verify) |
-| T4 Регрессионные сценарии | 📝 Plan |
-| T5 Разделить две 150 | ✅ Done |
-| T6 State machine | ✅ Done (selectedUnit — единый источник истины; 7 состояний — хранимое состояние + transition(); семантические флаги снесены в accessors) |
-| T7 video_start_ms правило | ✅ Done |
+| T2.2 Gate test scenarios | ✅ Done (Web: vitest 14/14; Android: JUnit 16/16) |
+| T3.1 Invariant index vs unitId | ✅ Done (verify) |
+| T4 Regression scenarios | 📝 Plan |
+| T5 Separate two 150 values | ✅ Done |
+| T6 State machine | ✅ Done (selectedUnit — single source of truth; 7 states — stored state + transition(); semantic flags demoted to accessors) |
+| T7 video_start_ms rule | ✅ Done |

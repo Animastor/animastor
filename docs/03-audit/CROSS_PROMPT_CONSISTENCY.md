@@ -1,63 +1,63 @@
 # Cross-Prompt Consistency: image.prompt ↔ video.action
 
-## Проблема (контрольный случай)
+## Problem (benchmark case)
 
-В книге `import_1786254623004_1786254631346`, сцена `sc-027e9c81`, юнит `iu-a373c502` (первая фраза «Мастера и Маргариты»: *«…появились два гражданина»*):
+In book `import_1786254623004_1786254631346`, scene `sc-027e9c81`, unit `iu-a373c502` (first line of *The Master and Margarita*: *"…two citizens appeared"*):
 
-- `image.prompt`: **«Two citizens** under a blistering sunset at Patriarshie Pруды: one center-left in a summer suit, one center-right in a checkered cap…»
-- `video.action`: **«Slow horizontal pan from left (mikhail_berlioz entering with hat) to right (ivan_ponyrev approaching from opposite side), heat shimmer intensifying…»**
+- `image.prompt`: **"Two citizens** under a blistering sunset at Patriarshie Ponds: one center-left in a summer suit, one center-right in a checkered cap…"
+- `video.action`: **"Slow horizontal pan from left (mikhail_berlioz entering with hat) to right (ivan_ponyrev approaching from opposite side), heat shimmer intensifying…"**
 - `scene.participants`: `[mikhail_berlioz, ivan_ponyrev, kiosk_saleswoman]`
 
-Один и тот же юнит даёт контрольную пару: в `video.action` агент использовал корректные snake-id, а в `image.prompt` заменил персонажей общим «two citizens». При этом passport'ы в image-пайплайне подставляются за id — то есть кадр показал бы **двух анонимных мужчин**, а следующая за ним моушн-сцена — **конкретных Берлиоза и Бездомного**. Нестыковка идентичности внутри одного юнита.
+The same unit produces a benchmark pair: in `video.action` the agent used correct snake-ids, but in `image.prompt` replaced the characters with generic "two citizens". Meanwhile passports in the image pipeline are substituted by id — meaning the frame would show **two anonymous men**, while the following motion scene shows **specific Berlioz and Bezdomny**. Identity inconsistency within a single unit.
 
-## Почему так получилось
+## Why This Happened
 
-1. **Оба поля пишет один вызов** `stepCreateVisuals` (visuals.md). Агент применил к полям разные стандарты: для статичного кадра скопировал анонимность исходника («два гражданина» — рассказчик намеренно не называет имён), а для моушна — привязал движение к id (видеомодель маппит строки сториборда к identity-анкерам по id). Стилистическое подражание тексту победило жёсткое правило «no generic nouns when IDs available» из visuals.md.
-2. **Существующие проверки не ловят этот класс:**
-   - `stepReconcileVideoActions` пропускает action (он agent-authored, отличен от prompt — `keptAuthored`); и чинит он только action, не prompt.
-   - `anchorGroupRefs` (детерминированный ремонт на рендере, video-workflows.js) работает **только в `video.action`** и только когда в нём **вообще нет** id. Здесь id в action есть → ремонт не нужен. А `image.prompt` не чинится никем.
-   - Аудит: список group-nouns не содержал «two citizens», и проверка №2 срабатывает только когда id нет ни в одном поле (`!hasCharId`).
+1. **Both fields are written by a single call** to `stepCreateVisuals` (visuals.md). The agent applied different standards to the two fields: for the static frame, it copied the source text's anonymity ("two citizens" — the narrator intentionally doesn't name them), while for motion, it tied movement to ids (the video model maps storyboard strings to identity anchors by id). Stylistic emulation of source text beat the hard rule "no generic nouns when IDs available" from visuals.md.
+2. **Existing checks don't catch this class:**
+   - `stepReconcileVideoActions` skips the action (it's agent-authored, differs from prompt — `keptAuthored`); and it only fixes action, not prompt.
+   - `anchorGroupRefs` (deterministic fix at render time, video-workflows.js) works **only in `video.action`** and only when it contains **no ids at all**. Here ids are present in action → no fix needed. And `image.prompt` is not fixed by anyone.
+   - Audit: the GROUP_NOUNS list didn't contain "two citizens", and check #2 only fires when ids are absent from both fields (`!hasCharId`).
 
-## Правило — АСИММЕТРИЧНОЕ
+## Rule — ASYMMETRIC
 
-`video.action` и `image.prompt` выполняют разные функции, поэтому проверка не симметрична:
+`video.action` and `image.prompt` serve different functions, so the check is not symmetric:
 
-**Жёсткое правило: `video IDs ⊆ image IDs`** — каждый персонаж, который конкретно участвует в `video.action` через валидный snake-id, **обязан** быть конкретно идентифицирован в `image.prompt`. «Two citizens» при `berlioz_id + bezdomny_id` в action — ошибка конкретизации `image.prompt`, чинится на полировке.
+**Hard rule: `video IDs ⊆ image IDs`** — every character that specifically participates in `video.action` via a valid snake-id **must** be specifically identified in `image.prompt`. "Two citizens" when `berlioz_id + bezdomny_id` are in action — an `image.prompt` specificity error, fixed during polish.
 
-**Обратное — НЕ ошибка**: `image.prompt` показывает Берлиоза и Бездомного, а `video.action` называет только Берлиоза — нормально. В видео может активно двигаться только один, второй в пассивном состоянии / фоне (модель автоматически его немного анимирует). Требовать `image IDs ⊆ video IDs` нельзя.
+**Reverse is NOT an error**: `image.prompt` shows Berlioz and Bezdomny, but `video.action` only names Berlioz — that's fine. In video, only one character may actively move; the other is in passive state/background (the model automatically animates it slightly). Requiring `image IDs ⊆ video IDs` is not allowed.
 
-Обратное направление оставлено только как **мягкая эвристика** (диагностика, никогда не ошибка). И ещё одно ограничение: проверяются **только валидные snake-id из `characters.json`** — случайная химера не может стать основанием для исправления другого промпта.
+The reverse direction is left only as a **soft heuristic** (diagnostics, never an error). One more constraint: only **valid snake-ids from `characters.json`** are checked — a random chimera cannot serve as grounds for fixing another prompt.
 
-## Механизм (гибрид: детерминированный детект + LLM на полировке)
+## Mechanism (hybrid: deterministic detection + LLM at polish)
 
-Новая общая точка правды — **`src/utils/snake-guard.js`**:
+The new single source of truth — **`src/utils/snake-guard.js`**:
 
-- `findKnownIdsInText(text, candidateIds)` — какие из кандидатов присутствуют в тексте (word-boundary, possessive учтён).
-- `findGenericPersonTerms(text, knownIds)` — generic-обозначения: групповые/неопределённые существительные (`two citizens`, `the two men`, `a man`, `people`, `both characters`…) **всегда**; местоимения (`he/his/they/them`) — **только когда в поле нет ни одного id** (после id местоимение разрешается естественно: «ivan_ponyrev raises his hand» — не анонимизация).
-- `findCrossPromptGaps(unit, participants, knownIds)` — для каждого юнита:
-  - `idsInPrompt` / `idsInAction` — только среди **scene.participants ∩ реестр** (валидные id из characters.json; химеры id не считаются и не запускают проверку);
-  - **HARD** (`direction: 'prompt'`) — **чистый сабсет**: action называет участника id, prompt его не называет → ошибка конкретизации prompt. Generic-термин НЕ требуется — сам пропуск id уже ошибка (тогда `generic_terms` пустой, хинт просто называет недостающие id);
-  - **SOFT** (`direction: 'action'`, `severity: 'soft'`): prompt называет участника, action не называет — не ошибка, только диагностика (здесь generic-термин обязателен, чтобы чистые различия подмножеств не шумели).
+- `findKnownIdsInText(text, candidateIds)` — which of the candidates are present in the text (word-boundary, possessive handled).
+- `findGenericPersonTerms(text, knownIds)` — generic designations: group/undefined nouns (`two citizens`, `the two men`, `a man`, `people`, `both characters`…) **always**; pronouns (`he/his/they/them`) — **only when no id is present in the field** (after an id, pronouns are natural: "ivan_ponyrev raises his hand" — not anonymization).
+- `findCrossPromptGaps(unit, participants, knownIds)` — for each unit:
+  - `idsInPrompt` / `idsInAction` — only among **scene.participants ∩ registry** (valid ids from characters.json; chimeric ids are not counted and don't trigger the check);
+  - **HARD** (`direction: 'prompt'`) — **pure subset**: action names a participant by id, prompt doesn't → specificity error in prompt. Generic term NOT required — the mere absence of id is already an error (then `generic_terms` is empty, hint simply lists the missing ids);
+  - **SOFT** (`direction: 'action'`, `severity: 'soft'`): prompt names a participant, action doesn't — not an error, diagnostics only (here generic term is mandatory so that pure subset differences don't noise).
 
-**Консервативность (по замыслу):**
-- Только HARD-направление действует: action-сторона никогда не принуждается называть всех из prompt.
-- Фон/экстры никогда не триггерят: триггер требует, чтобы **другое** поле называло участника id, а экстры id не имеют.
-- Подмножество без generic-термина («ivan_ponyrev leans forward» при двух участниках в кадре) — не флаг.
-- Участник, названный id вне сцены (fantasy), обрабатывается другим механизмом (`stepRepairFantasyIds`), не здесь.
+**Conservatism (by design):**
+- Only the HARD direction acts: the action side is never forced to name all characters from the prompt.
+- Background/extras never trigger: the trigger requires that the **other field** names the participant by id, and extras don't have ids.
+- A subset without a generic term ("ivan_ponyrev leans forward" when two characters are in frame) — not flagged.
+- A participant named by id outside the scene (fantasy) is handled by a different mechanism (`stepRepairFantasyIds`), not here.
 
-## Где это работает
+## Where It Runs
 
-1. **`pipeline-steps.js` → `stepPolishStoryboard`** (правит только `image.prompt`): если `video.action` называет участников, а `image.prompt` — generic → в user-сообщение добавляется блок «Cross-prompt consistency — image.prompt must use character_ids» со списком юнитов (`missing_ids`, `generic_terms`). Агент пересобирает именно недоработанный prompt, сохраняя композицию и смысл.
-2. **`stepPolishVideoActions`** — намеренно БЕЗ cross-prompt хинтов: обратное направление не ошибка. В правиле 5c видео-полировки прямо сказано, что action может анимировать подмножество кадра и НЕ обязан называть всех id из `image.prompt`.
-3. **Пост-merge валидация** (только HARD-направление): для каждого флагнутого юнита проверяется, что `missing_ids` **теперь присутствуют** в отполированном prompt (агент получил точные id — их отсутствие означает, что фикс не лёг, даже если generic-термин исчез). Нерешённые юниты считаются `unresolved` и логируются (в книгу попадают, но видны в аудите). Отката нет: поле могло получить другие легитимные правки, а сам факт виден через аудит.
-4. **Только in-range юниты** попадают в хинты — out-of-format поля (`> IMAGE_PROMPT_MAX_CHARS`) в полировку не берутся и в мердж не возвращаются, поэтому их флагация создавала бы только шум.
-5. **Правило** `storyboard_polish.md` (секция 6) описывает, как обрабатывать хинт-блок; `video_action_polish.md` (5c) — про то, что подмножество в action — норма.
-6. **Аудит** `audit-video-actions.js` — проверка №5 `CROSS-PROMPT`: **HARD → WARN** (prompt не конкретизирует id из action), **SOFT → INFO** (не ошибка, диагностика). Общий список `GROUP_NOUNS` из `snake-guard` (одна правда с пайплайном). Внимание: проверка №2 аудита (generic в action без id ни в одном поле) теперь использует **общий расширенный список** (~60 терминов вместо прежних 9) — на старых книгах это даст больше WARN (это реальные нарушения, но поведение аудита расширено).
-7. `pipeline-runner.js` — плоские проекции юнитов теперь несут `scene.participants` (иначе шаги полировки не знали бы состав сцены).
+1. **`pipeline-steps.js` → `stepPolishStoryboard`** (only fixes `image.prompt`): if `video.action` names participants but `image.prompt` uses generic → a "Cross-prompt consistency — image.prompt must use character_ids" block is added to the user message with a list of units (`missing_ids`, `generic_terms`). The agent rebuilds only the under-specified prompt, preserving composition and meaning.
+2. **`stepPolishVideoActions`** — intentionally WITHOUT cross-prompt hints: the reverse direction is not an error. Rule 5c in video polish explicitly states that action may animate a subset of the frame and is NOT required to name all ids from `image.prompt`.
+3. **Post-merge validation** (HARD direction only): for each flagged unit, it's verified that `missing_ids` are **now present** in the polished prompt (the agent received exact ids — their absence means the fix didn't stick, even if the generic term disappeared). Unresolved units are marked `unresolved` and logged (they end up in the book but are visible in the audit). No rollback: the field may have received other legitimate fixes, and the fact is visible through the audit.
+4. **Only in-range units** are included in hints — out-of-format fields (`> IMAGE_PROMPT_MAX_CHARS`) are not taken to polish and not returned in merge, so flagging them would only create noise.
+5. **Rule** `storyboard_polish.md` (section 6) describes how to handle hint blocks; `video_action_polish.md` (5c) — about subset in action being normal.
+6. **Audit** `audit-video-actions.js` — check #5 `CROSS-PROMPT`: **HARD → WARN** (prompt doesn't specify ids from action), **SOFT → INFO** (not an error, diagnostics). Shared `GROUP_NOUNS` list from `snake-guard` (single source of truth with the pipeline). Note: audit check #2 (generic in action without id in either field) now uses the **shared expanded list** (~60 terms vs previous 9) — on old books this produces more WARNs (these are real violations, but the audit behavior is expanded).
+7. `pipeline-runner.js` — flat unit projections now carry `scene.participants` (otherwise polish steps wouldn't know the scene composition).
 
-## Известные ограничения
+## Known Limitations
 
-- Если оба поля анонимны (id нет ни в одном) — HARD-проверка молчит (нет опоры в action); это зона аудита №2/№4 (generic в action без id) и правил.
-- Кандидаты — только **scene.participants ∩ реестр**. Это осознанно уже, чем «все id из characters.json»: персонаж, упомянутый в action, но не являющийся участником сцены (например, голос из соседней комнаты), НЕ принуждает prompt показывать его в кадре.
-- Ремонт — это **подсказка агенту на существующем полировочном шаге**, а не отдельный жёсткий барьер: если агент дважды не починил, юнит остаётся в книге с WARN в аудите (не блокируем пайплайн).
-- Список generic-терминов — английский (промпты по правилам пишутся на en); для других языков полей список расширять в `GROUP_NOUNS`.
+- If both fields are anonymous (no ids in either) — the HARD check is silent (no anchor in action); this is audit zone #2/#4 (generic in action without id) and rules.
+- Candidates are **scene.participants ∩ registry** only. This is intentionally narrower than "all ids from characters.json": a character mentioned in action but not a scene participant (e.g., a voice from the next room) does NOT force the prompt to show them in frame.
+- The fix is a **hint to the agent on an existing polish step**, not a separate hard barrier: if the agent fails to fix it twice, the unit remains in the book with a WARN in the audit (pipeline is not blocked).
+- The generic term list is English (prompts per rules are written in en); for other field languages, extend the list in `GROUP_NOUNS`.
