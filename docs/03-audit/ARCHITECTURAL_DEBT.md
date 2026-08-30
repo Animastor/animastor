@@ -2,287 +2,285 @@
 
 ## ✅ Resolved Bugs (Н.0–Н.9, 2026-06-26)
 
-Нижеперечисленные баги закрыты в рамках спринта Н.0–Н.9. Подробности — в `docs/TODO_IMMEDIATE.md`.
+The following bugs were closed as part of sprint Н.0–Н.9. Details in `docs/TODO_IMMEDIATE.md`.
 
-| Код | Проблема | Статус | Коммит |
+| Code | Problem | Status | Commit |
 |---|---|---|---|
-| **C1** | Двойной release квоты (markDispatchCompleted + callback) | ✅ | `4e007e2` |
-| **C2** | PG `status='ready'` не пишется в колбэках | ✅ | `cf0a48a` |
-| **C3** | Два registry с одинаковыми именами | ✅ | `5182455` |
-| **C4** | Неидемпотентность /gpu/task/result (двойная обработка) | ✅ | `d804a77` |
-| **M1** | Неатомарный RMW в per-asset state (GET+merge+SET) | ✅ | `1a0867d` |
-| **M2** | Check-then-incr race в quota | ✅ | `636da04` |
-| **M4** | Две системы лимитов (MAX_CONCURRENT + dispatch quotas) | ✅ | `0adc930` |
-| **§5.1** | GENERATING не выставляется в per-asset при диспатче | ✅ | `f0b81de` |
+| **C1** | Double quota release (markDispatchCompleted + callback) | ✅ | `4e007e2` |
+| **C2** | PG `status='ready'` not written in callbacks | ✅ | `cf0a48a` |
+| **C3** | Two registries with identical names | ✅ | `5182455` |
+| **C4** | /gpu/task/result non-idempotent (double processing) | ✅ | `d804a77` |
+| **M1** | Non-atomic RMW in per-asset state (GET+merge+SET) | ✅ | `1a0867d` |
+| **M2** | Check-then-incr race in quota | ✅ | `636da04` |
+| **M4** | Two limit systems (MAX_CONCURRENT + dispatch quotas) | ✅ | `0adc930` |
+| **§5.1** | GENERATING not set in per-asset on dispatch | ✅ | `f0b81de` |
 
 ---
 
-## 1. Отсутствие формальной абстракции коннекторов
+## 1. No Formal Connector Abstraction
 
-**Описание проблемы:** В проекте нет формального интерфейса или абстракции для коннекторов/адаптеров. Интеграция с GPU Hub, OpenRouter, PostgreSQL, Redis — прямые вызовы через HTTP и SQL.
+**Problem:** The project has no formal interface or abstraction for connectors/adapters. Integration with GPU Hub, OpenRouter, PostgreSQL, Redis — direct calls via HTTP and SQL.
 
-**Причина возникновения:** Эволюционное развитие. Изначально проект создавался как монолит без планирования сменяемости внешних систем.
+**Cause:** Evolutionary development. Initially created as a monolith without planning for external system replaceability.
 
-**Возможные последствия:** 
-- Замена OpenRouter на другой AI-провайдер потребует изменений во всех сервисах, вызывающих aiService
-- Замена ComfyUI на другую GPU-платформу потребует нового workflow-движка
-- Невозможность A/B тестирования разных провайдеров
+**Potential Consequences:**
+- Replacing OpenRouter with another AI provider requires changes in all services calling aiService
+- Replacing ComfyUI with another GPU platform requires a new workflow engine
+- No ability to A/B test different providers
 
-**Затрагиваемые компоненты:** ai-service.js, gpu-dispatcher.js, gpu-hub.js, worker.js, workflow-loader.js
-
----
-
-## 2. Отсутствие абстрактного слоя генераторов
-
-**Описание проблемы:** Audio, Image, Video сервисы имеют разные интерфейсы и не наследуют общий базовый класс. Невозможно добавить новый тип генерации без изменения orchestrator, dispatch-engine, scene-state.
-
-**Причина возникновения:** Изначально была только audio-генерация, image и video добавлены позже как копия с модификациями.
-
-**Возможные последствия:**
-- Каждый новый тип генерации требует изменений в 5+ файлах
-- Высокая вероятность несоответствия поведения нового типа существующим
-- Дублирование кода в dispatch-engine (audio/image/video секции)
-
-**Затрагиваемые компоненты:** scene-orchestrator.js, dispatch-engine.js, scene-state.js, runtime-scheduler.js, layer-config.js
+**Affected Components:** ai-service.js, gpu-dispatcher.js, gpu-hub.js, worker.js, workflow-loader.js
 
 ---
 
-## 3. Чрезмерная ответственность book-routes.cjs
+## 2. No Abstract Generator Layer
 
-**Описание проблемы:** Один файл содержит ~1800+ строк и ~30+ REST endpoint'ов. Смешивает CRUD, импорт, AI-пайплайн, управление генерацией, отладку.
+**Problem:** Audio, Image, Video services have different interfaces and don't inherit a common base class. Impossible to add a new generation type without modifying orchestrator, dispatch-engine, scene-state.
 
-**Причина возникновения:** Итеративное добавление endpoint'ов в существующий файл для простоты.
+**Cause:** Initially only audio generation existed; image and video added later as copies with modifications.
 
-**Возможные последствия:**
-- Сложность поддержки и тестирования
-- Высокая вероятность конфликтов при параллельной разработке
-- Нарушение Single Responsibility Principle
+**Potential Consequences:**
+- Each new generation type requires changes in 5+ files
+- High probability of behavioral inconsistency between new and existing types
+- Code duplication in dispatch-engine (audio/image/video sections)
 
-**Затрагиваемые компоненты:** book-routes.cjs
-
----
-
-## 4. Чрезмерная ответственность scene-orchestrator.js (ЧАСТИЧНО ИСПРАВЛЕНО)
-
-**Описание проблемы (было):** ~1200 строк, смешивающих dispatch execution, callback handling, state management, layer config, padded text trimming.
-
-**Что сделано:** Логика вынесена в `scene-callbacks.js` (~17 КБ), `scene-restoration.js`, `scene-utils.js`. Сейчас `scene-orchestrator.js` — фасад **~173 строки**. stale state tolerance убран (R3.1/R6.5).
-
-**Остаётся:** inline require() внутри scene-callbacks.js (8+ мест) — скрытые циклические зависимости.
-
-> **UPD 2026-06-26:** Размер orchestrator исправлен (~173, не ~1200). Код: `orchestration/*`.
+**Affected Components:** scene-orchestrator.js, dispatch-engine.js, scene-state.js, runtime-scheduler.js, layer-config.js
 
 ---
 
-## 5. Смешение runtime и бизнес-логики в dispatch-engine.js
+## 3. Excessive Responsibility of book-routes.cjs
 
-**Описание проблемы:** ~1000 строк, содержащая lease management, quota, circuit breaker, retry budget, fairness, policy, decision trace — все cross-cutting concerns в одном файле.
+**Problem:** Single file contains ~1800+ lines and ~30+ REST endpoints. Mixes CRUD, import, AI pipeline, generation management, debugging.
 
-**Причина возникновения:** Постепенное добавление механизмов устойчивости без выделения слоёв.
+**Cause:** Iteratively adding endpoints to existing file for simplicity.
 
-**Возможные последствия:**
-- При изменении одного механизма (например, retry budget) есть риск сломать другие
-- Невозможность переиспользовать отдельные механизмы в других контекстах
+**Potential Consequences:**
+- Maintenance and testing complexity
+- High probability of conflicts during parallel development
+- Violation of Single Responsibility Principle
 
-**Затрагиваемые компоненты:** dispatch-engine.js
-
----
-
-## 6. Знание о AI-модели захардкожено
-
-**Описание проблемы:** Модель по умолчанию (`qwen/qwen3.5-122b-a10b`) задаётся в runtime-config.js. docker-compose использует другую модель (`qwen/qwen3-32b`). Нет абстракции "модель AI" с интерфейсом и разными реализациями.
-
-**Текущее состояние (частично исправлено):**
-- ✅ `OPENROUTER_API_KEY` унифицирован как единый источник ключа во всех AI-вызовах
-- ✅ AI-роуты используют `config.OPENROUTER_API_KEY` вместо `process.env.AI_API_KEY`
-- ✅ AI_API_BASE_URL конфигурируется через env (по умолчанию Nvidia)
-- ❌ По-прежнему нет абстракции AI-провайдера
-- ❌ Нет fallback цепочки между OpenRouter и Nvidia
-- ❌ Провайдер-специфичный код размазан по ai-service.js
-
-**Затрагиваемые компоненты:** agent-service.js, ai-service.js, chat-engine.cjs
+**Affected Components:** book-routes.cjs
 
 ---
 
-## 7. Отсутствие unit-тестов для критических компонентов
+## 4. Excessive Responsibility of scene-orchestrator.js (PARTIALLY FIXED)
 
-**Описание проблемы:** Из 14 тестовых файлов большинство тестируют изолированные утилиты. Критические компоненты (scene-orchestrator, dispatch-engine, runtime-scheduler, agent-service) не имеют тестов.
+**Problem (was):** ~1200 lines, mixing dispatch execution, callback handling, state management, layer config, padded text trimming.
 
-**Причина возникновения:** Тесты писались post-factum для наиболее стабильных или простых модулей.
+**What was done:** Logic extracted to `scene-callbacks.js` (~17 KB), `scene-restoration.js`, `scene-utils.js`. Now `scene-orchestrator.js` is a facade **~173 lines**. Stale state tolerance removed (R3.1/R6.5).
 
-**Возможные последствия:**
-- Высокий риск регрессии при изменениях в orchestrator, dispatch-engine
-- Невозможность безопасного рефакторинга
-- Ручное тестирование как единственный метод верификации
+**Remaining:** inline require() inside scene-callbacks.js (8+ locations) — hidden cyclic dependencies.
 
-**Затрагиваемые компоненты:** scene-orchestrator.js (refactored to ~173 lines), dispatch-engine.js, runtime-scheduler.js, agent-service.js
+> **UPD 2026-06-26:** Orchestrator size corrected (~173, not ~1200). Code: `orchestration/*`.
 
 ---
 
-## 8. GPU Hub как единая точка отказа
+## 5. Mixed Runtime and Business Logic in dispatch-engine.js
 
-**Описание проблемы:** Все GPU-задачи проходят через один экземпляр GPU Hub. При его падении — вся генерация останавливается.
+**Problem:** ~1000 lines containing lease management, quota, circuit breaker, retry budget, fairness, policy, decision trace — all cross-cutting concerns in one file.
 
-**Текущее состояние (улучшено):**
-- ✅ REQUEUE при timeout воркера (10 min)
-- ✅ Дедупликация задач (NX EX 3600)
+**Cause:** Gradually adding resilience mechanisms without extracting layers.
+
+**Potential Consequences:**
+- Changing one mechanism (e.g., retry budget) risks breaking others
+- Impossible to reuse individual mechanisms in other contexts
+
+**Affected Components:** dispatch-engine.js
+
+---
+
+## 6. AI Model Knowledge Hardcoded
+
+**Problem:** Default model (`qwen/qwen3.5-122b-a10b`) set in runtime-config.js. docker-compose uses different model (`qwen/qwen3-32b`). No "AI model" abstraction with interface and different implementations.
+
+**Current State (partially fixed):**
+- ✅ `OPENROUTER_API_KEY` unified as single key source across all AI calls
+- ✅ AI routes use `config.OPENROUTER_API_KEY` instead of `process.env.AI_API_KEY`
+- ✅ AI_API_BASE_URL configurable via env (default: Nvidia)
+- ❌ Still no AI provider abstraction
+- ❌ No fallback chain between OpenRouter and Nvidia
+- ❌ Provider-specific code spread across ai-service.js
+
+**Affected Components:** agent-service.js, ai-service.js, chat-engine.cjs
+
+---
+
+## 7. No Unit Tests for Critical Components
+
+**Problem:** Of 14 test files, most test isolated utilities. Critical components (scene-orchestrator, dispatch-engine, runtime-scheduler, agent-service) have no tests.
+
+**Cause:** Tests written post-factum for most stable or simple modules.
+
+**Potential Consequences:**
+- High regression risk when changing orchestrator, dispatch-engine
+- Impossible safe refactoring
+- Manual testing as only verification method
+
+**Affected Components:** scene-orchestrator.js (refactored to ~173 lines), dispatch-engine.js, runtime-scheduler.js, agent-service.js
+
+---
+
+## 8. GPU Hub as Single Point of Failure
+
+**Problem:** All GPU tasks pass through single GPU Hub instance. On its failure — all generation stops.
+
+**Current State (improved):**
+- ✅ REQUEUE on worker timeout (10 min)
+- ✅ Task deduplication (NX EX 3600)
 - ✅ Graceful shutdown (SIGTERM)
-- ❌ Нет multi-instance GPU Hub
-- ❌ Нет репликации очередей Redis
+- ❌ No multi-instance GPU Hub
+- ❌ No Redis queue replication
 
-**Затрагиваемые компоненты:** gpu-hub.js, gpu-dispatcher.js, dispatch-engine.js
-
----
-
-## 9. Отсутствие интернационализации прогресс-сообщений
-
-**Описание проблемы:** Прогресс-сообщения в agent-service.js (PROGRESS_STAGES) на русском языке. Android-приложение ожидает русские сообщения.
-
-**Причина возникновения:** Проект ориентирован на русскоязычных пользователей.
-
-**Возможные последствия:**
-- Невозможность локализации без изменения backend
-- Смешение языка кода (английский) и данных (русский)
-
-**Затрагиваемые компоненты:** agent-service.js, GenerateViewModel.kt
+**Affected Components:** gpu-hub.js, gpu-dispatcher.js, dispatch-engine.js
 
 ---
 
-## 10. Отсутствие версионирования API
+## 9. No Internationalization of Progress Messages
 
-**Описание проблемы:** Все endpoint'ы используют `/api/v1/`, но нет механизма версионирования (заголовки, нейминг, compatibility layer).
+**Problem:** Progress messages in agent-service.js (PROGRESS_STAGES) are in Russian. Android app expects Russian messages.
 
-**Причина возникновения:** Проект на ранней стадии развития.
+**Cause:** Project targets Russian-speaking users.
 
-**Возможные последствия:**
-- Невозможность обратно совместимых изменений API
-- При изменении формата ответа — сломаются все клиенты
+**Potential Consequences:**
+- No localization without backend changes
+- Mixed code language (English) and data (Russian)
 
-**Затрагиваемые компоненты:** Все route-файлы, BackendApi.kt
-
----
-
-## 11. База знаний AI — частично используется
-
-**Текущее состояние:**
-- ✅ `ai-loader.js` — загружает examples с TTL-кэшем (1 мин), используется:
-  - `visual-utils.js` — `getExamples()` для `formatExamplesForPrompt()` и `buildVisualExemplars()`
-- ✅ `knowledge-base.js` — загружается через `agent-service.js` для future use
-- ❌ `rules/` и `skills/` из `backend/ai/` не используются в промптах основного пайплайна
-
-**Причина возникновения:** База знаний частично используется (examples), частично — резерв для будущих улучшений.
-
-**Затрагиваемые компоненты:** agent-service.js, ai-loader.js, knowledge-base.js, visual-utils.js
+**Affected Components:** agent-service.js, GenerateViewModel.kt
 
 ---
 
-## 12. Размер окна и ограничения AI-пайплайна
+## 10. No API Versioning
 
-**Описание проблемы:** `MAX_WINDOW_CHARS=1500` и `MAX_SCENES_PER_CHUNK=3`
-остаются консервативными ограничителями. Они больше не задают границу
-продвижения по книге, но для больших книг всё ещё приводят к большому
-количеству agent-вызовов.
+**Problem:** All endpoints use `/api/v1/`, but no versioning mechanism (headers, naming, compatibility layer).
 
-**Причина возникновения:** Выбраны консервативные значения для стабильности.
+**Cause:** Project in early development stage.
 
-**Возможные последствия:**
-- Высокая стоимость AI-вызовов для больших книг
-- Долгое время импорта
-- Потеря контекста между окнами
+**Potential Consequences:**
+- No backward-compatible API changes
+- Response format changes break all clients
 
-**Затрагиваемые компоненты:** agent-service.js
+**Affected Components:** All route files, BackendApi.kt
 
 ---
 
-## 13. Нет graceful shutdown *(ИСПРАВЛЕНО)*
+## 11. AI Knowledge Base — Partially Used
 
-**Описание проблемы (было):** backend.cjs не обрабатывает сигналы SIGTERM/SIGINT для корректного завершения процессов, снятия аренд (leases), сохранения состояния.
+**Current State:**
+- ✅ `ai-loader.js` — loads examples with TTL cache (1 min), used:
+  - `visual-utils.js` — `getExamples()` for `formatExamplesForPrompt()` and `buildVisualExemplars()`
+- ✅ `knowledge-base.js` — loaded via `agent-service.js` for future use
+- ❌ `rules/` and `skills/` from `backend/ai/` not used in main pipeline prompts
 
-**Исправлено:** Добавлены SIGTERM-обработчики:
+**Cause:** Knowledge base partially used (examples), partially reserved for future improvements.
+
+**Affected Components:** agent-service.js, ai-loader.js, knowledge-base.js, visual-utils.js
+
+---
+
+## 12. Window Size and AI Pipeline Limits
+
+**Problem:** `MAX_WINDOW_CHARS=1500` and `MAX_SCENES_PER_CHUNK=3` remain conservative limits. They no longer set book progression boundary, but for large books still cause many agent calls.
+
+**Cause:** Conservative values chosen for stability.
+
+**Potential Consequences:**
+- High AI call cost for large books
+- Long import time
+- Context loss between windows
+
+**Affected Components:** agent-service.js
+
+---
+
+## 13. No Graceful Shutdown *(FIXED)*
+
+**Problem (was):** backend.cjs didn't handle SIGTERM/SIGINT signals for proper process termination, lease release, state preservation.
+
+**Fixed:** SIGTERM handlers added:
 - `backend.cjs`: server.close() → redis.quit() → postgres.closePool()
 - `gpu-hub.js`: server.close() → redis.quit()
 
-**Затрагиваемые компоненты:** backend.cjs, gpu-hub.js
+**Affected Components:** backend.cjs, gpu-hub.js
 
 ---
 
-## 14. Отсутствие метрик и мониторинга
+## 14. No Metrics and Monitoring
 
-**Описание проблемы:** Нет системы сбора метрик (Prometheus, OpenTelemetry, etc.).
+**Problem:** No metrics collection system (Prometheus, OpenTelemetry, etc.).
 
-**Текущее состояние (частично исправлено):**
-- ✅ Добавлены security headers (Helmet.js)
-- ✅ Добавлен rate limiting (500 req/min)
+**Current State (partially fixed):**
+- ✅ Security headers added (Helmet.js)
+- ✅ Rate limiting added (500 req/min)
 
-> **UPD 2026-06-26:** Исправлен rate limit (500, не 100). Код: `backend.cjs:64-65`.
-- ✅ Добавлена трассировка запросов через requestId
-- ✅ Добавлены runtime metrics (runtime-metrics.js)
-- ✅ Добавлен runtime loop с history (100 ticks)
-- ❌ По-прежнему нет метрик CPU/memory/GPU
-- ❌ Нет внешнего мониторинга (Prometheus/Grafana)
+> **UPD 2026-06-26:** Rate limit corrected (500, not 100). Code: `backend.cjs:64-65`.
 
-**Затрагиваемые компоненты:** Все модули (используют console.log/warn/error)
+- ✅ Request tracing via requestId added
+- ✅ Runtime metrics added (runtime-metrics.js)
+- ✅ Runtime loop with history (100 ticks) added
+- ❌ Still no CPU/memory/GPU metrics
+- ❌ No external monitoring (Prometheus/Grafana)
 
----
-
-## 15. Slim runtime — governance модули в debug (✅ ИСПРАВЛЕНО)
-
-**Описание проблемы (было):** В v2.0.0 runtime/index.js был "slim"-нут: governance-модули (circuit-breaker, fairness, policy-engine и др.) вынесены из core pipeline в debug-секцию и загружаются лениво. Файлы сохранены на диске, но не входят в основной цикл. Часть из них делала `require()` на несуществующие файлы — мина для debug-эндпоинтов (500-е).
-
-**Что сделано (Phase 6, R6.4):**
-- circuitBreaker, retryBudget, fairness — переведены с safeRequire на прямой require() и реально вызываются в dispatch-engine
-- policyEngine, workloadClassifier, costEstimator — удалены из dispatch-engine (safeRequire убран)
-- Убраны мёртвые функции `dispatchStageWithPolicy()` и `evaluateDispatchPolicy()`
-
-**Что сделано (D.3/L1, 2026-06-27, коммит `311f44a`):**
-- Удалён `src/api/runtime.js` (1758 строк) — нигде не импортировался, единственный потребитель debug-кластера.
-- Удалены 16 мёртвых модулей `runtime/` (включая 6 с битыми require: policy-engine, policy-simulator, failure-replay, governance-validator, governance-sandbox, governance-health, execution-semantics и др.).
-- Удалён `debug: { ... }` фасад из `runtime/index.js`.
-- `runtime/` сокращён с **37 до 21 модуля** — все живые, debug-only governance-балласта больше нет.
-
-**Остаётся:** живые `circuit-breaker`/`fairness-engine`/`retry-budget-manager` (используются dispatch-engine напрямую). Битых require в кодовой базе нет.
-
-> **UPD 2026-06-26:** 3 governance-модуля LIVE, 3 мёртвых удалены из dispatch-engine.
-> **UPD 2026-06-27:** Мёртвый кластер и dead `api/runtime.js` удалены (D.3). Пункт закрыт.
+**Affected Components:** All modules (using console.log/warn/error)
 
 ---
 
-## 16. Dual state model — избыточная сложность *(ЧАСТИЧНО ИСПРАВЛЕНО в v2.1.0, Н.6+Н.7)*
+## 15. Slim Runtime — Governance Modules in Debug (✅ FIXED)
 
-**Описание проблемы (было):** Dual State Model (per-asset + linear FSM) с валидацией последовательных переходов, которая блокировала параллельный диспатч.
+**Problem (was):** In v2.0.0 runtime/index.js was "slimmed": governance modules (circuit-breaker, fairness, policy-engine, etc.) moved from core pipeline to debug section and loaded lazily. Files saved on disk but not in main cycle. Some had `require()` on non-existent files — mine for debug endpoints (500s).
 
-**Что сделано (v2.1.0):**
-- ✅ Удалена валидация переходов (`SceneTransitions`, `transitionSceneState` c locks/CAS)
-- ✅ Удалён `scene-state-machine.js` (`Stage`, `determineNextStage`) — мёртвый код
-- ✅ Удалён `decideStage` из оркестратора — dispatch-engine всегда передаёт `overrideStage`
-- ✅ Удалены `shouldScheduleScene`, `registerScene`, `progressScene` из scheduler — legacy
-- ✅ Удалены `sceneHeartbeat`, `isSceneStuck`, `getRecoveryPendingState` — не нужны без FSM
-- ✅ All callbacks (`handleAudioCompleted`, `handleImageCompleted`, `handleVideoCompleted`) проверяют per-asset state вместо линейного
+**What was done (Phase 6, R6.4):**
+- circuitBreaker, retryBudget, fairness — migrated from safeRequire to direct require() and actively called in dispatch-engine
+- policyEngine, workloadClassifier, costEstimator — removed from dispatch-engine (safeRequire removed)
+- Dead functions `dispatchStageWithPolicy()` and `evaluateDispatchPolicy()` removed
 
-**Что сделано (Н.6, М1 — `1a0867d`):**
-- ✅ Per-asset storage: JSON (GET+merge+SET) → Redis Hash (HSET/HGETALL) — устранён неатомарный RMW
+**What was done (D.3/L1, 2026-06-27, commit `311f44a`):**
+- Removed `src/api/runtime.js` (1758 lines) — never imported anywhere, sole debug cluster consumer.
+- Removed 16 dead `runtime/` modules (including 6 with broken require: policy-engine, policy-simulator, failure-replay, governance-validator, governance-sandbox, governance-health, execution-semantics, etc.).
+- Removed `debug: { ... }` facade from `runtime/index.js`.
+- `runtime/` reduced from **37 to 21 modules** — all alive, debug-only governance ballast gone.
 
-**Что сделано (Н.7, §5.1 — `f0b81de`):**
+**Remaining:** alive `circuit-breaker`/`fairness-engine`/`retry-budget-manager` (used by dispatch-engine directly). No broken requires in codebase.
+
+> **UPD 2026-06-26:** 3 governance modules LIVE, 3 dead removed from dispatch-engine.
+> **UPD 2026-06-27:** Dead cluster and dead `api/runtime.js` removed (D.3). Item closed.
+
+---
+
+## 16. Dual State Model — Excess Complexity *(PARTIALLY FIXED in v2.1.0, Н.6+Н.7)*
+
+**Problem (was):** Dual State Model (per-asset + linear FSM) with sequential transition validation that blocked parallel dispatch.
+
+**What was done (v2.1.0):**
+- ✅ Transition validation removed (`SceneTransitions`, `transitionSceneState` with locks/CAS)
+- ✅ `scene-state-machine.js` removed (`Stage`, `determineNextStage`) — dead code
+- ✅ `decideStage` removed from orchestrator — dispatch-engine always passes `overrideStage`
+- ✅ `shouldScheduleScene`, `registerScene`, `progressScene` removed from scheduler — legacy
+- ✅ `sceneHeartbeat`, `isSceneStuck`, `getRecoveryPendingState` removed — unnecessary without FSM
+- ✅ All callbacks (`handleAudioCompleted`, `handleImageCompleted`, `handleVideoCompleted`) check per-asset state instead of linear
+
+**What was done (Н.6, М1 — `1a0867d`):**
+- ✅ Per-asset storage: JSON (GET+merge+SET) → Redis Hash (HSET/HGETALL) — non-atomic RMW eliminated
+
+**What was done (Н.7, §5.1 — `f0b81de`):**
 - ✅ `executeAudioDispatch/ImageDispatch/VideoDispatch` → `setAssetState(..., AssetState.GENERATING)`
 
-**Остаётся:**
-- ❌ `SceneState` константы сохранены для backward compat (их читают плеер и debug endpoint'ы)
-- ❌ `deriveLinearState` / `syncLinearState` сохранены для поддержки старых Redis-ключей
+**Remaining:**
+- ❌ `SceneState` constants retained for backward compat (read by player and debug endpoints)
+- ❌ `deriveLinearState` / `syncLinearState` retained to support legacy Redis keys
 
-Зависимость от `SceneState` констант в роутах и реконсилейшне — не блокирует, но загрязняет код. Можно убрать в будущем, когда плеер перестанет читать `scene-state` ключи.
-
----
-
-## 17. Два журнала событий (Redis + PostgreSQL)
-
-**Описание проблемы:** Система имеет два event-журнала: Redis (event-journal.js, TTL 7 дней) и PostgreSQL (book-event-log.js, 30+ типов событий). Они не синхронизированы и дублируют функциональность.
-
-**Затрагиваемые компоненты:** event-journal.js, book-event-log.js
+Dependency on `SceneState` constants in routes and reconciliation — doesn't block but pollutes code. Can be removed later when player stops reading `scene-state` keys.
 
 ---
 
-## 18. Multi-file формат книг vs. legacy single-file
+## 17. Two Event Journals (Redis + PostgreSQL)
 
-**Описание проблемы:** Книги переведены на multi-file формат (v2.1), но код book/index.js всё ещё поддерживает legacy single-file формат для миграции. Это добавляет сложность при загрузке.
+**Problem:** System has two event journals: Redis (event-journal.js, TTL 7 days) and PostgreSQL (book-event-log.js, 30+ event types). They're not synchronized and duplicate functionality.
 
-**Затрагиваемые компоненты:** book/index.js, lazy-book.js
+**Affected Components:** event-journal.js, book-event-log.js
+
+---
+
+## 18. Multi-File Book Format vs. Legacy Single-File
+
+**Problem:** Books migrated to multi-file format (v2.1), but book/index.js still supports legacy single-file format for migration. This adds loading complexity.
+
+**Affected Components:** book/index.js, lazy-book.js

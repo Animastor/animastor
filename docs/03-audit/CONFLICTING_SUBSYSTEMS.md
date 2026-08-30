@@ -1,316 +1,314 @@
-# Architectural Audit: Конфликтующие подсистемы
+# Architectural Audit: Conflicting Subsystems
 
-> Дата: июнь 2026
-> Цель: Определить, где подсистемы конкурируют за управление состоянием, и наметить пути к единой координации.
-
----
-
-## Статус Phase 1 (Passive Recovery)
-
-> ✅ **R1.2** — Audio recovery: рантайм-цикл (setInterval 5s) убран. `recoverAudioResults()` сохранён для on-demand вызова.
-> ✅ **R1.3** — Reconciliation engine: auto-fix убран из runtime-loop. Добавлен `POST /debug/runtime/apply-fix` для ручного вызова.
+> Date: June 2026
+> Purpose: Identify where subsystems compete for state management control and outline paths toward unified coordination.
 
 ---
 
-## 1. Карта подсистем и их "право вето"
+## Phase 1 Status (Passive Recovery)
 
-### 1.1 Dirty-система (book-diff.cjs) — **Инициатор**
-
-**Роль:** Сравнивает old/new book, вычисляет dirty-слои через Prompt Dependency Registry, запускает `markDirtyScenes()`.
-
-**Реальное право вето:**
-- Lua-скрипт `RESET_SCENE_LUA` атомарно сбрасывает chunk-метаданные и per-asset states в `pending`
-- Добавляет сцены в active-scenes index
-- Вызывает `syncLinearState()` после каждой dirty-сцены
-
-**Где перебивается:**
-- `scene-window.restoreChunkStatusForScene()` может восстановить `audio_status = 'ready'` сразу после того, как dirty-система поставила `'pending'`
-- `dispatch-engine` может сказать "duplicate, lease still active"
+> ✅ **R1.2** — Audio recovery: runtime cycle (setInterval 5s) removed. `recoverAudioResults()` retained for on-demand calls.
+> ✅ **R1.3** — Reconciliation engine: auto-fix removed from runtime-loop. `POST /debug/runtime/apply-fix` added for manual invocation.
 
 ---
 
-### 1.2 Dispatch Engine (dispatch-engine.js) — **Контролёр доступа**
+## 1. Subsystem Map and Their "Veto Power"
 
-**Роль:** Единственный способ запустить stage. Проверяет lease, quota, circuit breaker, retry budget.
+### 1.1 Dirty System (book-diff.cjs) — **Initiator**
 
-**Реальное право вето:**
-- `DISPATCH_SKIPPED_DUPLICATE: lease still active` — если lease жив, диспатч блокируется
+**Role:** Compares old/new book, computes dirty layers via Prompt Dependency Registry, triggers `markDirtyScenes()`.
+
+**Actual Veto Power:**
+- Lua script `RESET_SCENE_LUA` atomically resets chunk metadata and per-asset states to `pending`
+- Adds scenes to active-scenes index
+- Calls `syncLinearState()` after each dirty scene
+
+**Where it gets overridden:**
+- `scene-window.restoreChunkStatusForScene()` may restore `audio_status = 'ready'` right after dirty system set `'pending'`
+- `dispatch-engine` may say "duplicate, lease still active"
+
+---
+
+### 1.2 Dispatch Engine (dispatch-engine.js) — **Access Controller**
+
+**Role:** The only way to launch a stage. Checks lease, quota, circuit breaker, retry budget.
+
+**Actual Veto Power:**
+- `DISPATCH_SKIPPED_DUPLICATE: lease still active` — if lease alive, dispatch blocked
 - Backpressure quotas (audio: 3, image: 2, video: 1)
-- «Phase 9» governance (circuit breaker, retry budget, fairness)
+- "Phase 9" governance (circuit breaker, retry budget, fairness)
 
-**Проблема:** Lease — это одновременно защита от дублей И препятствие для force-regen. Если пользователь хочет перегенерировать, а lease ещё активен от предыдущей попытки, система скажет "дубликат". В `book-routes.cjs` есть pre-delete и очистка dedup-ключей для dirty units, но lease может остаться.
-
----
-
-### 1.3 Scene Window (scene-window.js) — **Кеширующий оптимизатор**
-
-**Роль:** Проверяет, есть ли контент на диске, и если есть — пропускает GPU.
-
-**Реальное право вето:**
-- `sceneHasValidContent()` → если аудио реальное (не placeholder), изображения и видео есть — возвращает `true`, и сцена НЕ отправляется на GPU
-- `restoreChunkStatusForScene()` → переписывает `audio_status: 'pending'` обратно в `'ready'`/`'placeholder'` на основе файлов на диске
-- `startScene()` → если `sceneHasValidContent() = true`, ставит `VIDEO_READY` и не диспатчит ничего
-
-**Ключевой конфликт:** markDirtyScenes() сбрасывает всё в pending, а через несколько миллисекунд `startScene()` / `restoreChunkStatusForScene()` может вернуть всё обратно в ready, если файлы есть на диске. Это корректно для кеша, но может помешать force-regen.
+**Problem:** Lease is both a duplicate protection AND a barrier to force-regen. If user wants to regenerate and lease is still active from previous attempt, system says "duplicate." `book-routes.cjs` has pre-delete and dedup key cleanup for dirty units, but lease may remain.
 
 ---
 
-### 1.4 Startup Recovery (startup-recovery.js) — **Восстановитель после падения**
+### 1.3 Scene Window (scene-window.js) — **Caching Optimizer**
 
-**Роль:** На старте восстанавливает Redis-состояние из PG и файловой системы.
+**Role:** Checks whether content exists on disk, and if so, skips GPU.
 
-**Реальное право вето:**
-- Step 2: `recoverIuImagesFromDisk()` — находит PNG на диске и ставит `image_status = 'ready'` в Redis. Если после падения dirty-флаги потеряны, а файлы остались — восстановление делает их ready, и система не узнает, что нужна перегенерация.
-- Step 3: `reconcileMissingSceneState()` — восстанавливает scene counters, placeholder audio, scene_hashes в PG
-- Step 4: `checkVersionStaleness()` — только логирует, не чинит
+**Actual Veto Power:**
+- `sceneHasValidContent()` → if audio is real (not placeholder), images and video exist — returns `true`, and scene is NOT sent to GPU
+- `restoreChunkStatusForScene()` → rewrites `audio_status: 'pending'` back to `'ready'`/`'placeholder'` based on files on disk
+- `startScene()` → if `sceneHasValidContent() = true`, sets `VIDEO_READY` and dispatches nothing
 
-**Проблема:** Если книга была изменена, crash произошёл ДО того, как markDirtyScenes выполнился, то при старте recovery восстановит ВСЁ как ready (потому что файлы есть), и изменения не приведут к перегенерации. **Это потеря данных.**
-
----
-
-### 1.5 Audio Recovery (audio-recovery.cjs) — **Активный восстановитель (every 5s)**
-
-**Роль:** Каждые 5 секунд сканирует `animastor:result:*` в Redis и восстанавливает результаты GPU на диск.
-
-**Реальное право вето:**
-- Может перезаписать chunk metadata, установив `audio_status = 'ready'`
-- Может вызвать `handleTaskResult()`, который триггерит `handleAudioCompleted()`
-
-**Проблема:** Работает в рантайме, а не только на старте. Может "восстановить" результат, который пользователь явно отменил и хочет перегенерировать.
+**Key Conflict:** markDirtyScenes() resets everything to pending, and milliseconds later `startScene()` / `restoreChunkStatusForScene()` may return everything to ready if files exist on disk. This is correct for cache, but may interfere with force-regen.
 
 ---
 
-### 1.6 Reconciliation Engine (reconciliation-engine.js) — **Самоисцелятор**
+### 1.4 Startup Recovery (startup-recovery.js) — **Post-Crash Restorer**
 
-**Роль:** Детектит несоответствия между state machine и реальными файлами, умеет чинить.
+**Role:** On startup, restores Redis state from PG and filesystem.
 
-**Реальное право вето:**
-- `checkOrphanVideoState()` / `checkOrphanImageState()` / `checkOrphanAudioState()` — находит READY-состояния без файлов
-- `checkStaleDispatchLeases()` — находит stale leases
-- `checkStuckScenes()` — находит stuck-состояния
-- `applyFix()` — может применить `REGENERATE_MISSING_ASSET`, `MOVE_TO_PENDING`, `RELEASE_STALE_LEASE`, `PROGRESS_TO_IMAGE`, `RECONCILE_COUNTER_DRIFT` и другие фиксы
+**Actual Veto Power:**
+- Step 2: `recoverIuImagesFromDisk()` — finds PNGs on disk and sets `image_status = 'ready'` in Redis. If dirty flags were lost after crash but files remain — restoration makes them ready, and system doesn't know regeneration is needed.
+- Step 3: `reconcileMissingSceneState()` — restores scene counters, placeholder audio, scene_hashes in PG
+- Step 4: `checkVersionStaleness()` — only logs, doesn't fix
 
-**Проблема:** Reconciliation engine — это ещё один центр принятия решений, который:
-- Не знает о пользовательских намерениях (force-regen)
-- Может "починить" состояние, которое было намеренно установлено dirty-системой
-- Имеет свою модель "правильного" состояния, которая может не совпадать с моделью других подсистем
+**Problem:** If book was changed, crash happened BEFORE markDirtyScenes executed, then on startup recovery restores EVERYTHING as ready (because files exist), and changes won't trigger regeneration. **This is data loss.**
 
 ---
 
-### 1.7 Image Service (image-service.js) — **Исполнитель с bypass-ами**
+### 1.5 Audio Recovery (audio-recovery.cjs) — **Active Restorer (every 5s)**
 
-**Роль:** Генерирует изображения IU.
+**Role:** Every 5 seconds scans `animastor:result:*` in Redis and restores GPU results to disk.
 
-**Реальное право вето:**
-- `processSingleIU()` — `dirtyUnitIds` bypass: если unit в dirty-списке, пропускает disk cache check и отправляет на GPU
-- В том же месте чистит GPU hub dedup key (`animastor:job:{job_id}`) перед dispatch, чтобы regeneration не блокировался
-- Устанавливает in-flight маркер (`iu-in-flight:{id}`, TTL 20 min) для предотвращения дублей на следующих tick-ах
+**Actual Veto Power:**
+- May overwrite chunk metadata, setting `audio_status = 'ready'`
+- May trigger `handleTaskResult()`, which triggers `handleAudioCompleted()`
 
-**Это правильно:** image-service — единственное место, где dirty unit bypass работает корректно.
-
----
-
-### 1.8 Scene Orchestrator (scene-orchestrator.js) — **Центральный дирижёр**
-
-**Роль:** Dispatch execution, callback handling, stale state tolerance.
-
-**Реальное право вето:**
-- `executeImageDispatch()` — [VERSION-STALE CHECK] перед генерацией проверяет PG версии, и если `asset_ver < scene_ver` — форсирует реген
-- `executeVideoDispatch()` — то же для видео
-- `handleImageCompleted()` — stale state tolerance: если состояние не IMAGE_GENERATING, но файлы есть — всё равно завершает
-- `handleAudioCompleted()` / `handleVideoCompleted()` — то же самое
-
-**Проблема:** Stale state tolerance — это "лазейка", которая решает конкретные баги (callback пришёл после cancel→regenerate), но сигнализирует о том, что state machine не является единственным источником истины. Файлы на диске могут переопределить состояние.
+**Problem:** Runs in runtime, not just on startup. May "restore" a result that user explicitly cancelled and wants to regenerate.
 
 ---
 
-### 1.9 Book Sync (book-sync.js) — **PG-аудитор**
+### 1.6 Reconciliation Engine (reconciliation-engine.js) — **Self-Healer**
 
-**Роль:** Синхронизирует Book JSON с PG.
+**Role:** Detects mismatches between state machine and actual files, can fix them.
 
-**Реальное право вето:**
-- `markSceneAssetsStale()` — меняет status в PG с 'ready' на 'stale'
-- `reconcileFromDiff()` — обновляет scene_hashes, отменяет generation_tasks
+**Actual Veto Power:**
+- `checkOrphanVideoState()` / `checkOrphanImageState()` / `checkOrphanAudioState()` — finds READY states without files
+- `checkStaleDispatchLeases()` — finds stale leases
+- `checkStuckScenes()` — finds stuck states
+- `applyFix()` — can apply `REGENERATE_MISSING_ASSET`, `MOVE_TO_PENDING`, `RELEASE_STALE_LEASE`, `PROGRESS_TO_IMAGE`, `RECONCILE_COUNTER_DRIFT` and other fixes
 
-**Конфликт:** У book-sync есть версионная проверка (`getOutdatedByVersions`), которая может найти stale assets, но она только логирует — не инициирует перегенерацию. Это правильно (read-only auditor), но может сбивать с толку.
+**Problem:** Reconciliation engine is another decision center that:
+- Doesn't know about user intentions (force-regen)
+- May "fix" state that was intentionally set by dirty system
+- Has its own model of "correct" state that may not match other subsystems' models
 
 ---
 
-## 2. Матрица конфликтов
+### 1.7 Image Service (image-service.js) — **Executor with Bypasses**
 
-| Сценарий | Dirty | Dispatch | Window | Recovery | Recon Engine | Кто побеждает |
+**Role:** Generates IU images.
+
+**Actual Veto Power:**
+- `processSingleIU()` — `dirtyUnitIds` bypass: if unit in dirty list, skips disk cache check and sends to GPU
+- In same place clears GPU hub dedup key (`animastor:job:{job_id}`) before dispatch so regeneration not blocked
+- Sets in-flight marker (`iu-in-flight:{id}`, TTL 20 min) to prevent duplicates on next ticks
+
+**This is correct:** image-service is the only place where dirty unit bypass works properly.
+
+---
+
+### 1.8 Scene Orchestrator (scene-orchestrator.js) — **Central Conductor**
+
+**Role:** Dispatch execution, callback handling, stale state tolerance.
+
+**Actual Veto Power:**
+- `executeImageDispatch()` — [VERSION-STALE CHECK] before generation checks PG versions, and if `asset_ver < scene_ver` — forces regen
+- `executeVideoDispatch()` — same for video
+- `handleImageCompleted()` — stale state tolerance: if state isn't IMAGE_GENERATING but files exist — completes anyway
+- `handleAudioCompleted()` / `handleVideoCompleted()` — same
+
+**Problem:** Stale state tolerance is a "backdoor" that solves specific bugs (callback arrived after cancel→regenerate), but signals that state machine is not the sole source of truth. Files on disk can override state.
+
+---
+
+### 1.9 Book Sync (book-sync.js) — **PG Auditor**
+
+**Role:** Synchronizes Book JSON with PG.
+
+**Actual Veto Power:**
+- `markSceneAssetsStale()` — changes status in PG from 'ready' to 'stale'
+- `reconcileFromDiff()` — updates scene_hashes, cancels generation_tasks
+
+**Conflict:** book-sync has version checking (`getOutdatedByVersions`) which can find stale assets, but it only logs — doesn't initiate regeneration. This is correct (read-only auditor), but can be confusing.
+
+---
+
+## 2. Conflict Matrix
+
+| Scenario | Dirty | Dispatch | Window | Recovery | Recon Engine | Who Wins |
 |---|---|---|---|---|---|---|
-| **Regenerate после edit** | ставит pending | lease может блокировать | restore после dirty | — | может "починить" обратно | **Window** (восстанавливает ready) |
-| **Crash после save до regenerate** | потерян | — | стартует с диска | восстанавливает всё как ready | не запущен | **Recovery** (файлы есть → ready) |
-| **Callback после Cancel→Regenerate** | новая dirty, новый buildId | старый lease может блокировать | stale state tolerance | может обработать старый result | — | **Orchestrator** (stale state tolerance) |
-| **Force-regen dirty unit** | dirty unit в PG | dedup cleared | cache bypass | — | — | **Image Service** (правильно) |
-| **Audio recovery находит старый result** | — | — | — | восстанавливает файл | — | **Audio Recovery** (без контекста) |
+| **Regenerate after edit** | sets pending | lease may block | restore after dirty | — | may "fix" back | **Window** (restores ready) |
+| **Crash after save before regenerate** | lost | — | starts from disk | restores everything as ready | not launched | **Recovery** (files exist → ready) |
+| **Callback after Cancel→Regenerate** | new dirty, new buildId | old lease may block | stale state tolerance | may process old result | — | **Orchestrator** (stale state tolerance) |
+| **Force-regen dirty unit** | dirty unit in PG | dedup cleared | cache bypass | — | — | **Image Service** (correct) |
+| **Audio recovery finds old result** | — | — | — | restores file | — | **Audio Recovery** (no context) |
 
 ---
 
-## 3. Корень проблемы: четыре центра принятия решений
+## 3. Root Problem: Four Decision Centers
 
-У нас есть **четыре независимых механизма**, каждый из которых может установить или переопределить состояние:
+We have **four independent mechanisms**, each capable of setting or overriding state:
 
 ```
-1. Dirty/Regenerate        — устанавливает PENDING (через Lua)
+1. Dirty/Regenerate        — sets PENDING (via Lua)
    (book-diff.cjs + markDirtyScenes)
 
-2. Scene Window / Cache    — устанавливает READY (файлы есть)
+2. Scene Window / Cache    — sets READY (files exist)
    (sceneHasValidContent + restoreChunkStatus)
 
-3. Startup Recovery        — устанавливает READY (файлы есть)
+3. Startup Recovery        — sets READY (files exist)
    (recoverIuImagesFromDisk + reconcileMissingSceneState)
 
-4. Reconciliation Engine   — может установить PENDING или READY
+4. Reconciliation Engine   — may set PENDING or READY
    (applyFix: REGENERATE_MISSING_ASSET, MOVE_TO_PENDING, etc.)
 ```
 
-Никто из них не знает о намерениях остальных. Dirty не знает, что Window только что восстановил ready. Recovery не знает, что пользователь нажал regenerate.
+None of them knows about the others' intentions. Dirty doesn't know Window just restored ready. Recovery doesn't know user pressed regenerate.
 
-**Истина размазана по трём источникам:**
-- **PG** — версии (content_version, audio_config_version), dirty_unit_ids, scene_hashes
+**Truth is smeared across three sources:**
+- **PG** — versions (content_version, audio_config_version), dirty_unit_ids, scene_hashes
 - **Redis** — per-asset states, chunk metadata, scene states, leases
-- **Файловая система** — .mp3, .png, .mp4 файлы
+- **Filesystem** — .mp3, .png, .mp4 files
 
 ---
 
-## 4. Что ChatGPT предложил — и что из этого применимо
+## 4. What ChatGPT Proposed — and What's Applicable
 
-### ✅ "User intent bypass" — частично реализовано
+### ✅ "User intent bypass" — partially implemented
 
-Dirty unit bypass через `dirtyUnitIds` в `processSingleIU()` — это именно user intent bypass. Пользователь отредактировал юнит → dirty_unit_ids сохраняется в PG → при dispatch этот unit force-генерируется, минуя кеш.
+Dirty unit bypass via `dirtyUnitIds` in `processSingleIU()` is exactly user intent bypass. User edited unit → dirty_unit_ids saved in PG → on dispatch this unit force-generated, bypassing cache.
 
-**Но:** это работает только для per-unit regeneration. Для сценарного force-regen (весь слой image/video) механизм менее надёжен — relies on version staleness check в scene-orchestrator.
+**But:** this only works for per-unit regeneration. For scenario-level force-regen (entire image/video layer), mechanism is less reliable — relies on version staleness check in scene-orchestrator.
 
-### ✅ "Recovery как пассивная система" — НЕ реализовано
+### ✅ "Recovery as passive system" — NOT implemented
 
-Audio recovery активен в рантайме (каждые 5с). Recovery при старте восстанавливает состояние без контекста о dirty. Reconciliation engine может изменять состояние в любой момент.
+Audio recovery is active in runtime (every 5s). Startup recovery restores state without context about dirty. Reconciliation engine can change state at any time.
 
-### ❌ "Единый UnitState" — НЕ реализовано
+### ❌ "Single UnitState" — NOT implemented
 
-У нас dual model (linear FSM + per-asset), но это не единый источник истины. Настоящая истина — в PG + файлы + Redis одновременно.
+We have dual model (linear FSM + per-asset), but this isn't a single source of truth. Real truth lives in PG + files + Redis simultaneously.
 
-### ❌ "Оркестратор принимает решения, остальные советуют" — НЕ реализовано
+### ❌ "Orchestrator decides, others advise" — NOT implemented
 
-Window, Recovery, Reconciliation Engine — все могут принимать решения. Dispatch Engine имеет право вето.
+Window, Recovery, Reconciliation Engine — all can make decisions. Dispatch Engine has veto power.
 
 ---
 
-## 5. Рекомендации по уменьшению сложности
+## 5. Recommendations for Reducing Complexity
 
-### 5.1 Passive Recovery (высокий приоритет)
+### 5.1 Passive Recovery (high priority)
 
-Сделать recovery пассивным:
-- **Startup recovery:** только восстанавливает Redis из PG. Не устанавливает статусы на основе файлов на диске — только логирует расхождения.
-- **Audio recovery:** убрать рантайм-цикл (5s). Заменить на триггер по callback от GPU Hub.
-- **Reconciliation engine:** убрать auto-fix. Только логировать и предлагать фиксы. Применять их только по явному запросу (через эндпоинт /admin).
+Make recovery passive:
+- **Startup recovery:** only restores Redis from PG. Doesn't set statuses based on files on disk — only logs divergences.
+- **Audio recovery:** remove runtime cycle (5s). Replace with GPU Hub callback trigger.
+- **Reconciliation engine:** remove auto-fix. Only logs and suggests fixes. Apply only on explicit request (via /admin endpoint).
 
-### 5.2 Dispatch Lease с учётом пользовательских намерений (средний)
+### 5.2 Dispatch Lease Accounting for User Intentions (medium)
 
-Сейчас lease — это чистый "замок" с TTL. Если regenerate пришёл, lease должен форсированно освобождаться для этой сцены:
+Currently lease is a pure "lock" with TTL. If regenerate arrived, lease should be force-released for this scene:
 ```
 dispatchStage(..., { force: true }) → 
-  1. Redis.DEL lease (если есть)
-  2. Redis.DEL quota (если есть)  
+  1. Redis.DEL lease (if exists)
+  2. Redis.DEL quota (if exists)  
   3. Acquire new lease
   4. Dispatch
 ```
 
-Сейчас это делается для dirty units (dedup key очищается), но не для сценарных lease.
+Currently done for dirty units (dedup key cleared), but not for scenario-level leases.
 
-### 5.3 Версионный детект stale-состояний (уже внедрено, R13-R16) — **развивать**
+### 5.3 Version-Based Stale Detection (already implemented, R13-R16) — **develop**
 
-Version-based подход (content_version, audio_config_version) — правильный путь. Он позволяет:
-- Вычислить dirty как `asset_version < scene_version`, а не как explicit-флаг
-- Persist версии в PG (переживают crash)
-- Избежать флагов, которые могут быть потеряны
+Version-based approach (content_version, audio_config_version) is the right path. It allows:
+- Computing dirty as `asset_version < scene_version`, not as explicit flag
+- Persisting versions in PG (survives crash)
+- Avoiding flags that can be lost
 
-**Следующий шаг:** Перенести dirty-флаги из Redis в PG полностью. Redis хранит только runtime-состояние (прогресс, очереди). PG — истину (версии, dirty-ли).
+**Next step:** Move dirty flags from Redis to PG completely. Redis stores only runtime state (progress, queues). PG stores truth (versions, dirty).
 
-### 5.4 Упрощение stale state tolerance (низкий)
+### 5.4 Simplifying Stale State Tolerance (low)
 
-5 мест в scene-orchestrator.js проверяют "state не совпадает, но файлы есть — всё равно завершаем". Если бы state machine была единственным источником истины, эти лазейки не понадобились бы.
+5 locations in scene-orchestrator.js check "state doesn't match, but files exist — complete anyway." If state machine were the sole source of truth, these backdoors wouldn't be needed.
 
 ---
 
-## 6. Итоговая карта "кто есть кто"
+## 6. Final "Who Is Who" Map
 
-| Подсистема | Сейчас | Должно быть |
+| Subsystem | Now | Should Be |
 |---|---|---|
-| **book-diff** (dirty) | Инициатор | Единственный инициатор dirty |
-| **dispatch-engine** | Контролёр (lease) | Исполнитель решений оркестратора |
-| **scene-window** (cache) | Принимает решения (valid content) | Только советует (cache advisory) |
-| **startup-recovery** | Восстанавливает с auto-fix | Только логирует расхождения |
-| **audio-recovery** | Активный цикл (5s) | Только по callback |
-| **reconciliation-engine** | Применяет auto-fix | Только аудит |
-| **scene-orchestrator** | Центральный дирижёр | Единственный, кто изменяет состояние |
+| **book-diff** (dirty) | Initiator | Single dirty initiator |
+| **dispatch-engine** | Controller (lease) | Orchestrator decisions executor |
+| **scene-window** (cache) | Makes decisions (valid content) | Only advises (cache advisory) |
+| **startup-recovery** | Restores with auto-fix | Only logs divergences |
+| **audio-recovery** | Active cycle (5s) | Only on callback |
+| **reconciliation-engine** | Applies auto-fix | Only audit |
+| **scene-orchestrator** | Central conductor | Sole state changer |
 
-В идеале: система, где изменение состояния происходит в одном месте, по одному протоколу, с учётом контекста (user intent, current mode).
+Ideal: system where state changes happen in one place, following one protocol, with context awareness (user intent, current mode).
 
 ---
 
-## 7. Избыточная сложность: 5 точек, требующих аккуратной расчистки
+## 7. Excess Complexity: 5 Points Requiring Careful Cleanup
 
-> Ниже — пять конкретных мест, где сложность не оправдана и создаёт риски при изменениях.
-> Каждый пункт требует постепенного, тестируемого подхода: никаких "big bang" рефакторингов.
+> Below are five specific locations where complexity is unjustified and creates risks during changes.
+> Each requires gradual, testable approach: no "big bang" refactorings.
 
 ### 7.1 Dual State Model (linear FSM + per-asset)
 
-**Проблема:** Per-asset состояния — канонический источник истины. Linear FSM — производная проекция для обратной совместимости. `syncLinearState()` вызывается ПОСЛЕ КАЖДОГО изменения per-asset состояния:
+**Problem:** Per-asset states are canonical source of truth. Linear FSM is derived projection for backward compatibility. `syncLinearState()` called AFTER EVERY per-asset state change:
 
-- `scene-orchestrator.js`: 11+ вызовов `syncLinearState()`
-- `book-diff.cjs`: 1 вызов после `markDirtyScenes()`
-- Каждый вызов = Redis GET + JSON.parse + Redis SET
+- `scene-orchestrator.js`: 11+ calls to `syncLinearState()`
+- `book-diff.cjs`: 1 call after `markDirtyScenes()`
+- Each call = Redis GET + JSON.parse + Redis SET
 
-**Риск:** Расхождение между per-asset и linear состояниями. Каждый баг вида "callback пришёл, а состояние не то" — это следствие расхождения.
+**Risk:** Divergence between per-asset and linear states. Every bug of type "callback arrived, but state is wrong" is a consequence of this divergence.
 
-**Подход к расчистке:**
-1. Сначала сделать per-asset source of truth везде (уже сделано в теории)
-2. Затем найти всех потребителей linear FSM и перевести их на per-asset
-3. Удалить `syncLinearState()` — это будет финальным шагом, когда никто не зависит от linear
+**Cleanup approach:**
+1. First make per-asset source of truth everywhere (already done in theory)
+2. Then find all linear FSM consumers and migrate them to per-asset
+3. Remove `syncLinearState()` — this will be final step when nobody depends on linear
 
 ---
 
-### 7.2 Четыре дублирующихся проверки файлов на диске
+### 7.2 Four Duplicate File Checks on Disk
 
-Все четыре делают одно и то же: сканируют output-директорию и сверяют с Redis:
+All four do the same thing: scan output directory and compare with Redis:
 
-| Функция | Где | Что делает |
+| Function | Where | What It Does |
 |---|---|---|
-| `sceneHasValidContent()` | scene-window.js | Проверяет .mp3, .png, .mp4 на диске для одной сцены |
-| `restoreChunkStatusForScene()` | scene-window.js | Восстанавливает chunk status из файлов после dirty |
-| `reconcileWindowStatuses()` | scene-window.js | Сканирует все chunk keys и сверяет с файлами |
-| `recoverIuImagesFromDisk()` | startup-recovery.js | На старте сканирует PNG и ставит image_status='ready' |
+| `sceneHasValidContent()` | scene-window.js | Checks .mp3, .png, .mp4 on disk for single scene |
+| `restoreChunkStatusForScene()` | scene-window.js | Restores chunk status from files after dirty |
+| `reconcileWindowStatuses()` | scene-window.js | Scans all chunk keys and compares with files |
+| `recoverIuImagesFromDisk()` | startup-recovery.js | On startup scans PNGs and sets image_status='ready' |
 
-**Проблема:** Разная логика в каждом месте. Одно может сказать "ready", другое "pending" для одного и того же файла.
+**Problem:** Different logic in each place. One may say "ready", another "pending" for same file.
 
-**Подход к расчистке:**
-1. Выделить единую функцию `getSceneFilesStatus(buildDir, bookId, chapterId, sceneId)` которая возвращает `{ audio: { exists, isReal }, image: { exists }, video: { exists } }`
-2. Заменить все 4 проверки вызовами этой функции
-3. Постепенно убрать дублирующиеся места
-
----
-
-### 7.3 Audio recovery как активный цикл (every 5s)
-
-**Проблема:** `audio-recovery.cjs` каждые 5 секунд сканирует все `animastor:result:*` ключи в Redis. Это:
-
-- Лечит симптомы, а не причину (callback chain repair уже сделан в R18)
-- Может "восстановить" результат, который пользователь отменил
-- Создаёт лишнюю нагрузку на Redis (SCAN по всем ключам)
-
-**Подход к расчистке:**
-1. Сначала R18 уже починил callback chain — проверить, что recovery всё ещё нужен
-2. Затем заменить цикл на триггерный механизм: recovery запускается только для конкретного job_id, если callback не пришёл в течение timeout
-3. В конце — удалить `startRecoveryInterval()` и 5s цикл
+**Cleanup approach:**
+1. Extract single `getSceneFilesStatus(buildDir, bookId, chapterId, sceneId)` returning `{ audio: { exists, isReal }, image: { exists }, video: { exists } }`
+2. Replace all 4 checks with calls to this function
+3. Gradually remove duplicate locations
 
 ---
 
-### 7.4 Dispatch engine с 6 lazy-loaded governance-модулями
+### 7.3 Audio Recovery as Active Cycle (every 5s)
 
-**Проблема:** `dispatch-engine.js` загружает через `safeRequire()`:
+**Problem:** `audio-recovery.cjs` every 5 seconds scans all `animastor:result:*` keys in Redis. This:
+- Treats symptoms, not root cause (callback chain repair already done in R18)
+- May "restore" result that user cancelled
+- Creates unnecessary Redis load (SCAN over all keys)
 
+**Cleanup approach:**
+1. First R18 already fixed callback chain — verify recovery still needed
+2. Then replace cycle with trigger mechanism: recovery launches only for specific job_id if callback didn't arrive within timeout
+3. Finally — remove `startRecoveryInterval()` and 5s cycle
+
+---
+
+### 7.4 Dispatch Engine with 6 Lazy-Loaded Governance Modules
+
+**Problem:** `dispatch-engine.js` loads via `safeRequire()`:
 - `circuit-breaker.js`
 - `retry-budget-manager.js`
 - `fairness-engine.js`
@@ -318,158 +316,158 @@ Version-based подход (content_version, audio_config_version) — прав�
 - `workload-classifier.js`
 - `cost-estimator.js`
 
-Все они — мёртвый код. Не используются в production. Загружаются только если файлы есть на диске. `safeRequire()` возвращает `null`, если модуль не найден — и dispatch-engine работает как обычно.
+All are dead code. Not used in production. Loaded only if files exist on disk. `safeRequire()` returns `null` if module not found — and dispatch-engine works as usual.
 
-**Подход к расчистке:**
-1. Решить: нужны эти модули или нет
-2. Если нет — удалить файлы
-3. Если да — активировать в core pipeline
-4. Текущее состояние ("вроде есть, но не используются") — худшее из возможных
+**Cleanup approach:**
+1. Decide: are these modules needed?
+2. If no — delete files
+3. If yes — activate in core pipeline
+4. Current state ("seem to exist but aren't used") — worst of all worlds
 
 ---
 
-### 7.5 Stale state tolerance в трёх callback-ах
+### 7.5 Stale State Tolerance in Three Callbacks
 
-**Проблема:** Три callback-а в `scene-orchestrator.js` имеют одинаковый паттерн:
+**Problem:** Three callbacks in `scene-orchestrator.js` have same pattern:
 
 ```javascript
 if (!currentState || currentState.state !== EXPECTED_STATE) {
     if (filesExistOnDisk) {
-        // Stale state tolerance: завершаем всё равно
+        // Stale state tolerance: complete anyway
     } else {
-        // Отклоняем callback
+        // Reject callback
     }
 }
 ```
 
-Это означает: **state machine не заслуживает доверия**. Если файлы есть — мы верим диску, а не state machine.
+This means: **state machine is not trustworthy**. If files exist — we believe disk, not state machine.
 
-**Корень:** Cancel→Regenerate генерирует новый buildId, но callback от GPU может прийти со старым buildId. State machine уже сброшена, но GPU ещё работает над старым job.
+**Root:** Cancel→Regenerate generates new buildId, but GPU callback may arrive with old buildId. State machine already reset, but GPU still working on old job.
 
-**Подход к расчистке:**
-1. Сначала R2 (force lease release) — гарантирует, что новый regenerate снимает старые leases
-2. Затем R3 (unit in-flight tracking) — предотвращает dispatch для уже запущенных job-ов
-3. Только после этого можно убрать stale state tolerance — потому что новой dirty будет предшествовать очистка старых job-ов
+**Cleanup approach:**
+1. First R2 (force lease release) — ensures new regenerate clears old leases
+2. Then R3 (unit in-flight tracking) — prevents dispatch for already-launched jobs
+3. Only then can stale state tolerance be removed — because new dirty will be preceded by clearing old jobs
 
 ---
 
-## 8. Постепенный подход к расчистке
+## 8. Gradual Cleanup Approach
 
 ```
-Этап 1 (сейчас):   Осознать проблему ✅
-                    Задокументировать ✅
+Stage 1 (now):     Recognize the problem ✅
+                    Document it ✅
                     
-Этап 2 (ближайшие): Убрать активный recovery (R1.2)
+Stage 2 (near-term): Remove active recovery (R1.2)
                     Force lease release (R2.1)
                     
-Этап 3 (среднесрочно): Убрать stale state tolerance (зависит от R2)
-                        Консолидировать проверки файлов (7.2)
+Stage 3 (medium-term): Remove stale state tolerance (depends on R2)
+                        Consolidate file checks (7.2)
                         
-Этап 4 (долгосрочно): Убрать dual state model
-                       Почистить governance мертвый код
+Stage 4 (long-term): Remove dual state model
+                       Clean governance dead code
 ```
 
-**Принцип:** Каждое изменение должно:
-1. Иметь тесты (хотя бы интеграционные)
-2. Быть отделяемым — можно откатить без каскада
-3. Не менять поведение системы для пользователя (только внутреннюю архитектуру)
+**Principle:** Each change must:
+1. Have tests (at least integration tests)
+2. Be revertible — can roll back without cascade
+3. Not change user-facing behavior (only internal architecture)
 
 ---
 
-## 9. Целевая архитектура: источник истины для каждого вопроса
+## 9. Target Architecture: Source of Truth for Each Question
 
-> Основано на обсуждении с ChatGPT: ключевая проблема — отсутствие единого ответственного за каждый вопрос.
+> Based on ChatGPT discussion: key problem — no single responsible for each question.
 
-### 9.1 Принцип разделения хранилищ
+### 9.1 Storage Separation Principle
 
-> **Redis хранит то, что можно потерять.**
-> **База данных хранит то, что нельзя потерять.**
+> **Redis stores what can be lost.**
+> **Database stores what cannot be lost.**
 
-Если Redis завтра исчезнет (`redis flushall`), система должна восстановиться. Может быть медленно (пересборка кэшей), но **без потери проекта**. Если пропадёт PG — это катастрофа.
+If Redis disappears tomorrow (`redis flushall`), system should recover. May be slow (rebuilding caches), but **without losing project**. If PG disappears — that's catastrophe.
 
-### 9.2 Таблица ответственности
+### 9.2 Responsibility Table
 
-| Вопрос | Кто отвечает | Где хранится | Тип |
+| Question | Who Answers | Where Stored | Type |
 |---|---|---|---|
-| **Нужно ли регенерировать?** | **PG (версии)** | `scenes.content_version`, `scenes.audio_config_version` | **Факт** |
-| **Какие юниты dirty?** | **PG** | `scenes.dirty_unit_ids` | **Факт** |
-| **Есть ли задача на GPU?** | **Scheduler** | `dispatch-lease` в Redis | Производное |
-| **Есть ли файл на диске?** | **Storage** | Файловая система | Производное |
-| **Есть ли готовый результат?** | **PG** | `scene_assets.status` | **Факт** |
-| **Какой прогресс (43%)?** | **Redis** | chunk metadata | Производное (кэш) |
-| **Сцена в очереди?** | **Redis** | `active-scenes` | Производное |
-| **Кэш промпта?** | **Redis** | (где-то в runtime) | Производное (кэш) |
-| **Дубликат задачи?** | **Redis** | `animastor:job:*` | Производное (TTL) |
+| **Need to regenerate?** | **PG (versions)** | `scenes.content_version`, `scenes.audio_config_version` | **Fact** |
+| **Which units are dirty?** | **PG** | `scenes.dirty_unit_ids` | **Fact** |
+| **Is there a GPU task?** | **Scheduler** | `dispatch-lease` in Redis | Derived |
+| **Is file on disk?** | **Storage** | Filesystem | Derived |
+| **Is there a ready result?** | **PG** | `scene_assets.status` | **Fact** |
+| **What's progress (43%)?** | **Redis** | chunk metadata | Derived (cache) |
+| **Scene in queue?** | **Redis** | `active-scenes` | Derived |
+| **Prompt cache?** | **Redis** | (somewhere in runtime) | Derived (cache) |
+| **Task duplicate?** | **Redis** | `animastor:job:*` | Derived (TTL) |
 
-Отличия факта от производного состояния:
+Distinction between fact and derived state:
 
-- **Факт** — хранится в PG, переживает crash, является источником истины
-- **Производное** — хранится в Redis или файловой системе, может быть восстановлено из фактов
+- **Fact** — stored in PG, survives crash, is source of truth
+- **Derived** — stored in Redis or filesystem, can be reconstructed from facts
 
-### 9.3 Что сейчас нарушает этот принцип
+### 9.3 What Currently Violates This Principle
 
-**В Redis хранятся факты:**
-- `animastor:asset-state:*` — per-asset состояния (dirty/pending/generating/ready) — **это факт, должен быть в PG**
-- `animastor:scene-state:*` — linear FSM — **производное** (вычисляется из per-asset), может быть в Redis
+**Facts stored in Redis:**
+- `animastor:asset-state:*` — per-asset states (dirty/pending/generating/ready) — **this is fact, should be in PG**
+- `animastor:scene-state:*` — linear FSM — **derived** (computed from per-asset), can be in Redis
 
-**В PG дублируются производные:**
-- `scene_assets.status` — дублирует per-asset state из Redis. **Это правильно:** PG — факт, Redis — быстрый кэш.
-  Но если Redis и PG расходятся — кто прав?
+**Derivatives duplicated in PG:**
+- `scene_assets.status` — duplicates per-asset state from Redis. **This is correct:** PG is fact, Redis is fast cache.
+  But if Redis and PG diverge — who's right?
 
-**Storage (файлы) принимает решения:**
-- `sceneHasValidContent()` — проверяет файлы и на основе этого решает, пропустить ли GPU. **Файлы не должны быть источником истины для состояния генерации.**
+**Storage (files) makes decisions:**
+- `sceneHasValidContent()` — checks files and based on this decides whether to skip GPU. **Files should not be source of truth for generation state.**
 
-### 9.4 Целевая архитектура: дирижёр
+### 9.4 Target Architecture: Conductor
 
 ```
             ┌─────────────────────────────────────┐
-            │          ОРКЕСТРАТОР                 │
-            │  (принимает решения)                 │
+            │          ORCHESTRATOR                 │
+            │  (makes decisions)                    │
             │                                      │
             │  ┌──────────────────────────────┐    │
-            │  │  Источники информации:       │    │
-            │  │  ├── PG: версии, статусы     │    │
-            │  │  ├── Redis: прогресс, кэш   │    │
-            │  │  ├── Storage: файлы          │    │
-            │  │  └── GPU Hub: результат      │    │
+            │  │  Information Sources:        │    │
+            │  │  ├── PG: versions, statuses  │    │
+            │  │  ├── Redis: progress, cache  │    │
+            │  │  ├── Storage: files          │    │
+            │  │  └── GPU Hub: results        │    │
             │  └──────────────────────────────┘    │
             │              │                        │
             │              ▼                        │
             │  ┌──────────────────────────────┐    │
-            │  │  Исполнители:                │    │
+            │  │  Executors:                   │    │
             │  │  ├── dispatch-engine          │    │
             │  │  ├── audio/image/video service│    │
             │  │  └── scene-window (slide)     │    │
             │  └──────────────────────────────┘    │
             └─────────────────────────────────────┘
 
-  Каждый модуль отвечает на СВОЙ вопрос и НЕ принимает решений.
-  Решения принимает только оркестратор.
+  Each module answers ITS OWN question and does NOT make decisions.
+  Only the orchestrator makes decisions.
 ```
 
-### 9.5 Что это меняет для каждого модуля
+### 9.5 What This Changes for Each Module
 
-| Модуль | Сейчас | Цель |
+| Module | Now | Goal |
 |---|---|---|
-| **PG версии** | Хранит версии, но dirty определяется через Redis | Единственный источник truth для "нужна ли регенерация" |
-| **scene-window** | `sceneHasValidContent()` решает пропустить GPU | `getSceneFilesStatus()` возвращает информацию, оркестратор решает |
-| **dispatch-engine** | Lease может блокировать dispatch | Lease — только информация, оркестратор может force |
-| **startup-recovery** | Восстанавливает статусы (файлы есть → ready) | Логирует расхождения, не меняет состояния |
-| **audio-recovery** | Активный цикл 5с, восстанавливает результаты | Только по таймауту для конкретного job |
-| **scene-orchestrator** | Stale state tolerance (обходит state machine) | Доверяет state machine (после R2) |
-| **reconciliation-engine** | Auto-fix (меняет состояние) | Только аудит + API /admin/apply-fix |
+| **PG versions** | Stores versions, but dirty determined via Redis | Single source of truth for "need regeneration" |
+| **scene-window** | `sceneHasValidContent()` decides to skip GPU | `getSceneFilesStatus()` returns info, orchestrator decides |
+| **dispatch-engine** | Lease may block dispatch | Lease is only info, orchestrator can force |
+| **startup-recovery** | Restores statuses (files exist → ready) | Logs divergences, doesn't change state |
+| **audio-recovery** | Active 5s cycle, restores results | Only on timeout for specific job |
+| **scene-orchestrator** | Stale state tolerance (bypasses state machine) | Trusts state machine (after R2) |
+| **reconciliation-engine** | Auto-fix (changes state) | Only audit + API /admin/apply-fix |
 
-### 9.6 Критерий успеха
+### 9.6 Success Criteria
 
-Система достигла цели, когда после `redis flushall`:
+System achieves goal when after `redis flushall`:
 
-1. Backend стартует
-2. Startup recovery логирует: "найдено N файлов на диске, K расхождений с PG"
-3. **Ничего не меняется в состоянии**
-4. Runtime scheduler начинает tick
-5. `shouldScheduleAssets()` проверяет PG версии: `asset_version < scene_version?`
-6. Для устаревших сцен — dispatch
-7. Для актуальных — `sceneHasValidContent()` (уже advisory) предлагает пропустить
-8. Оркестратор принимает решение
+1. Backend starts
+2. Startup recovery logs: "found N files on disk, K divergences from PG"
+3. **Nothing changes in state**
+4. Runtime scheduler starts ticking
+5. `shouldScheduleAssets()` checks PG versions: `asset_version < scene_version?`
+6. For stale scenes — dispatch
+7. For current — `sceneHasValidContent()` (now advisory) suggests skipping
+8. Orchestrator makes decision
 
-**Ни один файл на диске не может переопределить состояние без решения оркестратора.**
+**No file on disk can override state without orchestrator's decision.**

@@ -1,245 +1,245 @@
 # Architectural Audit — TODO
 
-> **Легенда:** 🔴 Critical | 🟡 High | 🟢 Medium | ⚪ Low
-> **Статус:** 📝 Plan | 🔧 In progress | ✅ Done | ❌ Skipped
+> **Legend:** 🔴 Critical | 🟡 High | 🟢 Medium | ⚪ Low
+> **Status:** 📝 Plan | 🔧 In progress | ✅ Done | ❌ Skipped
 
 ---
 
-## Фаза 0: Аудит и измерения (перед изменениями)
+## Phase 0: Audit and Measurements (Before Changes)
 
-### [A0] Измерить текущие конфликты в логах
-- [ ] Собрать grep-паттерны для ключевых конфликтов:
-  - `DISPATCH_SKIPPED_DUPLICATE` — сколько раз dispatch блокирован lease
-  - `RECOVERY` / `RECOVER` — сколько раз recovery вмешивался
-  - `stale state` / `stale_state` — stale state tolerance в orchestrator
-  - `restoreChunkStatus` — восстановление статусов после dirty
-  - `audio-recovery` — каждый цикл audio recovery
-- [ ] Посчитать частоту каждого конфликта на production-логах
-- [ ] Определить топ-3 сценария, которые реально бьют по пользователям
-
----
-
-## Фаза 1: Passive Recovery (🔴 Critical)
-
-**Цель:** Recovery перестаёт быть активным участником принятия решений. Только логирует расхождения, не чинит их автоматически.
-
-### [R1.1] Startup recovery — только логировать, не чинить ✅ (частично)
-- [x] `recoverIuImagesFromDisk()` — сканирует PNG, только логирует найденные сцены (не обновляет Redis)
-- [x] `reconcileMissingSceneState()` — только логирует книги с отсутствующими Redis counters (не восстанавливает counters/placeholders/hashes)
-- [x] `checkVersionStaleness()` — уже только логирует (не меняли)
-- [x] **Важно:** crash recovery больше не маскирует dirty-состояние — после flushall Redis книга должна быть явно загружена через PUT/regenerate
-
-> ✅ **Расхождение снято (2026-06-27):** version-stale ветка в `startup-recovery.js:284-288`
-> больше не пишет `setAssetStates(... DIRTY)` напрямую — идёт через `orchestrator.markDirtyScene`
-> (M5, коммит `2807a38`). Единственный арбитр записи соблюдён, R1.1 теперь верен полностью.
-
-> **UPD 2026-06-26:** Добавлена пометка о расхождении.
-> **UPD 2026-06-27:** Расхождение устранено M5-рефактором; пометка обновлена.
-
-### [R1.2] Audio recovery — убрать рантайм-цикл ✅
-- [x] `audio-recovery.cjs`: убрать `startRecoveryInterval()` (setInterval every 5s)
-- [x] `backend.cjs`: убрать `audioRecovery.startRecoveryInterval()`
-- [ ] Заменить на триггерный механизм: если callback от GPU Hub не пришёл в течение timeout — только тогда запускать recovery для конкретного job
-- [ ] Либо использовать `recoverAudioResults()` как одноразовый вызов для конкретного scene+stage, а не сканировать все `animastor:result:*` каждые 5с
-- [ ] NOTE: `recoverAudioResults()` сохранён как export для on-demand вызова, но не подключён к API
-
-### [R1.3] Reconciliation engine — убрать auto-fix ✅
-- [x] `runtime-loop.js`: убрать auto-применение `applyFix()` из цикла (Phase 5)
-- [x] `debug-routes.cjs`: добавить API-эндпоинт `POST /api/v1/debug/runtime/apply-fix`
-- [x] `reconcileScene()` — только собирает report, не чинит
-- [x] `getFixRecommendations()` — только логировать, не вызывать `applyFix()`
+### [A0] Measure Current Conflicts in Logs
+- [ ] Collect grep patterns for key conflicts:
+  - `DISPATCH_SKIPPED_DUPLICATE` — how many times dispatch blocked by lease
+  - `RECOVERY` / `RECOVER` — how many times recovery intervened
+  - `stale state` / `stale_state` — stale state tolerance in orchestrator
+  - `restoreChunkStatus` — status restoration after dirty
+  - `audio-recovery` — each audio recovery cycle
+- [ ] Count frequency of each conflict on production logs
+- [ ] Identify top-3 scenarios that actually hit users
 
 ---
 
-## Фаза 2: Force Lease Release (🔴 Critical)
+## Phase 1: Passive Recovery (🔴 Critical)
 
-**Цель:** При regenerate dispatch lease не блокирует новую генерацию.
+**Goal:** Recovery stops being an active decision-maker. Only logs divergences, doesn't auto-fix them.
 
-### [R2.1] Force-параметр в dispatch engine ✅
-- [x] `dispatch-engine.js`: `dispatchStage()` — добавить параметр `{ force: boolean }`
-- [x] При `force=true`: 
-  1. `redis.del(leaseKey)` — очистить старый lease
-  2. `releaseQuota()` — очистить старую quota  
-  3. Только потом acquire нового lease и dispatch
-- [x] `acquireStageLease()` — добавить режим force: если lease есть и force=true, удалить и создать новый
+### [R1.1] Startup Recovery — Log Only, Don't Fix ✅ (partial)
+- [x] `recoverIuImagesFromDisk()` — scans PNGs, only logs found scenes (doesn't update Redis)
+- [x] `reconcileMissingSceneState()` — only logs books with missing Redis counters (doesn't restore counters/placeholders/hashes)
+- [x] `checkVersionStaleness()` — already log-only (unchanged)
+- [x] **Important:** crash recovery no longer masks dirty state — after Redis flushall the book must be explicitly loaded via PUT/regenerate
 
-### [R2.2] Force-параметр в regenerate endpoint ✅
-- [x] `book-routes.cjs`: установка `animastor:force-dispatch:{bookId}` флага (TTL 120s) после очистки leases
-- [x] `runtime-scheduler.js`: `tick()` — проверяет force-флаг, передаёт force=true в `attemptDispatch()`
-- [x] `attemptDispatch()` — получает `force` параметр, передаёт в `dispatchStage(..., { force })`
+> ✅ **Divergence resolved (2026-06-27):** version-stale branch in `startup-recovery.js:284-288`
+> no longer writes `setAssetStates(... DIRTY)` directly — goes through `orchestrator.markDirtyScene`
+> (M5, commit `2807a38`). Single write arbiter preserved, R1.1 now fully correct.
 
-### [R2.3] Cleanup stale leases при regenerate ✅
-- [x] `dispatch-engine.js`: новый метод `clearAllLeasesForBook(redis, bookId)` — SCAN + DEL для lease и meta ключей
-- [x] `book-routes.cjs`: `/regenerate` и `/cancel-generation` используют `dispatchEngine.clearAllLeasesForBook()` вместо локальных helpers
-- [x] Локальные `clearBookLeases()` / `clearBookDispatchMeta()` удалены как dead code
+> **UPD 2026-06-26:** Divergence noted.
+> **UPD 2026-06-27:** Divergence resolved by M5 refactor; note updated.
+
+### [R1.2] Audio Recovery — Remove Runtime Cycle ✅
+- [x] `audio-recovery.cjs`: removed `startRecoveryInterval()` (setInterval every 5s)
+- [x] `backend.cjs`: removed `audioRecovery.startRecoveryInterval()`
+- [ ] Replace with trigger mechanism: if GPU Hub callback doesn't arrive within timeout — only then launch recovery for specific job
+- [ ] Or use `recoverAudioResults()` as a one-shot call for specific scene+stage, not scanning all `animastor:result:*` every 5s
+- [ ] NOTE: `recoverAudioResults()` retained as export for on-demand calls, but not connected to API
+
+### [R1.3] Reconciliation Engine — Remove Auto-Fix ✅
+- [x] `runtime-loop.js`: removed auto-apply of `applyFix()` from cycle (Phase 5)
+- [x] `debug-routes.cjs`: added API endpoint `POST /api/v1/debug/runtime/apply-fix`
+- [x] `reconcileScene()` — only collects report, doesn't fix
+- [x] `getFixRecommendations()` — only logs, doesn't call `applyFix()`
 
 ---
 
-## Фаза 3: Единый оркестратор решений (🟡 High)
+## Phase 2: Force Lease Release (🔴 Critical)
 
-**Цель:** Только scene-orchestrator может изменять состояние. Остальные — только читают.
+**Goal:** On regenerate, dispatch lease doesn't block new generation.
 
-### [R3.1] Убрать stale state tolerance ✅
-- [x] `handleAudioCompleted()` — убран stale state tolerance блок
-- [x] `handleImageCompleted()` — убран stale state tolerance блок
-- [x] `handleVideoCompleted()` — убран stale state tolerance блок
-- [x] **Условие:** R2 (force lease release) выполнен перед этим шагом
+### [R2.1] Force Parameter in Dispatch Engine ✅
+- [x] `dispatch-engine.js`: `dispatchStage()` — added parameter `{ force: boolean }`
+- [x] When `force=true`:
+  1. `redis.del(leaseKey)` — clear old lease
+  2. `releaseQuota()` — clear old quota
+  3. Only then acquire new lease and dispatch
+- [x] `acquireStageLease()` — added force mode: if lease exists and force=true, delete and create new
 
-### [R3.2] RestoreChunkStatus — только в orchestration слое ✅
-- [x] Новый метод `restoreSceneChunkStatus()` в `scene-orchestrator.js` — инкапсулирует валидацию контента + восстановление chunk metadata + state transition + PNG pre-delete + GPU dedup clear
-- [x] `book-routes.cjs`: ~60 строк inline restore логики заменены на `orchestrator.restoreSceneChunkStatus()`
-- [x] Убраны лишние inline require внутри метода (fs/path уже на уровне модуля)
+### [R2.2] Force Parameter in Regenerate Endpoint ✅
+- [x] `book-routes.cjs`: sets `animastor:force-dispatch:{bookId}` flag (TTL 120s) after clearing leases
+- [x] `runtime-scheduler.js`: `tick()` — checks force flag, passes force=true to `attemptDispatch()`
+- [x] `attemptDispatch()` — receives `force` parameter, passes to `dispatchStage(..., { force })`
 
-### [R3.3] SceneHasValidContent → checkSceneContentCache (advisory) ✅
+### [R2.3] Cleanup Stale Leases on Regenerate ✅
+- [x] `dispatch-engine.js`: new method `clearAllLeasesForBook(redis, bookId)` — SCAN + DEL for lease and meta keys
+- [x] `book-routes.cjs`: `/regenerate` and `/cancel-generation` use `dispatchEngine.clearAllLeasesForBook()` instead of local helpers
+- [x] Local `clearBookLeases()` / `clearBookDispatchMeta()` removed as dead code
+
+---
+
+## Phase 3: Single Decision Orchestrator (🟡 High)
+
+**Goal:** Only scene-orchestrator can change state. Others only read.
+
+### [R3.1] Remove Stale State Tolerance ✅
+- [x] `handleAudioCompleted()` — stale state tolerance block removed
+- [x] `handleImageCompleted()` — stale state tolerance block removed
+- [x] `handleVideoCompleted()` — stale state tolerance block removed
+- [x] **Condition:** R2 (force lease release) completed before this step
+
+### [R3.2] RestoreChunkStatus — Orchestration Layer Only ✅
+- [x] New method `restoreSceneChunkStatus()` in `scene-orchestrator.js` — encapsulates content validation + chunk metadata restoration + state transition + PNG pre-delete + GPU dedup clear
+- [x] `book-routes.cjs`: ~60 lines of inline restore logic replaced with `orchestrator.restoreSceneChunkStatus()`
+- [x] Removed unnecessary inline requires inside method (fs/path already at module level)
+
+### [R3.3] SceneHasValidContent → checkSceneContentCache (Advisory) ✅
 - [x] `scene-window.js`: `sceneHasValidContent()` → `checkSceneContentCache()`
-- [x] Возвращает advisory-объект `{ audioOnDisk, imageOnDisk, videoOnDisk, staleByVersion, valid }` вместо boolean
-- [x] Все потребители обновлены: slideWindow, startScene, restoreSceneChunkStatus
-- [x] book-sync.js: только комментарии (не трогаем)
+- [x] Returns advisory object `{ audioOnDisk, imageOnDisk, videoOnDisk, staleByVersion, valid }` instead of boolean
+- [x] All consumers updated: slideWindow, startScene, restoreSceneChunkStatus
+- [x] book-sync.js: only comments (untouched)
 
 ---
 
-## Фаза 4: Версионный детект как единственный источник dirty (🟡 High)
+## Phase 4: Version Detection as Single Source of Dirty (🟡 High)
 
-**Цель:** Dirty вычисляется как `asset_version < scene_version`, а не через Redis-флаги.
+**Goal:** Dirty computed as `asset_version < scene_version`, not via Redis flags.
 
-### [R4.1] Перенести dirty-флаги из Redis в PG ✅
-- [x] Добавлен `scenes.is_dirty BOOLEAN DEFAULT FALSE` в PG (schema.js migration)
-- [x] `bumpSceneVersions()` теперь ставит `is_dirty = TRUE` при каждом bump версии
-- [x] Новая `clearDirtyFlag()` — сбрасывает `is_dirty = FALSE` после video completion
-- [x] Новая `getDirtyScenesByVersion()` — основной механизм детекта dirty через PG (is_dirty OR version_mismatch)
-- [x] Redis asset states остаются runtime-кешем, PG — source of truth для dirty
+### [R4.1] Move Dirty Flags from Redis to PG ✅
+- [x] Added `scenes.is_dirty BOOLEAN DEFAULT FALSE` in PG (schema.js migration)
+- [x] `bumpSceneVersions()` now sets `is_dirty = TRUE` on each version bump
+- [x] New `clearDirtyFlag()` — resets `is_dirty = FALSE` after video completion
+- [x] New `getDirtyScenesByVersion()` — primary dirty detection mechanism via PG (is_dirty OR version_mismatch)
+- [x] Redis asset states remain runtime cache, PG is source of truth for dirty
 
-### [R4.2] Version bump как единственный триггер dirty ✅
-- [x] `shouldScheduleAssets()` в runtime-scheduler.js — добавлена проверка `asset_version < scene_version` из PG
-- [x] При обнаружении версионного несоответствия: per-asset state сбрасывается в DIRTY → scheduler диспатчит регенерацию
-- [x] `clearDirtyFlag()` вызывается в трёх completion-путях: handleVideoCompleted, completeSceneWithoutVideo, completeSceneWithoutImage
-- [x] Redis Lua markDirtyScenes() сохранён для immediate runtime reset, но больше не является единственным источником dirty
+### [R4.2] Version Bump as Single Dirty Trigger ✅
+- [x] `shouldScheduleAssets()` in runtime-scheduler.js — added `asset_version < scene_version` check from PG
+- [x] On version mismatch detection: per-asset state reset to DIRTY → scheduler dispatches regeneration
+- [x] `clearDirtyFlag()` called in three completion paths: handleVideoCompleted, completeSceneWithoutVideo, completeSceneWithoutImage
+- [x] Redis Lua markDirtyScenes() retained for immediate runtime reset, but no longer sole source of dirty
 
-### [R4.3] Crash-safe dirty ✅
-- [x] R1.1 (startup recovery log-only) гарантирует, что после flushall Redis dirty-состояние не маскируется
-- [x] `is_dirty` в PG переживает Redis crash — scheduler обнаружит stale сцены на следующем tick
-- [x] `getDirtyScenesByVersion()` независим от Redis — работает на чистых PG данных
-
----
-
-## Phase 6: Расчистка избыточной сложности (🟡 High)
-
-**Цель:** Аккуратно, постепенно, с тестами — убрать 5 точек избыточной сложности.
-Каждое изменение должно быть отделяемым (можно откатить без каскада).
-
-### [R6.1] Dual state model — консолидация ✅
-
-> Per-asset — канонический, linear FSM — производная проекция.
-
-- [x] **Шаг 1:** Найдены все потребители linear FSM (syncLinearState: 22 места, transitionSceneState: 35 мест)
-- [x] **Шаг 2:** callback handlers переведены на per-asset API (убрано 6 syncLinearState вызовов)
-- [x] **Шаг 3:** dispatchStage layer short-circuits (audio/image/video disabled) — `transitionSceneState` заменён на `setAssetState()` + `setSceneStateWithBuildId()`
-- [x] **Шаг 4:** completeSceneWithoutVideo / completeSceneWithoutImage — `transitionSceneState` (3 вызова каждый) заменён на per-asset API
-
-**Результат:** `transitionSceneState` (c lock+CAS) больше не вызывается в short-circuit путях. Per-asset — единственный source of truth. Linear FSM — проекция.
+### [R4.3] Crash-Safe Dirty ✅
+- [x] R1.1 (startup recovery log-only) ensures dirty state not masked after Redis flushall
+- [x] `is_dirty` in PG survives Redis crash — scheduler detects stale scenes on next tick
+- [x] `getDirtyScenesByVersion()` independent of Redis — works on clean PG data
 
 ---
 
-### [R6.2] Консолидировать проверки файлов на диске ✅
+## Phase 6: Clean Up Excess Complexity (🟡 High)
 
-> Четыре места делали одно и то же: `checkSceneContentCache()`, `restoreChunkStatusForScene()`, `reconcileWindowStatuses()`, `recoverIuImagesFromDisk()`.
+**Goal:** Carefully, gradually, with tests — remove 5 points of excess complexity.
+Each change must be revertible (can roll back without cascade).
 
-- [x] **Шаг 1:** Создана единая `getSceneFilesStatus(buildDir, bookId, chapterId, sceneId)` — возвращает `{ audio: { exists, isReal }, image: { exists }, video: { exists } }`
-- [x] **Шаг 2:** `checkSceneContentCache()` переписана на `getSceneFilesStatus()`
-- [x] **Шаг 3:** `restoreChunkStatusForScene()` переписана на `getSceneFilesStatus()`
-- [x] **Шаг 4:** `reconcileWindowStatuses()` переписана на `getSceneFilesStatus()`
-- [x] **Шаг 5:** `recoverIuImagesFromDisk()` теперь log-only (R1.1) — больше не использует I/O
-- [x] **Шаг 6:** Убраны дублирующиеся fs.readdirSync/existsSync вызовы — все идут через единую функцию
+### [R6.1] Dual State Model — Consolidation ✅
 
----
+> Per-asset is canonical, linear FSM is derived projection.
 
-### [R6.3] Audio recovery — заменить на триггерный механизм ✅
+- [x] **Step 1:** Found all linear FSM consumers (syncLinearState: 22 locations, transitionSceneState: 35 locations)
+- [x] **Step 2:** Callback handlers migrated to per-asset API (6 syncLinearState calls removed)
+- [x] **Step 3:** dispatchStage layer short-circuits (audio/image/video disabled) — `transitionSceneState` replaced with `setAssetState()` + `setSceneStateWithBuildId()`
+- [x] **Step 4:** completeSceneWithoutVideo / completeSceneWithoutImage — `transitionSceneState` (3 calls each) replaced with per-asset API
 
-> Это же R1.2, но с акцентом на постепенность.
-
-- [x] **Шаг 1:** Убедиться, что callback chain repair (R18) работает — проверено, callback'и доходят
-- [x] **Шаг 2:** Добавить метрику: сколько раз audio recovery реально восстановил результат, который не был бы восстановлен callback-ом — **заменено на per-scene on-demand recovery вместо сканирования всех ключей**
-- [x] **Шаг 3:** `startRecoveryInterval()` удалён — никакой периодический сканинг не запускается
-- [x] **Шаг 4:** Новая `recoverAudioForScene()` — точечная per-scene recovery для одного result key
-- [x] **Шаг 5:** Debug endpoint `POST /api/v1/debug/audio/recover` — on-demand вызов per-scene recovery
-- [x] **Шаг 6:** Factory создаётся один раз при инициализации debug-routes (не на каждый запрос)
+**Result:** `transitionSceneState` (with lock+CAS) no longer called in short-circuit paths. Per-asset is the single source of truth. Linear FSM is a projection.
 
 ---
 
-### [R6.4] Governance модули — решить судьбу ✅
+### [R6.2] Consolidate File Checks on Disk ✅
 
-> 6 модулей загружались через `safeRequire()`. Решение:
-> - **circuitBreaker, retryBudget, fairness** — используются в `dispatchStage()` → заменён `safeRequire` на прямой `require()`
-> - **policyEngine, workloadClassifier, costEstimator** — только в мёртвых функциях `dispatchStageWithPolicy()` / `evaluateDispatchPolicy()` → функции удалены, safeRequire убран
+> Four places did the same thing: `checkSceneContentCache()`, `restoreChunkStatusForScene()`, `reconcileWindowStatuses()`, `recoverIuImagesFromDisk()`.
 
-- [x] **Шаг 1:** Проверен git log — модули существуют, но `dispatchStageWithPolicy()` и `evaluateDispatchPolicy()` никогда не вызывались
-- [x] **Шаг 2:** circuitBreaker/retryBudget/fairness — `safeRequire` → прямой `require()`. policyEngine/workloadClassifier/costEstimator — удалены из dispatch-engine (остаются доступны через собственные require в других файлах)
-- [x] **Шаг 3:** dispatch-engine больше не грузит лишние модули, null-проверки убраны
-
----
-
-### [R6.5] Убрать stale state tolerance ✅
-
-> Это же R3.1, но с явными шагами и зависимостями.
-
-- [x] **Pre-requisite:** R2.1 (force lease release) — уже сделан
-- [x] **Pre-requisite:** R2.3 (cleanup leases at regenerate) — уже сделан
-- [x] **Шаг 1:** `handleAudioCompleted()` — убран stale state tolerance блок
-- [x] **Шаг 2:** `handleImageCompleted()` — убран
-- [x] **Шаг 3:** `handleVideoCompleted()` — убран
-- [x] **Шаг 4:** Интеграционный тест: Cancel→Regenerate→callback
-
-> ⚠️ **Было внутреннее противоречие:** в приоритетном списке сверху R6.5 помечен ✅ Done, а здесь стоял `[ ]`.
-> Исправлено: теперь везде ✅. Подтверждено кодом — stale state tolerance блоков нет в `scene-callbacks.js`.
-
-> **UPD 2026-06-26:** Внутреннее противоречие снято.
+- [x] **Step 1:** Created single `getSceneFilesStatus(buildDir, bookId, chapterId, sceneId)` — returns `{ audio: { exists, isReal }, image: { exists }, video: { exists } }`
+- [x] **Step 2:** `checkSceneContentCache()` rewritten to use `getSceneFilesStatus()`
+- [x] **Step 3:** `restoreChunkStatusForScene()` rewritten to use `getSceneFilesStatus()`
+- [x] **Step 4:** `reconcileWindowStatuses()` rewritten to use `getSceneFilesStatus()`
+- [x] **Step 5:** `recoverIuImagesFromDisk()` now log-only (R1.1) — no longer uses I/O
+- [x] **Step 6:** Removed duplicate fs.readdirSync/existsSync calls — all go through single function
 
 ---
 
-## Полный приоритетный список
+### [R6.3] Audio Recovery — Replace with Trigger Mechanism ✅
+
+> Same as R1.2, but emphasizing gradualness.
+
+- [x] **Step 1:** Verify callback chain repair (R18) works — confirmed, callbacks arrive
+- [x] **Step 2:** Add metric: how many times audio recovery actually recovered a result that wouldn't have been recovered by callback — **replaced with per-scene on-demand recovery instead of scanning all keys**
+- [x] **Step 3:** `startRecoveryInterval()` removed — no periodic scanning launched
+- [x] **Step 4:** New `recoverAudioForScene()` — targeted per-scene recovery for single result key
+- [x] **Step 5:** Debug endpoint `POST /api/v1/debug/audio/recover` — on-demand per-scene recovery call
+- [x] **Step 6:** Factory created once at debug-routes initialization (not per request)
+
+---
+
+### [R6.4] Governance Modules — Decide Fate ✅
+
+> 6 modules loaded via `safeRequire()`. Decision:
+> - **circuitBreaker, retryBudget, fairness** — used in `dispatchStage()` → replaced `safeRequire` with direct `require()`
+> - **policyEngine, workloadClassifier, costEstimator** — only in dead functions `dispatchStageWithPolicy()` / `evaluateDispatchPolicy()` → functions removed, safeRequire removed
+
+- [x] **Step 1:** Verified git log — modules exist but `dispatchStageWithPolicy()` and `evaluateDispatchPolicy()` were never called
+- [x] **Step 2:** circuitBreaker/retryBudget/fairness — `safeRequire` → direct `require()`. policyEngine/workloadClassifier/costEstimator — removed from dispatch-engine (remain accessible via their own requires in other files)
+- [x] **Step 3:** dispatch-engine no longer loads unnecessary modules, null-checks removed
+
+---
+
+### [R6.5] Remove Stale State Tolerance ✅
+
+> Same as R3.1, but with explicit steps and dependencies.
+
+- [x] **Pre-requisite:** R2.1 (force lease release) — already done
+- [x] **Pre-requisite:** R2.3 (cleanup leases at regenerate) — already done
+- [x] **Step 1:** `handleAudioCompleted()` — stale state tolerance block removed
+- [x] **Step 2:** `handleImageCompleted()` — removed
+- [x] **Step 3:** `handleVideoCompleted()` — removed
+- [x] **Step 4:** Integration test: Cancel→Regenerate→callback
+
+> ⚠️ **Internal contradiction existed:** in the priority list above R6.5 was marked ✅ Done, but here it had `[ ]`.
+> Fixed: now ✅ everywhere. Verified by code — no stale state tolerance blocks in `scene-callbacks.js`.
+
+> **UPD 2026-06-26:** Internal contradiction resolved.
+
+---
+
+## Full Priority List
 
 ```
 Phase 1 — 🔴 Critical: Passive Recovery
-├── [R1.1] Startup recovery — только логировать      (⚪ low urgency, ✅ Done)
-├── [R1.2] Audio recovery — убрать рантайм-цикл      (🟡 high, ✅ Done)
-└── [R1.3] Reconciliation — убрать auto-fix          (🟡 high, ✅ Done)
+├── [R1.1] Startup recovery — log only            (⚪ low urgency, ✅ Done)
+├── [R1.2] Audio recovery — remove runtime cycle  (🟡 high, ✅ Done)
+└── [R1.3] Reconciliation — remove auto-fix       (🟡 high, ✅ Done)
 
 Phase 2 — 🔴 Critical: Force Lease Release
-├── [R2.1] Force-параметр в dispatch                 (🟡 high, ✅ Done)
-├── [R2.2] Force в regenerate endpoint               (🟡 high, ✅ Done)
-└── [R2.3] Cleanup stale leases при regenerate       (🟢 medium, ✅ Done)
+├── [R2.1] Force parameter in dispatch            (🟡 high, ✅ Done)
+├── [R2.2] Force in regenerate endpoint           (🟡 high, ✅ Done)
+└── [R2.3] Cleanup stale leases on regenerate     (🟢 medium, ✅ Done)
 
-Phase 3 — 🟡 High: Единый оркестратор
-├── [R3.1=R6.5] Убрать stale state tolerance         (🟢 medium, ✅ Done)
-├── [R3.2] RestoreChunkStatus → orchestrator         (🟢 medium, ✅ Done)
-└── [R3.3] SceneHasValidContent → advisory           (🟢 medium, ✅ Done)
+Phase 3 — 🟡 High: Single Orchestrator
+├── [R3.1=R6.5] Remove stale state tolerance      (🟢 medium, ✅ Done)
+├── [R3.2] RestoreChunkStatus → orchestrator      (🟢 medium, ✅ Done)
+└── [R3.3] SceneHasValidContent → advisory        (🟢 medium, ✅ Done)
 
-Phase 4 — 🟡 High: Versions as source of truth
-├── [R4.1] Per-asset dirty в PG                      (🟡 high, ✅ Done)
-├── [R4.2] Version bump = единственный триггер       (🟢 medium, ✅ Done)
-└── [R4.3] Crash-safe dirty (уже частично)           (🟢 medium, ✅ Done)
+Phase 4 — 🟡 High: Versions as Source of Truth
+├── [R4.1] Per-asset dirty in PG                  (🟡 high, ✅ Done)
+├── [R4.2] Version bump = single trigger          (🟢 medium, ✅ Done)
+└── [R4.3] Crash-safe dirty (partially done)      (🟢 medium, ✅ Done)
 
-Phase 5 — 🟢 Medium: Чистка дубликатов
-├── [R5.1] Event journals — сокращён EventType enum с ~100 до ~30, убраны causal ordering helpers (🟢, ✅ Done)
-├── [R5.2=R6.4] Governance dead code                 (🟢, ✅ Done)
-└── [R5.3] Heartbeat simplification — убраны startSceneHeartbeatTimer/stopSceneHeartbeatTimer (⚪, ✅ Done)
+Phase 5 — 🟢 Medium: Duplicate Cleanup
+├── [R5.1] Event journals — EventType enum reduced from ~100 to ~30, causal ordering helpers removed (🟢, ✅ Done)
+├── [R5.2=R6.4] Governance dead code              (🟢, ✅ Done)
+└── [R5.3] Heartbeat simplification — removed startSceneHeartbeatTimer/stopSceneHeartbeatTimer (⚪, ✅ Done)
 
-Phase 6 — 🟡 High: Расчистка избыточной сложности
-├── [R6.1] Dual state model — консолидация           (🟡, ✅ Done)
+Phase 6 — 🟡 High: Clean Up Excess Complexity
+├── [R6.1] Dual state model — consolidation       (🟡, ✅ Done)
 │   └── dispatchStage short-circuits → per-asset API
-├── [R6.2] Консолидировать проверки файлов           (🟡, ✅ Done)
-├── [R6.3=R1.2] Audio recovery → trigger-based       (🟡, ✅ Done)
-├── [R6.4=R5.2] Governance modules — решить судьбу   (🟢, ✅ Done)
-└── [R6.5=R3.1] Убрать stale state tolerance        (🟢, ✅ Done)
+├── [R6.2] Consolidate file checks                (🟡, ✅ Done)
+├── [R6.3=R1.2] Audio recovery → trigger-based    (🟡, ✅ Done)
+├── [R6.4=R5.2] Governance modules — decide fate  (🟢, ✅ Done)
+└── [R6.5=R3.1] Remove stale state tolerance     (🟢, ✅ Done)
 ```
 
 ---
 
-## Карта зависимостей
+## Dependency Map
 
 ```
 R1.2 / R6.3 (audio recovery cycle)
-  └── независим
+  └── independent
 
 R2.1 (force lease)
   ├──→ R2.2 → R2.3
@@ -249,35 +249,35 @@ R1.1 (startup log only)
   └──→ R4.3 (crash-safe dirty)
 
 R1.3 (recon engine auto-fix)
-  └── независим
+  └── independent
 
 R6.1 (dual state consolidation)
-  └── зависит от R3.x (единый оркестратор)
-      └── пока есть несколько мест, меняющих состояние, 
-          убирать linear FSM рискованно
+  └── depends on R3.x (single orchestrator)
+      └── while several places still change state,
+          removing linear FSM is risky
 
 R6.2 (file check consolidation)
-  └── независим, может быть сделан параллельно
+  └── independent, can be done in parallel
 
 R6.4 (governance dead code)
-  └── независим
+  └── independent
 ```
 
-**Рекомендуемый порядок (уточнённый):**
+**Recommended order (refined):**
 
 ```
-Phase 1:   R1.2       →  убрать audio recovery cycle             ✅
-          R1.3       →  убрать reconciliation auto-fix            ✅
+Phase 1:   R1.2       →  remove audio recovery cycle             ✅
+          R1.3       →  remove reconciliation auto-fix            ✅
           
 Phase 2:   R2.1       →  force lease release in dispatch           ✅
-          R2.2       →  force флаг в regenerate + scheduler        ✅
+          R2.2       →  force flag in regenerate + scheduler        ✅
           R2.3       →  clearAllLeasesForBook + cleanup             ✅          R6.4       →  governance: safeRequire→require + dead code       ✅
-          R6.2       →  консолидация проверок файлов                      ✅
-          R1.1       →  startup recovery log-only                         ✅          Phase 4:   R4.1       →  dirty-флаги в PG                           ✅
-          R4.2       →  version bump как единственный триггер              ✅
+          R6.2       →  consolidate file checks                          ✅
+          R1.1       →  startup recovery log-only                         ✅          Phase 4:   R4.1       →  dirty flags in PG                           ✅
+          R4.2       →  version bump as single trigger                    ✅
           R4.3       →  crash-safe dirty                                   ✅
           
-Далее:    R6.3       →  audio recovery → trigger-based
-          R5.x       →  чистка дубликатов
+Next:     R6.3       →  audio recovery → trigger-based
+          R5.x       →  duplicate cleanup
           R5.1       →  event journals
 ``` → R6.x
