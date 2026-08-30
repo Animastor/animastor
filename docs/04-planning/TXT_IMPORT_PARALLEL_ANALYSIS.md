@@ -800,3 +800,24 @@ const callOptions = {
 - `backend/src/services/workspace-ai-provider.js` — provider resolution
 - `backend/src/services/agent-session.js` — lifecycle helpers
 - `backend/src/storage/postgres/schema.js` — `agent_sessions`, `agent_steps`
+
+## 11. Status — Milestone #1 implemented
+
+The minimal vertical slice proposed in §4.3 is implemented (commits
+`39bde6c0` → `4227369c`, plus this documentation update):
+
+- `analysis_mode = sequential | parallel` lives in per-book layer-config
+  with default `sequential` (backwards compatible).
+- `analysis_parallelism = 1..8` (default 3) caps in-flight LLM calls
+  via the existing `p-limit` dependency (no new transport).
+- `backend/src/services/agent/parallel-analysis-orchestrator.js`
+  orchestrates the first parallel phase; voices stays in its legacy
+  sequential slot because it needs the merged character set.
+- All §12 acceptance criteria pass; the §11 "не трогать пока" list was
+  respected (no generic DAG engine, no scene-level parallelism, no
+  marketplace, no GPU/LLM mixing). See AGENTS.md "Parallel Analysis
+  Mode" for the full contract.
+
+Next milestone candidates (out of scope for this slice): per-task
+provider/model routing UI, scene-level parallelism, dynamic agent
+spawning, generic DAG engine for arbitrary workflows.
