@@ -8,35 +8,35 @@
 
 ## 1. Executive Summary
 
-### Что уже есть
-- **PostgreSQL как каноническое состояние** — 30+ таблиц (`backend/src/storage/postgres/schema.js`), schema применяется идемпотентно при старте (`runMigrations`), всё завязано на `book_id` как aggregate root.
-- **Дремлющий `users`-фундамент**: таблицы `users`, `books.user_id`, `chat_sessions.user_id` существуют в schema, но **ни один запрос в приложении их не использует** (grep по `storage/postgres/repositories/*` и всему `backend/src` не даёт ни одного INSERT/SELECT на `users`). Это не auth, а «скелет на будущее».
-- **Готовый идентификационный слой**: bookId, buildId, chapterId/sceneId/unitId, scene_hash, content_hash/file_hash, job_id, dispatch_id (см. §7).
-- **Чёткая граница backend ↔ GPU Hub**: gpu-hub принимает от backend задачи с **X-API-Key** (`gpu-hub/gpu-hub.js:33-41`, `backend/src/runtime/gpu-dispatcher.js:64-68`). Workers аутентифицируются **бесключом** (beacon + poll).
-- **Filesystem**: два корня — `data/books/<bookId>/` (исходная книга, multi-file vbook) и `data/output/<buildId>/` (сгенерированные артефакты). Path строится только из серверных ID.
+### What Already Exists
+- **PostgreSQL as canonical state** — 30+ tables (`backend/src/storage/postgres/schema.js`), schema applied idempotently on startup (`runMigrations`), everything keyed on `book_id` as aggregate root.
+- **Dormant `users` foundation**: tables `users`, `books.user_id`, `chat_sessions.user_id` exist in the schema, but **no query in the application uses them** (grep across `storage/postgres/repositories/*` and all of `backend/src` yields zero INSERT/SELECT on `users`). This is not auth but a "skeleton for the future."
+- **Ready identification layer**: bookId, buildId, chapterId/sceneId/unitId, scene_hash, content_hash/file_hash, job_id, dispatch_id (see §7).
+- **Clear backend ↔ GPU Hub boundary**: gpu-hub accepts tasks from backend with **X-API-Key** (`gpu-hub/gpu-hub.js:33-41`, `backend/src/runtime/gpu-dispatcher.js:64-68`). Workers authenticate **keylessly** (beacon + poll).
+- **Filesystem**: two roots — `data/books/<bookId>/` (source book, multi-file vbook) and `data/output/<buildId>/` (generated artifacts). Paths built only from server IDs.
 
-### Чего нет
-- **Никакой application-level аутентификации**: нет сессий, cookies, JWT, per-user токенов, middleware auth. Единственная защита — nginx **Basic Auth** на `app.animastor.in` (`proxy/conf/default.conf:282-287`), закрывающая весь SPA кроме `/library`. Это один общий пароль на всех, **не** identity.
-- **Никакого понятия workspace / project / owner** в рантайме. `GET /api/v1/books` отдаёт **все** книги сервера любому клиенту.
-- **Никакой привязки identity → filesystem**.
-- **Никаких миграционных файлов**: схема живёт одним файлом `schema.js` (уже 834 строки), миграции — идемпотентные `ALTER` в `runMigrations`.
+### What's Missing
+- **No application-level authentication**: no sessions, cookies, JWT, per-user tokens, auth middleware. The only protection is nginx **Basic Auth** on `app.animastor.in` (`proxy/conf/default.conf:282-287`), covering the entire SPA except `/library`. This is a single shared password, **not** identity.
+- **No workspace / project / owner concept** at runtime. `GET /api/v1/books` returns **all** books on the server to any client.
+- **No identity → filesystem binding**.
+- **No migration files**: schema lives in a single `schema.js` file (already 834 lines), migrations are idempotent `ALTER` statements in `runMigrations`.
 
-### Насколько сложно добавить accounts
-- **Средне**. Понятие владельца почти везде сводится к одной оси `book_id`. Все связанные таблицы (scenes, scene_assets, image_units, generation_tasks, chat_*, agent_*, character_*) уже переносят `book_id`, поэтому **workspace_id достаточно добавить на `books`** (и/или в `book_source`), а всё остальное наследуется через book.
-- Главные «подводные камни»: (1) media-serving роуты строят path прямо из URL-параметров без lookup в PG — потребуется единый ownership-resolver; (2) disk-scan recovery (`recoverAllBooksFromDisk`, `collectRecentBooks`) читает всю директорию книг без фильтра — станет небезопасным при мульти-пользователях; (3) Redis-ключи, индексированные по `book_id`, станут cross-tenant, если не ввести workspace-scoping.
+### How Hard to Add Accounts
+- **Medium**. The owner concept nearly everywhere reduces to a single `book_id` axis. All related tables (scenes, scene_assets, image_units, generation_tasks, chat_*, agent_*, character_*) already carry `book_id`, so **adding `workspace_id` to `books`** (and/or `book_source`) is sufficient — everything else is inherited via book.
+- Key "gotchas": (1) media-serving routes build paths directly from URL parameters without PG lookup — a unified ownership-resolver will be needed; (2) disk-scan recovery (`recoverAllBooksFromDisk`, `collectRecentBooks`) reads the entire book directory without filtering — becomes unsafe with multi-user; (3) Redis keys indexed by `book_id` will become cross-tenant without workspace scoping.
 
-### Главные точки интеграции
-1. **`books` (и `book_source`) → `workspace_id`** — единственная ось ownership.
-2. **Единый middleware аутентификации** в цепочке `backend/src/backend.cjs:63-89` (helmet → rate-limit → cors → json → request-id).
-3. **Единый ownership-resolver** для media-serving роутов (`generation-routes.cjs`).
-4. **`GET /api/v1/books`** — первая точка, которая обязана стать workspace-scoped.
-5. **Header/frontend**: `desktop-header__actions` и мобильный toolbar — место для user/workspace меню.
+### Key Integration Points
+1. **`books` (and `book_source`) → `workspace_id`** — the single ownership axis.
+2. **Unified auth middleware** in the `backend/src/backend.cjs:63-89` chain (helmet → rate-limit → cors → json → request-id).
+3. **Unified ownership-resolver** for media-serving routes (`generation-routes.cjs`).
+4. **`GET /api/v1/books`** — first endpoint that must become workspace-scoped.
+5. **Header/frontend**: `desktop-header__actions` and mobile toolbar — location for user/workspace menu.
 
 ---
 
 ## 2. Current Architecture
 
-Схема существующего потока (по `docs/01-overview/SYSTEM_OVERVIEW.md`, `ARCHITECTURE.md`, `proxy/conf/default.conf`):
+Existing flow diagram (per `docs/01-overview/SYSTEM_OVERVIEW.md`, `ARCHITECTURE.md`, `proxy/conf/default.conf`):
 
 ```text
               Internet
@@ -44,7 +44,7 @@
         ┌────────┴────────┐
         │ nginx (proxy)   │  proxy/conf/default.conf
         │ Basic Auth      │  animastor.in = public (no auth)
-        │ (app.*, кроме   │  app.animastor.in = Basic Auth (общий пароль)
+        │ (app.*, except  │  app.animastor.in = Basic Auth (shared password)
         │  /library)      │  /api/ → backend:3000   /gpu/ → gpu-hub:5000
         └────────┬────────┘
                  │
@@ -52,72 +52,72 @@
    ▼             ▼                          ▼
 Backend       GPU Hub (5000)            Frontend SPA (static)
 (Express:3000)  gpu-hub/gpu-hub.js        frontends/app/dist
- backend/src     │                        (за Basic Auth nginx)
+ backend/src     │                        (behind Basic Auth nginx)
    │             ├── Redis queues animastor:queue:{type}
    │             │    animastor:running / processing
    │             ▼
    │          Workers (worker/worker/worker.cjs)
    │             └── ComfyUI (image/audio/video)
    │
-   ├── PostgreSQL 16 (каноническое состояние, schema.js)
+   ├── PostgreSQL 16 (canonical state, schema.js)
    ├── Redis 7 (operational state, AOF persist)
    ├── Filesystem
-   │     data/books/<bookId>/        ← исходная книга (vbook multi-file)
-   │     data/output/<buildId>/      ← артефакты (mp3/png/mp4)
-   └── AI API (aicredits/OpenRouter) ← агенты и TTS
+   │     data/books/<bookId>/        ← source book (vbook multi-file)
+   │     data/output/<buildId>/      ← artifacts (mp3/png/mp4)
+   └── AI API (aicredits/OpenRouter) ← agents and TTS
 ```
 
-Ключевой факт: **приложение НЕ аутентифицирует пользователей**. Nginx Basic Auth — единственный барьер, общий для всех. Express-приложение открыто для любого запроса, дошедшего до него.
+Key fact: **the application does NOT authenticate users**. Nginx Basic Auth is the only barrier, shared by all. The Express application is open to any request that reaches it.
 
 ---
 
 ## 3. Current Database
 
-Все таблицы описаны в `backend/src/storage/postgres/schema.js`. Схема создаётся **кодом** (никаких миграционных файлов; `runMigrations()` — идемпотентная серия `CREATE TABLE IF NOT EXISTS` + `ALTER ... ADD COLUMN IF NOT EXISTS`). Репозитории: `backend/src/storage/postgres/repositories/` (12 файлов).
+All tables are defined in `backend/src/storage/postgres/schema.js`. The schema is created **by code** (no migration files; `runMigrations()` — idempotent series of `CREATE TABLE IF NOT EXISTS` + `ALTER ... ADD COLUMN IF NOT EXISTS`). Repositories: `backend/src/storage/postgres/repositories/` (12 files).
 
-### Таблицы
+### Tables
 
-| Таблица | Роль | Ключ / примечание |
+| Table | Role | Key / Notes |
 |---|---|---|
-| `users` | **Дремлющая** — будущие аккаунты | `user_id UUID PK`, `email UNIQUE NOT NULL`, `password_hash`, `display_name`, `role`, `settings` (schema.js:10-20). **Не используется ни одним запросом в приложении.** |
-| `books` | Реестр книг | `book_id TEXT PK`, **`user_id UUID REFERENCES users`** (schema.js:25), `title`, `author`, `language`, `visibility`, `tags`, `metadata`. **user_id тоже не используется.** |
-| `book_snapshots` | Версии книги (diff) | FK `books(book_id) ON DELETE CASCADE`, `version`, `snapshot JSONB` |
-| `scenes` | Метаданные сцен | PK `(book_id, chapter_id, scene_id)`, `scene_hash`, `build_id`, `status`, `content_version`, `audio_config_version`, `is_dirty`, `dirty_unit_ids` |
-| `asset_states` | Per-layer состояние | PK `(book_id, chapter_id, scene_id, layer)`, `status`, `hash`, `version` |
-| `cache_entries` | Детерминистичный кэш | `asset_key UNIQUE`, `file_path`, `content_hash`, `status`, индексы по book/scene/hash |
-| `asset_dependencies` | Граф зависимостей | `(book_id, source_layer, target_layer)` |
-| `generation_tasks` | История задач GPU | `task_id`, `book_id`, `scene_id`, `task_type`, `status`, `worker_id`, `retry_count` |
-| `workers` | Реестр воркеров | `worker_id PK`, `worker_type`, `status` |
-| `reconciliation_events` | Лог самовосстановления | `book_id`, `event_type` |
-| `output_manifests` | Пер-build манифесты | `build_id`, `book_id`, `asset_type`, `UNIQUE(build_id, book_id, asset_type)` |
-| `image_units` | Storyboard IU | `book_id`, `build_id`, `chapter_id`, `scene_id`, `unit_id`, тайминги |
+| `users` | **Dormant** — future accounts | `user_id UUID PK`, `email UNIQUE NOT NULL`, `password_hash`, `display_name`, `role`, `settings` (schema.js:10-20). **Not used by any query in the application.** |
+| `books` | Book registry | `book_id TEXT PK`, **`user_id UUID REFERENCES users`** (schema.js:25), `title`, `author`, `language`, `visibility`, `tags`, `metadata`. **user_id also unused.** |
+| `book_snapshots` | Book versions (diff) | FK `books(book_id) ON DELETE CASCADE`, `version`, `snapshot JSONB` |
+| `scenes` | Scene metadata | PK `(book_id, chapter_id, scene_id)`, `scene_hash`, `build_id`, `status`, `content_version`, `audio_config_version`, `is_dirty`, `dirty_unit_ids` |
+| `asset_states` | Per-layer state | PK `(book_id, chapter_id, scene_id, layer)`, `status`, `hash`, `version` |
+| `cache_entries` | Deterministic cache | `asset_key UNIQUE`, `file_path`, `content_hash`, `status`, indexes on book/scene/hash |
+| `asset_dependencies` | Dependency graph | `(book_id, source_layer, target_layer)` |
+| `generation_tasks` | GPU task history | `task_id`, `book_id`, `scene_id`, `task_type`, `status`, `worker_id`, `retry_count` |
+| `workers` | Worker registry | `worker_id PK`, `worker_type`, `status` |
+| `reconciliation_events` | Self-healing log | `book_id`, `event_type` |
+| `output_manifests` | Per-build manifests | `build_id`, `book_id`, `asset_type`, `UNIQUE(build_id, book_id, asset_type)` |
+| `image_units` | Storyboard IU | `book_id`, `build_id`, `chapter_id`, `scene_id`, `unit_id`, timings |
 | `storyboard_elements` | (future) | FK `books` |
 | `audio_layers` | (future) | FK `books` |
-| `scene_assets` | **Путь истины для asset-файлов** | `book_id/chapter_id/scene_id/asset_type`, `path`, `build_id`, `scene_hash`, `status`, версии, `UNIQUE(book_id, chapter_id, scene_id, asset_type, build_id)` |
-| `ai_chat_sessions` | Плоские AI-сессии | `book_id`, `mode`, `messages JSONB` |
-| `chat_sessions` | Группировка чатов | `session_id UUID PK`, **`user_id REFERENCES users`** (тоже дремлющий), `book_id` |
-| `chat_messages` | Сообщения чата | `session_id FK`, `book_id`, `role`, `message` |
-| `book_events` | Аудит-лог книги | `book_id`, **`actor`** (TEXT — единственное существующее «кто сделал», заполняется местами), `event_type`, `details JSONB` |
-| `agent_sessions` | Сессии AI-импорта | `book_id`, `source_type`, `status` |
-| `agent_steps` | Шаги пайплайна | FK `agent_sessions`, `step_type` (CHECK-список) |
-| `agent_conversations` | AI-вызовы | FK `agent_sessions`/`agent_steps` |
+| `scene_assets` | **Source of truth for asset files** | `book_id/chapter_id/scene_id/asset_type`, `path`, `build_id`, `scene_hash`, `status`, versions, `UNIQUE(book_id, chapter_id, scene_id, asset_type, build_id)` |
+| `ai_chat_sessions` | Flat AI sessions | `book_id`, `mode`, `messages JSONB` |
+| `chat_sessions` | Chat grouping | `session_id UUID PK`, **`user_id REFERENCES users`** (also dormant), `book_id` |
+| `chat_messages` | Chat messages | `session_id FK`, `book_id`, `role`, `message` |
+| `book_events` | Book audit log | `book_id`, **`actor`** (TEXT — the only existing "who did it", populated in places), `event_type`, `details JSONB` |
+| `agent_sessions` | AI import sessions | `book_id`, `source_type`, `status` |
+| `agent_steps` | Pipeline steps | FK `agent_sessions`, `step_type` (CHECK list) |
+| `agent_conversations` | AI calls | FK `agent_sessions`/`agent_steps` |
 | `agent_messages` | prompt/response | FK `agent_conversations` |
-| `character_resolution_runs` | Coreference-ран | `book_id`, `run_type`, `character_registry_hash`, `source_hash` |
-| `character_window_candidates` | Кандидаты | FK run, `character_id` |
-| `sentence_resolutions` | Пословные резолюции | FK run, `scene_id` |
-| `character_mentions` | Меншены | FK run, `character_id` |
-| `character_aliases` | Индекс алиасов | PK `(book_id, alias_norm, character_id)` |
-| `book_source` | **SHA256 файла → book_id** | `file_hash UNIQUE`, `book_id`, `source_type` (schema.js:750-767). Используется для dedup импорта и списка книг. |
-| `book_generation_sessions` | Window-state импорта | `book_id`, `window_index`, `status` |
-| `generation_cancellations` | Tombstone отмены | `book_id PK`, `created_by` |
+| `character_resolution_runs` | Coreference runs | `book_id`, `run_type`, `character_registry_hash`, `source_hash` |
+| `character_window_candidates` | Candidates | FK run, `character_id` |
+| `sentence_resolutions` | Per-sentence resolutions | FK run, `scene_id` |
+| `character_mentions` | Mentions | FK run, `character_id` |
+| `character_aliases` | Alias index | PK `(book_id, alias_norm, character_id)` |
+| `book_source` | **SHA256 file → book_id** | `file_hash UNIQUE`, `book_id`, `source_type` (schema.js:750-767). Used for import dedup and book list. |
+| `book_generation_sessions` | Window-state import | `book_id`, `window_index`, `status` |
+| `generation_cancellations` | Cancellation tombstone | `book_id PK`, `created_by` |
 
-### Карта связей (текущая)
+### Relationship Map (Current)
 
 ```text
-books (book_id PK, user_id — дремлющий)
+books (book_id PK, user_id — dormant)
   ├── book_snapshots            (book_id FK, CASCADE)
-  ├── scenes                    (book_id в PK) ── scene_hash, build_id
-  ├── asset_states              (book_id в PK)
+  ├── scenes                    (book_id in PK) ── scene_hash, build_id
+  ├── asset_states              (book_id in PK)
   ├── cache_entries             (book_id + index)
   ├── asset_dependencies        (book_id)
   ├── generation_tasks          (book_id)
@@ -128,7 +128,7 @@ books (book_id PK, user_id — дремлющий)
   ├── audio_layers              (book_id FK)
   ├── scene_assets              (book_id + build_id + scene_hash)
   ├── ai_chat_sessions          (book_id)
-  ├── chat_sessions             (book_id, user_id — дремлющий)
+  ├── chat_sessions             (book_id, user_id — dormant)
   │     └── chat_messages       (session_id FK)
   ├── book_events               (book_id, actor)
   ├── agent_sessions            (book_id)
@@ -141,149 +141,149 @@ books (book_id PK, user_id — дремлющий)
   └── generation_cancellations  (book_id PK)
 ```
 
-### Выводы для workspace-модели
+### Conclusions for Workspace Model
 
-- **Естественно получат `workspace_id`**: `books`, `book_source` (и, для чистоты, `agent_sessions`/`book_events` — но они наследуют через book_id). Достаточно ввести `workspace_id` на `books` + индекс; все нижележащие таблицы получают его транзитивно через `book_id`.
-- **НЕ должны получать `user_id` напрямую**: `scenes`, `scene_assets`, `image_units`, `generation_tasks`, `cache_entries`, `asset_states` — их identity должен идти только через `book → workspace`. Прямой `user_id` здесь создал бы параллельную ownership-систему.
-- `book_events.actor` — существующий «кто»-атрибут; при введении аккаунтов его можно связать с `user_id` (мягко, без ломания).
-- `users` уже имеет несовместимую с концептом форму: `email NOT NULL` и нет `username`. При реализации потребуется миграция, а не использование «как есть».
+- **Will naturally receive `workspace_id`**: `books`, `book_source` (and for cleanliness, `agent_sessions`/`book_events` — but they inherit via book_id). Adding `workspace_id` to `books` + an index is sufficient; all underlying tables get it transitively through `book_id`.
+- **Should NOT receive `user_id` directly**: `scenes`, `scene_assets`, `image_units`, `generation_tasks`, `cache_entries`, `asset_states` — their identity should go only through `book → workspace`. Direct `user_id` here would create a parallel ownership system.
+- `book_events.actor` — existing "who" attribute; when accounts are introduced, it can be linked to `user_id` (gently, without breaking things).
+- `users` already has an incompatible shape: `email NOT NULL` and no `username`. Implementation will require a migration, not using it "as is."
 
 ---
 
 ## 4. BKN
 
-**Важно:** в кодовой базе нет сущности с именем «BKN». Термин встречается только в `ACCOUNT_WORKSPACE_CONCEPT.md` (строки 265, 922). Ближайшее, что существует и выполняет роль «canonical book knowledge» — это **VBook multi-file формат** (тот же, что в `MiM.vbook` — ZIP с `manifest.json`, `book.json`, `chapters/*.json`).
+**Important:** There is no entity named "BKN" in the codebase. The term appears only in `ACCOUNT_WORKSPACE_CONCEPT.md` (lines 265, 922). The closest thing that exists and serves as "canonical book knowledge" is the **VBook multi-file format** (the same one in `MiM.vbook` — ZIP with `manifest.json`, `book.json`, `chapters/*.json`).
 
-### Что является canonical state
+### What Is Canonical State
 
-1. **Manifest + book.json на диске** — источник истины для идентичности книги:
-   - `manifest.json` содержит `vbook_version`, `book_id`, **`build_id`**, `state`, `created_at` (`backend/src/book/lazy-book/draft.js:37-50`).
-   - `book.json` — структура книги (title, author, language, chapters, defaults).
-   - `chapters/*.json` — сцены/главы.
-   - `generation-routes.cjs:34-47` прямо говорит: **«manifest.json is the single source of truth for build_id»**; клиентский build_id не доверяется.
-2. **PostgreSQL** — каноническое состояние для: book_source (hash→book), scene_assets (asset registry), book_events (аудит), generation_tasks, agent_sessions, image_units, cache_entries.
-3. **Redis** — операционное состояние генерации (per-asset state, очереди, lease, прогресс).
+1. **Manifest + book.json on disk** — source of truth for book identity:
+   - `manifest.json` contains `vbook_version`, `book_id`, **`build_id`**, `state`, `created_at` (`backend/src/book/lazy-book/draft.js:37-50`).
+   - `book.json` — book structure (title, author, language, chapters, defaults).
+   - `chapters/*.json` — scenes/chapters.
+   - `generation-routes.cjs:34-47` explicitly states: **"manifest.json is the single source of truth for build_id"**; client build_id is not trusted.
+2. **PostgreSQL** — canonical state for: book_source (hash→book), scene_assets (asset registry), book_events (audit), generation_tasks, agent_sessions, image_units, cache_entries.
+3. **Redis** — operational generation state (per-asset state, queues, lease, progress).
 
-### Где связи книга ↔ сцены ↔ файлы ↔ generation state
+### Where Book ↔ Scenes ↔ Files ↔ Generation State Links Exist
 
-- Книга → сцены: **filesystem** `book.json` + `chapters/*.json` (lazy-book) И **PG** `scenes` (через book_id). Синхронизация — `book-sync.js` по `scene_hash`.
-- Сцена → артефакты: **PG** `scene_assets` (path, build_id, scene_hash) + **filesystem** `data/output/<buildId>/<bookId>_<chapterId>_<sceneId>.*`.
+- Book → scenes: **filesystem** `book.json` + `chapters/*.json` (lazy-book) AND **PG** `scenes` (via book_id). Synchronization via `book-sync.js` by `scene_hash`.
+- Scene → artifacts: **PG** `scene_assets` (path, build_id, scene_hash) + **filesystem** `data/output/<buildId>/<bookId>_<chapterId>_<sceneId>.*`.
 - Generation state: **Redis** per-asset state (`scene-state.js`), **PG** `scene_assets.status`, `generation_tasks`, `output_manifests`.
 
-### Точка для workspace ownership
+### Natural Point for Workspace Ownership
 
-Естественная точка — **`books` + `book_source`**. Всё наследуется через `book_id`. Никакой параллельной ownership-системы рядом с BKN создавать не нужно: `books.workspace_id` покрывает все дочерние сущности, так как каждый идентификатор сцены/ассета уже включает `book_id`.
+The natural point is **`books` + `book_source`**. Everything is inherited through `book_id`. No parallel ownership system needs to be created alongside BKN: `books.workspace_id` covers all child entities, since every scene/asset identifier already includes `book_id`.
 
 ---
 
 ## 5. Filesystem
 
-### Текущая структура
+### Current Structure
 
 ```text
 data/books/
   <bookId>/                    ← bookId = <title_slug>_<Date.now()> (paths.js:26-31)
     manifest.json              ← book_id, build_id, state
-    book.json                  ← структура (title, chapters)
-    source.txt                 ← исходный текст
+    book.json                  ← structure (title, chapters)
+    source.txt                 ← source text
     characters.json, mentions.json, bible.json,
     locations.json, voices.json, cover.json
-    chapters/*.json            ← сцены
+    chapters/*.json            ← scenes
 data/output/
   <buildId>/                   ← buildId = build_<bookId> (draft.js:36)
     <bookId>_<chapterId>_<sceneId>.mp3        ← scene audio
-    <bookId>_<chapterId>_<sceneId>.mp4        ← scene video (+ _gN.mp4 группы)
-    <bookId>_<chapterId>_<sceneId>_NNNN.mp3   ← аудио-чанки
-    <bookId>_<chapterId>_<sceneId>_iu<iuId>.png   ← изображения IU
-    <bookId>_<chapterId>_<sceneId>_pr<iuId>.png   ← превью
+    <bookId>_<chapterId>_<sceneId>.mp4        ← scene video (+ _gN.mp4 groups)
+    <bookId>_<chapterId>_<sceneId>_NNNN.mp3   ← audio chunks
+    <bookId>_<chapterId>_<sceneId>_iu<iuId>.png   ← IU images
+    <bookId>_<chapterId>_<sceneId>_pr<iuId>.png   ← previews
 ```
 
-Path-хелперы: `backend/src/storage/filesystem-store.js` (все имена файлов), `backend/src/book/lazy-book/paths.js` (пути книги).
+Path helpers: `backend/src/storage/filesystem-store.js` (all file names), `backend/src/book/lazy-book/paths.js` (book paths).
 
-### Идентификаторы в path
+### Identifiers in Paths
 
-- `data/books/<bookId>/` — top-level папка книги.
-- `data/output/<buildId>/` — top-level папка артефактов.
-- Внутри: `bookId_chapterId_sceneId[...]` в имени файла. **workspace/user в path отсутствует.**
+- `data/books/<bookId>/` — top-level book folder.
+- `data/output/<buildId>/` — top-level artifact folder.
+- Inside: `bookId_chapterId_sceneId[...]` in filenames. **No workspace/user in path.**
 
-### Как определяется путь
+### How Paths Are Determined
 
-- Книга: `getBookDir(bookId) = path.join(BOOKS_DIR, bookId)` — из `bookId` (URL param).
-- Артефакты: `path.join(OUTPUT_DIR, buildId, filename)` — `buildId` берётся из manifest (`getEffectiveBuildId`, `generation-routes.cjs:34-47`), но **при недоступном manifest использует клиентский `req.query.build_id` как fallback**.
+- Book: `getBookDir(bookId) = path.join(BOOKS_DIR, bookId)` — from `bookId` (URL param).
+- Artifacts: `path.join(OUTPUT_DIR, buildId, filename)` — `buildId` taken from manifest (`getEffectiveBuildId`, `generation-routes.cjs:34-47`), but **when manifest is unavailable, uses client `req.query.build_id` as fallback**.
 
-### Может ли frontend/worker влиять на path
+### Can Frontend/Worker Influence Paths
 
-- **Да, косвенно.** Media-serving роуты (`/api/v1/iu-image/:bookId/:chapterId/:sceneId/:iuId`, `/api/v1/scene/:bookId/:chapterId/:sceneId/audio|video|image|storyboard|status`, `/api/v1/preview/...`) строят путь **прямо из URL-параметров** без обращения к PG: `path.join(OUTPUT_DIR, buildId, `${bookId}_${chapterId}_${sceneId}_${iuId}.png`)` (`generation-routes.cjs:429`).
-- **`bookId` генерируется из title** (`generateBookId`, paths.js:26-31) — title приходит с клиента, значит часть bookId пользователь-контролируема (но bookId уникализируется timestamp'ом).
-- `/api/v1/chunk/:id/...` строит path из данных в Redis (`c.build_id`, `c.book_id`) — тоже без ownership-check.
+- **Yes, indirectly.** Media-serving routes (`/api/v1/iu-image/:bookId/:chapterId/:sceneId/:iuId`, `/api/v1/scene/:bookId/:chapterId/:sceneId/audio|video|image|storyboard|status`, `/api/v1/preview/...`) build paths **directly from URL parameters** without PG lookup: `path.join(OUTPUT_DIR, buildId, \`${bookId}_${chapterId}_${sceneId}_${iuId}.png\`)` (`generation-routes.cjs:429`).
+- **`bookId` is generated from title** (`generateBookId`, paths.js:26-31) — title comes from client, so part of bookId is user-controlled (but bookId is unique by timestamp).
+- `/api/v1/chunk/:id/...` builds path from Redis data (`c.build_id`, `c.book_id`) — also without ownership check.
 
-### Recovery с диска
+### Disk Recovery
 
-- `recoverAllBooksFromDisk` / `recoverChunksFromDisk` (`backend/src/helpers/redis-helpers.cjs`) — сканируют `data/books` и `data/output/<buildId>` и восстанавливают Redis-состояние.
-- `reconciliation-engine.js` (цикл на старте + периодический) сверяет PG↔Redis↔disk.
-- `book-sync.js` — синхронизирует JSON↔DB по `scene_hash`.
-- `collectRecentBooks` (`recent-books-routes.cjs`) — **disk scan всей директории книг** как fallback для списка книг.
+- `recoverAllBooksFromDisk` / `recoverChunksFromDisk` (`backend/src/helpers/redis-helpers.cjs`) — scan `data/books` and `data/output/<buildId>` and restore Redis state.
+- `reconciliation-engine.js` (startup loop + periodic) compares PG↔Redis↔disk.
+- `book-sync.js` — syncs JSON↔DB by `scene_hash`.
+- `collectRecentBooks` (`recent-books-routes.cjs`) — **disk scan of entire book directory** as fallback for book list.
 
-### Вывод для future `workspace_id → book_id → path`
+### Conclusion for Future `workspace_id → book_id → path`
 
-- Физический layout менять **не обязательно**: достаточно того, что **backend всегда резолвит workspace через PG до построения пути**.
-- Нужен единый helper `resolveBookPath(bookId)` / `resolveBuildDir(bookId)`, который перед path-строением проверяет ownership в PG.
-- Опасный fallback `req.query.build_id` в `getEffectiveBuildId` при введении auth должен либо умереть, либо пройти через ownership-check.
-- При желании глубокой изоляции (в будущем) — префикс `storage/workspaces/<workspace_id>/books/<book_id>/`, но это потребует миграции данных и восстановления (`recoverAllBooksFromDisk`). Рекомендуется **не делать на первом этапе** — ownership должен жить в PG, не в path.
+- Physical layout does **not need to change**: it is sufficient that **backend always resolves workspace through PG before building paths**.
+- Need a unified helper `resolveBookPath(bookId)` / `resolveBuildDir(bookId)` that checks ownership in PG before path construction.
+- The dangerous `req.query.build_id` fallback in `getEffectiveBuildId` must either die or pass through an ownership check when auth is introduced.
+- For deep isolation in the future — prefix `storage/workspaces/<workspace_id>/books/<book_id>/`, but this requires data migration and recovery (`recoverAllBooksFromDisk`). **Not recommended for the first phase** — ownership should live in PG, not in paths.
 
 ---
 
 ## 6. Current Identity / Authentication
 
-### Что существует
+### What Exists
 
-| Механизм | Где | Что защищает | Кто «пользователь» |
+| Mechanism | Location | Protects | "User" |
 |---|---|---|---|
-| **nginx Basic Auth** | `proxy/conf/default.conf:282-287` | Весь SPA `app.animastor.in` кроме `/library` | Единственный общий пароль (`.htpasswd`) — **не identity** |
+| **nginx Basic Auth** | `proxy/conf/default.conf:282-287` | Entire SPA `app.animastor.in` except `/library` | Single shared password (`.htpasswd`) — **not identity** |
 | **GPU_HUB_API_KEY** (X-API-Key) | `gpu-hub/gpu-hub.js:33-41`, `backend/src/runtime/gpu-dispatcher.js:64-68` | POST `/task`, DELETE `/queue/clear` | Service-to-service (backend → hub) |
-| **AI API keys** | `backend/src/services/ai-service.js`, `ai-caller.js` | Вызовы AI (aicredits/OpenRouter) | Сервисный ключ |
-| `GPU_HUB_API_KEY` при `null` | `gpu-hub.js:34` | — | **«no key configured = open access»** |
+| **AI API keys** | `backend/src/services/ai-service.js`, `ai-caller.js` | AI calls (aicredits/OpenRouter) | Service key |
+| `GPU_HUB_API_KEY` when `null` | `gpu-hub.js:34` | — | **"no key configured = open access"** |
 
-### Чего НЕТ (подтверждено поиском)
+### What Does NOT Exist (Confirmed by Search)
 
-- Нет сессий, cookies, JWT, Bearer, per-user token, OIDC, passport, bcrypt/argon2 зависимостей.
-- Нет auth-эндпоинтов (нет `/login`, `/register`, `/logout`).
-- Нет middleware auth в Express: цепочка `backend.cjs:63-89` = helmet → rate-limit → cors → json → request-id → логгер. Всё.
-- Frontend `api/client.ts` не отправляет никаких auth-заголовков — полагается на Basic Auth браузера.
-- Android: Basic Auth, вероятно, в OkHttp (проверить `frontends/android` — не исследовано в деталях, но отдельных токенов не найдено).
-- `users`-таблица существует, но **мертва**.
+- No sessions, cookies, JWT, Bearer, per-user tokens, OIDC, passport, bcrypt/argon2 dependencies.
+- No auth endpoints (no `/login`, `/register`, `/logout`).
+- No auth middleware in Express: chain `backend.cjs:63-89` = helmet → rate-limit → cors → json → request-id → logger. That's it.
+- Frontend `api/client.ts` sends no auth headers — relies on browser Basic Auth.
+- Android: Basic Auth likely in OkHttp (check `frontends/android` — not investigated in detail, but no separate tokens found).
+- `users` table exists but is **dead**.
 
-### Где будет подключаться middleware
+### Where Middleware Will Be Plugged In
 
-Естественная точка — сразу после `app.set('trust proxy')` / `helmet` в `backend/src/backend.cjs` (после строки 65), до rate-limit, либо отдельным `app.use('/api/', requireAuth)`.
+Natural point — right after `app.set('trust proxy')` / `helmet` in `backend/src/backend.cjs` (after line 65), before rate-limit, or as a separate `app.use('/api/', requireAuth)`.
 
 ---
 
 ## 7. IDs, Hashes and Build IDs
 
-| Identifier | Meaning | Created by | Stored in | Security role |
+| Identifier | Meaning | Created by | Stored in | Security Role |
 |---|---|---|---|---|
-| **`book_id`** | Идентичность книги (aggregate root) | Сервер: `title_slug + Date.now()` (`paths.js:26-31`); title приходит с клиента | `manifest.json.book_id`, `books.book_id PK`, dir `data/books/<bookId>/`, все таблицы | **Не auth**. Частично контролируется клиентом (title). |
-| **`build_id`** | Идентичность сборки/папки артефактов | Сервер: `build_<bookId>` (`draft.js:36`) | `manifest.json.build_id`, `scenes.build_id`, `scene_assets.build_id`, `output_manifests`, dir `data/output/<buildId>/` | **Не auth**. Fallback на клиентский `req.query.build_id` при недоступном manifest. |
-| **`chapter_id` / `scene_id` / `unit_id`** | Структура книги | Сервер: `prefix-<8hex>` (`paths.js:19-24`); frontend-превью `idgen.ts` (не авторитет) | JSON книги, `scenes`, `image_units`, имена файлов | Не auth. |
-| **`scene_hash`** | Стабильный SHA256 содержимого сцены | Сервер: `scene-hash.js` (canonicalize → sha256) | `scenes.scene_hash`, `scene_assets.scene_hash` | **Dedup/инвалидация кэша, НЕ авторизация.** |
-| **`content_hash` / `file_hash`** | SHA256 файла/артефакта | Сервер: crypto (`book_source-repo.js`, `cache_entries`) | `book_source.file_hash UNIQUE`, `cache_entries.content_hash` | **Dedup импорта, НЕ авторизация.** |
-| **`job_id`** | Идентичность GPU-задачи | Сервер: `${assetId}:${type}` (`job-schema.js`) | Redis (`animastor:job:`, `running`, `queue`), payload hub | Не auth. |
-| **`dispatch_id`** | Идентичность диспетчеризации (lease/dedup) | Сервер (dispatch-engine) | Redis `animastor:dispatch-lease:`, `animastor:job:<dispatch_id>:<job_id>`, `generation_tasks` | Не auth. |
-| **`asset_key`** (cache_entries) | Детерминистичный ключ кэша | Сервер | `cache_entries.asset_key UNIQUE` | Не auth. |
-| **`chunk id`** | Redis-ключ чанка сцены | Сервер | `animastor:chunk:<id>` | **Используется в URL `/api/v1/chunk/:id/*` — знание ID даёт доступ.** |
-| **`request_id`** | Трассировка запроса | Сервер (`backend.cjs:81`) | лог | Нет. |
-| **`user_id`** | (Дремлющий) | — | `users`, `books`, `chat_sessions` | Не используется. |
+| **`book_id`** | Book identity (aggregate root) | Server: `title_slug + Date.now()` (`paths.js:26-31`); title comes from client | `manifest.json.book_id`, `books.book_id PK`, dir `data/books/<bookId>/`, all tables | **Not auth.** Partially client-controlled (title). |
+| **`build_id`** | Build/artifact folder identity | Server: `build_<bookId>` (`draft.js:36`) | `manifest.json.build_id`, `scenes.build_id`, `scene_assets.build_id`, `output_manifests`, dir `data/output/<buildId>/` | **Not auth.** Fallback to client `req.query.build_id` when manifest unavailable. |
+| **`chapter_id` / `scene_id` / `unit_id`** | Book structure | Server: `prefix-<8hex>` (`paths.js:19-24`); frontend preview `idgen.ts` (non-authoritative) | Book JSON, `scenes`, `image_units`, filenames | Not auth. |
+| **`scene_hash`** | Stable SHA256 of scene content | Server: `scene-hash.js` (canonicalize → sha256) | `scenes.scene_hash`, `scene_assets.scene_hash` | **Dedup/cache invalidation, NOT authorization.** |
+| **`content_hash` / `file_hash`** | SHA256 of file/artifact | Server: crypto (`book_source-repo.js`, `cache_entries`) | `book_source.file_hash UNIQUE`, `cache_entries.content_hash` | **Import dedup, NOT authorization.** |
+| **`job_id`** | GPU task identity | Server: `${assetId}:${type}` (`job-schema.js`) | Redis (`animastor:job:`, `running`, `queue`), hub payload | Not auth. |
+| **`dispatch_id`** | Dispatch identity (lease/dedup) | Server (dispatch-engine) | Redis `animastor:dispatch-lease:`, `animastor:job:<dispatch_id>:<job_id>`, `generation_tasks` | Not auth. |
+| **`asset_key`** (cache_entries) | Deterministic cache key | Server | `cache_entries.asset_key UNIQUE` | Not auth. |
+| **`chunk id`** | Redis scene chunk key | Server | `animastor:chunk:<id>` | **Used in URL `/api/v1/chunk/:id/*` — knowing the ID grants access.** |
+| **`request_id`** | Request tracing | Server (`backend.cjs:81`) | log | None. |
+| **`user_id`** | (Dormant) | — | `users`, `books`, `chat_sessions` | Not used. |
 
-### Скрытое предположение «знаешь ID → получаешь ресурс»
+### Hidden Assumption "Know ID → Get Resource"
 
-**Да, существует**, и оно встроено в архитектуру: все media-serving и статусные роуты идентифицируют ресурс **только по ID в URL / Redis-ключе**, без какой-либо проверки. См. §12. Это фундаментально, потому что сейчас весь сервер — один «tenant».
+**Yes, this exists**, and it is built into the architecture: all media-serving and status routes identify resources **only by ID in URL / Redis key**, without any verification. See §12. This is fundamental because the entire server is currently a single "tenant."
 
 ---
 
 ## 8. Generation / GPU Hub
 
-### Путь задачи
+### Task Path
 
 ```text
 Frontend (POST /api/v1/generate | /book/:id/regenerate)
@@ -294,33 +294,33 @@ Frontend (POST /api/v1/generate | /book/:id/regenerate)
   → POST gpu-hub /task (gpu-hub.js:297-382)   ← requireApiKey
        payload: job_id, params, build_id, book_id, chapter_id, scene_id, stage, dispatch_id
   → Redis queue animastor:queue:{audio|image|video}
-  → Worker: beacon (регистрация) → GET /task/next (гpus-hub.js:388-472)
-       [worker БЕЗ ключа — достаточно знать URL]
-  → ComfyUI → результат (base64)
+  → Worker: beacon (registration) → GET /task/next (gpu-hub.js:388-472)
+       [Worker WITHOUT key — knowing URL is sufficient]
+  → ComfyUI → result (base64)
   → Worker POST /task/result (gpu-hub.js:478-585)
-  → gpu-hub сохраняет animastor:result:<build>:<book>:<chapter>:<scene>:<type> + POST /gpu/task/result → backend
+  → gpu-hub saves animastor:result:<build>:<book>:<chapter>:<scene>:<type> + POST /gpu/task/result → backend
   → task-handler → orchestrator.handle*Completed → save asset (filesystem) + scene_assets (PG) + Redis state
 ```
 
-### Где логично проверять authorization
+### Where Authorization Should Be Checked
 
-- **Единственное правильное место — backend route boundary** (`backend.cjs` middleware + роуты). Workers и gpu-hub **не должны** решать, имеет ли человек право на книгу — они работают на доверенных ID (`book_id`, `job_id`, `dispatch_id`), полученных от backend. Это уже так: hub передаёт `book_id/chapter_id/scene_id` прозрачно и никогда не проверяет владение.
-- Конкретные точки: middleware на `/api/`; ownership-check внутри роутов, строящих path; в `getEffectiveBuildId`.
-- GPU Hub и worker получат преимущество автоматически: если backend не выдаст задачу на чужую книгу, hub/worker никогда её не увидят.
+- **The single correct place is the backend route boundary** (`backend.cjs` middleware + routes). Workers and gpu-hub **should not** decide whether a person has the right to a book — they work with trusted IDs (`book_id`, `job_id`, `dispatch_id`) received from backend. This is already the case: hub passes `book_id/chapter_id/scene_id` transparently and never checks ownership.
+- Specific points: middleware on `/api/`; ownership-check inside routes that build paths; in `getEffectiveBuildId`.
+- GPU Hub and worker get protection automatically: if backend doesn't issue tasks for someone else's book, hub/worker will never see them.
 
-### Проблемы безопасности этой цепочки (см. §12)
+### Security Issues in This Chain (See §12)
 
-- `/task/next`, `/task/result`, `/task/error`, `/beacon` на gpu-hub **не защищены ключом** — любой, кто знает URL, может зарегистрироваться воркером и забрать задачу (включая промпты и вложенные изображения).
-- Результат передаётся base64 через публичный hub; TLS защищает канал, но не аутентифицирует воркера.
+- `/task/next`, `/task/result`, `/task/error`, `/beacon` on gpu-hub are **not protected by key** — anyone who knows the URL can register as a worker and take tasks (including prompts and embedded images).
+- Results are passed as base64 through the public hub; TLS protects the channel but does not authenticate the worker.
 
 ---
 
 ## 9. Redis
 
-### Найденные ключи (~100 паттернов)
+### Found Keys (~100 patterns)
 
-**Persistent-ish / semi-persistent операционное состояние (содержат book/scene identity):**
-- `animastor:chunk:<id>` — состояние сцены (book_id, chapter_id, scene_id, build_id, флаги готовности)
+**Persistent-ish / semi-persistent operational state (contain book/scene identity):**
+- `animastor:chunk:<id>` — scene state (book_id, chapter_id, scene_id, build_id, readiness flags)
 - `animastor:asset-state:*`, `animastor:scene-state:*`, `animastor:iu-progress:*`, `animastor:iu-in-flight:*`, `animastor:iu-registry:*`
 - `animastor:book:*`, `animastor:book-scenes:*`, `animastor:layer-config:*`, `animastor:gen-scope:*`, `animastor:vbook-scene-idx:*`
 - `animastor:cancelled-workers:*`, `animastor:generation-progress:*`, `animastor:runtime:persistence:*`, `animastor:snapshot:*`, `animastor:scope:*`
@@ -333,154 +333,154 @@ Frontend (POST /api/v1/generate | /book/:id/regenerate)
 - `animastor:worker:heartbeat:*`, `animastor:gpu-hub:workers`
 - `animastor:audio-merge-lock:*`, `animastor:video-lock:*`, `animastor:scene-lock:*`, `animastor:cleanup-lock`, `animastor:regenerate-lock`, `animastor:video-dedup:*`, `animastor:audio-scene-lock:*`, `animastor:circuit:*`, `animastor:failure:*`, `animastor:retry-budget:*`, `animastor:fairness:*`, `animastor:error-processed:*`, `animastor:result-processed:*`, `animastor:priority:queue`, `animastor:force-dispatch:*`, `animastor:scene-heartbeat:*`, `animastor:scene-video:*`, `animastor:audio-orch:*`, `animastor:video-orch:*`, `animastor:drift:*`, `animastor:stuck-scenes`, `animastor:runtime:scheduler:*`, `animastor:lease:*`, `animastor:lease-heartbeat:*`, `animastor:runtime:total-*`, `animastor:mode:*`, `animastor:prompt-profiles:*`, `animastor:pending-purge*`, `animastor:video-merge-lock:*`, `animastor:audio-scene-failsafe:*`
 
-### Выводы
+### Conclusions
 
-- **Redis не должен быть источником истины для ownership.** На данный момент ownership в Redis не живёт — там только `book_id` в операционных ключах. Но `animastor:chunk:*` хранит полную scene-identity и используется для построения media-путей (`/api/v1/chunk/:id/*`); если эти ключи потеряны — есть disk recovery.
-- **Обязательно остаётся в PostgreSQL** (при реализации accounts): users, workspaces, workspace_members, books.workspace_id, и все persistent-домены (book_source, scene_assets, generation_tasks, book_events, agent_sessions, image_units).
-- **Нельзя допустить**, чтобы session/anonymous-identity жили только в Redis — при рестарте Redis пользователь потерял бы доступ к своей работе (прямо противоречит концепту: «PostgreSQL is source of truth for identity»).
+- **Redis should not be the source of truth for ownership.** Currently no ownership lives in Redis — only `book_id` in operational keys. But `animastor:chunk:*` stores full scene identity and is used to build media paths (`/api/v1/chunk/:id/*`); if these keys are lost, disk recovery exists.
+- **Must remain in PostgreSQL** (when accounts are implemented): users, workspaces, workspace_members, books.workspace_id, and all persistent domains (book_source, scene_assets, generation_tasks, book_events, agent_sessions, image_units).
+- **Session/anonymous identity must not live only in Redis** — on Redis restart the user would lose access to their work (directly contradicts the concept: "PostgreSQL is source of truth for identity").
 
 ---
 
 ## 10. Frontend Integration Points
 
-Фронтенд: `frontends/app` (Preact, responsive: MobileShell/DesktopShell), публичный сайт `frontends/website` (auth не нужен), Android `frontends/android` (Kotlin, зеркалит Web).
+Frontend: `frontends/app` (Preact, responsive: MobileShell/DesktopShell), public site `frontends/website` (no auth needed), Android `frontends/android` (Kotlin, mirrors Web).
 
-### Места для user/workspace меню
+### Locations for User/Workspace Menu
 
-- **Desktop header**: `frontends/app/src/app/AppShell.tsx:163` — `<div class="desktop-header__actions">` содержит AI chip + Settings button. Сюда ложится кнопка User/Workspace (концепт: `[ User / Workspace ] [ Settings ]`), рядом с Settings.
-- **Mobile toolbar**: `AppShell.tsx:322-361` — `<header class="toolbar">` с AI chip + Settings. Сюда же — кнопка пользователя.
-- Концепт явно разделяет: User/Workspace («кто я/какой workspace») vs Settings («как себя ведёт приложение») — не смешивать (концепт §19).
+- **Desktop header**: `frontends/app/src/app/AppShell.tsx:163` — `<div class="desktop-header__actions">` contains AI chip + Settings button. User/Workspace button goes here (concept: `[ User / Workspace ] [ Settings ]`), next to Settings.
+- **Mobile toolbar**: `AppShell.tsx:322-361` — `<header class="toolbar">` with AI chip + Settings. User button goes here too.
+- Concept clearly separates: User/Workspace ("who am I / which workspace") vs Settings ("how the application behaves") — do not mix (concept §19).
 
-### API client / session
+### API Client / Session
 
-- `frontends/app/src/api/client.ts` — единственная точка всех запросов. `API_BASE = '/api/v1'` (относительный, hostname не зашит). Сейчас НЕ шлёт auth-заголовков. Здесь добавится проброс токена/cookie.
-- Хранение client state: `localStorage` (`animastor_desktop_panels`), `sessionStorage` (`animastor_ai_bubble_dismissed`), Preact-сигналы в `frontends/app/src/state/*` (`generateStore.ts`, `playbackStore.ts`, `positionStore.ts`).
-- **Будущая auth-session**: новый сигнал-store (по образцу `generateStore.ts`), персистент в localStorage. НО: по концепту браузер хранит только reconnect-credential, а не данные.
+- `frontends/app/src/api/client.ts` — single point for all requests. `API_BASE = '/api/v1'` (relative, hostname not hardcoded). Currently sends NO auth headers. Token/cookie passthrough will be added here.
+- Client state storage: `localStorage` (`animastor_desktop_panels`), `sessionStorage` (`animastor_ai_bubble_dismissed`), Preact signals in `frontends/app/src/state/*` (`generateStore.ts`, `playbackStore.ts`, `positionStore.ts`).
+- **Future auth-session**: new signal-store (modeled after `generateStore.ts`), persistent in localStorage. But per concept, browser stores only reconnect credential, not data.
 
-### Затронутые компоненты
+### Affected Components
 
-- `AppShell.tsx` (header/toolbar), `api/client.ts` (auth-заголовки), `SettingsPage.tsx` (место для Account-под-настроек), `router.ts` (новые маршруты /login, /account), `FilePage.tsx` (список книг станет workspace-scoped), `generateStore.ts` (bookId-открытие — потребует resolve через workspace). Android-зеркала: `frontends/android` (сверка по `docs/08-mobile-web-migration/*`).
+- `AppShell.tsx` (header/toolbar), `api/client.ts` (auth headers), `SettingsPage.tsx` (location for Account sub-settings), `router.ts` (new /login, /account routes), `FilePage.tsx` (book list becomes workspace-scoped), `generateStore.ts` (bookId opening — requires resolve via workspace). Android mirrors: `frontends/android` (cross-reference `docs/08-mobile-web-migration/*`).
 
 ---
 
 ## 11. API Authorization Map
 
-Все маршруты монтируются в `backend.cjs` (строки 156-171). Группы:
+All routes are mounted in `backend.cjs` (lines 156-171). Groups:
 
-| Endpoint/group | File | Current access | Future ownership check | Notes |
+| Endpoint/group | File | Current Access | Future Ownership Check | Notes |
 |---|---|---|---|---|
-| `GET /health`, `GET /metrics` | `backend.cjs` | public (nginx health) | нет | liveness |
-| `GET /api/v1/books` | `recent-books-routes.cjs:121` | **любой** — все книги сервера | **да (обязательно)** | сейчас = «shared sandbox» |
-| `GET /api/v1/book/:bookId` + `PUT/PATCH` | `core-routes.cjs` | любой с book_id | да | |
-| `DELETE /api/v1/book/:bookId` | `core-routes.cjs:745` | любой с book_id | да | также чистит Redis |
-| `POST /api/v1/book/load-vbook` | `import-routes.cjs:302` | любой | да (создание привязки к workspace) | bookId из bundle |
-| `POST /api/v1/book/import-txt` (+ bootstrap, resume, next-window, trigger) | `import-routes.cjs` | любой | да | создаёт bookId из title |
-| `POST /api/v1/generate` | `generation-routes.cjs:52` | любой с файлом | да | legacy full-book |
-| `POST /api/v1/book/:bookId/regenerate`, `cancel-generation`, `generate-next` | `book/generation-routes.cjs` | любой с book_id | да | |
-| `GET /api/v1/chunk/:id/*` (status, audio, image, video, storyboard) | `generation-routes.cjs:178,287,599,612,654` | **любой с chunk id** | да | path строится из Redis chunk |
-| `GET /api/v1/scene/:bookId/:chapterId/:sceneId/(audio\|video\|image\|storyboard\|status)` | `generation-routes.cjs:756,771,906,923,942` | **любой с ID в URL** | да | **path строится из URL params без PG lookup** |
-| `GET /api/v1/iu-image/...`, `/api/v1/preview/...` | `generation-routes.cjs:425,441` | **любой с ID** | да | прямой path.join из params |
-| `POST /api/v1/worker/heartbeat`, `GET /worker/status`, `GET /worker/counts` | `generation-routes.cjs:458,473,483` | любой | да (урезать до workspace-скоупа) | heartbeat от worker |
-| `GET /api/v1/book/:bookId/progress-stream` (SSE) | `generation-routes.cjs:544` | любой с book_id | да | |
-| `/api/v1/book/:bookId/agent-status` | `agent-routes.cjs` | любой | да | |
-| `/api/v1/book/:bookId/recover-placeholders` | `recovery-routes.cjs:20` | любой | да | |
-| `/api/v1/book/:bookId/export/*`, `/download` | `export-routes.cjs` | любой с book_id | да | отдаёт `.vbook` zip |
-| `/api/v1/book/:bookId/.../versions`, `/parse`, `/snapshot`, `/source`, `/cache` | `versions/parse/cache-routes.cjs` | любой | да | |
-| `POST /api/v1/book/:bookId/characters\|locations\|voices` (entity CRUD) | `entity-crud-routes.cjs` | любой | да | |
-| `/api/v1/ai/*`, `/api/v1/agent/*` | `ai-routes.cjs`, `debug-routes.cjs` | любой | да | AI-чат, сессии |
-| `/api/v1/workflows/*`, `/api/v1/connectors/*`, `/api/v1/config/*` | `workflow/connector/config-routes.cjs` | любой | нет (app-level) | конфиг-роуты |
-| `/gpu/task/result`, `/gpu/task/error` (backend, от gpu-hub) | в `generation-routes.cjs` | service (gpu-hub) | service | внутренние |
-| gpu-hub `/task` POST, `/queue/clear` DELETE | `gpu-hub.js` | **X-API-Key** | service | уже авторизовано |
-| gpu-hub `/task/next`, `/task/result`, `/task/error`, `/beacon`, `/health` | `gpu-hub.js` | **open** | worker-level | см. §12 |
-| nginx `/library`, статика `animastor.in` | `default.conf` | public | нет | публичный контент |
+| `GET /health`, `GET /metrics` | `backend.cjs` | public (nginx health) | no | liveness |
+| `GET /api/v1/books` | `recent-books-routes.cjs:121` | **anyone** — all server books | **yes (mandatory)** | currently = "shared sandbox" |
+| `GET /api/v1/book/:bookId` + `PUT/PATCH` | `core-routes.cjs` | anyone with book_id | yes | |
+| `DELETE /api/v1/book/:bookId` | `core-routes.cjs:745` | anyone with book_id | yes | also cleans Redis |
+| `POST /api/v1/book/load-vbook` | `import-routes.cjs:302` | anyone | yes (creates workspace binding) | bookId from bundle |
+| `POST /api/v1/book/import-txt` (+ bootstrap, resume, next-window, trigger) | `import-routes.cjs` | anyone | yes | creates bookId from title |
+| `POST /api/v1/generate` | `generation-routes.cjs:52` | anyone with file | yes | legacy full-book |
+| `POST /api/v1/book/:bookId/regenerate`, `cancel-generation`, `generate-next` | `book/generation-routes.cjs` | anyone with book_id | yes | |
+| `GET /api/v1/chunk/:id/*` (status, audio, image, video, storyboard) | `generation-routes.cjs:178,287,599,612,654` | **anyone with chunk id** | yes | path built from Redis chunk |
+| `GET /api/v1/scene/:bookId/:chapterId/:sceneId/(audio\|video\|image\|storyboard\|status)` | `generation-routes.cjs:756,771,906,923,942` | **anyone with ID in URL** | yes | **path built from URL params without PG lookup** |
+| `GET /api/v1/iu-image/...`, `/api/v1/preview/...` | `generation-routes.cjs:425,441` | **anyone with ID** | yes | direct path.join from params |
+| `POST /api/v1/worker/heartbeat`, `GET /worker/status`, `GET /worker/counts` | `generation-routes.cjs:458,473,483` | anyone | yes (restrict to workspace scope) | heartbeat from worker |
+| `GET /api/v1/book/:bookId/progress-stream` (SSE) | `generation-routes.cjs:544` | anyone with book_id | yes | |
+| `/api/v1/book/:bookId/agent-status` | `agent-routes.cjs` | anyone | yes | |
+| `/api/v1/book/:bookId/recover-placeholders` | `recovery-routes.cjs:20` | anyone | yes | |
+| `/api/v1/book/:bookId/export/*`, `/download` | `export-routes.cjs` | anyone with book_id | yes | serves .vbook zip |
+| `/api/v1/book/:bookId/.../versions`, `/parse`, `/snapshot`, `/source`, `/cache` | `versions/parse/cache-routes.cjs` | anyone | yes | |
+| `POST /api/v1/book/:bookId/characters\|locations\|voices` (entity CRUD) | `entity-crud-routes.cjs` | anyone | yes | |
+| `/api/v1/ai/*`, `/api/v1/agent/*` | `ai-routes.cjs`, `debug-routes.cjs` | anyone | yes | AI chat, sessions |
+| `/api/v1/workflows/*`, `/api/v1/connectors/*`, `/api/v1/config/*` | `workflow/connector/config-routes.cjs` | anyone | no (app-level) | config routes |
+| `/gpu/task/result`, `/gpu/task/error` (backend, from gpu-hub) | in `generation-routes.cjs` | service (gpu-hub) | service | internal |
+| gpu-hub `/task` POST, `/queue/clear` DELETE | `gpu-hub.js` | **X-API-Key** | service | already authorized |
+| gpu-hub `/task/next`, `/task/result`, `/task/error`, `/beacon`, `/health` | `gpu-hub.js` | **open** | worker-level | see §12 |
+| nginx `/library`, static `animastor.in` | `default.conf` | public | no | public content |
 
 ---
 
 ## 12. Security Risks Found During Reconnaissance
 
-Только фиксация; ничего не исправлено.
+Documentation only; nothing is fixed.
 
-1. **Media-serving без ownership-check** — path строится прямо из URL-параметров: `/api/v1/scene/:bookId/:chapterId/:sceneId/audio|video|image`, `/api/v1/iu-image/:bookId/...`, `/api/v1/preview/...` (`generation-routes.cjs:429,756,906,923,942`). Нет обращения к PG, нет проверки прав.
-2. **Chunk-роуты без ownership-check** — `/api/v1/chunk/:id/audio|image|video|storyboard|status` (`generation-routes.cjs:178-282,599-666`) — доступ по знанию Redis chunk id.
-3. **`GET /api/v1/books` возвращает все книги сервера** любому клиенту (`recent-books-routes.cjs:121-133`), включая disk-scan всего `data/books`.
-4. **`getEffectiveBuildId` fallback на клиентский `req.query.build_id`** при недоступном manifest (`generation-routes.cjs:34-47`) — клиент может повлиять на build-адресацию.
-5. **Worker-endpoints GPU hub без аутентификации**: `/beacon`, `/task/next`, `/task/result`, `/task/error` (`gpu-hub.js`) — любой, знающий URL, может зарегистрироваться воркером, забрать задачи (промпты + вложенные изображения) или поститать результаты.
-6. **`GPU_HUB_API_KEY` по умолчанию `null` = открытый `/task` и `/queue/clear`** (`gpu-hub.js:34`).
-7. **Публичные и внутренние эндпоинты на одном Express-сервере**: `/health`, `/metrics`, `/gpu/*` не выделены в отдельный сервис; при ошибке конфигурации nginx всё доступно напрямую.
-8. **Redis-ключи индексированы по `book_id` без workspace-скоупа** — при мульти-тенантности потребуется пересмотр, чтобы избежать cross-tenant утечек через угадывание book_id.
-9. **bookId частично клиент-контролируем** (title → slug в `paths.js:26-31`) — сам по себе не критично, но при отсутствии auth это лёгкий коллизионный вектор.
-10. **`users`-таблица и FK `books.user_id` существуют, но не используются** — риск «полуреализованной» security-модели, которую будущий код может принять за работающую.
-11. **`book_events.actor`** — неструктурированный «кто», без привязки к identity.
-12. **Basic Auth (общий пароль) не является identity** — вся защита приложения — один общий секрет в nginx.
+1. **Media-serving without ownership-check** — path built directly from URL parameters: `/api/v1/scene/:bookId/:chapterId/:sceneId/audio|video|image`, `/api/v1/iu-image/:bookId/...`, `/api/v1/preview/...` (`generation-routes.cjs:429,756,906,923,942`). No PG lookup, no permission check.
+2. **Chunk routes without ownership-check** — `/api/v1/chunk/:id/audio|image|video|storyboard|status` (`generation-routes.cjs:178-282,599-666`) — access by knowing Redis chunk id.
+3. **`GET /api/v1/books` returns all server books** to any client (`recent-books-routes.cjs:121-133`), including disk-scan of all of `data/books`.
+4. **`getEffectiveBuildId` falls back to client `req.query.build_id`** when manifest is unavailable (`generation-routes.cjs:34-47`) — client can influence build addressing.
+5. **Worker endpoints on GPU hub without authentication**: `/beacon`, `/task/next`, `/task/result`, `/task/error` (`gpu-hub.js`) — anyone who knows the URL can register as a worker, take tasks (prompts + embedded images), or post results.
+6. **`GPU_HUB_API_KEY` defaults to `null` = open `/task` and `/queue/clear`** (`gpu-hub.js:34`).
+7. **Public and internal endpoints on one Express server**: `/health`, `/metrics`, `/gpu/*` are not separated into a separate service; on nginx misconfiguration everything is directly accessible.
+8. **Redis keys indexed by `book_id` without workspace scope** — with multi-tenancy, review needed to prevent cross-tenant leaks via book_id guessing.
+9. **bookId is partially client-controlled** (title → slug in `paths.js:26-31`) — not critical on its own, but without auth it's a trivial collision vector.
+10. **`users` table and FK `books.user_id` exist but are unused** — risk of a "half-implemented" security model that future code may treat as working.
+11. **`book_events.actor`** — unstructured "who", without identity binding.
+12. **Basic Auth (shared password) is not identity** — the entire application protection is a single shared secret in nginx.
 
 ---
 
 ## 13. Proposed Integration Points
 
-### 13.1 Данные (PG)
+### 13.1 Data (PG)
 
 ```text
-users            → наполнить (username, password_hash, email optional, recovery_key_hash)
-workspaces       → новая таблица (id, name, owner_user_id, plan)
-workspace_members→ новая таблица (workspace_id, user_id, role)
-books            → + workspace_id  (миграция существующих книг в «legacy»/первый workspace)
-book_source      → наследует через book_id (или + workspace_id для прямых запросов)
-sessions/tokens  → новая таблица (или httpOnly cookie + server-side session в PG)
+users            → populate (username, password_hash, email optional, recovery_key_hash)
+workspaces       → new table (id, name, owner_user_id, plan)
+workspace_members → new table (workspace_id, user_id, role)
+books            → + workspace_id  (migrate existing books to "legacy"/first workspace)
+book_source      → inherits via book_id (or + workspace_id for direct queries)
+sessions/tokens  → new table (or httpOnly cookie + server-side session in PG)
 ```
 
-**НЕ добавлять user_id** в scenes/scene_assets/image_units/generation_tasks/cache_entries — только через `book → workspace`.
+**Do NOT add user_id** to scenes/scene_assets/image_units/generation_tasks/cache_entries — only through `book → workspace`.
 
 ### 13.2 Backend
 
-- **Auth middleware** в `backend.cjs` после helmet, перед роутами: resolver identity из cookie/token → `req.user`/`req.workspace`.
-- **Ownership resolver** (`requireWorkspaceBook(bookId)`) — единственная точка перед: media-serving, chunk-роутами, экспортом, удалением, генерацией, SSE, списком книг.
-- **`GET /api/v1/books`** → фильтр `WHERE workspace_id = $1`.
-- **`getEffectiveBuildId`** — убрать client-fallback либо проверять ownership до использования.
-- **Anonymous identity**: при первом запросе создавать анонимного user + temporary workspace; браузеру — reconnect-токен.
+- **Auth middleware** in `backend.cjs` after helmet, before routes: resolve identity from cookie/token → `req.user`/`req.workspace`.
+- **Ownership resolver** (`requireWorkspaceBook(bookId)`) — single point before: media-serving, chunk routes, export, deletion, generation, SSE, book list.
+- **`GET /api/v1/books`** → filter `WHERE workspace_id = $1`.
+- **`getEffectiveBuildId`** — remove client fallback or verify ownership before use.
+- **Anonymous identity**: on first request create anonymous user + temporary workspace; browser gets reconnect token.
 
 ### 13.3 Generation / GPU Hub
 
-- Оставить как есть: hub/worker работают на доверенных ID. Никаких ownership-проверок на hub.
-- Защитить worker-эндпоинты hub (worker токен) — отдельно от accounts, но до мульти-пользователей желательно.
-- В payload задачи уже есть `book_id`/`chapter_id`/`scene_id`/`stage`/`dispatch_id` — workspace_id можно добавить транзитивно (или не добавлять вовсе, т.к. backend уже проверил).
+- Leave as-is: hub/worker work with trusted IDs. No ownership checks on hub.
+- Protect worker endpoints on hub (worker token) — separate from accounts, but desirable before multi-user.
+- Task payload already has `book_id`/`chapter_id`/`scene_id`/`stage`/`dispatch_id` — workspace_id can be added transitively (or not at all, since backend already verified).
 
 ### 13.4 Filesystem
 
-- **НЕ** переезжать на `workspaces/<id>/books/...` на первом этапе. Вместо этого: ownership живёт в PG; `resolveBookDir()` ходит в PG.
-- Recovery (`recoverAllBooksFromDisk`, `collectRecentBooks`) — сканировать книги только workspace-скоупа (или вернуть list из PG и disk-scan оставить только как fallback под тем же фильтром).
+- Do **not** move to `workspaces/<id>/books/...` in the first phase. Instead: ownership lives in PG; `resolveBookDir()` queries PG.
+- Recovery (`recoverAllBooksFromDisk`, `collectRecentBooks`) — scan only workspace-scoped books (or return list from PG and leave disk-scan only as fallback under the same filter).
 
 ### 13.5 Frontend
 
-- Кнопка User/Workspace в `desktop-header__actions` + mobile toolbar.
-- `api/client.ts` — проброс токена.
-- Новый `authStore` (сигналы + localStorage) по образцу `generateStore`.
-- Маршруты `/login`, `/register`, `/account` в `router.ts`.
+- User/Workspace button in `desktop-header__actions` + mobile toolbar.
+- `api/client.ts` — token passthrough.
+- New `authStore` (signals + localStorage) modeled after `generateStore`.
+- Routes `/login`, `/register`, `/account` in `router.ts`.
 
 ---
 
 ## 14. Open Questions
 
-1. Что делать с существующей дремлющей `users`-таблицей (email NOT NULL, нет username) — мигрировать или заменить с нуля?
-2. Куда направить существующие книги (сейчас `books.user_id` пуст) при введении workspace — создавать «legacy»/системный workspace?
-3. Анонимная сессия: cookie (httpOnly) vs токен в localStorage; ротация; срок жизни.
-4. Как аутентифицировать Android (OkHttp Basic Auth сегодня) — переводить на токены?
-5. Срок жизни анонимного workspace, лимиты storage/GPU — до реализации нужны цифры.
-6. Как поступить с worker-эндпоинтами gpu-hub (`/task/next` и др.) — вводить ли worker-токены до accounts.
-7. `visibility` в `books` (private/public/shared) — это будущий механизм шаринга; как он соотносится с `workspace_members`.
-8. Публичная Library (`/library`) — остаётся вне accounts?
-9. Как workspace-scope-индексировать Redis-ключи без полной миграции ключей?
-10. Нужен ли `workspace_id` в `book_source` для прямых запросов или достаточно join через `book_id`.
+1. What to do with the existing dormant `users` table (email NOT NULL, no username) — migrate or replace from scratch?
+2. Where to route existing books (currently `books.user_id` is empty) when workspace is introduced — create a "legacy"/system workspace?
+3. Anonymous session: cookie (httpOnly) vs token in localStorage; rotation; lifetime.
+4. How to authenticate Android (OkHttp Basic Auth today) — migrate to tokens?
+5. Anonymous workspace lifetime, storage/GPU limits — numbers needed before implementation.
+6. What to do about worker endpoints on gpu-hub (`/task/next` etc.) — introduce worker tokens before accounts?
+7. `visibility` in `books` (private/public/shared) — future sharing mechanism; how does it relate to `workspace_members`.
+8. Public Library (`/library`) — remains outside accounts?
+9. How to workspace-scope Redis keys without full key migration?
+10. Is `workspace_id` needed in `book_source` for direct queries, or is joining through `book_id` sufficient?
 
 ---
 
 ## 15. Recommended Next Step
 
-**Минимальный первый этап (соответствует Phase 1+2 концепта), без изменения существующих маршрутов:**
+**Minimal first phase (corresponding to Phase 1+2 of the concept), without changing existing routes:**
 
-1. **Проектирование схемы** (не миграция!): документ с точными `ALTER`/`CREATE` для `users`, `workspaces`, `workspace_members`, `sessions`, `books.workspace_id` — с учётом текущего дремлющего `users`.
-2. **Рефакторинг адресации**: ввести в backend единый ownership-resolver, но **пока с hardcoded «single workspace»** — так, чтобы media-serving и chunk-роуты перестали строить path напрямую из URL, не меняя поведение.
-3. **Anonymous identity**: создать анонимного пользователя + temporary workspace при первом запросе + выдать reconnect-токен; привязать к нему все создаваемые книги.
-4. **`GET /api/v1/books` → workspace-scoped** (первый видимый и безопасный шаг).
-5. **UI**: кнопка User/Workspace в header (пока показывает «Anonymous / Temporary workspace» и заглушку «Keep my workspace»).
+1. **Schema design** (not migration!): document with exact `ALTER`/`CREATE` for `users`, `workspaces`, `workspace_members`, `sessions`, `books.workspace_id` — accounting for the current dormant `users`.
+2. **Addressing refactor**: introduce unified ownership-resolver in backend, but **with hardcoded "single workspace" for now** — so that media-serving and chunk routes stop building paths directly from URL, without changing behavior.
+3. **Anonymous identity**: create anonymous user + temporary workspace on first request + issue reconnect token; bind all created books to it.
+4. **`GET /api/v1/books` → workspace-scoped** (first visible and safe step).
+5. **UI**: User/Workspace button in header (for now shows "Anonymous / Temporary workspace" and a "Keep my workspace" stub).
 
-Этот шаг даёт работающий ownership-слой под капотом, сохраняет обратную совместимость всех текущих клиентов и не трогает генерацию/GPU Hub.
+This step provides a working ownership layer under the hood, preserves backward compatibility with all current clients, and does not touch generation/GPU Hub.
