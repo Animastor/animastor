@@ -1,23 +1,23 @@
-# Gap-анализ: «Animastor: Near Horizons» против текущего кода
+# Gap Analysis: "Animastor: Near Horizons" vs Current Code
 
-> Компаньон к документу-видению [`../Animastor_Близкие_горизонты.md`](../Animastor_Близкие_горизонты.md).
-> Задача: сверить каждый раздел видения с реальным кодом и показать, что уже
-> работает, что частично, а что вообще не начато. Язык — русский (текст
-> видения не переводился).
+> Companion to the vision document [`../Animastor_Близкие_горизонты.md`](../Animastor_Близкие_горизонты.md).
+> Task: compare each vision section with actual code and show what already
+> works, what's partial, and what hasn't started. Language — Russian (vision text
+> was not translated).
 >
-> Дата фиксации: 18 августа 2026.
+> Snapshot date: August 18, 2026.
 
-## Легенда статусов
+## Status Legend
 
-| Статус | Значение |
+| Status | Meaning |
 |---|---|
-| ✅ | Реализовано и работает (в проде) |
-| 🔶 | Частично: фундамент есть, ключевая деталь отсутствует |
-| ⛔ | Не начато / отсутствует |
+| ✅ | Implemented and working (in production) |
+| 🔶 | Partial: foundation exists, key detail missing |
+| ⛔ | Not started / missing |
 
 ---
 
-## 1. Сводная таблица по разделам документа
+## 1. Summary Table by Document Sections
 
 | § | Идея | Статус | Где в коде / комментарий |
 |---|---|---|---|
@@ -41,7 +41,7 @@
 
 ---
 
-## 2. Что уже реализовано — детали с путями
+## 2. What's Already Implemented — Details with Paths
 
 ### §1, §2, §5 — контрольная плоскость отделена от вычислений ✅
 
@@ -94,7 +94,7 @@ result/error-ключи по TTL (1 ч), `/queue/clear` (полный или п�
 
 ---
 
-## 3. Разрывы — что нужно, чтобы приблизиться к видению
+## 3. Gaps — What's Needed to Approach the Vision
 
 По приоритету самого документа (§17):
 
@@ -121,7 +121,7 @@ result/error-ключи по TTL (1 ч), `/queue/clear` (полный или п�
 
 ---
 
-## 4. Вывод и рекомендации
+## 4. Conclusions and Recommendations
 
 **Первый горизонт документа — это не план, а уже работающая архитектура.**
 Фундамент, который документ просит «заложить сейчас» (§15, §17), заложен:
@@ -143,7 +143,7 @@ Community compute и полностью локальная сборка — сл
 
 ---
 
-## 5. Связанные файлы
+## 5. Related Files
 
 - Видение: `docs/Animastor_Близкие_горизонты.md`
 - Архитектура: `ARCHITECTURE.md` (корень репо), `docs/01-overview/SYSTEM_MAP.md`
