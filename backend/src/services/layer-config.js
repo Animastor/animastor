@@ -35,6 +35,11 @@ const SCOPES = Object.freeze({
     WHOLE_BOOK:         'whole_book',
 });
 
+const ANALYSIS_MODES = Object.freeze({
+    SEQUENTIAL: 'sequential',
+    PARALLEL:   'parallel',
+});
+
 const KEY_PREFIX = 'animastor:layer-config:';
 const key = (bookId) => `${KEY_PREFIX}${bookId}`;
 
@@ -45,6 +50,18 @@ const DEFAULTS = Object.freeze({
 
     // VBook AI agent: how many scenes to generate per pass (1-5, default 3)
     chunk_size: 3,
+
+    // Parallel/Subagent AI Analysis (Reconnaissance plan, Milestone #1).
+    // 'sequential' = legacy behavior (extract_characters → voices → locations, in order).
+    // 'parallel'   = independent AI tasks (characters + locations) run concurrently,
+    //                voices still runs sequentially after characters (it consumes them).
+    // Default is sequential — existing users / configs must continue working unchanged.
+    analysis_mode: ANALYSIS_MODES.SEQUENTIAL,
+
+    // Max concurrent LLM requests in parallel analysis mode (1..8).
+    // Caps the number of in-flight AI calls regardless of how many tasks are scheduled.
+    // Sequential mode ignores this value (each step is awaited in turn).
+    analysis_parallelism: 3,
 
     // Per-worker generation timeouts (minutes). Controls GPU_TIMEOUT_MS.
     // Used by dispatch-engine to set per-type timeout for gpu-hub tasks.
@@ -66,10 +83,18 @@ function normalize(raw) {
 
         chunk_size: _clampInt(obj.chunk_size, 1, 5, DEFAULTS.chunk_size),
 
+        analysis_mode: _clampAnalysisMode(obj.analysis_mode),
+        analysis_parallelism: _clampInt(obj.analysis_parallelism, 1, 8, DEFAULTS.analysis_parallelism),
+
         audio_timeout_minutes: _clampInt(obj.audio_timeout_minutes, 5, 120, DEFAULTS.audio_timeout_minutes),
         image_timeout_minutes: _clampInt(obj.image_timeout_minutes, 5, 120, DEFAULTS.image_timeout_minutes),
         video_timeout_minutes: _clampInt(obj.video_timeout_minutes, 10, 180, DEFAULTS.video_timeout_minutes),
     };
+}
+
+function _clampAnalysisMode(value) {
+    if (value === ANALYSIS_MODES.PARALLEL) return ANALYSIS_MODES.PARALLEL;
+    return ANALYSIS_MODES.SEQUENTIAL;
 }
 
 function _clampInt(value, min, max, fallback) {
@@ -160,6 +185,13 @@ async function set(redis, bookId, partial) {
         chunk_size: partial.chunk_size !== undefined
             ? _clampInt(partial.chunk_size, 1, 5, current.chunk_size)
             : current.chunk_size,
+
+        analysis_mode: partial.analysis_mode !== undefined
+            ? _clampAnalysisMode(partial.analysis_mode)
+            : current.analysis_mode,
+        analysis_parallelism: partial.analysis_parallelism !== undefined
+            ? _clampInt(partial.analysis_parallelism, 1, 8, current.analysis_parallelism)
+            : current.analysis_parallelism,
 
         audio_timeout_minutes: partial.audio_timeout_minutes !== undefined
             ? _clampInt(partial.audio_timeout_minutes, 5, 120, current.audio_timeout_minutes)
@@ -253,6 +285,7 @@ async function restoreFromBooks(redis) {
 
 module.exports = {
     SCOPES,
+    ANALYSIS_MODES,
     DEFAULTS,
     key,
     get,

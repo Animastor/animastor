@@ -26,6 +26,27 @@ async function _readChunkSize(redis, bookId) {
     return layerConfig.getChunkSize(redis, bookId);
 }
 
+/**
+ * Read AI-analysis settings from layer-config for the given book.
+ * Falls back to legacy defaults (sequential, parallelism=3) when Redis / layer-config is unavailable.
+ * Used by the pipeline runner to decide between the sequential and parallel
+ * extraction paths (Reconnaissance plan, Milestone #1).
+ */
+async function _readAnalysisConfig(redis, bookId) {
+    try {
+        const cfg = await layerConfig.get(redis, bookId);
+        return {
+            analysis_mode: cfg?.analysis_mode || layerConfig.ANALYSIS_MODES.SEQUENTIAL,
+            analysis_parallelism: cfg?.analysis_parallelism || layerConfig.DEFAULTS.analysis_parallelism,
+        };
+    } catch (_) {
+        return {
+            analysis_mode: layerConfig.ANALYSIS_MODES.SEQUENTIAL,
+            analysis_parallelism: layerConfig.DEFAULTS.analysis_parallelism,
+        };
+    }
+}
+
 async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
     const _progress = progress || (() => {});
     const draft = lazyBook.loadDraftBook(bookId);
@@ -134,6 +155,9 @@ async function bootstrapWithAgentInner(bookId, draft, progress, publishProgress,
             progress_msg: '⟳ Анализирую текст: извлекаю персонажей и локации...',
         });
 
+        const analysisConfig = await _readAnalysisConfig(redis, bookId);
+        console.log(`[AGENT] bootstrapWithAgent: analysis_mode=${analysisConfig.analysis_mode}, parallelism=${analysisConfig.analysis_parallelism} for book ${bookId}`);
+
         const result = await pipelineRunner.runPipeline(sessionId, windowInfo.text, [], [], 0, _progress, 0, {
             rawWindowText: windowInfo.fullChapter,
             sourceOffsetBase: windowInfo.windowStartOffset,
@@ -145,6 +169,8 @@ async function bootstrapWithAgentInner(bookId, draft, progress, publishProgress,
             country: structure.country || null,
             epoch: structure.epoch || null,
             promptProfiles: profileOverride.resolvePromptProfiles(),
+            analysisMode: analysisConfig.analysis_mode,
+            analysisParallelism: analysisConfig.analysis_parallelism,
         });
 
         if (result.scenes.length === 0) {
@@ -647,7 +673,10 @@ async function _bootstrapNextWindowInner(bookId, progress, publishProgress, redi
         const nextWindowIndex = (windowData?.window_index || 0) + 1;
         const nextChapterIndex = windowInfo.chapterIndex;
 
-        const result = await pipelineRunner.runPipeline(sessionId, windowInfo.text, existingChars, existingLocs, nextWindowIndex, _progress, (windowData?.created_scenes || 0), {
+        const analysisConfig = await _readAnalysisConfig(redis, bookId);
+    console.log(`[AGENT] bootstrapNextWindow: analysis_mode=${analysisConfig.analysis_mode}, parallelism=${analysisConfig.analysis_parallelism} for book ${bookId}`);
+
+    const result = await pipelineRunner.runPipeline(sessionId, windowInfo.text, existingChars, existingLocs, nextWindowIndex, _progress, (windowData?.created_scenes || 0), {
             rawWindowText: windowInfo.fullChapter,
             sourceOffsetBase: windowInfo.windowStartOffset,
             publishProgress,
@@ -659,6 +688,8 @@ async function _bootstrapNextWindowInner(bookId, progress, publishProgress, redi
             country: structure?.country || null,
             epoch: structure?.epoch || null,
             promptProfiles: profileOverride.resolvePromptProfiles(),
+            analysisMode: analysisConfig.analysis_mode,
+            analysisParallelism: analysisConfig.analysis_parallelism,
         });
 
         const extraScenes = result.extraScenes || [];

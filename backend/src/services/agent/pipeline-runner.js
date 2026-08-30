@@ -11,6 +11,7 @@ const { updateSession, createSession, isSessionCancelled, isBookCancelled } = re
 const { PROGRESS_STAGES, MAX_WINDOW_CHARS, MAX_SCENES_PER_CHUNK, computeWindowChars } = require('../agent-prompts');
 const { mergeCharacterLists, isPlaceholderCharacter } = require('../../utils/character-identity');
 const { sanitizeEnvironment } = require('../../utils/snake-guard');
+const layerConfig = require('../layer-config');
 const pipelineSteps = require('./pipeline-steps');
 const { needsVideoActionReconciliation } = pipelineSteps;
 const { splitLongUnits } = require('./unit-splitter');
@@ -45,6 +46,27 @@ function flatVisualUnits(enrichedScenes) {
  */
 function _resolveChunkSize(options) {
     return Math.max(1, Math.min(5, (options && options.chunkSize) || MAX_SCENES_PER_CHUNK));
+}
+
+/**
+ * Resolve the AI-analysis mode for this run. Defaults to 'sequential' so
+ * legacy behavior is preserved when the option is absent.
+ */
+function _resolveAnalysisMode(options) {
+    const mode = options && options.analysisMode;
+    if (mode === layerConfig.ANALYSIS_MODES.PARALLEL) return layerConfig.ANALYSIS_MODES.PARALLEL;
+    return layerConfig.ANALYSIS_MODES.SEQUENTIAL;
+}
+
+/**
+ * Resolve the maximum number of concurrent LLM requests in parallel analysis
+ * mode. Sequential mode ignores this value. Clamped to [1, 8].
+ */
+function _resolveAnalysisParallelism(options) {
+    const raw = options && options.analysisParallelism;
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 1) return layerConfig.DEFAULTS.analysis_parallelism;
+    return Math.min(8, n);
 }
 
 /**
@@ -280,6 +302,11 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     const effectiveMaxChars = (options.chunkSize != null)
         ? computeWindowChars(effectiveChunkSize)
         : MAX_WINDOW_CHARS;
+
+    // Parallel/Subagent AI Analysis (Milestone #1). Defaults to 'sequential' so
+    // every existing user / config continues to behave identically.
+    const analysisMode = _resolveAnalysisMode(options);
+    const analysisParallelism = _resolveAnalysisParallelism(options);
 
     // ── Cancellation helper ──
     // Checks if the agent session has been marked as cancelled in the DB.

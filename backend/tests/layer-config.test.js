@@ -15,6 +15,8 @@ describe('Layer Config Service', () => {
         image_enabled: true,
         video_enabled: true,
         chunk_size: 3,
+        analysis_mode: 'sequential',
+        analysis_parallelism: 3,
         audio_timeout_minutes: 30,
         image_timeout_minutes: 30,
         video_timeout_minutes: 60,
@@ -103,5 +105,53 @@ describe('Layer Config Service', () => {
         expect(cfg).to.deep.equal(DEFAULTS);
         const got = await layerConfig.get(null, 'any');
         expect(got).to.deep.equal(DEFAULTS);
+    });
+
+    // ── Parallel/Subagent AI Analysis (Reconnaissance, Milestone #1) ──
+    describe('analysis_mode contract', () => {
+        it('defaults to sequential for unknown books (backwards compat)', async () => {
+            const cfg = await layerConfig.get(fakeRedis, 'unknown-book');
+            expect(cfg.analysis_mode).to.equal('sequential');
+            expect(cfg.analysis_parallelism).to.equal(3);
+        });
+
+        it('ANALYSIS_MODES exposes sequential and parallel values', () => {
+            expect(layerConfig.ANALYSIS_MODES).to.deep.equal({
+                SEQUENTIAL: 'sequential',
+                PARALLEL:   'parallel',
+            });
+        });
+
+        it('set accepts analysis_mode=parallel and roundtrips it', async () => {
+            const cfg = await layerConfig.set(fakeRedis, 'b-para', { analysis_mode: 'parallel' });
+            expect(cfg.analysis_mode).to.equal('parallel');
+            const got = await layerConfig.get(fakeRedis, 'b-para');
+            expect(got.analysis_mode).to.equal('parallel');
+        });
+
+        it('set rejects unknown analysis_mode values and falls back to sequential', async () => {
+            const cfg = await layerConfig.set(fakeRedis, 'b-bogus', { analysis_mode: 'turbo' });
+            expect(cfg.analysis_mode).to.equal('sequential');
+        });
+
+        it('set clamps analysis_parallelism to [1, 8]', async () => {
+            const cfgLow = await layerConfig.set(fakeRedis, 'b-p', { analysis_parallelism: 0 });
+            expect(cfgLow.analysis_parallelism).to.equal(1);
+            const cfgHigh = await layerConfig.set(fakeRedis, 'b-p', { analysis_parallelism: 999 });
+            expect(cfgHigh.analysis_parallelism).to.equal(8);
+        });
+
+        it('partial set preserves untouched analysis fields', async () => {
+            await layerConfig.set(fakeRedis, 'b-mix', { analysis_mode: 'parallel', analysis_parallelism: 4 });
+            const cfg = await layerConfig.set(fakeRedis, 'b-mix', { image_enabled: false });
+            expect(cfg.analysis_mode).to.equal('parallel');
+            expect(cfg.analysis_parallelism).to.equal(4);
+            expect(cfg.image_enabled).to.equal(false);
+        });
+
+        it('normalize() coerces a missing analysis_mode to sequential', () => {
+            const cfg = layerConfig.normalize({ chunk_size: 2 });
+            expect(cfg.analysis_mode).to.equal('sequential');
+        });
     });
 });
