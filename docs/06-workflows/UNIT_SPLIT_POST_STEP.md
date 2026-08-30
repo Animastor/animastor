@@ -1,71 +1,71 @@
 # Unit Split Post-Step — splitLongUnits
 
-## Задача
+## Task
 
-После того как AI создал Imagination Units (шаг `stepCreateUnits`), **проверить длительность каждого юнита** и, если какой-то юнит превышает ~20 секунд по аудио, **разделить его на несколько логических юнитов**.
+After AI creates Imagination Units (step `stepCreateUnits`), **check the duration of each unit** and, if any unit exceeds ~20 seconds of audio, **split it into multiple logical units**.
 
-## Мотивация
+## Motivation
 
-- AI создаёт юниты по смыслу («один акт воображения»), не думая о секундах — это правильно.
-- Но длинный unit (30-40 секунд звучания) попадёт в один видеочанк целиком, так как `selectWorkflowGroups` не может разбить один unit.
-- Решение: пост-шаг, который измеряет `estimated_duration_sec` каждого юнита и, при превышении лимита, reprompt AI с просьбой разделить.
+- AI creates units semantically ("one act of imagination"), without thinking about seconds — this is correct.
+- But a long unit (30-40 seconds of audio) ends up in a single video chunk, because `selectWorkflowGroups` cannot split a single unit.
+- Solution: a post-step that measures `estimated_duration_sec` of each unit and, when exceeding the limit, reprompts AI to split it.
 
-## Алгоритм
+## Algorithm
 
 ```
 Units from AI
   ↓
-Для каждого unit: estimateSpeechDurationSec(unit.text)
+For each unit: estimateSpeechDurationSec(unit.text)
   ↓
-Если все ≤ 20s → OK, возвращаем units
+If all ≤ 20s → OK, return units
   ↓
-Если есть unit > 20s → AI reprompt:
-  "Этот юнит содержит несколько актов воображения.
-   Раздели его на отдельные юниты, каждый — один визуальный кадр."
+If any unit > 20s → AI reprompt:
+  "This unit contains several acts of imagination.
+   Split it into separate units, each — one visual frame."
   ↓
-Проверить длительность снова
+Check duration again
   ↓
-Если всё ещё > 20s → второй reprompt
+If still > 20s → second reprompt
   ↓
-Если всё ещё > 20s → emergency fallback:
-  1. Split по предложениям (. ! ?)
-  2. Split по запятым (, ; —)
-  3. Split по словам (пополам)
+If still > 20s → emergency fallback:
+  1. Split by sentences (. ! ?)
+  2. Split by commas (, ; —)
+  3. Split by words (in half)
   ↓
-Вернуть итоговый массив units
+Return final units array
 ```
 
-## Разделение ответственности
+## Responsibility Split
 
-| Компонент | Задача |
+| Component | Task |
 |---|---|
-| AI (unit_splitter.md) | Смысловое разделение: один акт воображения → несколько |
-| Код (unit-splitter.js) | Измерение, проверка, retry, fallback |
-| Pipeline (pipeline-runner.js) | Вызов splitLongUnits между `stepCreateUnits` и `stepCreateVisuals` |
+| AI (unit_splitter.md) | Semantic splitting: one imagination act → multiple |
+| Code (unit-splitter.js) | Measurement, checking, retry, fallback |
+| Pipeline (pipeline-runner.js) | Calling splitLongUnits between `stepCreateUnits` and `stepCreateVisuals` |
 
-## Файлы
+## Files
 
-- `backend/ai/rules/unit_splitter.md` — AI prompt для разделения
-- `backend/src/services/agent/unit-splitter.js` — реализация
-- `backend/src/services/agent-prompts.js` — регистрация prompt (RULES)
-- `backend/src/services/agent/pipeline-runner.js` — точка вызова
+- `backend/ai/rules/unit_splitter.md` — AI prompt for splitting
+- `backend/src/services/agent/unit-splitter.js` — implementation
+- `backend/src/services/agent-prompts.js` — prompt registration (RULES)
+- `backend/src/services/agent/pipeline-runner.js` — call site
 
-## Константы
+## Constants
 
-- `MAX_UNIT_DURATION_SEC = 20` — максимальная длительность одного unit (в секундах)
-- `MAX_UNIT_SPLIT_RETRIES = 2` — сколько раз пробовать AI reprompt
+- `MAX_UNIT_DURATION_SEC = 20` — maximum duration of a single unit (in seconds)
+- `MAX_UNIT_SPLIT_RETRIES = 2` — how many times to retry AI reprompt
 
 ## Emergency fallback (chain)
 
-Если AI не смог разделить unit (2 retries):
+If AI couldn't split a unit (2 retries):
 
-1. **Sentence-split**: разбить по `[.!?]+` с пробелом после. Каждое предложение → отдельный unit. Если предложение > 20s → не дробить, оставить как есть (крайне редкий случай).
-2. **Comma-split**: разбить по `[,;—]+` (с опциональным пробелом после). Em-dash часто без пробела. Каждый сегмент → unit.
-3. **Word-count split**: разбить по `\s+` на две равные половины по словам.
+1. **Sentence-split**: split by `[.!?]+` with trailing space. Each sentence → separate unit. If sentence > 20s → don't split, leave as-is (extremely rare case).
+2. **Comma-split**: split by `[,;—]+` (with optional trailing space). Em-dash often without space. Each segment → unit.
+3. **Word-count split**: split by `\s+` into two equal halves by word count.
 
-## Интеграция в pipeline
+## Pipeline integration
 
-`splitLongUnits` вызывается в `pipeline-runner.js` **после** `stepCreateUnits` и **до** `stepCreateVisuals`:
+`splitLongUnits` is called in `pipeline-runner.js` **after** `stepCreateUnits` and **before** `stepCreateVisuals`:
 
 ```javascript
 const units = await pipelineSteps.stepCreateUnits(sessionId, scene, ...);
@@ -73,13 +73,13 @@ const splitUnits = await splitLongUnits(sessionId, scene, units, ...);
 const visualUnits = await pipelineSteps.stepCreateVisuals(sessionId, scene, splitUnits, ...);
 ```
 
-## Результаты тестирования
+## Test results
 
-- **19 тестов**, все проходят ✅
-- `getUnitDurationSec` — 3 теста
-- `findLongUnits` — 3 теста
-- `splitBySentences` — 2 теста
-- `splitByCommas` — 4 теста (запятые, точки с запятой, em-dash, без разделителей)
-- `splitByWordCount` — 2 теста
-- `emergencySplit` — 2 теста (narration, dialogue audio preservation)
-- `splitLongUnits` (no AI) — 3 теста (short units, empty, null)
+- **19 tests**, all passing ✅
+- `getUnitDurationSec` — 3 tests
+- `findLongUnits` — 3 tests
+- `splitBySentences` — 2 tests
+- `splitByCommas` — 4 tests (commas, semicolons, em-dash, no delimiters)
+- `splitByWordCount` — 2 tests
+- `emergencySplit` — 2 tests (narration, dialogue audio preservation)
+- `splitLongUnits` (no AI) — 3 tests (short units, empty, null)

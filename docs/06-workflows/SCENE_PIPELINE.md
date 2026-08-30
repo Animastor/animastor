@@ -2,72 +2,73 @@
 
 ## Core Principle
 
-**AI делает литературную работу. Код делает техническую работу.**
+**AI does the literary work. Code does the technical work.**
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                      LLM (AI Agent)                      │
 │                                                         │
-│  Задача: "Прочитай текст и разбей на естественные        │
-│           нарративные эпизоды (сцены)"                   │
+│  Task: "Read the text and split into natural             │
+│         narrative episodes (scenes)"                     │
 │                                                         │
-│  НЕ ЗНАЕТ про: лимиты, окна, кэш, количество сцен       │
+│  DOES NOT KNOW about: limits, windows, cache,           │
+│  number of scenes                                        │
 └──────────────────────┬──────────────────────────────────┘
-                       │ возвращает N сцен
+                       │ returns N scenes
                        ▼
 ┌─────────────────────────────────────────────────────────┐
-│                   Pipeline (код)                         │
+│                   Pipeline (code)                        │
 │                                                         │
-│  1. Берёт первые K сцен (chunk_size из настроек)         │
-│  2. Отправляет их на юниты + визуалы                     │
-│  3. Остальные (N − K) → cached_scenes в БД               │
-│  4. На следующем шаге: если есть cached_scenes →         │
-│     обрабатывает их без вызова AI                        │
-│  5. Когда кэш пуст → новый вызов AI со следующим         │
-│     участком текста                                      │
+│  1. Takes first K scenes (chunk_size from settings)      │
+│  2. Sends them for units + visuals                       │
+│  3. Rest (N − K) → cached_scenes in DB                  │
+│  4. Next step: if cached_scenes exist →                  │
+│     processes them without AI call                       │
+│  5. When cache empty → new AI call with next             │
+│     text segment                                        │
 └─────────────────────────────────────────────────────────┘
 ```
 
-## Разделение ответственности
+## Responsibility Split
 
-### LLM (агент) — только литературная задача
+### LLM (agent) — literary task only
 
-- Читает фрагмент исходного текста (обычно ~5500 символов)
-- Разбивает на **естественные нарративные эпизоды**
-- Критерии сцены: одно место, одно время, одни участники, один coherent episode
-- **Не имеет никаких ограничений** на количество сцен
-- Не знает про chunk_size, кэш, окна, video чанки — ничего
+- Reads a fragment of source text (typically ~5500 characters)
+- Splits into **natural narrative episodes**
+- Scene criteria: one location, one time, one set of participants, one coherent episode
+- **Has no constraints** on number of scenes
+- Doesn't know about chunk_size, cache, windows, video chunks — nothing
 
-### Pipeline (код) — управление данными
+### Pipeline (code) — data management
 
-| Этап | Что происходит |
-|------|---------------|
-| **Scene creation** | Вызов AI → получение N сцен |
-| **Capping** | Берём первые `chunkSize` (обычно 2) для немедленной обработки |
-| **Caching** | Остальные N−k сцен → `window_data.cached_scenes` в PostgreSQL |
-| **Processing** | Для каждой сцены: title/location.id/environment-override (в шаге создания) → units → split long units → visuals → reconciliation |
-| **Cache drain** | На следующем шаге: если есть `cached_scenes`, обрабатываем их без AI |
-| **Next window** | Когда кэш пуст и есть ещё текст → новый вызов AI |
+| Step | What happens |
+|------|-------------|
+| **Scene creation** | AI call → get N scenes |
+| **Capping** | Take first `chunkSize` (typically 2) for immediate processing |
+| **Caching** | Remaining N−k scenes → `window_data.cached_scenes` in PostgreSQL |
+| **Processing** | For each scene: title/location.id/environment-override (at creation step) → units → split long units → visuals → reconciliation |
+| **Cache drain** | Next step: if `cached_scenes` exist, process them without AI |
+| **Next window** | When cache empty and text remains → new AI call |
 
-## Поток данных
+## Data Flow
 
 ```
 Window 1:
-  Исходный текст (5500 chars)
+  Source text (5500 chars)
        │
        ▼
   AI → 5 natural scenes
        │
        ├── [scene 1, scene 2] → units → visuals → save to book
        │
-       └── [scene 3, scene 4, scene 5] → cached_scenes в БД
+       └── [scene 3, scene 4, scene 5] → cached_scenes in DB
 
 Window 2:
   cached_scenes = [scene 3, scene 4, scene 5]
        │
        ├── [scene 3, scene 4] → units → visuals → save to book
        │
-       └── [scene 5] → cached_scenes в БД
+       └── [scene 5] → cached_scenes in DB
 
 Window 3:
   cached_scenes = [scene 5]
@@ -76,46 +77,46 @@ Window 3:
 
 Window 4:
   cached_scenes = []
-  remaining_text = есть ещё
+  remaining_text = text remains
        │
        ▼
-  AI → следующий участок текста → ...
+  AI → next text segment → ...
 ```
 
-## Экономия токенов
+## Token savings
 
-Без кэша: каждое окно = 1 AI вызов на сцены.
-С кэшем: 1 AI вызов порождает несколько окон обработки.
+Without cache: each window = 1 AI call for scenes.
+With cache: 1 AI call generates multiple processing windows.
 
 ```
-Пример: книга 30 000 символов, chunk_size=2, AI делает ~5 сцен/окно
+Example: book 30,000 characters, chunk_size=2, AI makes ~5 scenes/window
 
-Без кэша:  5 окон × 1 AI = 5 AI вызовов
-С кэшем:   2 AI вызова + 3 processCachedScenes (0 AI)
-Экономия:  ~60% AI вызовов
+Without cache:  5 windows × 1 AI = 5 AI calls
+With cache:     2 AI calls + 3 processCachedScenes (0 AI)
+Savings:        ~60% AI calls
 ```
 
-## Ключевые файлы
+## Key files
 
-| Файл | Роль |
+| File | Role |
 |------|------|
-| `ai/rules/scenes.md` | Промпт для AI — чисто литературный, без лимитов |
-| `services/agent/pipeline-steps.js` | `stepCreateScenes()` — вызывает AI |
-| `services/agent/pipeline-runner.js` | `runPipeline()` — оркестратор, `processCachedScenes()` — кэш |
-| `services/agent/bootstrap.js` | `bootstrapWithAgent()` и `bootstrapNextWindow()` — управление окнами |
+| `ai/rules/scenes.md` | AI prompt — purely literary, no limits |
+| `services/agent/pipeline-steps.js` | `stepCreateScenes()` — calls AI |
+| `services/agent/pipeline-runner.js` | `runPipeline()` — orchestrator, `processCachedScenes()` — cache |
+| `services/agent/bootstrap.js` | `bootstrapWithAgent()` and `bootstrapNextWindow()` — window management |
 | `services/agent-prompts.js` | `MAX_SCENES_PER_CHUNK`, `CHARS_PER_SCENE`, `MAX_WINDOW_CHARS` |
 
-## Структура cached_scenes в БД
+## cached_scenes structure in DB
 
-Сохраняется в `agent_sessions.window_data` как JSON-поле `cached_scenes`:
+Stored in `agent_sessions.window_data` as JSON field `cached_scenes`:
 
 ```json
 {
   "window_index": 0,
   "cached_scenes": [
     {
-      "title": "Странное видение Берлиоза",
-      "text": "И тут знойный воздух сгустился перед ним...",
+      "title": "Берлиоз's Strange Vision",
+      "text": "And then the scorching air thickened before him...",
       "type": "narration",
       "characters_present": ["mikhail_berlioz"],
       "location": { "id": "patriarch_ponds" }
@@ -127,20 +128,20 @@ Window 4:
 }
 ```
 
-## Технические константы (не влияют на AI)
+## Technical constants (don't affect AI)
 
-Эти константы определяют размер окна текста для LLM и количество сцен,
-обрабатываемых за один проход. Они **не влияют** на то, как AI делит сцены.
-Размер сцены определяется агентом исходя из литературной логики, а не
-фиксированным количеством символов.
+These constants define the text window size for the LLM and the number of scenes
+processed per pass. They **do not affect** how AI splits scenes.
+Scene size is determined by the agent based on literary logic, not
+a fixed number of characters.
 
-| Константа | Значение | Зачем |
+| Constant | Value | Purpose |
 |-----------|----------|-------|
-| `MAX_SCENES_PER_CHUNK` | 2 | Сколько готовых сцен одновременно передаётся на дальнейшую обработку |
-| `CHARS_PER_SCENE` | 2700 | Технический множитель для расчёта `MAX_WINDOW_CHARS` |
-| `MAX_WINDOW_CHARS` | 5500 | Размер текстового окна, передаваемого LLM за один вызов |
-| лимит сцен | нет | AI создаёт столько сцен, сколько естественно вытекает из текста |
+| `MAX_SCENES_PER_CHUNK` | 2 | How many ready scenes are simultaneously sent for further processing |
+| `CHARS_PER_SCENE` | 2700 | Technical multiplier for calculating `MAX_WINDOW_CHARS` |
+| `MAX_WINDOW_CHARS` | 5500 | Text window size passed to LLM per call |
+| scene limit | none | AI creates as many scenes as naturally flow from the text |
 
-## История изменений
+## Changelog
 
-- **2026-07-29**: Убран последний искусственный лимит из промпта AI. AI не знает про `%MAX_SCENES%`. Добавлен `processCachedScenes()` для обработки кэшированных сцен без вызова AI. `cached_scenes` сохраняется в `window_data` PostgreSQL.
+- **2026-07-29**: Removed last artificial limit from AI prompt. AI doesn't know about `%MAX_SCENES%`. Added `processCachedScenes()` for processing cached scenes without AI call. `cached_scenes` stored in `window_data` PostgreSQL.
