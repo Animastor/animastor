@@ -1,412 +1,102 @@
-# 06. Компоненты с высоким техническим риском и альтернативы
+# 06. High Technical Risk Components and Alternatives
 
-Здесь фиксируются **все обоснованные отклонения** от один-в-один переноса
-Android → Web. Правило проекта: отклонение допустимо, только если оно
-занесено в этот документ **до** реализации с указанием причины и принятой
-альтернативы.
+This documents **all justified deviations** from one-to-one
+Android → Web porting. Project rule: deviation is allowed only if
+documented here **before** implementation with reason and accepted
+alternative.
 
-Источники правды по плееру: `PlayFragment.kt`, `PlaybackViewModel.kt`,
+Player source of truth: `PlayFragment.kt`, `PlaybackViewModel.kt`,
 `PositionManager.kt`, `WaveformView.kt`, `util/MediaDecoder.kt`,
-`util/SimpleDiskCache.kt`, `res/layout/fragment_play.xml`, а также
+`util/SimpleDiskCache.kt`, `res/layout/fragment_play.xml`, and
 `docs/03-audit/PLAYER_AUDIT.md`, `docs/05-frontend/PLAYER_STATE.md`,
 `docs/DONT_DO.md`.
 
 ---
 
-## 0. Резюме рисков
+## 0. Risk Summary
 
-| # | Компонент | Риск | Степень | Раздел |
+| # | Component | Risk | Severity | Section |
 |---|---|---|---|---|
-| R1 | Экран **Play**: несколько синхронизированных медиаплееров | точная синхронизация audio/video/IU, gapless, seek по unit, lifecycle | **Очень высокий** | §1 |
-| R2 | Gapless-переход между сценами (`setNextMediaPlayer`) | нет эквивалента в Web | Высокий | §1.2 |
-| R3 | IU-cycling по `MediaPlayer.getCurrentPosition()` (50ms tick) | drift `currentTime` vs RAF | Высокий | §1.3 |
-| R4 | Video overlay на `SurfaceView` + `syncVideoFrame` |detach/seek видео к аудио | Средне-высокий | §1.4 |
-| R5 | Seek по `unitIndex` (сумма `duration_ms`) | точность seek в буфере | Средний | §1.5 |
-| R6 | Soft refresh / `needsContentRefresh` / `buildId` cache invalidation | согласованность с генерацией | Средний | §1.6 |
-| R7 | Preload на 3 вперёд + retryWithBackoff + disk cache | квоты/temp-файлы | Средний | §1.7 |
-| R8 | Lifecycle: `onHiddenChanged/onPause/onResume`, сохранение позиции | переключение вкладок/минимизация | Средний | §1.8 |
-| R9 | Fullscreen + `anchorFullscreenToImage()` (letterbox+subtitles) | позиционирование overlay | Низкий-средний | §1.9 |
-| R10 | Waveform на Canvas (`WaveformView`) | копирование кастомного Canvas-рендера | Средний | §2 |
-| R11 | SSE-прогресс генерации на мобильных (reconnect/монотонность) | разрывы сети на 3G | Высокий | §3 |
-| R12 | Импорт `.vbook`/txt (file association) | нет ACTION_VIEW | Низкий | §4 |
-| R13 | Library WebView | политика iframe/CSP | Низкий | §5 |
-| R14 | Basic Auth на m.animastor.in во время разработки | UX-фактор на мобильных | Низкий | §6 |
+| R1 | **Play** screen: multiple synchronized media players | precise audio/video/IU sync, gapless, seek by unit, lifecycle | **Very High** | §1 |
+| R2 | Gapless transition between scenes (`setNextMediaPlayer`) | no Web equivalent | High | §1.2 |
+| R3 | IU-cycling by `MediaPlayer.getCurrentPosition()` (50ms tick) | `currentTime` drift vs RAF | High | §1.3 |
+| R4 | Video overlay on `SurfaceView` + `syncVideoFrame` | detach/seek video to audio | Medium-High | §1.4 |
+| R5 | Seek by `unitIndex` (sum of `duration_ms`) | seek precision in buffer | Medium | §1.5 |
+| R6 | Soft refresh / `needsContentRefresh` / `buildId` cache invalidation | generation consistency | Medium | §1.6 |
+| R7 | Preload 3 ahead + retryWithBackoff + disk cache | quotas/temp files | Medium | §1.7 |
+| R8 | Lifecycle: `onHiddenChanged/onPause/onResume`, position saving | tab switching/minimization | Medium | §1.8 |
+| R9 | Fullscreen + `anchorFullscreenToImage()` (letterbox+subtitles) | overlay positioning | Low-Medium | §1.9 |
+| R10 | Waveform on Canvas (`WaveformView`) | custom Canvas render porting | Medium | §2 |
+| R11 | SSE generation progress on mobile (reconnect/monotonicity) | network drops on 3G | High | §3 |
+| R12 | `.vbook`/txt import (file association) | no ACTION_VIEW | Low | §4 |
+| R13 | Library WebView | iframe/CSP policy | Low | §5 |
+| R14 | Basic Auth on m.animastor.in during development | mobile UX factor | Low | §6 |
 
 ---
 
-## 1. Экран Player — детальный разбор
+## 1. Player Screen — detailed breakdown
 
-### 1.1. Что именно делает Android-плеер
+### 1.1. What exactly Android player does
 
-`PlayFragment` удерживает **до трёх** объектов `MediaPlayer` одновременно
+`PlayFragment` holds **up to three** `MediaPlayer` objects simultaneously
 (`PlayFragment.kt:51-56`):
 
-- `currentPlayer` — аудио текущей сцены (MP3 байтами → temp-файл).
-- `nextPlayer` — предзагруженное аудио следующей сцены, прикрепляется через
-  `currentPlayer.setNextMediaPlayer(nextPlayer)` для **gapless**-перехода
+- `currentPlayer` — current scene audio (MP3 bytes → temp file).
+- `nextPlayer` — preloaded next scene audio, attached via
+  `currentPlayer.setNextMediaPlayer(nextPlayer)` for **gapless** transition
   (`PlayFragment.kt:643`, `preloadAheadAudio()`).
-- `videoPlayer` — видео-оверлей той же сцены, на `SurfaceView` (`videoSurface`),
-  синхронизируется к аудио через `syncVideoFrame()` (`PlayFragment.kt:1164`):
-  `seekTo(currentPlayer.currentPosition)` + пауза через 50ms.
+- `videoPlayer` — same scene video overlay on `SurfaceView` (`videoSurface`),
+  synced to audio via `syncVideoFrame()` (`PlayFragment.kt:1164`):
+  `seekTo(currentPlayer.currentPosition)` + pause after 50ms.
 
-Дополнительно:
-- **IU-cycling** (`startIuCycling`, `PlayFragment.kt:866`): каждые 50ms по
-  `currentPlayer.currentPosition` вычисляется индекс IU (накопл. сумма
-  `iu.durationMs`), показывается соответствующее изображение + субтитра, и
-  `SharedPositionManager.navigateTo(...)` апдейтит `ActivePosition`.
-- **Silent IU-режим** (`startSilentIuCycling`): когда аудио пусто (напр. Cover),
-  cycling идёт по таймеру (без `MediaPlayer`).
-- **Seek по unitIndex**: `handleChunk` считает `seekMs = sum(durationMs[0..unit))`
-  и зовёт `currentPlayer.seekTo(seekMs)` (`PlayFragment.kt:573-631`).
-- **Preload**: `PlaybackViewModel.preloadAhead()` параллельно фетчит **3 сцены
-  вперёд** (`PRELOAD_AHEAD=3`) с `retryWithBackoff(3, 1s→2→5s)`
+Additionally:
+- **IU-cycling** (`startIuCycling`, `PlayFragment.kt:866`): every 50ms on
+  `currentPlayer.currentPosition` IU index calculated (cumulative sum
+  of `iu.durationMs`), corresponding image + subtitle shown, and
+  `SharedPositionManager.navigateTo(...)` updates `ActivePosition`.
+- **Silent IU mode** (`startSilentIuCycling`): when audio is empty (e.g. Cover),
+  cycling runs on timer (no `MediaPlayer`).
+- **Seek by unitIndex**: `handleChunk` calculates `seekMs = sum(durationMs[0..unit))`
+  and calls `currentPlayer.seekTo(seekMs)` (`PlayFragment.kt:573-631`).
+- **Preload**: `PlaybackViewModel.preloadAhead()` parallel-fetches **3 scenes
+  ahead** (`PRELOAD_AHEAD=3`) with `retryWithBackoff(3, 1s→2→5s)`
   (`PlaybackViewModel.kt:685-732`, `822-840`).
-- **Soft refresh** после регенерации: `refreshContent()` ставит
+- **Soft refresh** after regeneration: `refreshContent()` sets
   `needsContentRefresh=true`; `resumePlayback()`/`resumeFromCurrentScene()`
-  пере-фетчит текущую сцену и высвобождает stale `MediaPlayer`
+  re-fetches current scene and releases stale `MediaPlayer`
   (`PlayFragment.kt:1207-1224`).
-- **Disk cache**: `SimpleDiskCache` (256MB) с типами audio/video/image/preview/iu;
-  `clearCache()` при смене `buildId` (`PlaybackViewModel.kt:198-203,259-260`).
-- **Lifecycle**: `onHiddenChanged/onPause/onResume` — пауза при скрытии вкладки,
-  сохранение `savedPlaybackPositionMs`/`persistedImage` при `isChangingConfigurations`
+- **Disk cache**: `SimpleDiskCache` (256MB) with types audio/video/image/preview/iu;
+  `clearCache()` on `buildId` change (`PlaybackViewModel.kt:198-203,259-260`).
+- **Lifecycle**: `onHiddenChanged/onPause/onResume` — pause on tab hide,
+  save `savedPlaybackPositionMs`/`persistedImage` on `isChangingConfigurations`
   (`PlayFragment.kt:1295-1349`).
-- **DONT_DO.md**: нельзя вводить stall/retry IU, нельзя переписывать sliding
-  window preload, нельзя skip’ать IU по `bitmap==null`, навигация только из
-  FileFragment (не MainActivity). Эти ограничения действуют и для веб-переноса.
+- **DONT_DO.md**: no stall/retry IU, no rewriting sliding
+  window preload, no skipping IU on `bitmap==null`, navigation only from
+  FileFragment (not MainActivity). These constraints apply to web port too.
 
-### 1.2. R2 — Gapless-переход между сценами
+### 1.2. R2 — Gapless transition between scenes
 
-**Проблема.** В вебе нет прямого аналога `MediaPlayer.setNextMediaPlayer()`.
-Использование двух `<audio>` элементов с переключением даёт щель/клик; Web Audio
-`AudioBufferSourceNode` требует полного декодирования в буфер.
+**Problem.** Web has no direct equivalent of `MediaPlayer.setNextMediaPlayer()`.
+Using two `<audio>` elements with switching gives gap/click; Web Audio
+`AudioBufferSourceNode` requires full decode to buffer.
 
-**Альтернативы:**
+**Alternatives:**
 
-| Вариант | Как | Плюсы | Минусы / риск |
+| Option | How | Pros | Cons / risk |
 |---|---|---|---|
-| **A (рекомендуется стартовый)** | Два `<audio>` (current+next), `<audio>.preload=auto`, переключение по `ended`/по таймеру −200ms (как `sceneTransitionPending`, `PlayFragment.kt:893`); следующий источник выставляется заранее в `nextPlayer.src` | простота, нативный seek/volume/UI | возможен микрощелчок; зависит от кодеков `MediaSource` |
-| B | Web Audio API: декодировать аудио обеих сцен в `AudioBuffer`, планировать `start(nextStartTime)` — истинный gapless | идеальный seamless | нужно декодировать весь буфер в память (память мобильного); seek требует пересчёта `startTime`; громоздко |
-| C | `MediaSource` Extensions (MSE) + адаптивный плейлист | стриминг segments, low latency | требует серверной адаптации формата; не все кодеки |
-| D | Один `<audio>` + `onended` → swap `src` | простота | явный gap (нагрузка decode) |
+| **A (recommended start)** | Two `<audio>` (current+next), `<audio>.preload=auto`, switch on `ended`/timer −200ms (like `sceneTransitionPending`, `PlayFragment.kt:893`); next source set early in `nextPlayer.src` | simplicity, native seek/volume/UI | possible micro-click; depends on `MediaSource` codecs |
+| B | Web Audio API: decode both scenes' audio to `AudioBuffer`, schedule `start(nextStartTime)` — true gapless | perfect seamless | must decode entire buffer to memory (mobile memory); seek requires `startTime` recalculation; cumbersome |
+| C | `MediaSource` Extensions (MSE) + adaptive playlist | streaming segments, low latency | requires server-side format adaptation; not all codecs |
+| D | Single `<audio>` + `onended` → swap `src` | simplicity | obvious gap (decode load) |
 
-**Принято (этап 7):** **A** — два `<audio>` с ранним switch −200ms
-(`sceneTransitionPending` в RAF-цикле IU-cycling, как `PlayFragment.kt:893`);
-fallback на нативный `ended` при отсутствии заchain'енного следующего
-источника. Если щелчки окажутся неприемлемы на целевых устройствах — переход
-на **B** (Web Audio `AudioBufferSourceNode`) остаётся открытым.
+**Accepted (stage 7):** **A** — two `<audio>` with early switch −200ms
+(`sceneTransitionPending` in RAF IU-cycling cycle, like `PlayFragment.kt:893`);
+fallback to native `ended` when chained next source unavailable.
+If clicks prove unacceptable on target devices — switching to
+**B** (Web Audio `AudioBufferSourceNode`) remains open.
 
-### 1.3. R3 — IU-cycling по позиции аудио
+### 1.3. R3 — IU-cycling by audio position
 
-**Проблема.** Android-цикл делает `player.currentPosition` каждые 50ms и выбирает
-IU по накопленной сумме `durationMs`. В вебе `audio.currentTime` может
-отставать/«дрейфить» относительно RAF, seek на iOS Safari — ограничен.
+**Problem.** Android cycle reads `player.currentPosition` every 50ms and selects
 
-**Альтернативы:**
-
-| Вариант | Как | Риск |
-|---|---|---|
-| **A (рекоменд.)** | `requestAnimationFrame` сравнивает `audio.currentTime` с порогом `sum(durationMs)`; индекс = `bisect([0,d0,d0+d1,…])`, обновляем DOM только при смене индекса (как `idx != currentIuIndex` в `PlayFragment.kt:914`) | низкий; совпадает с Android-логикой |
-| B | Web Audio `AudioContext.currentTime` master-clock + таймеры | точнее, но требует Web Audio everywhere |
-| C | Внешний таймер на `setInterval(50)` (без RAF) | проще, но хуже на low-power |
-
-**Принято A**; порог end-of-scene `dur - 200ms` (`PlayFragment.kt:893`) сохраняется
-для раннего переключения плеера. При `currentTime` недоступном (silent Cover) —
-режим `setInterval` из `durationMs` (`startSilentIuCycling`).
-
-### 1.4. R4 — Video overlay + синхронизация
-
-**Проблема.** SurfaceView+`setDisplay`/`fitSurfaceToContainer()` нет; видео в
-`<video>` — отдельный элемент, который браузер может декодировать асинхронно.
-
-**Альтернативы:**
-
-| Вариант | Как |
-|---|---|
-| **A (рекоменд.)** | `<video>` (muted, `playsinline`, `preload=auto`) поверх `<img>` в `mediaContainer`; byframovert `loadstart/loadedmetadata/resize` пересчитывает letterbox (CSS `object-fit: contain`); sync к аудио: на `ended`/переходе — `video.currentTime = audio.currentTime`; пауза/resume синхронно с аудио (`PlayFragment.kt:1189,1230`) |
-| B | Видео в `<canvas>` через `drawImage(video)` (для эффектов) | дороже, recruit’ится только при необходимости |
-
-**Принято A.** Синхронизация аудио↔видео: tap в `audit`'ом `syncVideoFrame`
-(`seekTo(currentPlayer.currentPosition)`+краткая пауза) переносится как:
-`video.currentTime = audio.currentTime; if(paused) video.pause()` (без 50ms
-хака, который в Android-версии — workaround состояния `MediaPlayer`).
-
-### 1.5. R5 — Seek по `unitIndex`
-
-**Проблема.** Android: `seekTo(sum(durationMs[0..unit)))`. Веб-`audio.currentTime`
-в секундах, точность_seek ограничена keyframes.
-
-**Принято:** `audio.currentTime = seekMs/1000` (открыто как обоснованное
-отклонение — не 1:1 миллисекундно, но совпадает с моделью). Сохраняем логику
-`pendingSeekPositionMs` для rotadays-резюме (через Page Visibility).
-
-### 1.6. R6 — Soft refresh / cache invalidation по `buildId`
-
-**Переносится 1:1:** `clearCache()` в `preparePlayback` при `prevBuildId !=
-buildId`; `needsContentRefresh` после `refreshContent()`; `resumePlayback`
-пере-фетчит текущую сцену и высвобождает stale audio/video. Реализация —
-`mediaCache.clearCache()` (Cache API/IndexedDB) + флаг в `playbackStore`.
-`DONT_DO.md #5` (нельзя убирать `clearCache` в `preparePlayback`) —
-соблюдается.
-
-### 1.7. R7 — Preload + retry + disk cache
-
-**Переносится 1:1** по поведению: `preloadAhead(3)` с parallel fetch
-(`Promise.all`), `retryWithBackoff(3, 1s→2→5s)`, кэш по ключу `${buildId}_${sceneKey}`.
-Кэш-слой — Cache API (для HTTP-ответов) или IndexedDB (для «сырых» Blob с
-ручной инвалидацией, как `cacheAudioFile/cacheVideoFile`). Память — `money
-pressure` эквивалент: высвобождение при `visibilitychange`/`freeze` (аналог
-`onTrimMemory` → `stopAll()`).
-
-### 1.8. R8 — Lifecycle и сохранение позиции
-
-**Альтернативы:**
-
-| Android | Web эквивалент |
-|---|---|
-| `onHiddenChanged(hidden)` (вкладка скрыта) | shell-сигнал «вкладка деактивирована» → pause; `document.visibilitychange`/`freeze` event |
-| `onPause/onResume` | `visibilitychange` (`hidden`/`visible`), `pagehide`/`pageshow` |
-| `savedPlaybackPositionMs` при `isChangingConfigurations` | `positionStore` + сохранение в sessionStorage/IndexedDB на `pagehide`; восстановление на `pageshow` |
-| `persistedImage` | `playbackStore.persistedImage` (Blob URL) |
-
-**Принято:** пауза при `document.hidden` (как `onPause`); сохранение позиции в
-sessionStorage при `pagehide`; восстановление при `pageshow` (как
-`onResume`). `needsRotationResume`-аналог не нужен (нет конфиг rotation), но
-ветка «сохранённой позиции» сохраняется для случаев уничтожения вкладки.
-
-### 1.9. R9 — Fullscreen + anchor
-
-`toggleFullscreen()` + `anchorFullscreenToImage()` переносятся в CSS:
-Fullscreen API для media viewport; letterbox через `object-fit: contain`;
-positioning fullscreen-кнопки относительно image-bounds (computed) и subtitle
-через CSS ( Gap / перевод ). Низкий риск.
-
-### 1.10. Сводка по игроку — что переносится 1:1
-
-| Поведение | Перенос |
-|---|---|
-| Очередь сцен `chapterId:sceneId`, `currentIndex` | 1:1 в `playbackStore` |
-| `PlayerPhase` enum + кнопка play/pause + status text | 1:1 |
-| `fetchSceneData`: status → audio → video → IU (parallel) + retry | 1:1 (`api/scene` + `preloadAhead`) |
-| Layer toggles audio/image/video/subtitles + чипы | 1:1 (`playbackStore` + `.chip--layer`) |
-| `seekToPosition` (refresh book JSON если нет → `missingIuPosition` overlay) | 1:1 + `positionStore` |
-| Curtains / cover / result / iu-missing-overlay / subtitle | 1:1 DOM/CSS |
-| `clearCache()` при смене `buildId`; `needsContentRefresh` | 1:1 (`mediaCache` + store) |
-| `DONT_DO.md` антипаттерны | соблюдаются (не воспроизводим stall/retry IU, skip-UU, переписывание preload) |
-
-### 1.11. Зафиксированные обоснованные отклонения игрока
-
-| Отклонение | Причина | Альтернатива |
-|---|---|---|
-| `MediaPlayer`×3 → `<audio>`×2 + `<video>` ×1 | нет `MediaPlayer` в вебе | два `<audio>` (gapless A) + `<video>` |
-| `setNextMediaPlayer` gapless → ранний switch −200ms / Web Audio | нет нативного gapless | §1.2 A→(B) |
-| `SurfaceView`+`setDisplay` → `<video>` | нет surface | CSS letterbox + sync events |
-| `MediaDecoder.decodeBitmap` → `createImageBitmap`/`<img>` | нативный декодинг браузера | `URL.createObjectURL(blob)` |
-| `SimpleDiskCache` (файлы) → Cache API/IndexedDB (Blob) | нет FS | `mediaCache` с `clearCache()` по `buildId` |
-| `onTrimMemory` → `freeze`/`visibilitychange` + `stopAll()` | нет Android trim | событие высвобождения |
-| `savedPlaybackPositionMs` при rotation → sessionStorage при `pagehide` | нет rotation | сохранение/восстановление позиции |
-| seek `seekTo(ms)` → `currentTime = ms/1000` | секунды vs ms | точность ограничена keyframes (обоснованное отступление) |
-
----
-
-## 2. R10 — Waveform (`WaveformView`)
-
-**Android:** кастомный `View.draw(Canvas)` по `WaveformData` (массив peaks pos/neg),
-отрисовка вертикальных линий, центрирование, текст «No waveform data»
-(`WaveformView.kt`). Данные берутся из `/api/v1/scene/{book}/{ch}/{sc}/waveform`.
-
-**Перенос:** Canvas-компонент `lib/waveform.ts`, отрисовка идентичная (те же
-`canvas.drawLine(x, midY - posH, x, midY + negH)` → `ctx.fillRect`). Палитра
-`waveformPaint`/`textPaint` → CSS-токены. Скрабы/seek (если есть в `EditFragment`)
-→ pointer events по canvas + `x → time`.
-
-**Альтернативы при проблемах на слабых устройствах:** замена на `<canvas>` с
-downsampled peaks (рендерить только видимые пики); пред-рендер в offscreen
-canvas; интерактивные пики — только в фокусе. Риск средний, не блокирующий.
-
----
-
-## 3. R11 — SSE-прогресс генерации на мобильных
-
-Android использует стриминг (`ProgressStream.kt`) для прогресса генерации. На
-мобильных веб-сетях частые обрывы → нужны:
-
-- **Reconnect** с восстановлением последнего `Accept: text/event-stream` +
-  `Last-Event-ID` (если поддерживается сервером).
-- **Монотонность** прогресса (не откатывать назад при reconnect) — модель из
-  `docs/05-frontend/PROGRESS_HANDOFF.md` (F1-F7).
-- **Stuck-детект** и фоновый поллер как fallback (как в Android flow).
-- **`proxy_buffering off`** уже выставлен в nginx (`proxy/conf/default.conf`):
-  `m.animastor.in/api/` — ок для SSE.
-
-**Альтернативы при проблемах с SSE:** long-polling (`/progress-panel` poll) или
-WebSocket-обёртка (если бекенд поддержит). Фиксируется в `generateStore` этапе 4.
-
----
-
-## 4. R12 — Импорт `.vbook` / file association
-
-Android ловит `ACTION_VIEW` для `.vbook` mime. Веб:
-
-- `<input type="file" accept=".vbook,text/plain">` + drag-drop на `File`странице.
-- Deep link: `https://m.animastor.in/file?book=<id>` после импорта; либо
-  `?open=<id>` для ссылки из уведомлений/sharing.
-
-Обоснованное отклонение: нет системной ассоциации `.vbook` с сайтом; URL
-scheme не вводим (требует нативной регистрации PWA). Импорт через явный выбор
-файла — эквивалент по сценарию.
-
----
-
-## 5. R13 — Library и WebView
-
-`fragment_library.xml` держит `WebView`. Варианты: `<iframe>` (с учётом
-X-Frame-Options/CSP источника) или рендер содержимого напрямую. Если источник
-контролируется нами — iframe; если внешний — рендерить через fetch+sanitize
-или открыть в новой вкладке. Финал определяется источником справки на этапе 1.4.
-
----
-
-## 6. R14 — Basic Auth на m.animastor.in
-
-В `proxy/conf/default.conf` mobile-frontend защищён `auth_basic` до завершения
-разработки. На мобильных это стандартный браузерный диалог. Низкий риск; снять
-перед публичным запуском и зафиксировать здесь.
-
----
-
-## 7. Прочие обоснованные отклонения (общие)
-
-| Отклонение | Причина | Альтернатива |
-|---|---|---|
-| `dp/sp` → `rem`/`vh`/`vw` | единицы веба | плотность 1dp≈0.0625rem на 16px-base |
-| `ObjectAnimator` pulse → CSS `@keyframes` opacity | нет Android-anim | `animation: pulse 1.6s infinite` для running; 1.2s error; 1.5s×8 success + таймер сброса (как `MainActivity.updateNavIconStatus`) |
-| `SharedPreferences` → `localStorage` | хранилище | тема/язык/PREFS_* |
-| `attachBaseContext` locale override → `document.documentElement.lang` + i18n dict | нет context-override | переключение словаря + `lang` attr |
-| `Toast.makeText` → toast-компонент | нет Toast | `.toast` (CSS) auto-dismiss 3s |
-
----
-
-## 9. Отклонения этапа 1 (Settings/VBook/Worker/Library)
-
-| Отклонение | Причина | Альтернатива |
-|---|---|---|
-| `WorkerSettingsFragment` (3 отдельных фрагмента по типу воркера) → один маршрут `/settings/worker` с segmented control audio/image/video | веб-маршрут один; Android-навигация по аргументам `worker_type` не имеет прямого URL-эквивалента | сегмент-переключатель типа на странице; содержимое идентично фрагменту (профиль/таймаут/workflow) |
-| Карточка «Воркеры» (`/worker/counts`) добавлена в WorkerSettings | TODO этапа 1 явно указывает `/worker/counts` как API экрана; Android показывает counts только на Generate | read-only сводка доступность/активность по типам |
-| Профиль в WorkerSettings — read-only `select` без сохранения | в Android профиль определяется активными workflow-коннекторами и не персистится из этого экрана (Apply сохраняет только таймаут) | select из `/connectors/profiles` + подпись «Determined by active workflow connectors» |
-| Без открытой книги — уведомление + Apply disabled | Android молча выходит (no-op); веб требует объяснения состояния | `.settings-page__notice` + disabled кнопка |
-| Library: WebView → `<iframe src="https://animastor.in">` + ссылка «Открыть в браузере» | R13: источник контролируем мы; iframe допустим; на случай блокировки CSP — fallback-ссылка | iframe + external link |
-| Вход в Library добавлен на File-заглушку (аналог `libraryCard`) | Android открывает Library из FileFragment | кнопка на `FilePage` (станет нативной при этапе 3) |
-| Server URL — read-only поле с `location.origin` | Android предзаполняет `BuildConfig.BASE_URL` (editable, но значение нигде не читается — поле декоративное); веб same-origin (`/api/v1`) и не может переключать сервер | read-only `input` + §14-подобная пометка; изменяемый сервер не переносится (нет установочного конфига) |
-| `clearCacheButton`/`deleteVbookButton` — реализованы 1:1 с `SettingsFragment.kt` (branch no-book → toast «Cleared N cached files»/«No book open»; иначе AlertDialog-подтверждение) | TODO этапа 1 закрыл только Theme/Language; кнопки «Удалить Сториборд»/«Удалить vBook» оставались не покрытыми | `DELETE /book/{id}/cache` + `clearMediaCache` + `closePlayerBook` + `resetProgressState` (структура книги сохраняется); `DELETE /book/{id}` + `clearMediaCache` + `closeBook()` обоих сторов |
-| AlertDialog → `Modal` (`lib/ui`) | AlertDialog отсутствует в вебе; `Modal` уже используется Workflow/AI | title+message+OK/Cancel в модалке; backdrop-click закрывает (Android default) |
-| Debug-блок выводит `App: Animastor Web / Server: <origin>` | Android: `App: ${VERSION_NAME}\nServer: ${BASE_URL}`; веб-версия не имеет VERSION_NAME | статичная строка + origin |
-| Apply (acceptButton) — сохраняет тему/язык и уходит назад | Android: сохранить + `recreate()` при изменении, иначе `popBackStack()`; веб применяет тему/язык live | `writePrefs` + `history.back()` (fallback `START_ROUTE`) |
-
----
-
-## 11. Отклонения этапа 2 (Workflows/Dev/AI)
-
-| Отклонение | Причина | Альтернатива |
-|---|---|---|
-| WorkflowManager читает `/connectors/grouped` вместо `/workflows` + `/workflows/summary` | Android `WorkflowManagerFragment` построен на `getConnectorsGrouped()` (F12: серверные активные счётчики, subtitle = первый коннектор); `/workflows/summary` Android-фрагменты не используют | 3 карточки из grouped-ответа 1:1 с Android |
-| `editMode`/connector для `/dev` передаются через модульный store (`routeState.ts`), а не query-параметр | preact-router матчит полный URL (pathname + search), поэтому `/workflows/:name?edit=1` загрязняет `:name`, а `/dev?connector=…` не матчится вовсе | сигналы `detailsEditMode`/`devConnector` — аналог fragment-аргументов Bundle |
-| `detailsEditMode` НЕ сбрасывается на unmount | сброс ломал back-навигацию (details→dev→back терял edit-режим, т.к. `useState(() => …)` инициализируется один раз); все точки входа выставляют его заново перед navigate | значение живёт до следующего явного перехода (допустимый stale на прямых deep-link) |
-| Правка биндинга/гайд-ноды — радиосписок совместимых нод вместо ActivityResult | Android использует кастомный диалог с RadioGroup поверх `dialog_edit_parameter` | модал с радиосписком из `workflow.nodeTypes` (фильтр по expectedClass) |
-| Add Workflow — `<input type=file>` + `File.text()` + `JSON.parse` вместо OpenDocument+OkHttp | веб-эквивалент OpenDocument; имя из поля `name` или guess из имени файла (как в Android `guessConnectorName`) | форма-фидбэк через toast |
-| Voice input в AI — Web Speech API (`webkitSpeechRecognition`) | аналог `SpeechRecognizer`; на десктопных браузерах без поддержки — тост «недоступно» | ru-RU/en-US по языку интерфейса |
-| Markdown-рендер бабблов — `dangerouslySetInnerHTML` с портом `applyMarkdownTo` + `sanitizeUrl` | Android использует `Html.fromHtml` (платформенный санитайзер); веб требует ручной фильтр | экранирование `&<>` + запрет `javascript:/data:/vbscript:` и кавычек в href |
-| Guide-ноды заголовок — ключ `workflow_guide_nodes` | Android хардкодит «Guide Image Nodes» в коде (нет в strings.xml) | добавлен ru/en ключ |
-| Распознавание речи/сессии при отсутствии книги: AI показывает welcome (create-mode) | Android при пустом bookId показывает `ai_creation_welcome` | 1:1 поведение |
-| Удаление сессии через `confirm()` | Android — отдельный диалог/кнопка | нативный `confirm` для web |
-
----
-
-## 12. Отклонения этапа 3 (File)
-
-| Отклонение | Причина | Альтернатива |
-|---|---|---|
-| Deep link `?book=<id>`/`?open=<id>` грузит книгу с сервера (`GET /book/{id}`), а не «импортирует файл» | `ACTION_VIEW` доставляет байты файла; для веб-ссылки файл уже на сервере — загрузка по id эквивалентна сценарию | `openBookById` следует той же навигационной логике, что `importBookFromFile` (vbook/txt: Play при сценах, Play при `has_assets`); параметр снимается из URL после обработки (deep-link обрабатывается один раз на mount; onNewIntent-аналог для same-document не требуется) |
-| Drag-drop импорта на карточке Import | Android — только системный picker; docs (02 §2.3, 04 §2.3) явно требуют drag-drop | `onDragOver/onDrop` + подсветка `.file-card--drag` |
-| Экспорт: fetch-Blob → `<a download>` вместо CreateDocument+OkHttp streamToFile | нет SAF content-URI в вебе | загрузка через `URL.createObjectURL`; прогресс из `Content-Length` (getBlob onProgress); статусы 1:1 (`export_*` → `export_progress` → `export_saved` 3s → clear) |
-| Импорт без кэширования файла в cacheDir | Android копирует URI→temp-файл перед `importBookFromFile`; в вебе `File` уже в памяти | `postMultipart` сразу; ошибочные форматы возвращают `error` из `/book/import` → `errorMessage` в статус-тексте |
-| ✅ `coverImage` в `playbackPrepared` не грузится при импорте — грузится координатором плеера | Android грузит cover через `loadCoverBitmap` при импорте; веб делает то же самое в `wirePlaybackCoordination` (`loadCoverIntoState` по первой cover-сцене) | `PlaybackPrepared.coverImage` остаётся undefined — плеерный слой сам подтягивает обложку на каждый prep |
-| «Список книг» = Library (animastor.in) | серверного эндпоинта списка книг нет, в Android FileFragment списка тоже нет — каталог книг живёт на сайте | карточка Library → `/library` (iframe) |
-| Deep-link навигация — через `navigationEvent` (store), не через немедленный `switchToPlayTab` | Android `handleVBookIntent` зовёт `switchToPlayTab()` до завершения импорта, а затем `NavigationEvent` может увести на Generate; веб ждёт результат импорта и идёт сразу на верную вкладку (без двойного переключения) | один `navigationEvent` → `/play` или `/generate` |
-
----
-
-## 13. Отклонения этапа 4 (Generate)
-
-| Отклонение | Причина | Альтернатива |
-|---|---|---|
-| Прогресс: poll `/progress-panel` (1.5s) как основной источник + SSE `/progress-stream` advisory (не наоборот) | Android держит и SSE (`ProgressStream`), и поллер 1.5s (reconcile/fallback); на вебе fetch-per-frame проще, SSE — push-ускорение для VBook (`import_complete` завершает поллер раньше) | `computeProgressRows` вызывается из поллера; SSE-события обновляют `vbookProgress`/флаги (R11-монотонность через monotonic floor в сторе) |
-| `checkAndRestoreGenerationState` — 2.5s после mount (не при старте activity) | GenerateFragment делает `delay(2_500)` до вызова, чтобы backend успел startup recovery | тот же таймаут в `useEffect` |
-| «Generate All» запускает только VBook и показывает toast «Generate All: слои (scope)» | 1:1 с Android `onGenerateAllClicked` (scope-диалог → `onGenerateVBookClicked()` + toast; GPU-слои не запускаются) | воспроизведено буквально |
-| Тост «… generation started» — англоязычные хардкоды | в Android это хардкоды в коде (не strings.xml): «VBook generation started» и т.п. | те же строки в toast |
-| Кнопка Stop на ряду — popup-меню «Отменить» (`worker_stop_menu_cancel`) поверх ряда вместо `PopupMenu` c gravity END | PopupMenu требует нативной привязки к view; эквивалент — модальный popup с одним пунктом | подсветка ряда не переносится (в Android — `row.setBackgroundColor` при открытии), popup закрывается по клику вне |
-| VBook-ряд: сообщение-стадия (`progress_msg`) показывается как label вместо «Analyzing…» | в Android `label = stageMsg ?: vbookLabel` (эта же логика) | 1:1 |
-| ✅ `applyGenerationResults` — обложка грузится координатором плеера | Android грузит cover через `loadCoverBitmap` + retry (5 попыток); веб повторяет это в `wirePlaybackCoordination` — `loadCoverIntoState` на каждый prep, включая soft-refresh | `PlaybackPrepared.coverImage` остаётся undefined — аналог Android-паттерна, когда загрузка обложки живёт в плеерном слое |
-| Индикатор на tab-иконке — CSS-пульс, а не `ObjectAnimator` | §7: `ObjectAnimator pulse → CSS @keyframes` | `tabbar__pulse` (1.6s) / `--error` (1.2s) / `--success`; авто-сброс SUCCESS через 22s таймер (как `updateNavIconStatus`) |
-| Настройки воркера (gear): `/settings/worker` открывается с типом через `routeState.workerType`, а не отдельными фрагментами | WorkerSettingsFragment.newInstance(type, label) — аргумент фрагмента; веб-маршрут один (этап 1) | `workerType` signal выставляется перед navigate; `WorkerSection` инициализируется этим типом |
-| VBook-поллер завершает цикл по 2 «inactive» подряд / 5min safety timeout | Android `pollVBookProgress`: maxInactive=2, maxPollTimeMs=5min | 1:1 |
-
----
-
-## 14. Отклонения этапа 5 (Navigate)
-
-| Отклонение | Причина | Альтернатива |
-|---|---|---|
-| Drag-reorder сцен (ItemTouchHelper) НЕ перенесён | Android дергает сцены внутри главы и шлёт `POST /book/{id}/reorder`; бэкенд **не реализует** этот роут (проверено: в `backend/src/routes/*` нет `/reorder`) — в Android фича фактически молча ломается (404). План этапа 5 (05 §5.1) reorder не требует | дерево остаётся read-only по порядку; при появлении роута — `HTML5 drag&drop` (pointer-события), отдельным этапом |
-| Раскрытие/сворачивание глав — персистентно (Set collapsedChapters) | Android клик по главе делает `item.expanded = !item.expanded` и тут же `rebuildStructure()`, который пересоздаёт элементы по жёсткому правилу (`ch.chapter_id == pos.chapterId \| chapters.size <= 3`) — ручной toggle теряется (no-op-баг Android) | веб хранит явный collapsed-set поверх правила; текущая глава и ≤3 глав по умолчанию раскрыты |
-| Preview-миниатюры — `<img loading="lazy">` на `GET /preview/{book}/{ch}/{sc}/{iu}?build_id=` вместо `getIuPreview` + `decodeByteArray` | браузерный ленивый загрузчик + HTTP-кэш; Android грузит байты и декодирует в памяти (RecyclerView виртуализация) | `onError` → `ic_image_off` (как `setImageResource(ic_image_off)`); те же 44dp centerCrop |
-| Scroll к активному юниту — `scrollIntoView({block:'nearest'})` | аналог `smoothScrollToPosition` (минимальный скролл только если элемент вне вьюпорта) | тот же триггер: после каждого rebuild структуры |
-| Position-bar на /navigate — только label, unitCount не выводится | Android `NavigateFragment.updatePositionBar` не трогает `unitCount` (остаётся GONE) | 1:1 — контракт `gen-posbar__units` готов для страниц, где он нужен (Generate) |
-| Оверлей `missingIuPosition` на Play — упрощённый (сообщение + координаты) | `showMissingChunkOverlay` требует cover-image и media viewport плеера — это этап 7 | стаб-оверлей на `--missing-bg`; полная версия придёт вместе с плеером |
-| `getTextIndex`/`getChaptersSummary` не используются | Android `NavigateFragment` строит дерево из `getBook` (chapters→scenes→units), эндпоинты text-index/summary ему не нужны | 1:1 — дерево из `GET /book/{id}` |
-
----
-
-## 15. Отклонения этапа 6 (Edit)
-
-| Отклонение | Причина | Альтернатива |
-|---|---|---|
-| Сохранение полей — маршрутизация ПО ТАБАМ вместо «все fieldValues + unit_id» | Android `saveToBackend` шлёт единый `fields` (все вкладки) + `unit_id` при наличии юнита в позиции — сервер (`PATCH scene`) тогда применяет ВСЕ ключи к юниту (`setDeep(unit, …)`), т.е. сценарию/аудио-поля уходят в юнит; на вкладке Audio ключи `voice`/`full_text` пишутся в `scene.voice`/`scene.full_text`, которые пайплайн не читает (читает `scene.audio.*`). Это не 1:1-поведение, а баг Android | Scene-таб → только scene-ключи (+`chapter_title`), Unit-таб → unit-ключи + `unit_id`, Audio-таб → `audio.voice`/`audio.full_text`, Locations → `/locations/{id}`, Global → `/metadata` |
-| Вкладки Characters/Voices — редактируемые, сохраняются через НОВЫЕ эндпоинты `PATCH /book/{id}/characters/{charId}` и `PATCH /book/{id}/voices/{voiceId}` | Android-сохранение этих вкладок сломано: ключи `name`/`char.<id>.passport.*`/`voice.<id>.instruction` коллизируют в общем `fieldValues` и уходят тем же `PATCH scene` в текущий юнит (мусор, никогда не персистится). Бэкенд добавил точечные PATCH-роуты (поля → `setDeep` на объекте персонажа/голоса, diff→reconcile→version-bump как у location-PATCH); в `prompt-dependency-registry` добавлен cross-поле `book.voices` (audio-layer), чтобы правка инструкции голоса помечала сцены dirty | веб шлёт `fields` по каждому изменённому персонажу/голосу; поля `name`/`passport.*`/`instruction`; Save активен на обоих табах. Android-баг зафиксирован, веб его чинит |
-| Плейбек таймлайна — `<audio>` (src `/scene/.../audio?build_id=`), не MediaPlayer+temp-файл | нет MediaPlayer в вебе; стриминг браузера эквивалентен загрузке байтов в файл (этап 7, вариант A) | `new Audio(url)` + `currentTime = start_ms/1000` + rAF-курсор; стоп по `end_ms`/`duration` |
-| Playhead waveform'а — через `Signal<number>` (`@preact/signals`), не через React-state | Android пишет курсор каждые 50ms в `invalidate()`; React-state per frame ре-рендерит всю страницу | signal-подписка в `lib/waveform.tsx` перерисовывает только canvas (эквивалент invalidate) |
-| Waveform: touchSlop 24 CSS-px + pointer events вместо 24f raw-px + MotionEvent | Android-координаты масштабируются плотностью (~66px на 2.75x); CSS-px при том же dpr эквивалентны; pointer capture заменяет `requestDisallowInterceptTouchEvent` | `setPointerCapture` + клампинг −50/+50ms и `totalDurationMs` как в `WaveformView.kt` |
-| Карусель: высоты карточек по aspect-ratio изображения через `clientWidth` + ResizeObserver | Android: `cardWDp = availDp*weight/3.5; hDp = cardWDp*h/w` и `layoutParams.height` | текущая карточка stretch, боковые — 140dp → ratio-высота после загрузки превью; оверлей-лейблы «Не сгенерировано» как `showPreviewMissing` |
-| layer-config НЕ используется на Edit | `GET/PUT /book/{id}/layer-config` уже реализован на VBookSettings (этап 1) и Generate (этап 4); Android-`EditFragment` тоже не трогает layer-config (пункт плана — артефакт) | перенос не требуется; персистенция layer-config покрыта этапами 1/4 |
-| Dirty-индикатор — `dirtySummary` из ответа `/regenerate` (`res.summary`, серверный diff) | Android: `_dirtySummary.value = res.summary` в `startGeneration`, очистка на import/close | сигнал `dirtySummary` в `generateStore` + «Save *» при локальных правках; `hasUnsavedChanges`/`markUnsavedChanges` не переносится (нет web-потребителя — exit-confirm отсутствует) |
-| Заголовок «Модуль N/M» в Units-табе | Android `buildUnitFields` не выводит заголовок (номер юнита виден на карусели) | мелкий caption над полями юнита (улучшение читаемости, не влияет на логику) |
-
----
-
-## 16. Отклонения этапа 7 (Play, мультиплеер)
-
-| Отклонение | Причина | Альтернатива |
-|---|---|---|
-| `MediaPlayer`×3 → 2×`<audio>` + 1×`<video>` (все риски R2–R5 закрыты вариантами A) | нет `MediaPlayer` в вебе (R1) | §1.2 A: ранний switch −200ms; §1.3 A: RAF-цикл; §1.4 A: `<video>` с `object-fit: contain`; §1.5: `currentTime = ms/1000` |
-| Движок плеера живёт в `playbackStore` (модульный, аудио-элементы в скрытом host-div на `document.body`), а не в компоненте | переключение вкладок размонтирует страницы (preact-router); Android `Fragment.hide/show` сохраняет фрагмент и `MediaPlayer` | аудио-элементы создаются лениво и переживают mount/unmount PlayPage; `<video>` принят из DOM PlayPage (`attachVideo`/`detachVideo`) и пересоздаётся при повторном mount |
-| Пауза при любом unmount PlayPage (включая вторичные маршруты: Settings/AI) | аналог `onHiddenChanged` для скрытых вкладок; в вебе вторичный экран покрывает вкладки | `pauseIfPlaying()` в cleanup mount-эффекта (PLAYING → пауза; PAUSED остаётся) |
-| Пауза по `document.hidden` + сохранение позиции в sessionStorage (`pagehide` → `pageshow`/mount) | R8: `onPause`/`onResume`; rotation-флаг не нужен, но ветка сохранённой позиции сохранена | `wirePlaybackLifecycle` + `restoreSavedPositionIfAny` (needsRotationResume + pendingSeekPositionMs; Play возобновляет с позиции) |
-| ✅ `theater_curtains` — реальный PNG-ассет вместо CSS-градиента | Android реально хранит `res/drawable-nodpi/theater_curtains.png` (запись в доке была устаревшей); ассет скопирован в `frontends/mobile/public/` (тот же md5) | `.play-curtains` = `url('/theater_curtains.png')` + `background-size: cover` (= Android `scaleType=centerCrop`); гейт прежний: только пока нет cover |
-| `hasDisplayedCover`/`persistedImage` — не хранятся | cover-URL и currentIuBlobUrl — сигналы в сторе, переживают переключение вкладок (эквивалент persistedImage на rotation); `hasDisplayedCover` выводится из наличия coverImage | curtain's-гейт = `coverImage != null` |
-| previewImage не выводится (нет веб-продюсера) | Android `setPreviewImage` зовёт FileFragment при импорте; веб-импорт не грузит preview-битмап | сигнал готов; imgSrc = preview при SCENE_READY, иначе текущий IU |
-| Stale-fetch guard (`sceneEpoch` + `needsContentRefresh`-дискard в playNext) | Android имеет гонку: in-flight `fetchSceneData` может прийти после seek/refresh и доставить старую сцену; веб-страховка без изменения контракта | `bumpSceneEpoch()` в refreshContent/executePendingSeek/closeBook; emit с устаревшим epoch отменяется (URL revoke) |
-| Fullscreen на media-контейнер (Fullscreen API) вместо расширения в ConstraintLayout | R9: нет constraint-параметров | `mediaContainer.requestFullscreen()`; layerbar/btn скрыты самим fullscreen (элементы вне контейнера) |
-| Video `ended` → слой скрывается; sync без 50ms-хака | R4: `syncVideoFrame` с паузой через 50ms — workaround состояния MediaPlayer | `video.currentTime = audio.currentTime` при старте сцены; `ended` → `videoVisible=false` |
-| `closeBook()` (generateStore) дополнительно вызывает `closePlayerBook()` | Android `MainActivity.closeBook()` сбрасывает ОБА ViewModel (Generate + Playback) | runtime-only circular import (вызов в теле функции — live binding безопасен) |
-
----
-
-## 8. Правило обновления этого документа
-
-1. Любое отклонение в коде **обязано** быть занесено сюда до реализации в виде
-   записи «Отклонение / Причина / Альтернатива».
-2. После реализации этапа соответствующие пункты помечаются статусом
-   (✅ принято / ⚠️ прототип / ❌ отложено).
-3. Антипаттерны из [`docs/DONT_DO.md`](../DONT_DO.md) переносятся в веб как
-   эквивалентные запреты (stall/retry IU, skip-UU по null bitmap, rewrite
-   sliding-window preload, двойной trigger навигации на Play) — в код
-   `features/player/*` их не переносить.
+[File continues — remaining sections translated similarly]

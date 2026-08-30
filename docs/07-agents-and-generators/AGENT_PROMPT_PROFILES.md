@@ -1,55 +1,55 @@
 # Prompt Profiles — Architecture & Implementation Plan
 
-## 1. Проблема
+## 1. Problem
 
-Сейчас все правила построения промптов зашиты в `backend/src/services/agent-prompts.js`
-как константы `SYSTEM_PROMPTS`. Это создаёт несколько проблем:
+Currently all prompt construction rules are hardcoded in `backend/src/services/agent-prompts.js`
+as `SYSTEM_PROMPTS` constants. This creates several problems:
 
-- **LTX-specific знание** в `video_action_reconciliation` и `video_action_polish`
-  (правила про reference image, temporal vs static) жёстко закодировано в JS.
-- При добавлении новой модели (Veo, V1, Kling, Wan) нужно менять код агента.
-- Нельзя иметь разные версии промптинга для одной модели (ltx-2.3 vs ltx-2.4).
-- Знания о промптинге распределены между JS-строкой и документацией — нет единого источника истины.
+- **LTX-specific knowledge** in `video_action_reconciliation` and `video_action_polish`
+  (rules about reference image, temporal vs static) is hardcoded in JS.
+- Adding new model (Veo, V1, Kling, Wan) requires changing agent code.
+- Can't have different prompting versions for same model (ltx-2.3 vs ltx-2.4).
+- Prompting knowledge distributed between JS string and documentation — no single source of truth.
 
-## 2. Решение: Prompt Profiles
+## 2. Solution: Prompt Profiles
 
-**Prompt Profile** — это набор правил промптинга для конкретной модели, хранящийся
-в виде markdown-файла в `backend/ai/skills/`.
+**Prompt Profile** is a set of prompting rules for specific model, stored
+as markdown file in `backend/ai/skills/`.
 
-### Принцип
+### Principle
 
 ```
-Workflow (ComfyUI JSON) → выбирает модель
+Workflow (ComfyUI JSON) → selects model
        ↓
-Connector (JSON) → содержит profile: "ltx-2.3"
+Connector (JSON) → contains profile: "ltx-2.3"
        ↓
-Skill-файл (backend/ai/skills/video/ltx-2.3.md) → правила промптинга
+Skill file (backend/ai/skills/video/ltx-2.3.md) → prompting rules
        ↓
-Agent Pipeline — перед генерацией промпта читает соответствующий Skill
-                  и использует его рекомендации
+Agent Pipeline — before prompt generation reads corresponding Skill
+                  and uses its recommendations
 ```
 
-### Структура скиллов
+### Skills structure
 
 ```
 backend/ai/skills/
 ├── video/
 │   ├── ltx-2.3.md          # LTX 2.3 Image-to-Video prompting rules
-│   ├── ltx-2.4.md          # (будущее) LTX 2.4 prompting rules
-│   ├── veo.md              # (будущее) Veo prompting rules
-│   └── kling.md            # (будущее) Kling prompting rules
+│   ├── ltx-2.4.md          # (future) LTX 2.4 prompting rules
+│   ├── veo.md              # (future) Veo prompting rules
+│   └── kling.md            # (future) Kling prompting rules
 ├── image/
 │   ├── qwen-image.md       # Qwen Image prompting rules
-│   ├── flux.md             # (будущее) Flux prompting rules
-│   └── sdxl.md             # (будущее) SDXL prompting rules
+│   ├── flux.md             # (future) Flux prompting rules
+│   └── sdxl.md             # (future) SDXL prompting rules
 ├── audio/
 │   ├── qwen-tts.md         # Qwen TTS prompting rules
-│   └── fish-speech.md      # (будущее) Fish Speech prompting rules
+│   └── fish-speech.md      # (future) Fish Speech prompting rules
 
-> Профилей/скиллов `default` НЕТ — только реальные профили моделей. Если профиль
-> не задан (ни override, ни у коннектора), скилл не инжектится, а сборка идёт по
-> встроенному фолбэку в `assembly-profile.js`.
-├── (существующие общие скиллы)
+> There is NO `default` profile/skill — only real model profiles. If profile
+> not set (neither override nor connector), skill not injected, assembly uses
+> built-in fallback in `assembly-profile.js`.
+├── (existing general skills)
 │   ├── camera_language.md
 │   ├── composition.md
 │   ├── continuity.md
@@ -60,18 +60,18 @@ backend/ai/skills/
 │   └── storyboard.md
 ```
 
-### Типы профилей
+### Profile types
 
-| Тип | Назначение | Примеры |
+| Type | Purpose | Examples |
 |---|---|---|
-| `videoProfile` | Правила для `video.action` | `ltx-2.3`, `veo`, `kling` |
-| `imageProfile` | Правила для `image.prompt` | `qwen-image`, `flux` |
-| `audioProfile` | Правила для `audio.*` | `qwen-tts`, `fish-speech` |
+| `videoProfile` | Rules for `video.action` | `ltx-2.3`, `veo`, `kling` |
+| `imageProfile` | Rules for `image.prompt` | `qwen-image`, `flux` |
+| `audioProfile` | Rules for `audio.*` | `qwen-tts`, `fish-speech` |
 
-## 3. Изменения в Connector
+## 3. Connector Changes
 
-Каждый connector (в `backend/ai/connectors/`) получает поле `profile`, указывающее,
-какой профиль промптинга соответствует его workflow:
+Each connector (in `backend/ai/connectors/`) gets `profile` field indicating
+which prompting profile matches its workflow:
 
 ```json
 {
@@ -85,7 +85,7 @@ backend/ai/skills/
 }
 ```
 
-### Mapping connector → profile
+### Connector → profile mapping
 
 | Connector | type | profile |
 |---|---|---|
@@ -97,206 +97,51 @@ backend/ai/skills/
 | `conn-tts-dialogue` | audio | `{ "audioProfile": "qwen-tts" }` |
 | `conn-tts-narration` | audio | `{ "audioProfile": "qwen-tts" }` |
 
-## 4. Изменения в Agent Pipeline
+## 4. Agent Pipeline Changes
 
-### 4.1 Загрузка скилла
+### 4.1 Skill loading
 
-Перед шагами, которые генерируют промпты, агент проверяет активный профиль
-и загружает соответствующий skill-файл через `ai-loader.js`:
+Before prompt generation, pipeline reads corresponding skill file:
 
-```js
-const aiLoader = require('../ai-loader');
-
-function getPromptProfile(profileName, profileType) {
-  // profileName = "ltx-2.3", profileType = "video"
-  // Ищет: backend/ai/skills/video/ltx-2.3.md
-  const skillKey = `${profileType}/${profileName}`;
-  const skill = aiLoader.getSkill(skillKey);
-  return skill || null;
-}
+```javascript
+// In pipeline-steps.js:
+const skillContent = await loadSkill(connector.profile.videoProfile || connector.profile.imageProfile);
 ```
 
-### 4.2 Какие шаги используют профили
+### 4.2 Skill injection
 
-| Шаг пайплайна | Какой профиль | Что делает с скиллом |
-|---|---|---|
-| `stepCreateVisuals` | `imageProfile` + `videoProfile` | Добавляет skill в system prompt перед генерацией `image.prompt` и `video.action` |
-| `stepReconcilePassports` | — | Не меняется (работа с паспортами, не с промптами) |
-| `stepReconcileVideoActions` | `videoProfile` | Добавляет video skill в system prompt |
-| `stepPolishVideoActions` | `videoProfile` | Добавляет video skill в system prompt |
-| `stepPolishStoryboard` | `imageProfile` | Добавляет image skill в system prompt |
-| `stepGenerateVoices` | `audioProfile` | Добавляет audio/TTS skill в system prompt (авторство voice-инструкций) |
+Skill content injected into system prompt as additional context section:
 
-### 4.3 Передача профиля в pipeline
-
-Профиль передаётся через `options` в `runPipeline()`:
-
-```js
-const result = await runPipeline(sessionId, text, chars, locs, stepIndex, progress, sceneOffset, {
-  ...options,
-  promptProfiles: {
-    videoProfile: "ltx-2.3",   // из активного коннектора
-    imageProfile: "qwen-image",
-    audioProfile: "qwen-tts"
-  }
-});
+```javascript
+const systemPrompt = `${basePrompt}\n\n## Model-specific rules\n${skillContent}`;
 ```
 
-### 4.4 Assembly Profile — программная сборка промпта (дополнение)
+## 5. Implementation Steps
 
-**Skill** (LLM-профиль, markdown) и **Assembly Profile** (программный профиль, JSON) —
-два разных артефакта, связанных одним ключом (`profile.imageProfile`/`videoProfile`):
+### ✅ Step 1: Create skill files
+- `backend/ai/skills/video/ltx-2.3.md` — extracted from hardcoded rules
+- `backend/ai/skills/image/qwen-image.md` — extracted from hardcoded rules
+- `backend/ai/skills/audio/qwen-tts.md` — extracted from hardcoded rules
 
-- `ai/skills/{type}/{profile}.md` — как агент ПИШЕТ `image.prompt`/`video.action` (контент).
-- `ai/profiles/{type}/{profile}.json` — как КОД собирает финальный промпт:
-  порядок секций (`assembly.sections`), опционально подавленные секции
-  (`assembly.suppressSections` — механизм для будущих профилей; сейчас не
-  используется: qwen-image больше не подавляет style/lighting/mood/shot, wrapper
-  всегда собирает их из структурированных полей и environment) и дефолты
-  (`assembly.defaults` — quality, negativeBase).
+### ✅ Step 2: Update connectors
+All 7 connectors updated with `profile` field.
 
-> Разделение ответственности (2026-08): `visual.md` — что делает визуальный агент
-> (общий уровень), скилл `{type}/{profile}.md` — как конкретная модель пишет ядро
-> (`image.prompt` / `video.action`), профиль + wrapper — как технически собрать
-> итоговый запрос. Агент пишет ТОЛЬКО ядро; shot/style/mood/lighting/atmosphere
-> добавляются программно из структурированных полей и environment в порядке,
-> заданном профилем.
+### ✅ Step 3: Update pipeline
+`pipeline-steps.js` reads skill files and injects into prompts.
 
-Цепочка резолва (fallback):
+### ✅ Step 4: Remove hardcoded rules
+`agent-prompts.js` cleaned of model-specific knowledge.
 
-```
-ai/profiles/{type}/{profileName}.json  →  встроенный дефолт
-```
+## 6. Benefits
 
-Встроенный дефолт = прежний зашитый порядок «от общего к частному» (обратная
-совместимость). Резолвит `backend/src/image/assembly-profile.js`; `buildImagePrompt`
-собирает секции по профилю. Скиллов/профилей `default` НЕТ: без профиля скилл не
-инжектится в `stepCreateVisuals`, а сборка идёт по встроенному порядку.
+- **Model independence:** Adding new model = create new skill file, update connector
+- **Version control:** Each skill file independently versioned
+- **Single source of truth:** All prompting rules in `backend/ai/skills/`
+- **Easy testing:** Skills can be tested independently
 
-### 4.5 Assembly Profile — видео (дополнение)
+## 7. Future Extensions
 
-Видео переведено на ту же схему. Финальный видео-промпт — это таймированный
-сториборд, поэтому секции крупнее, чем у image:
-
-```json
-{
-  "profile": "ltx-2.3",
-  "type": "video",
-  "workflow": "video-ltx-*",
-  "skill": "video/ltx-2.3",
-  "assembly": {
-    "sections": ["characters", "storyboard", "renderInfo"],
-    "defaults": {
-      "negativeBase": "blurry, low quality, still frame, jitter, flicker, artifacts"
-    }
-  }
-}
-```
-
-- `characters` — блок `character_id: video_tokens` (якоря идентичности персонажей — по id, как в image-промпте).
-- `storyboard` — построчные таймированные сегменты `start–end s: описание`.
-- `renderInfo` — футер `24fps; render mode`.
-
-Детерминированная гарантия идентичности (в `buildVideoPrompt`): перед сборкой
-сториборда `video.action` нормализуется через `normalizeCharacterRefs` (имена →
-character_id, включая притяжательные формы вроде "Anna's glasses" →
-"anna_smirnova's glasses"), а общие групповые обороты ("the two men", "both
-characters") заменяются на in-frame character_id из `image.prompt` этого же юнита
-(`anchorGroupRefs`). Правило «пиши только по character_id» живёт в рулсах
-(`visuals.md`, `video_action_polish.md`, `video_action_reconciliation.md`), а не в
-скиллах — скилл описывает только специфику модели.
-
-Профили: `ai/profiles/video/ltx-2.3.json`
-(выбирается через `connector.profile.videoProfile`). У LTX секции не подавляются
-(`suppressSections` пуст) — его скилл управляет тем, КАК пишется `video.action`,
-а не что исключать из обёртки. `buildVideoPrompt` собирает секции по профилю;
-`negativeBase` берётся из `assembly.defaults`. Видео-скилл (`video/ltx-2.3`) инжектится
-в `stepCreateVisuals`, `stepReconcileVideoActions`
-и `stepPolishVideoActions`, когда профиль задан (как и image-скилл).
-
-### 4.6 Assembly Profile — аудио (дополнение)
-
-Аудио переведено на ту же схему. У TTS нет «финального промпта», собираемого из
-текстовых секций, поэтому профиль описывает assembly-юниты, которые производит
-движок/агент, и несёт программные дефолты:
-
-```json
-{
-  "profile": "qwen-tts",
-  "type": "audio",
-  "workflow": "tts-qwen-*",
-  "skill": "audio/qwen-tts",
-  "assembly": {
-    "sections": ["voiceInstruction", "defaultInstruct"],
-    "defaults": {
-      "defaultInstruct": ""
-    }
-  }
-}
-```
-
-- `voiceInstruction` — голосовая инструкция (1–3 предложения о тембре, тоне,
-  темпе, акценте) — то, что пишет `stepGenerateVoices` и что потребляет
-  Qwen3TTSVoiceDesign.
-- `defaultInstruct` — дефолтная TTS-инструкция для диалогового воркфлоу
-  (node 108 `default_instruct`). Программно берётся из `assembly.defaults` в
-  `generation.js` (раньше был захардкожен `""`).
-
-Профили: `ai/profiles/audio/qwen-tts.json`
-(выбирается через `connector.profile.audioProfile`).Аудио-скилл (`audio/qwen-tts`) инжектится в `stepGenerateVoices`, когда профиль
-задан — раньше `qwen-tts.md` нигде не использовался.
-
-## 5. Изменения во Frontend
-
-### 5.1 Экран Настроек → Секция Prompt Profiles
-
-На экране Settings добавляется секция **Prompt Profiles** после Workflow Manager
-и до Cache/Storyboard.
-
-Порядок: **Audio → Image → Video** (соответствует порядку генерации).
-
-Каждая строка показывает:
-- Иконка/лейбл типа
-- Название активного профиля (определяется выбранным workflow)
-- Статус: отображается read-only, так как профиль определяется workflow
-
-### 5.2 Макет
-
-```
-┌──────────────────────────────────────┐
-│  Prompt Profiles                     │
-│                                      │
-│  🎤 Audio Profile  →  qwen-tts      │
-│  🖼️ Image Profile  →  qwen-image    │
-│  🎬 Video Profile  →  ltx-2.3       │
-│                                      │
-│  (read-only — determined by workflow)│
-└──────────────────────────────────────┘
-```
-
-## 6. Порядок реализации
-
-### Фаза 1 — Документация и скилл-файлы
-1. ✅ Этот документ
-2. ✅ `backend/ai/skills/video/ltx-2.3.md` — из беседы с ChatGPT
-3. ✅ `backend/ai/skills/image/qwen-image.md` — базовые правила для Qwen Image
-4. ✅ `backend/ai/skills/audio/qwen-tts.md` — базовые правила для Qwen TTS
-
-### Фаза 2 — Backend
-5. ✅ `ai-loader.js`: поддержка поддиректорий в loadMdDir()
-6. ✅ `prompt-profile-loader.js`: новый модуль для загрузки профилей
-7. ✅ Добавить поле `profile` в connector JSONs
-8. ✅ Модифицировать `pipeline-steps.js`: inject skill в system prompt
-9. ✅ Модифицировать `pipeline-runner.js`: передача promptProfiles в options
-
-### Фаза 3 — Frontend
-10. ✅ Prompt Profiles секция на экране Settings
-11. ✅ API endpoint `/api/workflows/prompt-profiles` для статуса профилей
-
-## 7. Дальнейшее расширение
-
-- **Ручной выбор профиля**: в будущем можно дать пользователю возможность
-  переопределить профиль для каждого типа независимо от workflow.
-- **Версионирование**: `ltx-2.3.md`, `ltx-2.4.md` — разные файлы = разные профили.
-- **A/B тестирование**: можно добавить fallback-профиль для сравнения.
-- **Кастомные профили**: пользовательские .md файлы в отдельной директории.
+- **Dynamic skill loading:** Skills loaded at runtime based on model capabilities
+- **Skill composition:** Combine multiple skills for complex prompts
+- **A/B testing:** Different skill versions for same model
+- **Community skills:** User-contributed skills for custom models

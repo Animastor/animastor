@@ -1,63 +1,64 @@
-# Coreference Resolution — История упрощения
+# Coreference Resolution — Simplification History
 
-> **Текущий статус (июль 2026):** Coreference-шаг удалён из пайплайна.
-> `coreference.js` — заглушка. `unit.participants` удалён.
-> Единственный механизм: `inferCharactersFromPrompt()` сканирует `visual.prompt`
-> на `character_id` и inject-ит паспорта.
-> Документ сохранён для истории рефакторинга.
+> **Current status (July 2026):** Coreference step removed from pipeline.
+> `coreference.js` — stub. `unit.participants` removed.
+> Sole mechanism: `inferCharactersFromPrompt()` scans `visual.prompt`
+> for `character_id` and injects passports.
+> Document preserved for refactoring history.
 
 ## Problem Statement
 
-AI-агент генерации visual prompts иногда использует для описания персонажей не их `character_id`, а естественные языковые обороты:
+AI agent generating visual prompts sometimes uses natural language phrases
+instead of `character_id` for character descriptions:
 
-- *"Продавщица налила им газировки"* вместо `booth_woman`
-- *"Редактор обернулся"* вместо `berlioz`
-- *"Поэт задумался"* вместо `bezdomny`
+- *"The saleswoman poured them soda"* instead of `booth_woman`
+- *"The editor turned around"* instead of `berlioz`
+- *"The poet thought"* instead of `bezdomny`
 
-## Решение: LLM сам определяет участников
+## Solution: LLM determines participants itself
 
-**Текущая архитектура (с июля 2026):**
+**Current architecture (since July 2026):**
 
 ```
-Шаг 0: analyze_structure             — метаданные книги
-Шаг 1: analyze_characters            — персонажи
-Шаг 2: analyze_locations             — локации
-Шаг 3: create_scenes                 — сцены (title + location.id + environment-override)
-Шаг 4: create_units                  — IU (без participants — удалён)
-Шаг 5: create_visual_prompts        — inferCharactersFromPrompt
+Step 0: analyze_structure             — book metadata
+Step 1: analyze_characters            — characters
+Step 2: analyze_locations             — locations
+Step 3: create_scenes                 — scenes (title + location.id + environment-override)
+Step 4: create_units                  — IU (without participants — removed)
+Step 5: create_visual_prompts        — inferCharactersFromPrompt
 ```
 
-`unit.participants` удалён из всей системы. Вместо этого `inferCharactersFromPrompt()`
-сканирует `visual.prompt` на `character_id` и inject-ит паспорта. `coreference.js` — заглушка.
+`unit.participants` removed from entire system. Instead `inferCharactersFromPrompt()`
+scans `visual.prompt` for `character_id` and injects passports. `coreference.js` — stub.
 
-### Как это работает (тек. версия)
+### How it works (current version)
 
-1. **`stepCreateVisuals()`** — AI пишет `visual.prompt` с character_id (не именами)
-2. **`inferCharactersFromPrompt()`** — сканирует `visual.prompt` на `character_id` через regex
-3. **`normalizeCharacterRefs()`** — заменяет имена на ID в visual prompt
-4. **`buildCharacters()`** — inject-ит паспорта для найденных character_id
+1. **`stepCreateVisuals()`** — AI writes `visual.prompt` with character_id (not names)
+2. **`inferCharactersFromPrompt()`** — scans `visual.prompt` for `character_id` via regex
+3. **`normalizeCharacterRefs()`** — replaces names with IDs in visual prompt
+4. **`buildCharacters()`** — injects passports for found character_id
 
-## Core Principle: Не угадывай
+## Core Principle: Don't guess
 
-**Жёсткое правило:** если идентификация персонажа неочевидна из контекста — не привязывать к случайному персонажу.
+**Hard rule:** if character identification isn't obvious from context — don't bind to random character.
 
-## Интеграция с image-service.js
+## Integration with image-service.js
 
-`image-service.js` — **потребитель**:
+`image-service.js` — **consumer**:
 
 ```javascript
-// В buildCharacters:
-// 1. inferCharactersFromPrompt() — сканирует visual.prompt на character_id
-// 2. normalizeCharacterRefs() — заменяет алиасы на ID
+// In buildCharacters:
+// 1. inferCharactersFromPrompt() — scans visual.prompt for character_id
+// 2. normalizeCharacterRefs() — replaces aliases with IDs
 ```
 
-## История упрощения
+## Simplification history
 
-Изначально была реализована двухфазная архитектура (coarse + fine pass) с хранением resolution в 5 PostgreSQL таблицах. После анализа было решено упростить:
+Initially a two-phase architecture (coarse + fine pass) was implemented with resolution stored in 5 PostgreSQL tables. After analysis, simplification was decided:
 
-- **Убрано (июнь 2026):** stepCollectCharacterCandidates, stepResolveCharacterMentions,
-  matchMentionsToUnits, БД таблицы, PROGRESS_STAGES для coreference
-- **Убрано (июль 2026):** unit.participants, assignUnitParticipants, coreference-шаг,
+- **Removed (June 2026):** stepCollectCharacterCandidates, stepResolveCharacterMentions,
+  matchMentionsToUnits, DB tables, PROGRESS_STAGES for coreference
+- **Removed (July 2026):** unit.participants, assignUnitParticipants, coreference step,
   shouldInjectParticipantPassports, applyScenePairParticipantFallback, character_anchors
-- **Оставлено:** normalizeCharacterRefs, buildSafeAliasIndex, isSafeCharacterAlias,
+- **Kept:** normalizeCharacterRefs, buildSafeAliasIndex, isSafeCharacterAlias,
   inferCharactersFromPrompt
