@@ -19,6 +19,7 @@ import type { TaskLabels, TaskRow } from '../state/generateStore';
 import { position as positionSignal } from '../state/positionStore';
 import { toast } from '../lib/ui';
 import { IconPlay, IconStop, IconSettings, IconLibrary, IconVolumeUp, IconVolumeOff, IconImage, IconImageOff, IconVideocam, IconVideocamOff } from '../app/icons';
+import { AnalysisProgressPanel } from './AnalysisProgressPanel';
 
 // GeneratePage — 1:1 with GenerateFragment + fragment_generate.xml (stage 4).
 //  - Position bar (include_position_bar) → tap navigates to /navigate.
@@ -326,7 +327,11 @@ export function GeneratePage(props: { path?: string }) {
         rows={rowsFor('vbook')}
         showDoneRow={showDoneRow}
         onRowStop={setPopupRow}
-      />
+      >
+        {/* Parallel AI Analysis progress panel (Milestone #2) — renders
+            nothing in sequential mode; see AnalysisProgressPanel. */}
+        <AnalysisProgressPanel />
+      </WorkerSection>
 
       {/* Audio section */}
       <WorkerSection
@@ -431,7 +436,7 @@ export function GeneratePage(props: { path?: string }) {
 //  WORKER SECTION — one card (fragment_generate.xml section block)
 // ═══════════════════════════════════════════════════════════════
 
-function WorkerSection({ label, iconActive, iconInactive, state, enabled, onToggle, onSettings, onGenerate, genLabel, onStop, rows, showDoneRow, onRowStop }: {
+function WorkerSection({ label, iconActive, iconInactive, state, enabled, onToggle, onSettings, onGenerate, genLabel, onStop, rows, showDoneRow, onRowStop, children }: {
   label: string;
   iconActive: JSX.Element;
   iconInactive: JSX.Element;
@@ -445,6 +450,9 @@ function WorkerSection({ label, iconActive, iconInactive, state, enabled, onTogg
   rows: TaskRow[];
   showDoneRow: boolean;
   onRowStop: (row: TaskRow) => void;
+  /** Optional extra block rendered below the progress rows.
+   *  Used by the VBook section to inject the parallel-analysis panel. */
+  children?: JSX.Element | null;
 }) {
   const showActiveIcon = state.iconState !== 'off' && state.iconState !== 'error';
   const pulse = state.iconState === 'active';
@@ -482,6 +490,7 @@ function WorkerSection({ label, iconActive, iconInactive, state, enabled, onTogg
           // would reconcile duplicate keys and drop/misrender rows.
           <WorkerRow key={row.taskId ? `${row.taskId}:${row.chapterId ?? ''}:${row.sceneId ?? ''}:${i}` : `${row.type}-${i}`} row={row} onStop={() => onRowStop(row)} />
         ))}
+        {children}
       </div>
 
       {/* Action buttons */}
