@@ -1,30 +1,29 @@
-# 09. Миграция Mobile Web → Desktop
+# 09. Mobile Web → Desktop Migration
 
-Раздел посвящён десктопной презентации существующего мобильного веб-приложения
-Animastor (`frontends/mobile/`, Preact + TS + Vite). Десктоп **не** является
-вторым продуктом: он переиспользует те же маршруты, API-клиент, сторы, переводы,
-темы и доменные компоненты, добавляя десктопную оболочку и десктопные варианты
-workspace-лейаутов.
+This section covers the desktop presentation of the existing Animastor mobile web app
+(`frontends/mobile/`, Preact + TS + Vite). Desktop is **not** a
+second product: it reuses the same routes, API client, stores, translations,
+themes and domain components, adding a desktop shell and desktop variants of
+workspace layouts.
 
-> **Статус:** план утверждён (этап 1 аудита завершён). Десктопный shell-прототип
-> реализован за 8 коммитов (создан по плану §15 как «Immediate next step») —
-> см. [`02-PROGRESS.md`](02-PROGRESS.md). Следующий приоритет — десктопный
-> **Editor workspace** (Phase 5 плана).
+> **Status:** plan approved (stage 1 audit complete). Desktop shell prototype
+> implemented in 8 commits (built per plan §15 as "Immediate next step") —
+> see [`02-PROGRESS.md`](02-PROGRESS.md). Next priority is desktop
+> **Editor workspace** (Phase 5 of plan).
 
 ---
 
-## Ключевое решение (из плана, §1.4 и §14)
+## Key decision (from plan, §1.4 and §14)
 
-`frontends/main/` содержит только статичный `index.html` — это **не** десктопное
-приложение. Поэтому десктоп реализуется **внутри `frontends/mobile/`** как
-адаптивное представление на определённом брейкпоинте ширины; мобильная
-композиция остаётся fallback'ом ниже этого брейкпоинта. Строить второе
-десктопное приложение запрещено (дублирование состояния и расхождение
-поведения).
+`frontends/main/` contains only a static `index.html` — this is **not** a desktop
+application. Therefore desktop is implemented **inside `frontends/mobile/`** as
+an adaptive view at a certain width breakpoint; mobile
+composition remains the fallback below this breakpoint. Building a second
+desktop application is forbidden (state duplication and behavior divergence).
 
-## Основная модель
+## Core model
 
-Контекстуальный workspace:
+Contextual workspace:
 
 ```text
 ┌──────────── File rail ────────────┬────────────── Main workspace ──────────────┬──── Navigator ────┐
@@ -36,33 +35,33 @@ workspace-лейаутов.
                                   AI Assistant: contextual overlay / docked panel
 ```
 
-Generator, Player и Editor — это три **режима workspace**, а не три смежные
-панели: сегментированный mode-бар в десктопном header'е, состояние — в
-существующих общих сторах (`generateStore`, `playbackStore`, `positionStore`).
+Generator, Player and Editor are three **workspace modes**, not three adjacent
+panels: segmented mode-bar in desktop header, state lives in
+existing shared stores (`generateStore`, `playbackStore`, `positionStore`).
 
-## Брейкпоинты (Phase 2 — валидировать реальным контентом)
+## Breakpoints (Phase 2 — validate with real content)
 
 | Layout state | Viewport | Shell behaviour |
 |---|---:|---|
-| Wide desktop | `>= 1440px` | header + File-панель 264–304px + центр + Navigator 280–336px |
-| Standard laptop | `1100–1439px` | File → rail 56–64px после открытия книги; Navigator открыт, в Editor сжимается |
-| Narrow desktop | `900–1099px` | центр + один overlay/коллапсируемый сайдбар |
-| Mobile | `< 900px` | текущий mobile-шелл (toolbar + tab bar), без десктопных панелей |
+| Wide desktop | `>= 1440px` | header + File panel 264–304px + center + Navigator 280–336px |
+| Standard laptop | `1100–1439px` | File → rail 56–64px after book open; Navigator open, Editor compresses |
+| Narrow desktop | `900–1099px` | center + one overlay/collapsible sidebar |
+| Mobile | `< 900px` | current mobile shell (toolbar + tab bar), no desktop panels |
 
-Текущий shell-прототип работает от брейкпоинта **`min-width: 1180px`**
-(`DESKTOP_SHELL_QUERY` в `AppShell.tsx`) с laptop-адаптацией `<= 1359px` —
-значения предстоит сверить с планом после визуальных прототипов.
+Current shell prototype works from breakpoint **`min-width: 1180px`**
+(`DESKTOP_SHELL_QUERY` in `AppShell.tsx`) with laptop adaptation `<= 1359px` —
+values to be verified against plan after visual prototypes.
 
-## Структура раздела
+## Section structure
 
-| Документ | Содержание |
+| Document | Contents |
 |---|---|
-| [`01-MIGRATION-PLAN.md`](01-MIGRATION-PLAN.md) | Полный план миграции: аудит мобильного UI, десктопные принципы, информационная архитектура, десктопный Editor/Generator/Player, AI Assistant, фазы 1–10, definition of done |
-| [`02-PROGRESS.md`](02-PROGRESS.md) | Трекер прогресса по фазам: что реализовано (shell-прототип), что в работе, что дальше |
+| [`01-MIGRATION-PLAN.md`](01-MIGRATION-PLAN.md) | Full migration plan: mobile UI audit, desktop principles, information architecture, desktop Editor/Generator/Player, AI Assistant, phases 1–10, definition of done |
+| [`02-PROGRESS.md`](02-PROGRESS.md) | Phase progress tracker: what's implemented (shell prototype), what's in progress, what's next |
 
-## Связанные документы
+## Related documents
 
-- [`docs/08-mobile-web-migration/README.md`](../08-mobile-web-migration/README.md) — предшествующая миграция Android → Mobile Web (`frontends/mobile/`)
-- [`docs/05-frontend/PLAYER_STATE.md`](../05-frontend/PLAYER_STATE.md) — состояние плеера (контракт, переиспользуется без изменений)
-- [`docs/01-overview/PROJECT_STRUCTURE.md`](../01-overview/PROJECT_STRUCTURE.md) — место `frontends/mobile/` в проекте
-- [`docs/DONT_DO.md`](../DONT_DO.md) — антипаттерны, не воспроизводить в десктопной оболочке
+- [`docs/08-mobile-web-migration/README.md`](../08-mobile-web-migration/README.md) — preceding Android → Mobile Web migration (`frontends/mobile/`)
+- [`docs/05-frontend/PLAYER_STATE.md`](../05-frontend/PLAYER_STATE.md) — player state (contract, reused without changes)
+- [`docs/01-overview/PROJECT_STRUCTURE.md`](../01-overview/PROJECT_STRUCTURE.md) — `frontends/mobile/` position in project
+- [`docs/DONT_DO.md`](../DONT_DO.md) — anti-patterns, do not reproduce in desktop shell
