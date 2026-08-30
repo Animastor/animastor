@@ -25,20 +25,19 @@ Animastor Backend
  Provider Adapter
        │
        ├── RunPod REST API v2
-       ├── RunPod MCP (для agent-assisted operations)
-       └── в будущем другие GPU providers
+       ├── RunPod MCP (for agent-assisted operations)
+       └── future other GPU providers
        │
        ▼
  RunPod Pods / Serverless / Workers
 ```
 
-Backend продолжает отвечать за генерационную логику и orchestration
-задач.
+Backend continues to handle generation logic and task orchestration.
 
-GPU Hub отвечает за физическую инфраструктуру worker'ов: - обнаружение
-worker'ов; - состояние worker'ов; - provisioning; - lifecycle; -
-health; - подключение/отключение GPU; - передачу задач worker'ам; -
-реакцию на отказ инфраструктуры.
+GPU Hub handles physical worker infrastructure: - worker
+discovery; - worker state; - provisioning; - lifecycle; -
+health; - GPU connection/disconnection; - task delivery to workers; -
+infrastructure failure response.
 
 ## 2. Why Not Integrate RunPod Directly into Backend
 
@@ -55,69 +54,69 @@ Backend should tell GPU Hub at approximately this level:
 с такими требованиями.
 ```
 
-GPU Hub уже решает, где и как получить вычислительный ресурс.
+GPU Hub already decides where and how to get compute resources.
 
-Так мы сохраняем независимость core backend от конкретного
-GPU-провайдера.
+This preserves core backend independence from specific
+GPU providers.
 
 ## 3. What to Use from RunPod
 
-Основной будущий интерфейс:
+Primary future interface:
 
 **RunPod REST API v2**
 
-Он является главным программным API для интеграции.
+This is the main software API for integration.
 
-Дополнительный интерфейс:
+Additional interface:
 
 **RunPod MCP Server**
 
-MCP особенно интересен для agent-assisted infrastructure management: -
-изучение возможностей RunPod агентом; - диагностика; - discovery; -
-операции, которые удобно выполнять через AI agent; - помощь
-разработчику/оператору при работе с инфраструктурой.
+MCP is particularly interesting for agent-assisted infrastructure management: -
+exploring RunPod capabilities via agent; - diagnostics; - discovery; -
+operations convenient to perform through AI agent; - assisting
+developer/operator with infrastructure work.
 
-MCP не должен автоматически становиться runtime-зависимостью GPU Hub.
+MCP should not automatically become GPU Hub runtime dependency.
 
-Для production runtime предпочтителен явный REST API v2 через
-собственный adapter.
+For production runtime, explicit REST API v2 via
+custom adapter preferred.
 
 ## 4. Where the Agent Should Learn About RunPod
 
 Перед началом реализации агент должен прочитать официальные источники
 RunPod.
 
-### Обязательные источники
+### Required sources
 
 1.  **RunPod REST API v2 specification**
 
     `https://api.runpod.io/v2`
 
-    Использовать как основной источник истины по endpoint'ам, схемам
-    запросов/ответов и доступным операциям.
+    Use as primary source of truth for endpoints, request/response
+    schemas, and available operations.
 
 2.  **RunPod REST API v2 migration guide**
 
-    Использовать для понимания:
+    Use for understanding:
 
-    -   структуры v2;
+    -   v2 structure;
     -   breaking changes;
-    -   соответствий старых API;
-    -   новых возможностей.
+    -   legacy API mappings;
+    -   new capabilities.
 
 3.  **RunPod MCP documentation**
 
-    Изучить MCP отдельно от REST API:
+    Study MCP separately from REST API:
 
-    -   какие tools доступны;
-    -   какие операции read-only;
-    -   какие операции изменяют инфраструктуру;
-    -   какие операции destructive;
-    -   какие данные MCP предоставляет агенту.
+    -   available tools;
+    -   read-only operations;
+    -   infrastructure-changing operations;
+    -   destructive operations;
+    -   data MCP provides to agent.
 
 4.  **RunPod API / infrastructure documentation**
 
-    Дополнительно изучить:
+    Additional study:
 
     -   Pods;
     -   Serverless;
@@ -129,50 +128,50 @@ RunPod.
     -   storage;
     -   pricing/usage.
 
-### Правило для агента
+### Agent rule
 
-Не угадывать API RunPod по памяти.
+Don't guess RunPod API from memory.
 
-Перед реализацией: 1. открыть актуальную v2 specification; 2. открыть
-migration guide; 3. проверить нужные endpoint'ы; 4. сверить
-request/response schemas; 5. только после этого писать adapter.
+Before implementation: 1. open current v2 specification; 2. open
+migration guide; 3. check needed endpoints; 4. verify
+request/response schemas; 5. only then write adapter.
 
 ## 5. RunPod Timelines and Constraints
 
-На момент создания документа RunPod объявил:
+At document creation time RunPod announced:
 
--   REST API v1 прекращает обслуживание **15 ноября 2026**;
--   GraphQL должен быть отключён в **начале 2027 года**;
--   начиная с **17 сентября 2026** для старых API вводятся rate limits;
--   в ноябре 2026 ожидаются короткие brown-out проверки REST v1.
+-   REST API v1 sunset **November 15, 2026**;
+-   GraphQL to be disabled in **early 2027**;
+-   starting **September 17, 2026** rate limits introduced for legacy APIs;
+-   November 2026 expected short brown-out checks for REST v1.
 
-Поэтому новую интеграцию строить сразу на **REST API v2**.
+Therefore build new integration directly on **REST API v2**.
 
-Не закладывать новый код на v1 или GraphQL.
+Don't introduce new code on v1 or GraphQL.
 
 ## 6. What's Particularly Useful for GPU Hub
 
 ### 6.1 GPU availability
 
-GPU Hub сможет перед provisioning узнать: - какие GPU доступны; - в
-каких datacenter; - где есть capacity; - какие варианты подходят под
-требования worker'а.
+GPU Hub can before provisioning discover: - which GPUs available; - in
+which datacenters; - where capacity exists; - which options match
+worker requirements.
 
-Это позволит перейти от:
+This enables transition from:
 
 ``` text
-попробовали создать Pod → не получилось → повторили
+tried to create Pod → failed → retried
 ```
 
-к:
+to:
 
 ``` text
-discovery → выбор подходящего ресурса → provisioning
+discovery → select suitable resource → provisioning
 ```
 
 ### 6.2 Datacenter selection
 
-GPU Hub потенциально сможет выбирать datacenter по политике:
+GPU Hub can potentially select datacenter by policy:
 
 ``` text
 GPU requirements
@@ -188,16 +187,16 @@ latency / geography
 selected provider resource
 ```
 
-Конкретная политика будет определена позднее.
+Specific policy to be defined later.
 
 ### 6.3 Runtime visibility
 
-RunPod v2 предоставляет больше информации о runtime Pod'ов и Serverless
-worker'ов.
+RunPod v2 provides more information about Pod and Serverless
+worker runtime.
 
-Это можно использовать как дополнительный источник истины для GPU Hub.
+This can serve as additional source of truth for GPU Hub.
 
-Важно:
+Important:
 
 **RunPod health не должен автоматически заменять наш собственный worker
 heartbeat.**
