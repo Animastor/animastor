@@ -2,101 +2,101 @@
 
 ## 1. Backend Server (`backend/src/backend.cjs`)
 
-**Ответственность:** Точка входа. Инициализация Redis/Express/PG, DI всех сервисов, монтирование роутов, запуск runtime loop.
+**Responsibility:** Entry point. Redis/Express/PG initialization, DI of all services, route mounting, runtime loop startup.
 
-**Входы:** HTTP-запросы (Express), сигналы от GPU Hub (callbacks через task-handler).
+**Inputs:** HTTP requests (Express), GPU Hub signals (callbacks via task-handler).
 
-**Выходы:** HTTP-ответы, задачи в GPU Hub, данные в Redis/PG.
+**Outputs:** HTTP responses, tasks to GPU Hub, data to Redis/PG.
 
-**Зависимости:** Express, ioredis, pg, multer, adm-zip, sharp, music-metadata, ws, uuid, cors, helmet, express-rate-limit.
+**Dependencies:** Express, ioredis, pg, multer, adm-zip, sharp, music-metadata, ws, uuid, cors, helmet, express-rate-limit.
 
-**Встроенные улучшения:**
+**Built-in improvements:**
 - **Helmet.js** — HTTP security headers (HSTS, CSP, X-Frame-Options, XSS-Protection)
-- **Rate limiting** — 500 req/min на `/api/`, защита от перегрузок
+- **Rate limiting** — 500 req/min on `/api/`, overload protection
 
-> **UPD 2026-06-26:** Исправлен rate limit (500, не 100). Код: `backend.cjs:64-65`.
-- **Request ID** — каждый HTTP-запрос получает короткий ID (`crypto.randomUUID().slice(0,8)`) для трассировки
-- **Graceful shutdown (SIGTERM)** — последовательное завершение: server.close() → redis.quit() → postgres.closePool()
+> **UPDATE 2026-06-26:** Fixed rate limit (500, not 100). Code: `backend.cjs:64-65`.
+- **Request ID** — every HTTP request gets short ID (`crypto.randomUUID().slice(0,8)`) for tracing
+- **Graceful shutdown (SIGTERM)** — sequential shutdown: server.close() → redis.quit() → postgres.closePool()
 
-**Используют:** Все внешние клиенты (Android, curl, браузер).
+**Used by:** All external clients (Android, curl, browser).
 
-**Использует:** Все модули backend (`state`, `audio`, `image`, `video`, `workflows`, `orchestration`, `storage`, `runtime`, `book`, `services/*`).
+**Uses:** All backend modules (`state`, `audio`, `image`, `video`, `workflows`, `orchestration`, `storage`, `runtime`, `book`, `services/*`).
 
 ---
 
 ## 2. API Layer (Routes)
 
 ### 2.1 Book Routes (`backend/src/routes/book-routes.cjs`)
-**Ответственность:** Управление книгами: CRUD, импорт TXT, bootstrap, trigger-next-window, статус, agent-status, генерация, чанки, слайд-окно, реордер сцен.
+**Responsibility:** Book management: CRUD, TXT import, bootstrap, trigger-next-window, status, agent-status, generation, chunks, sliding window, scene reorder.
 
-**Входы:** HTTP `GET/POST/PUT/PATCH/DELETE /api/v1/book/*`
-**Выходы:** JSON-ответы
+**Inputs:** HTTP `GET/POST/PUT/PATCH/DELETE /api/v1/book/*`
+**Outputs:** JSON responses
 
 ### 2.2 Generation Routes (`backend/src/routes/generation-routes.cjs`)
-**Ответственность:** Запуск/отмена генерации, gen-scope, layer-config, worker counts, прогресс.
+**Responsibility:** Generation start/cancel, gen-scope, layer-config, worker counts, progress.
 
-**GPU Hub cleanup (июль 2026):** Добавлена `clearGpuHubQueues()` — централизованная очистка stale-задач из Redis GPU hub (dedup-ключи, очереди, running, result-кэш). Поддерживает опциональный sceneFilter для точечной очистки. Используется в regenerate и cancel-generation.
+**GPU Hub cleanup (July 2026):** Added `clearGpuHubQueues()` — centralized cleanup of stale tasks from Redis GPU hub (dedup keys, queues, running, result cache). Supports optional sceneFilter for targeted cleanup. Used in regenerate and cancel-generation.
 
-**См. также:** `docs/02-orchestration/GPU_HUB_CLEANUP.md`
+**See also:** `docs/02-orchestration/GPU_HUB_CLEANUP.md`
 
 ### 2.3 AI Routes (`backend/src/routes/ai-routes.cjs`)
-**Ответственность:** AI-чат ассистент, загрузка book в AI-контекст, управление сессиями чата.
+**Responsibility:** AI assistant chat, book loading into AI context, chat session management.
 
 ### 2.4 Debug Routes (`backend/src/routes/debug-routes.cjs`)
-**Ответственность:** Отладка: дампы состояния, очереди, ивент-журнал.
+**Responsibility:** Debugging: state dumps, queues, event journal.
 
 ### 2.5 Connector Routes (`backend/src/routes/connector-routes.cjs`)
-**Ответственность:** Управление коннекторами (13 эндпоинтов).
+**Responsibility:** Connector management (13 endpoints).
 
 ### 2.6 Workflow Routes (`backend/src/routes/workflow-routes.cjs`)
-**Ответственность:** Управление workflow (4 эндпоинта).
+**Responsibility:** Workflow management (4 endpoints).
 
 ### 2.7 Auth Routes (`backend/src/routes/auth-routes.cjs`)
-**Ответственность:** Аутентификация: register, login, logout, me. Публичные/pre-auth эндпоинты.
+**Responsibility:** Authentication: register, login, logout, me. Public/pre-auth endpoints.
 
 **API:**
-- `POST /api/v1/auth/register` — создание аккаунта (+ workspace + сессия); при вызове с гостевым cookie — конвертация гостевого workspace in-place.
+- `POST /api/v1/auth/register` — account creation (+ workspace + session); when called with guest cookie — in-place guest workspace conversion.
 - `POST /api/v1/auth/login` — username/password → session cookie (HttpOnly).
-- `POST /api/v1/auth/logout` — инвалидация сессии/гостевой идентичности.
-- `GET /api/v1/auth/me` — текущая идентичность: user | guest | none.
+- `POST /api/v1/auth/logout` — session/guest identity invalidation.
+- `GET /api/v1/auth/me` — current identity: user | guest | none.
 
-**Сессии:** Server-side в PG (`sessions` таблица), cookie `animastor_sid`. Кросс-поддоменные через `COOKIE_DOMAIN=animastor.in`.
+**Sessions:** Server-side in PG (`sessions` table), cookie `animastor_sid`. Cross-subdomain via `COOKIE_DOMAIN=animastor.in`.
 
 ### 2.8 Worker Routes (`backend/src/routes/worker-routes.cjs`)
-**Ответственность:** Регистрация и lifecycle воркеров workspace (PW-4 fail-closed model).
+**Responsibility:** Workspace worker registration and lifecycle (PW-4 fail-closed model).
 
 **API:**
-- `POST /api/v1/worker/verify` — проверка credential (worker CLI first-run). FAIL CLOSED: missing/invalid/revoked → 401. Возвращает identity + mode из PG (authoritative).
-- `POST /api/v1/workers` — создать воркера + выдать credential (one-time). Mode: `private` (default) или `share` (с `confirm_share=true`). `system` — admin-only, отклоняется.
-- `GET /api/v1/workers` — список воркеров workspace (без секретов).
-- `GET /api/v1/workers/:workerId` — детали одного воркера.
-- `POST /api/v1/workers/:workerId/rotate` — ротация credential (старый умирает).
-- `DELETE /api/v1/workers/:workerId` — отзыв воркера (soft delete).
+- `POST /api/v1/worker/verify` — credential check (worker CLI first-run). FAIL CLOSED: missing/invalid/revoked → 401. Returns identity + mode from PG (authoritative).
+- `POST /api/v1/workers` — create worker + issue credential (one-time). Mode: `private` (default) or `share` (with `confirm_share=true`). `system` — admin-only, rejected.
+- `GET /api/v1/workers` — workspace worker list (no secrets).
+- `GET /api/v1/workers/:workerId` — single worker details.
+- `POST /api/v1/workers/:workerId/rotate` — credential rotation (old dies).
+- `DELETE /api/v1/workers/:workerId` — worker revoke (soft delete).
 
-**Инварианты:** workspace_id всегда из `req.workspace` (никогда из body/guest). Only registered users (guests get 401/403).
+**Invariants:** workspace_id always from `req.workspace` (never from body/guest). Only registered users (guests get 401/403).
 
 ### 2.9 Admin Routes (`backend/src/routes/admin-routes.cjs`)
-**Ответственность:** Платформенный admin-уровень: system AI kill switch + system provider + SYSTEM worker registry.
+**Responsibility:** Platform admin level: system AI kill switch + system provider + SYSTEM worker registry.
 
 **API — System AI:**
-- `GET /api/v1/admin/system-ai` — состояние kill switch + provider meta.
+- `GET /api/v1/admin/system-ai` — kill switch state + provider meta.
 - `PUT /api/v1/admin/system-ai` — toggle enabled/upsert provider.
-- `POST /api/v1/admin/system-ai/test` — тест соединения (не сохраняет ключ).
+- `POST /api/v1/admin/system-ai/test` — connection test (doesn't save key).
 
 **API — SYSTEM Worker Registry (PW-4):**
-- `POST /api/v1/admin/workers/system` — создать SYSTEM воркер (Animastor-operated pool). Token выдаётся ОДИН раз.
-- `GET /api/v1/admin/workers/system` — список SYSTEM воркеров.
-- `POST /api/v1/admin/workers/system/:workerId/rotate` — ротация credential (старый умирает, новый ОДИН раз).
-- `DELETE /api/v1/admin/workers/system/:workerId` — отзыв (immediate soft delete).
+- `POST /api/v1/admin/workers/system` — create SYSTEM worker (Animastor-operated pool). Token issued ONCE.
+- `GET /api/v1/admin/workers/system` — SYSTEM worker list.
+- `POST /api/v1/admin/workers/system/:workerId/rotate` — credential rotation (old dies, new ONCE).
+  `DELETE /api/v1/admin/workers/system/:workerId` — revoke (immediate soft delete).
 
-SYSTEM воркеры workspace-less (workers_scope_check), создаются ТОЛЬКО здесь. Tenant routes отклоняют mode='system'.
+SYSTEM workers workspace-less (workers_scope_check), created ONLY here. Tenant routes reject mode='system'.
 
-**Guard:** `requireAdmin` (role='admin' OR ADMIN_USERNAMES allowlist). Второй слой: nginx Basic Auth на `admin.animastor.in`.
+**Guard:** `requireAdmin` (role='admin' OR ADMIN_USERNAMES allowlist). Second layer: nginx Basic Auth on `admin.animastor.in`.
 
-**Примечание:** admin-routes получает `redis` (для worker auth mirror updates при create/rotate/revoke).
+**Note:** admin-routes receives `redis` (for worker auth mirror updates on create/rotate/revoke).
 
 ### 2.10 Settings AI Routes (`backend/src/routes/settings-ai-routes.cjs`)
-**Ответственность:** Workspace AI provider — один активный провайдер на workspace.
+**Responsibility:** Workspace AI provider — one active provider per workspace.
 
 **API:**
 - `GET/PUT/DELETE /api/v1/settings/ai/provider` — CRUD workspace провайдера.
@@ -105,84 +105,84 @@ SYSTEM воркеры workspace-less (workers_scope_check), создаются �
 **Identity:** user OR guest с workspace; anonymous → 401.
 
 ### 2.11 Config Routes (`backend/src/routes/config-routes.cjs`)
-**Ответственность:** Клиентские лимиты для редакторов (image_prompt_max_chars).
+**Responsibility:** Client-side editor limits (image_prompt_max_chars).
 
 ### 2.12 Book Sub-Routes (`backend/src/routes/book/`)
-**Ответственность:** Book routes декомпозированы на 17 подмодулей:
+**Responsibility:** Book routes decomposed into 17 sub-modules:
 
-| Модуль | Роль |
+| Module | Role |
 |---|---|
 | `core-routes.cjs` | GET/PUT/PATCH book, DELETE, source-coverage, cover |
 | `import-routes.cjs` | load-vbook, import-txt, bootstrap, resume-bootstrap, bootstrap-next-window |
-| `export-routes.cjs` | Экспорт vbook, storyboard, audio, video |
+| `export-routes.cjs` | Vbook, storyboard, audio, video export |
 | `generation-routes.cjs` | regenerate, cancel-generation, generate-next |
 | `chunks-routes.cjs` | GET chunks, GET assets-state |
 | `agent-routes.cjs` | GET agent-status |
-| `progress-panel.cjs` | Прогресс-панель (pre-computed worker list) |
+| `progress-panel.cjs` | Progress panel (pre-computed worker list) |
 | `recovery-routes.cjs` | recover-placeholders |
-| `versions-routes.cjs` | Версии сцен |
-| `recent-books-routes.cjs` | Недавние книги (session restore) |
-| `entity-crud-routes.cjs` | Add/delete персонажей/локаций/голосов |
+| `versions-routes.cjs` | Scene versions |
+| `recent-books-routes.cjs` | Recent books (session restore) |
+| `entity-crud-routes.cjs` | Add/delete characters/locations/voices |
 | `status-routes.cjs` | Status/read-only endpoints |
 | `parse-routes.cjs` | Parse/source/snapshot |
 | `cache-routes.cjs` | Cache inspection + teardown |
 
 ## 3. Orchestration Layer
 
-### 3.0 Orchestrator Facade (`backend/src/orchestration/orchestrator.js`) — Единый арбитр состояния
+### 3.0 Orchestrator Facade (`backend/src/orchestration/orchestrator.js`) — Single State Arbiter
 
-**Ответственность:** Единственный владелец lifecycle-состояния сцены. Фасад из 11 команд, через которые проходят ВСЕ писатели состояния (M5).
+**Responsibility:** Single owner of scene lifecycle state. Facade of 11 commands, through which ALL state writers pass (M5).
 
-**Команды:**
-- `markDirty(deps, redis, bookId, buildId, dirtyScenes, layerCfg)` — через bookDiff.markDirtyScenes (Lua-атомарный reset)
-- `markDirtyScene(redis, bookId, chapterId, sceneId, assets)` — прямой per-scene DIRTY (для recovery)
-- `planScene(redis, bookId, chapterId, sceneId)` — чистая функция, читает per-asset состояния, НЕ пишет
+**Commands:**
+- `markDirty(deps, redis, bookId, buildId, dirtyScenes, layerCfg)` — via bookDiff.markDirtyScenes (Lua atomic reset)
+- `markDirtyScene(redis, bookId, chapterId, sceneId, assets)` — direct per-scene DIRTY (for recovery)
+- `planScene(redis, bookId, chapterId, sceneId)` — pure function, reads per-asset states, writes nothing
 - `beginStage(redis, scene, loadedBook, buildId, stage)` — dispatch + per-asset GENERATING/PENDING
 - `completeStage(redis, bookId, chapterId, sceneId, stage, buildId)` — callback + version gate + READY + release
 - `completeStageWithoutVideo(redis, loadedBook, bookId, chapterId, sceneId, buildId)` — video disabled
 - `completeStageWithoutImage(redis, loadedBook, bookId, chapterId, sceneId, buildId)` — image disabled
 - `setScenePending(redis, bookId, chapterId, sceneId, asset, buildId)` — per-asset PENDING
-- `setSceneAllReady(redis, bookId, chapterId, sceneId, buildId)` — cache hit: все ассеты READY
+- `setSceneAllReady(redis, bookId, chapterId, sceneId, buildId)` — cache hit: all assets READY
 - `setScenePlaceholder(redis, bookId, chapterId, sceneId, buildId)` — audio PLACEHOLDER
-- `reconcile(redis, bookId, chapterId, sceneId)` — сверка фактов через reconciliation-engine
+- `reconcile(redis, bookId, chapterId, sceneId)` — fact verification via reconciliation-engine
 
-**Версионный гейт (M5 Шаг 5):** `completeStage` проверяет `scene_assets.scene_content_version < scenes.content_version` в PG перед READY. Если версия устарела → DIRTY вместо READY. Graceful fallback при недоступности PG.
+**Version gate (M5 Step 5):** `completeStage` checks `scene_assets.scene_content_version < scenes.content_version` in PG before READY. If version stale → DIRTY instead of READY. Graceful fallback when PG unavailable.
 
-> **UPD 2026-07-16 (T8):** syncLinearState удалён, SceneState enum удалён. Per-asset — единственный source of truth.
+> **UPDATE 2026-07-16 (T8):** syncLinearState removed, SceneState enum removed. Per-asset — sole source of truth.
 
 ### 3.1 Runtime Scheduler (`backend/src/runtime/runtime-scheduler.js`)
 
-**Ответственность:** Tick-based (5s) планировщик. **Чистая функция решения** — `shouldScheduleAssets()` только читает per-asset состояния и layer-config, ничего не пишет (Д.2). Version-stale reset — явный пред-проход в `attemptDispatch()` через `detectVersionStale()` + `markVersionStaleDirty()`.
+**Responsibility:** Tick-based (5s) planner. **Pure decision function** — `shouldScheduleAssets()` only reads per-asset states and layer-config, writes nothing (D.2). Version-stale reset — explicit pre-pass in `attemptDispatch()` via `detectVersionStale()` + `markVersionStaleDirty()`.
 
-**Scene-specific active index cleanup (июль 2026):** Добавлена `removeScenesFromActiveIndex()` — удаляет только указанные сцены из `animastor:active-scenes` (через SREM), а не все сцены книги. Используется в regenerate для точечной очистки dirty-сцен.
+**Scene-specific active index cleanup (July 2026):** Added `removeScenesFromActiveIndex()` — removes only specified scenes from `animastor:active-scenes` (via SREM), not all book scenes. Used in regenerate for targeted dirty scene cleanup.
 
-**Входы:** Redis (active scenes set), heartbeat воркеров.
-**Выходы:** Вызовы `dispatchEngine.dispatchStage()`.
+**Inputs:** Redis (active scenes set), worker heartbeat.
+**Outputs:** `dispatchEngine.dispatchStage()` calls.
 
-**Зависимости:** Redis, dispatch-engine, active-scenes-index, scene-state, worker-health.
-**Используют:** runtime-loop.
-**Использует:** dispatch-engine, orchestrator, scene-window.
+**Dependencies:** Redis, dispatch-engine, active-scenes-index, scene-state, worker-health.
+**Used by:** runtime-loop.
+**Uses:** dispatch-engine, orchestrator, scene-window.
 
 ### 3.2 Dispatch Engine (`backend/src/runtime/dispatch-engine.js`)
 
-**Ответственность:** Dispatch с lease-механизмом (NX TTL, предотвращение дублирования), quota-контроль (backpressure с **атомарным Lua EVAL** для acquire), idempotent completion (NX marker). Интеграция с governance-модулями: circuit-breaker, retry-budget, fairness-engine — напрямую через `require()` (LIVE, не lazy).
+**Responsibility:** Dispatch with lease mechanism (NX TTL, duplication prevention), quota control (backpressure with **atomic Lua EVAL** for acquire), idempotent completion (NX marker). Integration with governance modules: circuit-breaker, retry-budget, fairness-engine — direct via `require()` (LIVE, not lazy).
 
-**Ключевые изменения:**
-- **Атомарные квоты (M2):** `ATOMIC_ACQUIRE_SCRIPT` (Lua EVAL) — проверка лимита и INCR в одной Redis-операции. Устранён race между GET и INCR.
-- **Idempotent completion (C4):** `markDispatchCompleted` защищён `SET NX` по ключу `animastor:dispatch-completed:*`. Повторный колбэк безвреден.
-- **Д.1 (C1):** Единственный владелец release квоты — `markDispatchCompleted`. Из scene-callbacks releaseQuota убран.
-- **Force dispatch:** Поддержка `force=true` — очистка существующего lease + quota + metadata перед повторным dispatch.
-- **Scene-specific cleanup (июль 2026):** Добавлена `clearLeasesForScenes()` — batch DELETE lease/meta/completed ключей для указанных сцен (без SCAN, по известным ключам). Используется в regenerate для точечной очистки dirty-сцен.
+**Key changes:**
+- **Atomic quotas (M2):** `ATOMIC_ACQUIRE_SCRIPT` (Lua EVAL) — limit check and INCR in single Redis operation. Race between GET and INCR eliminated.
+- **Idempotent completion (C4):** `markDispatchCompleted` protected by `SET NX` on key `animastor:dispatch-completed:*`. Duplicate callback harmless.
+- **D.1 (C1):** Single owner of quota release — `markDispatchCompleted`. releaseQuota removed from scene-callbacks.
+- **Force dispatch:** `force=true` support — clears existing lease + quota + metadata before re-dispatch.
+- **Scene-specific cleanup (July 2026):** Added `clearLeasesForScenes()` — batch DELETE lease/meta/completed keys for specified scenes (no SCAN, by known keys). Used in regenerate for targeted dirty scene cleanup.
 
-**Зависимости:** Redis, lease-manager, runtime-config, counter-reconciliation, runtime-metrics, **circuit-breaker (LIVE)**, **retry-budget-manager (LIVE)**, **fairness-engine (LIVE)**.
-**Удалены из core:** policy-engine, workload-classifier, cost-estimator (мёртвый код, Phase 6).
+**Dependencies:** Redis, lease-manager, runtime-config, counter-reconciliation, runtime-metrics, **circuit-breaker (LIVE)**, **retry-budget-manager (LIVE)**, **fairness-engine (LIVE)**.
+**Removed from core:** policy-engine, workload-classifier, cost-estimator (dead code, Phase 6).
 
-**Используют:** runtime-scheduler.
-**Использует:** orchestrator.dispatchStage().
+**Used by:** runtime-scheduler.
+**Uses:** orchestrator.dispatchStage().
 
-**Lease TTL (актуальные):** audio 15min, image 20min, video 30min.
+**Lease TTL (current):** audio 15min, image 20min, video 30min.
 
-**Экспорт:** `clearLeasesForScenes`, `clearAllLeasesForBook`, `getQuotaStatus`, `LEASE_TTLS`, `QUOTAS`, `SCHEDULER_TICK_LOCK`, `SCHEDULER_TICK_LOCK_TTL`.
+**Exports:** `clearLeasesForScenes`, `clearAllLeasesForBook`, `getQuotaStatus`, `LEASE_TTLS`, `QUOTAS`, `SCHEDULER_TICK_LOCK`, `SCHEDULER_TICK_LOCK_TTL`.
 
 ### 3.3 Scene Orchestrator (`backend/src/orchestration/scene-orchestrator.js`)
 
@@ -196,207 +196,207 @@ SYSTEM воркеры workspace-less (workers_scope_check), создаются �
 
 ### 3.4 Scene Window (`backend/src/runtime/scene-window.js`)
 
-**Ответственность:** Управление окном генерации (scope-aware). Старт/стоп/слайд окна по мере завершения сцен.
+**Responsibility:** Generation window management (scope-aware). Window start/stop/slide as scenes complete.
 
-**Ключевые изменения:**
-- **Все записи состояния через facade (M5 Шаг 2):** `setScenePending`, `setSceneAllReady`, `setScenePlaceholder` — 7 прямых вызовов `state.setAssetState/setAssetStates` заменены на `orchestrator.*` (коммит d4bda21: syncLinearState удалён)
-- **Cache advisory (Phase 3/R3.3):** `checkSceneContentCache` — только информация, решение принимает facade. Version-based staleness check.
-- **Единый источник статусов файлов:** `getSceneFilesStatus()` — четырежды используемая функция для проверки наличия файлов на диске.
-- **Version gate (Д.3/M3):** `restoreChunkStatusForScene` и `reconcileWindowStatuses` проверяют PG версию перед записью 'ready'. Stale файлы не отменяют force-regen.
+**Key changes:**
+- **All state writes via facade (M5 Step 2):** `setScenePending`, `setSceneAllReady`, `setScenePlaceholder` — 7 direct `state.setAssetState/setAssetStates` calls replaced by `orchestrator.*` (commit d4bda21: syncLinearState removed)
+- **Cache advisory (Phase 3/R3.3):** `checkSceneContentCache` — informational only, decision made by facade. Version-based staleness check.
+- **Single source of file statuses:** `getSceneFilesStatus()` — quadruply used function for checking file existence on disk.
+- **Version gate (D.3/M3):** `restoreChunkStatusForScene` and `reconcileWindowStatuses` check PG version before writing 'ready'. Stale files don't cancel force-regen.
 
 ### 3.5 Event Journal (`backend/src/orchestration/event-journal.js`) v1.1.0
 
-**Ответственность:** Append-only журнал событий сцены в Redis (List). Аудит жизненного цикла. TTL 7 дней. Core scene lifecycle типы (R5.1) — governance/phase-specific типы удалены.
+**Responsibility:** Append-only scene event journal in Redis (List). Lifecycle audit. TTL 7 days. Core scene lifecycle types (R5.1) — governance/phase-specific types removed.
 
 **API:** appendSceneEvent, getSceneEvents, getSceneEventsByTime, getLastEvents, getEventsByType, getEventCount, getFirstEventTime, getLastEventTime, getEventTimeRange, deleteSceneEvents.
 
-**Event types:** SCENE_STARTED, AUDIO_DISPATCHED, AUDIO_COMPLETED, AUDIO_FAILED, IMAGE_DISPATCHED, IMAGE_FAILED, VIDEO_DISPATCHED, VIDEO_COMPLETED, VIDEO_FAILED, RECOVERY_*, DUPLICATE_CALLBACK, INVALID_STATE_CALLBACK, LOCK_*, DISPATCH_BLOCKED_CIRCUIT, RETRY_BUDGET_EXCEEDED, STARVATION_DETECTED, OVERLOAD_PROTECTION_ENABLED и др.
+**Event types:** SCENE_STARTED, AUDIO_DISPATCHED, AUDIO_COMPLETED, AUDIO_FAILED, IMAGE_DISPATCHED, IMAGE_FAILED, VIDEO_DISPATCHED, VIDEO_COMPLETED, VIDEO_FAILED, RECOVERY_*, DUPLICATE_CALLBACK, INVALID_STATE_CALLBACK, LOCK_*, DISPATCH_BLOCKED_CIRCUIT, RETRY_BUDGET_EXCEEDED, STARVATION_DETECTED, OVERLOAD_PROTECTION_ENABLED etc.
 
 ### 3.6 Active Scenes Index (`backend/src/runtime/active-scenes-index.js`)
 
-**Ответственность:** Redis-набор `animastor:active-scenes` для отслеживания сцен в обработке.
+**Responsibility:** Redis set `animastor:active-scenes` for tracking scenes in processing.
 
 ---
 
 ## 4. Service Layer
 
 ### 4.1 Audio Service (`backend/src/audio/audio-service.js`)
-**Ответственность:** TTS-генерация через GPU Hub, мерж аудиочанков через ffmpeg, placeholder-аудио, silence-trimming, book-level audio merge, padded text trimming.
+**Responsibility:** TTS generation via GPU Hub, audio chunk merging via ffmpeg, placeholder audio, silence-trimming, book-level audio merge, padded text trimming.
 
-**Входы:** sceneData, loadedBook, buildId, bookId.
-**Выходы:** Аудиофайлы (MP3), вызовы gpu.send().
+**Inputs:** sceneData, loadedBook, buildId, bookId.
+**Outputs:** Audio files (MP3), gpu.send() calls.
 
-**Зависимости:** gpu-dispatcher, workflow-loader, audio-workflows.
+**Dependencies:** gpu-dispatcher, workflow-loader, audio-workflows.
 
 ### 4.2 Image Service (`backend/src/image/image-service.js`)
-**Ответственность:** Генерация изображений IU через GPU Hub, построение промптов (персонажи, локации, окружение), кэширование, превью.
+**Responsibility:** IU image generation via GPU Hub, prompt building (characters, locations, environment), caching, preview.
 
-**Входы:** sceneData, loadedBook, buildId, bookId.
-**Выходы:** PNG-файлы, вызовы gpu.send().
+**Inputs:** sceneData, loadedBook, buildId, bookId.
+**Outputs:** PNG files, gpu.send() calls.
 
-**Зависимости:** gpu-dispatcher, workflow-loader, image-workflows.
+**Dependencies:** gpu-dispatcher, workflow-loader, image-workflows.
 
 ### 4.3 Video Service (`backend/src/video/video-service.js`)
-**Ответственность:** Генерация видео через LTX-модели (multi-image), чтение изображений для GPU assets.
+**Responsibility:** Video generation via LTX models (multi-image), image reading for GPU assets.
 
-**Входы:** sceneData, loadedBook, buildId.
-**Выходы:** MP4-файлы, вызовы gpu.sendVideo().
+**Inputs:** sceneData, loadedBook, buildId.
+**Outputs:** MP4 files, gpu.sendVideo() calls.
 
-**Зависимости:** gpu-dispatcher, workflow-loader, video-workflows.
+**Dependencies:** gpu-dispatcher, workflow-loader, video-workflows.
 
 ### 4.4 Video Merge (`backend/src/video/video-merge.js`)
-**Ответственность:** Мерж мультигрупповых видео в сцену, book-level merge, muxing видео+аудио.
+**Responsibility:** Multi-group video merging into scene, book-level merge, video+audio muxing.
 
 ### 4.5 Agent Service (`backend/src/services/agent/`)
-**Ответственность:** AI-пайплайн разбит на подмодули в `backend/src/services/agent/`:
-- `pipeline-steps.js` — 6 шагов (шаг 0 + 5 шагов пайплайна)
-- `pipeline-runner.js` — запуск пайплайна с валидацией
-- `bootstrap.js` — первое окно (`bootstrapWithAgent`)
-- `coreference.js` — сведён к заглушке (удалён из пайплайна)
-- `ai-caller.js` — вызов AI с ретраями
-- `text-utils.js` / `image-utils.js` — утилиты
-- `agent-prompts.js` — все system prompt'ы (в `services/agent-prompts.js`)
-- `agent-service.js` — barrel-экспорт и window-generation
+**Responsibility:** AI pipeline decomposed into sub-modules in `backend/src/services/agent/`:
+- `pipeline-steps.js` — 6 steps (step 0 + 5 pipeline steps)
+- `pipeline-runner.js` — pipeline execution with validation
+- `bootstrap.js` — first window (`bootstrapWithAgent`)
+- `coreference.js` — reduced to stub (removed from pipeline)
+- `ai-caller.js` — AI call with retries
+- `text-utils.js` / `image-utils.js` — utilities
+- `agent-prompts.js` — all system prompts (in `services/agent-prompts.js`)
+- `agent-service.js` — barrel export and window-generation
 
-**Шаги пайплайна (упрощённый, без coreference):**
+**Pipeline steps (simplified, without coreference):**
 ```
-Шаг 0: stepAnalyzeStructure       — метаданные книги (отдельно, до pipeline)
-Шаг 1: stepExtractCharacters      — персонажи
-Шаг 2: stepExtractLocations       — локации
-Шаг 3: stepCreateScenes           — сцены (до 3, из буфера ~1500 символов)
+Step 0: stepAnalyzeStructure       — book metadata (separate, before pipeline)
+Step 1: stepExtractCharacters      — characters
+Step 2: stepExtractLocations       — locations
+Step 3: stepCreateScenes           — scenes (up to 3, from ~1500 char buffer)
                                       + title, location.id, environment-override
-Шаг 4: stepCreateUnits            — IU (визуальные единицы), per-scene
-Шаг 5: stepCreateVisuals          — visual-промпты, per-scene
+Step 4: stepCreateUnits            — IU (visual units), per-scene
+Step 5: stepCreateVisuals          — visual prompts, per-scene
 ```
 
-**Ключевые изменения (июнь–июль 2026):**
-- **Отдельный Enrichment-шаг удалён** — title, location.id и environment-override
-  генерирует сам `stepCreateScenes()`: агент сравнивает каждую сцену с глобальным
-  шаблоном локации и пишет `location.environment` только для отличающихся полей
-  (правило «только переопределения», то же, что было в `enrich_scenes.md`).
-  Лишний LLM-проход по 500-символьным фрагментам убран.
-- **`unit.participants` удалён из всей системы** — LLM больше не генерирует
-  participants для IU. `inferCharactersFromPrompt()` — единственный метод
-  определения участников визуала (сканирует `visual.prompt` на character_id).
-- **Coreference resolution удалён из пайплайна** — `coreference.js` сведён к заглушке.
-  Валидация character_id теперь только через `normalizeCharacterRefs()`.
-- **`character_anchors` удалён** — позиции персонажей пишутся напрямую в
-  `visual.prompt`, без отдельного поля.
+**Key changes (June–July 2026):**
+- **Separate Enrichment step removed** — title, location.id and environment-override
+  generated by `stepCreateScenes()` itself: agent compares each scene with global
+  location template and writes `location.environment` only for differing fields
+  ("overrides only" rule, same as in `enrich_scenes.md`).
+  Extra LLM pass over 500-char fragments eliminated.
+- **`unit.participants` removed from entire system** — LLM no longer generates
+  participants for IU. `inferCharactersFromPrompt()` — sole method
+  for determining visual participants (scans `visual.prompt` for character_id).
+- **Coreference resolution removed from pipeline** — `coreference.js` reduced to stub.
+  character_id validation now only via `normalizeCharacterRefs()`.
+- **`character_anchors` removed** — character positions written directly to
+  `visual.prompt`, no separate field.
 
-**Ключевое поведение (2026-07-02):**
-- Backend хранит `currentOffset` в `agent_sessions.window_data` и берёт от него
-  текстовый буфер `MAX_WINDOW_CHARS=1500`.
-- AI создаёт **до 3 сцен** (`MAX_SCENES_PER_CHUNK=3`) из начала буфера и может
-  оставить хвост буфера неиспользованным.
-- `computeSceneCoverage()` проверяет, что созданные сцены являются дословным
-  непрерывным префиксом буфера.
-- `resolveSceneProgress()` вычисляет `nextOffset` по окончанию последней
-  созданной сцены; `currentOffset` обновляется именно в эту позицию, а не в
-  конец буфера.
-- Длительность сцены: цель ~20s, soft ceiling ~30s с одним repair retry.
+**Key behavior (2026-07-02):**
+- Backend stores `currentOffset` in `agent_sessions.window_data` and takes from it
+  text buffer `MAX_WINDOW_CHARS=1500`.
+- AI creates **up to 3 scenes** (`MAX_SCENES_PER_CHUNK=3`) from buffer start and may
+  leave buffer tail unused.
+- `computeSceneCoverage()` verifies created scenes are verbatim
+  continuous prefix of buffer.
+- `resolveSceneProgress()` computes `nextOffset` by end of last
+  created scene; `currentOffset` updated to this position, not to
+  buffer end.
+- Scene duration: target ~20s, soft ceiling ~30s with one repair retry.
 
-**Входы:** bookId, sourceText.
-**Выходы:** JSON-структура книги в PG (agent_sessions, agent_steps, agent_conversations).
+**Inputs:** bookId, sourceText.
+**Outputs:** Book JSON structure in PG (agent_sessions, agent_steps, agent_conversations).
 
-**Зависимости:** ai-service, book, postgres, agent-prompts.
+**Dependencies:** ai-service, book, postgres, agent-prompts.
 
-**Хранение книги (multi-file, v2.2):** Помимо `bible.json` и `characters.json`,
-система теперь хранит:
-- `locations.json` — все локации (отдельно от bible, доступ через `book.locations`)
-- `voices.json` — все голоса персонажей (отдельно от bible, доступ через `book.voices`)
-- `bible.json` — включает `country` и `epoch` для инъекции в image-промпты
+**Book storage (multi-file, v2.2):** In addition to `bible.json` and `characters.json`,
+system now stores:
+- `locations.json` — all locations (separate from bible, accessible via `book.locations`)
+  `voices.json` — all character voices (separate from bible, accessible via `book.voices`)
+- `bible.json` — includes `country` and `epoch` for image prompt injection
 
-**AI-провайдер:**
-- Единый ключ: `OPENROUTER_API_KEY`
-- Базовый URL: `AI_API_BASE_URL` (конфигурируемый, по умолчанию OpenRouter)
-- Модель по умолчанию: `qwen3-32b`
-- JSON-ответы очищаются от CoT (`<think>`/`<reasoning>`) перед парсингом
+**AI provider:**
+- Single key: `OPENROUTER_API_KEY`
+- Base URL: `AI_API_BASE_URL` (configurable, default OpenRouter)
+- Default model: `qwen3-32b`
+- JSON responses cleaned of CoT (`<think>`/`<reasoning>`) before parsing
 
 ### 4.6 TXT Importer (`backend/src/services/txt-importer.js`)
-**Ответственность:** Импорт TXT: декодирование (UTF-8/CP1251), валидация, создание draft, вызов agent-service.
+**Responsibility:** TXT import: decoding (UTF-8/CP1251), validation, draft creation, agent-service call.
 
-**Входы:** Buffer (TXT file) или string (AI text).
-**Выходы:** Draft-книга на диске.
+**Inputs:** Buffer (TXT file) or string (AI text).
+**Outputs:** Draft book on disk.
 
 ### 4.7 Window Generator (`backend/src/services/window-generator.cjs`)
-**Ответственность:** Фоновая обработка следующего окна: вызов bootstrapNextWindow, создание чанков, placeholder audio, регистрация сцен для GPU.
+**Responsibility:** Background processing of next window: bootstrapNextWindow call, chunk creation, placeholder audio, scene registration for GPU.
 
 ### 4.8 AI Service (`backend/src/services/ai-service.js`)
-**Ответственность:** Клиент внешнего AI API (OpenRouter + Nvidia). Вызов с ретраями и парсинг JSON. Единый ключ: `OPENROUTER_API_KEY`. Включает функцию `refineDraft()` с загрузкой примеров из `ai/examples/`.
+**Responsibility:** External AI API client (OpenRouter + Nvidia). Call with retries and JSON parsing. Single key: `OPENROUTER_API_KEY`. Includes `refineDraft()` function with example loading from `ai/examples/`.
 
 ### 4.9 Task Handler (`backend/src/services/task-handler.cjs`)
-**Ответственность:** Обработка callback'ов от GPU Hub. Поддерживает IU image completion с проверкой PG, аудио-мерж с padded text trimming, video dispatch.
+**Responsibility:** GPU Hub callback processing. Supports IU image completion with PG verification, audio merge with padded text trimming, video dispatch.
 
-**Входы:** HTTP POST / callback от GPU Hub.
-**Выходы:** Вызовы orchestrator.handleAudioCompleted / handleImageCompleted / handleVideoCompleted.
+**Inputs:** HTTP POST / callback from GPU Hub.
+**Outputs:** orchestrator.handleAudioCompleted / handleImageCompleted / handleVideoCompleted calls.
 
 ### 4.10 Chat Engine (`backend/src/services/chat-engine.cjs`)
-**Ответственность:** AI-чат для ассистента. Управление историей диалога. Поддерживает режимы (chat, edit, director, import, analyze, validate) с tool-based архитектурой (edit_book, write_storyboard, import_book, extract_entities, validate_book).
+**Responsibility:** AI assistant chat. Dialog history management. Supports modes (chat, edit, director, import, analyze, validate) with tool-based architecture (edit_book, write_storyboard, import_book, extract_entities, validate_book).
 
 ### 4.11 Gen Scope (`backend/src/services/gen-scope.js`)
-**Ответственность:** Персистентность области генерации (whole_book / current_chapter / current_scene / from_current_scene).
+**Responsibility:** Generation scope persistence (whole_book / current_chapter / current_scene / from_current_scene).
 
 ### 4.12 Layer Config (`backend/src/services/layer-config.js`)
-**Ответственность:** Профили генерации per-book (AUDIO_ONLY, IMAGE_ONLY, VIDEO_ONLY, STORYBOARD, FULL).
+**Responsibility:** Per-book generation profiles (AUDIO_ONLY, IMAGE_ONLY, VIDEO_ONLY, STORYBOARD, FULL).
 
 ### 4.13 Scene Asset Registry (`backend/src/services/scene-asset-registry.js`)
-**Ответственность:** PostgreSQL-реестр asset'ов сцены (audio/image/video/storyboard). Замена Redis-реестра.
+**Responsibility:** PostgreSQL scene asset registry (audio/image/video/storyboard). Replaces Redis registry.
 
 ### 4.14 Book Event Log (`backend/src/services/book-event-log.js`)
-**Ответственность:** PostgreSQL-журнал событий книги (замена Redis event journal). 30+ типов событий.
+**Responsibility:** PostgreSQL book event journal (replaces Redis event journal). 30+ event types.
 
 ### 4.15 Book Source (`backend/src/services/book-source.js`)
-**Ответственность:** Канонический индекс сцен из Book JSON. Валидация существования сцен, fingerprinting.
+**Responsibility:** Canonical scene index from Book JSON. Scene existence validation, fingerprinting.
 
 ### 4.16 Book Sync (`backend/src/services/book-sync.js`)
-**Ответственность:** Синхронизация Book JSON с производным состоянием БД. Обнаружение добавленных/изменённых/удалённых сцен через scene_hash.
+**Responsibility:** Book JSON synchronization with derived DB state. Detection of added/modified/deleted scenes via scene_hash.
 
 ### 4.17 Cleanup Service (`backend/src/services/cleanup-service.cjs`)
-**Ответственность:** Управление жизненным циклом сборок, распределённые блокировки очистки, периодическая очистка stale audio scene locks.
+**Responsibility:** Build lifecycle management, distributed cleanup locks, periodic stale audio scene lock cleanup.
 
 ### 4.18 GPU Hub Cleanup
-**Ответственность:** Очистка stale-задач GPU Hub при регенерации/отмене (в `routes/book/generation-routes.cjs`).
+**Responsibility:** GPU Hub stale task cleanup on regenerate/cancel (in `routes/book/generation-routes.cjs`).
 
-**Функция `clearGpuHubQueues(redis, bookId, sceneFilter?)`:**
-- Очищает dedup-ключи `animastor:job:*` и `animastor:result-processed:*`
-- Фильтрует очереди `animastor:queue:audio|image|video`
-- Удаляет running-задачи из `animastor:running`
-- Очищает кэш результатов `animastor:result:*`
-- sceneFilter позволяет чистить только задачи для конкретных сцен
+**Function `clearGpuHubQueues(redis, bookId, sceneFilter?)`:**
+- Clears dedup keys `animastor:job:*` and `animastor:result-processed:*`
+- Filters queues `animastor:queue:audio|image|video`
+- Removes running tasks from `animastor:running`
+- Clears result cache `animastor:result:*`
+- sceneFilter allows cleaning only tasks for specific scenes
 
 ### 4.19 Audio Orchestrator (`backend/src/services/audio-orchestrator.js`)
-**Ответственность:** Единая state machine для аудио-генерации сцены.
+**Responsibility:** Unified state machine for scene audio generation.
 
 **Phase machine:** `NEW → PLACEHOLDER_READY → GENERATING → WAITING_CHUNKS → MERGING → FAILED/DONE`
 
-**Роль:** Единственный владелец merge-оркестрации. Все компоненты (startScene, executeAudioDispatch, completeChunk, completeMerge) читают phase из Redis-ключа `animastor:audio-orch:{bookId}:{chapterId}:{sceneId}` и принимают решения ТОЛЬКО на основе phase.
+**Role:** Sole owner of merge orchestration. All components (startScene, executeAudioDispatch, completeChunk, completeMerge) read phase from Redis key `animastor:audio-orch:{bookId}:{chapterId}:{sceneId}` and make decisions ONLY based on phase.
 
-**Инварианты:** phase=DONE ⇔ asset.audio=READY; phase=FAILED ⇒ asset.audio=FAILED.
+**Invariants:** phase=DONE ⇔ asset.audio=READY; phase=FAILED ⇒ asset.audio=FAILED.
 
-**Функции:** `completeChunk` (приём чанка, проверка комплектности, retry-логика, merge), `failWaitingScene` (единственный владелец WAITING_CHUNKS → FAILED), `scanAllStates` (для recovery).
+**Functions:** `completeChunk` (chunk acceptance, completeness check, retry logic, merge), `failWaitingScene` (sole owner of WAITING_CHUNKS → FAILED), `scanAllStates` (for recovery).
 
 ### 4.20 Video Orchestrator (`backend/src/services/video-orchestrator.js`)
-**Ответственность:** State machine для видео-генерации сцены (зеркало audio-orchestrator).
+**Responsibility:** State machine for scene video generation (mirror of audio-orchestrator).
 
 **Phase machine:** `NEW → GENERATING → WAITING_CHUNKS → MERGING → FAILED/DONE`
 
-**Решённая проблема (2026-08-11):** Видео сцены разбивается на N групп (`_g1`..`_gN`), но первый результат вызывал completeStage → finalizeDispatch удалял metadata/lease, и остальные группы отклонялись. Решение — state machine по образцу audio-orchestrator.
+**Problem solved (2026-08-11):** Scene video split into N groups (`_g1`..`_gN`), but first result called completeStage → finalizeDispatch deleted metadata/lease, remaining groups rejected. Solution — state machine modeled on audio-orchestrator.
 
-**Отличие от аудио:** Видео-группы НЕ склеиваются в обязательный единый файл — чанки остаются отдельными (`_gN.mp4`). Склейка `_g1.._gN → scene.mp4` выполняется только для плеера.
+**Difference from audio:** Video groups NOT merged into mandatory single file — chunks remain separate (`_gN.mp4`). Merging `_g1.._gN → scene.mp4` only performed for player.
 
 ### 4.21 Entity Cleanup (`backend/src/services/entity-cleanup.cjs`)
-**Ответственность:** Deep cleanup при ручном удалении scene / unit (entity). Удаление производного состояния через все слои:
+**Responsibility:** Deep cleanup on manual scene / unit (entity) deletion. Derived state deletion across all layers:
 
 - **PostgreSQL** — scene_assets, generation_tasks, image_units, storyboard_elements, audio_layers, asset_states, cache_entries, scenes
 - **Redis** — chunks, per-asset states, active index, audio/video orchestrators, dispatch leases, retry counters, GPU dedup keys
-- **Filesystem** — аудио/чанки/IU/превью/видео файлы сцены
-- **In-flight** — отмена GPU dispatch leases + hub jobs
-- **Invalidation** — пометка родительской сцены dirty для регенерации
+- **Filesystem** — audio/chunks/IU/preview/video scene files
+- **In-flight** — GPU dispatch lease + hub job cancellation
+  **Invalidation** — parent scene marked dirty for regeneration
 
-**Безопасность:** Каждый шаг отчитывается ok/error. Неполные очистки записываются в `animastor:pending-purge` set; periodic reconcileCycle повторяет (max 5 попыток).
+**Safety:** Each step reports ok/error. Incomplete cleanups written to `animastor:pending-purge` set; periodic reconcileCycle retries (max 5 attempts).
 
 ### 4.22 Audio Recovery (`backend/src/services/audio-recovery.cjs`)
-**Ответственность:** Периодическое (5s) сканирование Redis для восстановления потерянных audio/image результатов.
+**Responsibility:** Periodic (5s) Redis scanning for lost audio/image result recovery.
 
 ### 4.20 Placeholder Audio (`backend/src/services/placeholder-audio.js`)
 **Ответственность:** Генерация MP3-тишины для тайминга, замена placeholder → real audio при завершении TTS.
