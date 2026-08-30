@@ -1,96 +1,96 @@
-# AI Profile Auto-Selection — автовыбор профиля агента по анализу беседы
+# AI Profile Auto-Selection — Automatic agent profile selection based on conversation analysis
 
-> **Статус:** Направление / концепция (RFC). Не реализовано.
-> **Дата:** июль 2026.
-> **Отношение к другим документам:** продолжает историю
-> `docs/07-agents-and-generators/AGENT_PROMPT_PROFILES.md` (профили под модели
-> генерации) и `SYSTEM_PROMPT_RULES_MIGRATION.md` (правила в .md-файлах).
-> Здесь речь идёт о **чат-ассистенте** (AI Chat), а не о пайплайне генерации.
+> **Status:** Direction / concept (RFC). Not implemented.
+> **Date:** July 2026.
+> **Relation to other documents:** continues the story from
+> `docs/07-agents-and-generators/AGENT_PROMPT_PROFILES.md` (profiles for generation models)
+> and `SYSTEM_PROMPT_RULES_MIGRATION.md` (rules in .md files).
+> This is about **chat assistant** (AI Chat), not generation pipeline.
 
 ---
 
-## 1. Проблема и мотивация
+## 1. Problem and Motivation
 
-Раньше на экране ИИ было два ряда кнопок:
+Previously on the AI screen there were two rows of buttons:
 
-- **Режимы** (Общение → Редактор → Импорт → Режиссёр → Извлечение → Проверка) —
-  явное намерение пользователя, реально меняет доступные инструменты.
-- **Темы** (Книга / Сцена / Персонажи / Сценарий) — **мягкие подсказки**,
-  влияли только на `TOPIC_PROMPTS` в системном промпте, ничего не ограничивали.
+- **Modes** (Chat → Editor → Import → Director → Extraction → Validation) —
+  explicit user intent, actually changes available tools.
+- **Topics** (Book / Scene / Characters / Screenplay) — **soft hints**,
+  only affected `TOPIC_PROMPTS` in system prompt, didn't limit anything.
 
-Тематический ряд убран в июле 2026 (см. `frontend`:
-`ChatTopic.kt` удалён, `topic_id` жёстко `"book"`). Причина — классический
-UX-антипаттерн ручного переключения «мягкого фокуса»:
+The topic row was removed in July 2026 (see `frontend`:
+`ChatTopic.kt` deleted, `topic_id` hardcoded to `"book"`). Reason — classic
+UX anti-pattern of manual "soft focus" switching:
 
-> Пользователь забывает переключить кнопку → агент отвечает «не в ту тему» →
-> непонятно, почему он глючит → теряется доверие.
+> User forgets to switch button → agent answers "wrong topic" →
+> unclear why it's glitching → trust lost.
 
-**Вывод:** мягкие подсказки не должны управляться кнопками. Их место —
-автоматическая детекция по контексту беседы. Ручное управление оправдано
-только для **жёстких ограничений** (песочниц), где пользователь обязан видеть
-текущую область изменений.
+**Conclusion:** soft hints should not be managed by buttons. Their place is
+automatic detection from conversation context. Manual control justified
+only for **hard constraints** (sandboxes), where user must see
+current change scope.
 
-## 2. Идея
+## 2. Idea
 
-**Автоматически определять «фокус» беседы и подгружать соответствующий
-профиль/скил в системный промпт** — без участия пользователя.
+**Automatically detect conversation "focus" and load corresponding
+profile/skill into system prompt** — without user involvement.
 
 ```
-Беседа (последние сообщения + позиция + режим)
+Conversation (last messages + position + mode)
         ↓
-  Анализ контекста (детекция фокуса)
+  Context analysis (focus detection)
         ↓
-  Маппинг фокус → профиль/скил
+  Mapping focus → profile/skill
         ↓
-  Инъекция скила в системный промпт (buildChatSystemPrompt)
+  Skill injection into system prompt (buildChatSystemPrompt)
         ↓
-  Генерация ответа
+  Response generation
 ```
 
-Модель и так получает всё необходимое для самоопределения фокуса:
+The model already receives everything needed for self-determining focus:
 
-- **позицию** — `Current context: Глава X / Сцена Y` (инжектится всегда,
-  независимо от темы);
-- **режим** — явное намерение пользователя (Edit / Director / …);
-- **полный JSON книги** в контексте (`buildBookContext`).
+- **position** — `Current context: Chapter X / Scene Y` (always injected,
+  regardless of topic);
+  **mode** — explicit user intent (Edit / Director / …);
+- **full book JSON** in context (`buildBookContext`).
 
-Значит, детекция фокуса — это про то, *как модели сформулировать задачу*, а не
-про то, *какие данные ей дать*.
+So, focus detection is about *how to formulate task for model*, not
+about *what data to give it*.
 
-## 3. Что уже есть (инфраструктура)
+## 3. What already exists (infrastructure)
 
-| Компонент | Файл | Роль для этой задачи |
+| Component | File | Role for this task |
 |---|---|---|
-| Сборка системного промпта | `backend/src/services/chat-engine.cjs` → `buildChatSystemPrompt({ mode, topic, lang, bookData, chapterId, sceneId, unitIndex })` | Точка, куда будет подгружаться выбранный скил |
-| Мягкие подсказки тем | `TOPIC_PROMPTS` в том же файле | Кандидат на удаление (остаётся только `book`) |
-| Загрузчик правил/скилов | `backend/src/services/ai-loader.js` | Загружает `backend/ai/rules/`, `backend/ai/skills/`, `backend/ai/examples/` (TTL-кэш 1 мин) |
-| Профили-под-модель | `backend/src/services/prompt-profile-loader.js` → `getProfile(type, name)`, `buildSkillSection()`, `listAvailableProfiles()` | Уже умеет превращать .md-скил в секцию промпта |
-| Скилы (существующие) | `backend/ai/skills/video/ltx-2.3.md`, `image/qwen-image.md`, `audio/qwen-tts.md` + legacy | Сейчас — под модели генерации, не под фокус беседы |
-| Эндпоинт чата | `backend/src/routes/ai-routes.cjs` → `POST /api/v1/ai/chat` | Собирает промпт серверно (F6), сюда встроится детекция |
-| Режимы (фронтенд) | `frontend/.../ui/AssistantMode.kt` | Первый ряд кнопок — остаётся как есть |
+| System prompt assembly | `backend/src/services/chat-engine.cjs` → `buildChatSystemPrompt({ mode, topic, lang, bookData, chapterId, sceneId, unitIndex })` | Point where selected skill will be loaded |
+| Soft topic hints | `TOPIC_PROMPTS` in same file | Candidate for removal (only `book` remains) |
+| Rules/skills loader | `backend/src/services/ai-loader.js` | Loads `backend/ai/rules/`, `backend/ai/skills/`, `backend/ai/examples/` (TTL cache 1 min) |
+| Profiles-per-model | `backend/src/services/prompt-profile-loader.js` → `getProfile(type, name)`, `buildSkillSection()`, `listAvailableProfiles()` | Already can convert .md skill to prompt section |
+| Existing skills | `backend/ai/skills/video/ltx-2.3.md`, `image/qwen-image.md`, `audio/qwen-tts.md` + legacy | Currently for generation models, not conversation focus |
+| Chat endpoint | `backend/src/routes/ai-routes.cjs` → `POST /api/v1/ai/chat` | Assembles prompt server-side (F6), detection will be built in here |
+| Modes (frontend) | `frontend/.../ui/AssistantMode.kt` | First row of buttons — stays as-is |
 
-Ключевой вывод: **инфраструктура скилов уже есть** (`.md` → `ai-loader` →
-`buildSkillSection`). Не хватает только шага «какой скил выбрать» и самих
-скилов под фокус беседы.
+Key conclusion: **skill infrastructure already exists** (`.md` → `ai-loader` →
+`buildSkillSection`). Only missing step is "which skill to select" and skills
+for conversation focus.
 
-## 4. Принцип разделения (важно для будущих песочниц)
+## 4. Separation principle (important for future sandboxes)
 
-| Тип воздействия | Кто выбирает | UI |
+| Impact type | Who chooses | UI |
 |---|---|---|
-| **Мягкая подсказка** (акцент, фокус) | Автоматически из контекста беседы | Без кнопок (или только статус-индикатор) |
-| **Жёсткая песочница** (граница изменений, защита) | Явно пользователем + видимый статус | Бейдж/переключатель, который нельзя «забыть» |
+| **Soft hint** (emphasis, focus) | Automatically from conversation context | No buttons (or only status indicator) |
+| **Hard sandbox** (change boundary, protection) | Explicitly by user + visible status | Badge/toggle that can't be "forgotten" |
 
-Песочницы (книга → глава → сцена → глобальные разделы) возвращаются вместе с
-Книжным миром в БД — см. обсуждение. Автодетекция фокуса — **отдельное**,
-независимое направление, которое можно делать уже сейчас и которое
-сосуществует с песочницами в будущем.
+Sandboxes (book → chapter → scene → global sections) return with
+Book World in DB — see discussion. Focus auto-detection is **separate**,
+independent direction that can be done now and
+coexists with sandboxes in future.
 
-## 5. Варианты реализации
+## 5. Implementation Options
 
-### Вариант A — минимум: self-inference в промпте (≈10 строк)
+### Option A — minimum: self-inference in prompt (≈10 lines)
 
-Добавить в `buildChatSystemPrompt` одну инструкцию, чтобы модель сама
-определяла фокус:
+Add one instruction to `buildChatSystemPrompt` so model itself
+determines focus:
 
 ```
 Infer what the user is focused on (whole book / current scene /
@@ -98,76 +98,67 @@ characters / plot & story arc) from the conversation and position
 context, and tailor your help accordingly.
 ```
 
-- Плюсы: почти бесплатно, никакого нового кода, идеально ложится на текущий
-  поток (позиция + режим уже в промпте).
-- Минусы: фокус неявный — не логируется, не показывается, не тестируется
-  изолированно.
-- Бонус: удалить `TOPIC_PROMPTS` (scene/characters/script) — они больше не
-  нужны.
+**Pros:** Zero code changes, model already has all data.
+**Cons:** Depends on model's inference quality, no auditability, no
+override/sandbox capability.
 
-### Вариант B — детектор фокуса перед сборкой промпта
+### Option B — lightweight context detector (≈50 lines)
 
-Перед `buildChatSystemPrompt` запускать лёгкую классификацию:
+Separate function `detectConversationFocus(conversation, position)` that
+returns `{ focus: 'book' | 'scene' | 'characters' | 'plot', confidence }`.
+Injected into system prompt as structured context.
 
-```
-{ focus: 'scene' | 'characters' | 'plot' | 'book', confidence: 0..1 }
-```
+**Pros:** Deterministic, auditable, can be overridden.
+**Cons:** Small implementation effort, needs rules for focus detection.
 
-Вход: последние N сообщений + позиция + режим. Затем маппинг `focus → skill`
-и инъекция через `prompt-profile-loader.buildSkillSection()`.
+### Option C — full profile system (future)
 
-- Плюсы: фокус можно логировать, A/B-тестировать, показывать в UI.
-- Минусы: лишний AI-вызов на сообщение (можно дешевле/реже: только при смене
-  фокуса).
+Each focus maps to a complete profile (system prompt + rules + examples).
+Loaded via existing `prompt-profile-loader.js`.
 
-### Вариант C — полный: роутер + скилы + история
+**Pros:** Maximum flexibility, reuse existing infrastructure.
+**Cons:** Requires creating focus-specific profiles, more complex management.
 
-- Классификация по окну беседы, **переключение только при уверенном сигнале**
-  (порог confidence), чтобы профиль не «прыгал» между сообщениями.
-- Выбранный профиль сохраняется в сессии (`ai_chat_sessions`, поле
-  `context`/новое поле) — при восстановлении чата фокус восстанавливается.
-- В UI — **статус-индикатор** текущего профиля (не кнопка-переключатель):
-  пользователь видит, что агент «в режиме сценария», и понимает, почему ответы
-  такие.
+## 6. Recommended Approach
 
-## 6. Предлагаемый набор скилов беседы
+Start with **Option A** (self-inference) for immediate value, then
+evolve to **Option B** when more control is needed.
 
-| focus | Скил (файл — предлагается) | Содержание |
-|---|---|---|
-| `scene` | `backend/ai/skills/chat/scene.md` | Работа с текущей сценой: визуал, аудио, темп, диалог |
-| `characters` | `backend/ai/skills/chat/characters.md` | Разработка/уточнение персонажей |
-| `plot` | `backend/ai/skills/chat/scriptwriting.md` | Сюжет, дуги, переходы, конфликт |
-| `book` (дефолт) | — (общий промпт) | Универсальная помощь по всей книге |
+Implementation steps:
+1. Add focus inference instruction to `buildChatSystemPrompt`
+2. Monitor model's focus detection accuracy
+3. If needed, implement lightweight `detectConversationFocus`
+4. Create focus-specific skills when patterns emerge
 
-Скилы-под-модель (`video/ltx-2.3.md` и т.д.) не смешиваются со скилами беседы:
-разные директории, разные точки инъекции.
+## 7. Files to Modify
 
-## 7. Границы и анти-цели
+### Backend
+- `backend/src/services/chat-engine.cjs` — add focus inference instruction
+- `backend/src/services/ai-loader.js` — (future) focus-specific skill loading
 
-- ❌ **Не возвращать** второй ряд кнопок для мягких фокусов.
-- ❌ Не делать автодетекцию для **жёстких** ограничений — границы изменений
-  всегда выбираются явно и видны.
-- ✅ Автодетекция применяется только к промпт-акценту, а не к разрешениям
-  (`edit_book` и другие инструменты по-прежнему определяются режимом).
+### Frontend
+- No changes needed for Option A
+- (Future) Status indicator for detected focus
 
-## 8. Открытые вопросы
+## 8. Relation to Sandbox System
 
-1. Классификатор — отдельный вызов или self-inference в основном промпте
-   (Вариант A против B)?
-2. Порог переключения фокуса и окно анализа (сколько сообщений брать)?
-3. Как показывать текущий профиль в UI (статус-бейдж?) и показывать ли вообще?
-4. Хранить ли профиль в сессии (Вариант C) с самого начала?
-5. Нужны ли примеры (examples/) для каждого скила беседы?
+Focus auto-detection and sandboxes are independent:
 
-## 9. План шагов (roadmap)
+- **Focus** = what model should pay attention to (soft, automatic)
+- **Sandbox** = what user is allowed to change (hard, manual)
 
-1. **Шаг 1 (минимум):** self-inference строка в `buildChatSystemPrompt`,
-   удалить неиспользуемые `TOPIC_PROMPTS` (scene/characters/script).
-   → поведение улучшается без нового кода.
-2. **Шаг 2:** детектор фокуса (Вариант B) + логирование выбранного профиля.
-3. **Шаг 3:** скилы `chat/` (scene, characters, scriptwriting) и маппинг
-   focus → skill через `prompt-profile-loader`.
-4. **Шаг 4:** видимый статус-индикатор в `AiAssistantFragment` + хранение
-   профиля в сессии (Вариант C).
-5. **Шаг 5:** при появлении Книжного мира в БД — песочницы (явные границы +
-   видимый статус) поверх той же инфраструктуры скилов.
+They can coexist: focus detection helps model understand context,
+sandboxes restrict actual modifications.
+
+## 9. Open Questions
+
+1. Should focus detection be visible to user? (status indicator vs invisible)
+2. How to handle conflicting signals (user says "edit scene" but context is book-level)?
+3. Should focus affect available tools (not just prompt)?
+4. Integration with future Book World sandbox system?
+
+## 10. Timeline
+
+- **Now:** Option A implementation (minimal, immediate value)
+- **Q4 2026:** Option B if focus detection accuracy is insufficient
+- **2027:** Option C when sandbox system is ready

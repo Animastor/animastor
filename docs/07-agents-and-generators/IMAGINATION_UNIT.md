@@ -100,13 +100,13 @@ sitting), different composition — or different participants entirely.
 - **Characters** have global passports. Reference a character **by name only** — the
   appearance is pulled in automatically behind the name. Re-describe appearance **only**
   when it deviates from baseline: wounded, wet, changed clothes, dirty.
-  - **Scene-level overrides** (`scene.passport[charId]`): если у персонажа в конкретной
-    сцене изменилось что-то из паспорта (одежда, детали и т.п.), можно перекрыть только
-    эти поля на уровне сцены — например `scene.passport.hero.clothes =
-    "long grey coat"`. При генерации `resolvePassport()` берёт перекрытие сцены
-    с наивысшим приоритетом, остальные поля остаются из глобального паспорта;
-    очищенное поле (`'' → null`) снова падает на глобальный фоллбэк. Тот же принцип,
-    что у локаций (`locations.json` environment vs `scene.location.environment`).
+  - **Scene-level overrides** (`scene.passport[charId]`): if character in specific
+    scene changed something from passport (clothes, details etc.), can override only
+    these fields at scene level — e.g. `scene.passport.hero.clothes =
+    "long grey coat"`. During generation `resolvePassport()` takes scene override
+    with highest priority, remaining fields stay from global passport;
+    cleared field (`'' → null`) falls back to global again. Same principle
+    as locations (`locations.json` environment vs `scene.location.environment`).
 - **Locations** are defined globally. Reference a location **by name only** (e.g.
   `Patriarch Ponds`). Re-describe the location **only** when its state changed: fog,
   rain, broken windows, fire.
@@ -142,30 +142,30 @@ character rules are dropped, because there are no characters to name.
 ## Where this lives in the code  - **Authoring instruction** — `SYSTEM_PROMPTS.visuals` in
   `backend/src/services/agent-prompts.js`. This is the meta-prompt that tells the LLM how
   to write each `image.prompt`. The doctrine above is encoded here.
-  - Also `SYSTEM_PROMPTS.scenes` — требует `characters_present` (обязательно для каждого
-    персонажа), `location.id` (обязательно), `environment.epoch` + `environment.season`.
-  -  AI больше **не пишет `location` в `image.prompt`** — пишет только `character_id`.
-    Location inject-ится автоматически в buildImagePrompt.
+  - Also `SYSTEM_PROMPTS.scenes` — requires `characters_present` (mandatory for each
+    character), `location.id` (mandatory), `environment.epoch` + `environment.season`.
+  - AI no longer writes `location` in `image.prompt` — only writes `character_id`.
+    Location injected automatically in buildImagePrompt.
 - **Context fed to the author** — `stepCreateVisuals` builds `%CONTEXT%`, passing each participant's
   name so the author can write part 3 (arrangement) and repeat it across units.
-  `character_anchors` **удалён** (июль 2026) — позиции пишутся напрямую в prompt.
-  Также передаёт `epoch` и `season`, если они есть в `scene.location.environment`.
+  `character_anchors` **removed** (July 2026) — positions written directly to prompt.
+  Also passes `epoch` and `season` if present in `scene.location.environment`.
 - **Assembler** — `buildImagePrompt()` / `buildCharacters()` in
   `backend/src/image/image-service.js` still auto-injects the character passports and
   location description behind the names. The doctrine's "name only" refers to what the
   *prompt author* writes; the assembler complements it by supplying the appearance the
   name stands for. Keep the two consistent when editing either side.
-  - **Новое:** `resolveVisualStyle()` — цепочка fallback для visual style,
-    с фильтрацией типографских стилей (`soviet_book_page` только для cover/chapter_intro).
-  - **Новое:** `inferCharactersFromPrompt()` — **единственный метод** определения
-    участников (с июля 2026; `unit.participants` удалён). Сканирует `image.prompt`
-    на наличие `character_id` и inject-ит их паспорта.
-  - **Новое:** `resolveLocationFromPrompt()` — если у сцены нет `location`,
-    сопоставляет текст промпта с `bible.locations` через транслитерацию Cyr→Lat
-    и prefix-матчинг (порог 0.25).
-  - **Новое:** поддержка `epoch`, `season`, `atmosphere` из environment.
-- **Scene style fix** — `lazy-book/index.js` больше не проставляет `style: 'soviet_book_page'`
-  на нарративные сцены. Этот стиль остаётся только на типографические сцены
-  (`cover`, `chapter_intro` с юнитами типа `typography`).
+  - **New:** `resolveVisualStyle()` — fallback chain for visual style,
+    with typographic style filtering (`soviet_book_page` only for cover/chapter_intro).
+  - **New:** `inferCharactersFromPrompt()` — **sole method** for determining
+    participants (since July 2026; `unit.participants` removed). Scans `image.prompt`
+    for `character_id` and injects their passports.
+  - **New:** `resolveLocationFromPrompt()` — if scene has no `location`,
+    matches prompt text against `bible.locations` via Cyr→Lat transliteration
+    and prefix matching (threshold 0.25).
+  - **New:** support for `epoch`, `season`, `atmosphere` from environment.
+- **Scene style fix** — `lazy-book/index.js` no longer sets `style: 'soviet_book_page'`
+  on narrative scenes. This style remains only for typographic scenes
+  (`cover`, `chapter_intro` with `typography` type units).
 - **Fallback** — `getFallbackImage` in `agent-service.js` produces a pronoun-free,
   named, location-anchored prompt when the LLM step is unavailable.

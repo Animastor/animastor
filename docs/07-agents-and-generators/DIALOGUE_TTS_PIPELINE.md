@@ -75,7 +75,7 @@ ComfyUI / GPU Hub:
 
   Punctuation (commas, dashes) preserved — it carries prosodic information and affects timing calculations.
 
-- **Fallback (word-boundary guard):** If `audio.text` matches inside another word (substring collision, e.g., "да" inside "дала"), or `indexOf` doesn't find match (AI inconsistency), or `audio.text` consists only of opener characters — `extractNarrationFromDialogueUnit()` returns `null`. Entire `unit.text` goes to narrator (narration segment). Safer than character saying wrong text.
+- **Fallback (word-boundary guard):** If `audio.text` matches inside another word (substring collision, e.g., "da" inside "dala"), or `indexOf` doesn't find match (AI inconsistency), or `audio.text` consists only of opener characters — `extractNarrationFromDialogueUnit()` returns `null`. Entire `unit.text` goes to narrator (narration segment). Safer than character saying wrong text.
 
 - **Multilingual:** Opener marker normalization (`—`, `"`, `«`, `„`, `'`) covers 🇷🇺 Russian, 🇬🇧 English, 🇫🇷 French, 🇩🇪 German, 🇪🇸 Spanish and others.
 
