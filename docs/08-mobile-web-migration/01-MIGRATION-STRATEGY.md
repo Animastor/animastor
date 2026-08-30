@@ -1,102 +1,101 @@
-# 01. Общая стратегия переноса Android UI на Mobile Web
+# 01. Overall Strategy for Migrating Android UI to Mobile Web
 
-> Цель: получить мобильную веб-версию на `https://m.animastor.in/`, визуально и
-> поведенчески неотличимую от Android-приложения, с переиспользованием того же
+> Goal: create a mobile web version at `https://m.animastor.in/`, visually and
+> behaviorally indistinguishable from the Android app, reusing the same
 > backend API `/api/v1/...`.
 
 ---
 
-## 1. Базовые факты об Android-приложении
+## 1. Key facts about the Android app
 
-- Стек: Kotlin + Jetpack (Fragment, ViewBinding, ViewModel, `activityViewModels`),
+- Stack: Kotlin + Jetpack (Fragment, ViewBinding, ViewModel, `activityViewModels`),
   Material 3, `ConstraintLayout`, `BottomNavigationView`, `MediaPlayer` (Android),
   Retrofit + OkHttp.
-- Навигация: **нижняя панель из 5 вкладок** (`res/menu/bottom_nav.xml`):
-  `File` → `Generate` → `Play` → `Edit` → `Navigate`. Стартовый экран — `File`.
-  Навигация реализована вручную через `FragmentTransaction` `hide/show` по тегам
-  (`MainActivity.kt`), **без** Navigation Component / nav graph.
-- Доп. экраны открываются поверх底部-нав вкладок как отдельные фрагменты с
+- Navigation: **bottom bar with 5 tabs** (`res/menu/bottom_nav.xml`):
+  `File` → `Generate` → `Play` → `Edit` → `Navigate`. Home screen is `File`.
+  Navigation implemented manually via `FragmentTransaction` `hide/show` by tags
+  (`MainActivity.kt`), **without** Navigation Component / nav graph.
+- Additional screens open above bottom-nav tabs as separate fragments with
   `addToBackStack`: `Settings`, `AiAssistant`, `WorkflowManager`,
   `WorkflowDetails`, `WorkflowTypeList`, `DeveloperView`, `VBookSettings`,
-  `WorkerSettings`, `Library`. `Generate` имеет индикатор статуса генерации
-  (пульсация иконки).
-- Тема: Material 3 Dark/Light «кинозал» (`themes.xml`). Точка входа — тёмная.
-  Палитра `cinema_*`, скругления 12/18/28dp, чипы-слои плеера.
-- Локализация: `ru` / `en` / `auto`.
-- Координация: `MainActivity.setupPlaybackCoordination()` слушает
-  `GenerateViewModel.playbackPrepared` и вызывает `PlaybackViewModel.preparePlayback()`
-  — единый канал «генерация → плеер».
+  `WorkerSettings`, `Library`. `Generate` has generation status indicator
+  (icon pulsation).
+- Theme: Material 3 Dark/Light "cinema" (`themes.xml`). Entry point is dark.
+  `cinema_*` palette, rounded corners 12/18/28dp, player layer chips.
+- Localization: `ru` / `en` / `auto`.
+- Coordination: `MainActivity.setupPlaybackCoordination()` listens to
+  `GenerateViewModel.playbackPrepared` and calls `PlaybackViewModel.preparePlayback()`
+  — single "generation → player" channel.
 
-## 2. Стратегия переноса
+## 2. Migration strategy
 
-### 2.1. Платформа веб-фронтенда
+### 2.1. Web frontend platform
 
-Веб-версия будет **тонким клиентом** поверх того же backend API, что и Android:
-- Тот же API `/api/v1/...` (Retrofit-интерфейс → HTTP-клиент на TS/JS).
-- Те же модели данных (`BookData`, `StoryboardResponse`, `SceneStatus`, …).
-- Та же последовательность экранов и сценарии.
+The web version will be a **thin client** over the same backend API as Android:
+- Same API `/api/v1/...` (Retrofit interface → HTTP client in TS/JS).
+- Same data models (`BookData`, `StoryboardResponse`, `SceneStatus`, …).
+- Same screen sequence and scenarios.
 
-Подбор стека фреймворка зафиксируется в
-[`03-MOBILE-WEB-ARCHITECTURE.md`](03-MOBILE-WEB-ARCHITECTURE.md). До выбора
-стека учитывается: SPA-навигация «вкладки как страницы», реактивное состояние
-(эквивалент `StateFlow`), маршрутизация по hash/path, обязательная поддержка
-мобильных браузеров (Safari iOS, Chrome Android), работа оффлайн/слабого
-соединения (preloading).
+Framework stack selection will be documented in
+[`03-MOBILE-WEB-ARCHITECTURE.md`](03-MOBILE-WEB-ARCHITECTURE.md). Before stack
+selection, considerations: SPA navigation "tabs as pages", reactive state
+(equivalent to `StateFlow`), hash/path routing, mandatory mobile browser support
+(Safari iOS, Chrome Android), offline/weak connection work (preloading).
 
-### 2.2. Принцип «один экран — одна страница»
+### 2.2. "One screen — one page" principle
 
-- Каждый Android `Fragment` → отдельный **маршрут (page)** веб-приложения:
-  `/file`, `/generate`, `/play`, `/edit`, `/navigate` для нижней панели;
-  `/settings`, `/ai`, `/library`, `/workflows`, … для вторичных.
-- Нижняя панель = фиксированный нижний `tab bar`, переключающий маршруты и
-  сохраняющий состояние каждой вкладки (эквивалент `hide/show` по тегам).
-- Вторичные экраны = маршруты с возвратом (`back` stack), аналог
+- Each Android `Fragment` → separate **route (page)** in web app:
+  `/file`, `/generate`, `/play`, `/edit`, `/navigate` for bottom bar;
+  `/settings`, `/ai`, `/library`, `/workflows`, … for secondary.
+- Bottom bar = fixed bottom `tab bar` switching routes and
+  preserving each tab's state (equivalent to `hide/show` by tags).
+- Secondary screens = routes with return (`back` stack), analogous to
   `addToBackStack`.
 
-### 2.3. Перенос в три потока
+### 2.3. Migration in three streams
 
-| Поток | Что | Когда |
+| Stream | What | When |
 |---|---|---|
-| **A. Каркас** | shell-приложение: роутер, tab bar, тема/токены, i18n, HTTP-клиент, маппинг моделей | до экранов |
-| **B. Простые экраны** | Settings, Library, Workflow*, VBook/Worker settings, AiAssistant, File | первыми |
-| **C. Сложные экраны** | Generate (SSE-прогресс, чипы), Edit (waveform, таймлайн), Navigate (карта «закладок»), **Play (мультиплеер)** | по графику в [`05-SCREEN-IMPLEMENTATION-ORDER.md`](05-SCREEN-IMPLEMENTATION-ORDER.md) |
+| **A. Skeleton** | shell app: router, tab bar, theme/tokens, i18n, HTTP client, model mapping | before screens |
+| **B. Simple screens** | Settings, Library, Workflow*, VBook/Worker settings, AiAssistant, File | first |
+| **C. Complex screens** | Generate (SSE progress, chips), Edit (waveform, timeline), Navigate (bookmark map), **Play (multiplex player)** | per schedule in [`05-SCREEN-IMPLEMENTATION-ORDER.md`](05-SCREEN-IMPLEMENTATION-ORDER.md) |
 
-### 2.4. Порядок проектирования каждого экрана
+### 2.4. Screen design order for each screen
 
-1. Прочитать `layout/*.xml` фрагмента → зафиксировать структуру DOM и停靠ку.
-2. Снять токены дизайна из `themes.xml`/`colors.xml` → CSS design tokens.
-3. Перенести строки из `strings.xml` (ru/en) → словари i18n.
-4. Перенести логику: `ViewModel.uiState.collect` → стор/подписки; `observe` →
-   эквивалент реактивных подписок.
-5. Перенести вызовы `BackendApi` → методы HTTP-клиента (те же пути/параметры).
-6. Зафиксировать отклонения (если есть) в
-   [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md) с обоснованием.
+1. Read `layout/*.xml` of fragment → fix DOM structure and anchoring.
+2. Extract design tokens from `themes.xml`/`colors.xml` → CSS design tokens.
+3. Migrate strings from `strings.xml` (ru/en) → i18n dictionaries.
+4. Migrate logic: `ViewModel.uiState.collect` → store/subscriptions; `observe` →
+   reactive subscription equivalents.
+5. Migrate `BackendApi` calls → HTTP client methods (same paths/parameters).
+6. Document deviations (if any) in
+   [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md) with justification.
 
-### 2.5. Что переносим один-в-один
+### 2.5. What we migrate one-to-one
 
-- Визуальные токены (цвета `cinema_*`, скругления 12/18/28dp, высоты,
-  иконографию — векторные `ic_*.xml` перекодировать в SVG).
-- Текстовые сценарии: импорт книги → генерация → play → edit → navigate.
-- API-контракты (endpoints, query-параметры, payload модели).
-- Поведение нижней панели (5 вкладок, индикатор статуса генерации).
-- Локализацию ru/en + `auto`.
+- Visual tokens (`cinema_*` colors, rounded corners 12/18/28dp, heights,
+  iconography — vector `ic_*.xml` re-encoded to SVG).
+- Text scenarios: book import → generation → play → edit → navigate.
+- API contracts (endpoints, query parameters, payload models).
+- Bottom bar behavior (5 tabs, generation status indicator).
+- Localization ru/en + `auto`.
 
-### 2.6. Что заведомо меняется (фиксируется как обоснованное отклонение)
+### 2.6. What definitely changes (documented as justified deviation)
 
-- `MediaPlayer` (Android) → `HTMLMediaElement` / Web Audio — см. раздел Player.
-- `SurfaceView` для видеоoverlay → `<video>`/`<canvas>`.
-- Дисковый кэш `SimpleDiskCache` → Cache API / IndexedDB.
-- Файловые ассоциации (`.vbook` ACTION_VIEW) → загрузка файла через `<input
+- `MediaPlayer` (Android) → `HTMLMediaElement` / Web Audio — see Player section.
+- `SurfaceView` for video overlay → `<video>`/`<canvas>`.
+- `SimpleDiskCache` disk cache → Cache API / IndexedDB.
+- File associations (`.vbook` ACTION_VIEW) → file loading via `<input
   type=file>` / drag-drop.
-- `MediaDecoder.decodeBitmap` → нативный декодинг браузера (`<img>`, `createImageBitmap`).
+- `MediaDecoder.decodeBitmap` → native browser decoding (`<img>`, `createImageBitmap`).
 
-Полный перечень рисков и альтернатив — в
+Full risk and alternative list in
 [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md).
 
 ---
 
-## 3. Источник правды
+## 3. Source of truth
 
-При расхождении между этим разделом и кодом Android **источником правды является
-код** (`frontend/app/src/main/`). Этот раздел описывает перенос, а не меняет
-Android; все ссылки на классы/методы даны для сопоставления.
+When this section and Android code diverge, **the source of truth is the code**
+(`frontend/app/src/main/`). This section describes the migration, not modifying
+Android; all class/method references are for mapping purposes.

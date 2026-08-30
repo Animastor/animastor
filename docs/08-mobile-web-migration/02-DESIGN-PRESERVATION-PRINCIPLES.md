@@ -1,105 +1,105 @@
-# 02. Принципы сохранения дизайна и UX
+# 02. Design and UX Preservation Principles
 
-Основное правило проекта: мобильная веб-версия **максимально повторяет**
-Android-приложение по дизайну, логике и пользовательскому опыту. Любое
-отклонение предварительно документируется и обосновывается в
+Core project rule: the mobile web version **closely replicates** the
+Android app in design, logic, and user experience. Any deviation is
+pre-documented and justified in
 [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md).
 
 ---
 
-## 1. Четыре принципа сохранения
+## 1. Four preservation principles
 
-### 1.1. Максимально сохранить внешний вид
+### 1.1. Maximize visual preservation
 
-- Перенести **дизайн-токены** из `res/values/colors.xml` и `themes.xml` в CSS
-  custom properties (`--cinema-background`, `--cinema-primary`, …). Тёмная
-  тема «кинозал» — точка входа по умолчанию (как в Android `Theme.Animastor` =
+- Migrate **design tokens** from `res/values/colors.xml` and `themes.xml` to CSS
+  custom properties (`--cinema-background`, `--cinema-primary`, …). Dark
+  "cinema" theme — default entry point (like Android `Theme.Animastor` =
   `Theme.Animastor.CinemaDark`).
-- Сохранить палитру `cinema_*`: `cinema_background`, `cinema_surface`,
+- Preserve `cinema_*` palette: `cinema_background`, `cinema_surface`,
   `cinema_surface_variant`, `cinema_primary`, `cinema_accent`, `cinema_error`,
   `cinema_text_primary/secondary`, `cinema_outline[_variant]`, `cinema_scrim`,
-  `subtitle_background`, `cinema_missing_bg`. Полный список — таблица в
+  `subtitle_background`, `cinema_missing_bg`. Full list — table in
   [`04-MAPPING-TABLES.md`](04-MAPPING-TABLES.md) §3.
-- Сохранить **скругления** Material 3: small=12, medium=18, large=28 dp (→ rem
-  по плотности).
-- Сохранить **shape-исключения** плеера: `ChevronLeft`/`ChevronRight` (12dp с
-  одной стороны, 0 с другой) для чипов-слоёв.
-- Перекодировать векторные drawable `ic_*.xml` в SVG и подключить как
-  `mask-icon`/inline SVG (_color-tint по `currentColor`), чтобы `app:tint` →
+- Preserve Material 3 **rounded corners**: small=12, medium=18, large=28 dp (→ rem
+  by density).
+- Preserve player **shape exceptions**: `ChevronLeft`/`ChevronRight` (12dp on
+  one side, 0 on other) for layer chips.
+- Re-encode vector drawable `ic_*.xml` to SVG and connect as
+  `mask-icon`/inline SVG (`currentColor` color-tint), so `app:tint` →
   CSS `color`.
-- Сохранить типографику: `sans-serif-medium`, размеры `15sp`/`16sp`/`11sp`,
-  `textAllCaps`, `letterSpacing` (например `0.08` для overlay «не сгенерировано»).
+- Preserve typography: `sans-serif-medium`, sizes `15sp`/`16sp`/`11sp`,
+  `textAllCaps`, `letterSpacing` (e.g., `0.08` for "not generated" overlay).
 
-### 1.2. Максимально сохранить расположение экранов
+### 1.2. Maximize screen layout preservation
 
-- **Нижняя панель из 5 вкладок** (`bottom_nav.xml`): `File · Generate · Play ·
-  Edit · Navigate` — тот же порядок. Стартовый экран — `File`.
-- Структура каждого `fragment_*.xml` переносится один-в-один в разметку
-  страницы (ConstraintLayout-`constraints` → CSS Grid/Flexbox, `layout_*
-  constraints` сохраняются как DOM-порядок и anchor-связи).
-- Сохранить вертикальный ритм плеера: media viewport сверху, layer bar, big play
-  button, progress bar, status text (см. `fragment_play.xml`).
-- Вторичные экраны открываются «поверх» вкладок (full-screen route), как в
+- **Bottom bar with 5 tabs** (`bottom_nav.xml`): `File · Generate · Play ·
+  Edit · Navigate` — same order. Home screen is `File`.
+- Each `fragment_*.xml` structure migrated one-to-one to page
+  layout ( ConstraintLayout `constraints` → CSS Grid/Flexbox, `layout_*`
+  constraints preserved as DOM order and anchor links).
+- Preserve player vertical rhythm: media viewport top, layer bar, big play
+  button, progress bar, status text (see `fragment_play.xml`).
+- Secondary screens open "above" tabs (full-screen route), like
   Android `addToBackStack`.
 
-### 1.3. Максимально сохранить расположение элементов управления
+### 1.3. Maximize control placement preservation
 
-- Чипы-слои плеера (`layerAudio/Image/Video/Subtitles`) — горизонтальный ряд
-  48dp с icon-only и icon-toggle по `checked`.
-- Big play button — `56dp`, `cornerRadius 18dp`, full-width с `margin 16dp`,
+- Player layer chips (`layerAudio/Image/Video/Subtitles`) — horizontal row
+  48dp with icon-only and icon-toggle by `checked`.
+- Big play button — `56dp`, `cornerRadius 18dp`, full-width with `margin 16dp`,
   `marginBottom 20dp`.
-- Fullscreen-кнопка — `44dp`, `bottom|end`, `margin 14dp`, tint `#FFFFFF`,
-  показывается поверх media viewport, позиционируется с учётом letterbox и
-  субтитров (логика `anchorFullscreenToImage()`).
-- Toolbar со settings-кнопкой и AI-кнопкой сверху; статус-генерации пульсация
-  иконки `Generate` (running/error/success) — перенести как CSS-анимация `alpha`.
-- Чипы режимов `mode_chip_*`, тем `topic_chip_*`, слоёв `layer_chip_*`,
-  тогглов `toggle_chip_*` — те же цвета/обводки/иконки. (`worker_chip_*` —
-  удалённые тулбар-чипы старой архитектуры, вместо них тогглы секций
-  воркеров `toggle_chip_*` на экране Generator.)
+- Fullscreen button — `44dp`, `bottom|end`, `margin 14dp`, tint `#FFFFFF`,
+  shown over media viewport, positioned accounting for letterbox and
+  subtitles (`anchorFullscreenToImage()` logic).
+- Toolbar with settings and AI button at top; generation status icon
+  pulsation `Generate` (running/error/success) — migrate as CSS `alpha` animation.
+- Mode chips `mode_chip_*`, topic chips `topic_chip_*`, layer chips `layer_chip_*`,
+  toggle chips `toggle_chip_*` — same colors/borders/icons. (`worker_chip_*` —
+  removed old architecture toolbar chips, replaced by worker section
+  toggles `toggle_chip_*` on Generator screen.)
 
-### 1.4. Максимально сохранить пользовательские сценарии
+### 1.4. Maximize user scenario preservation
 
-Сохраняются **сквозные потоки** из `docs/01-overview/DATA_FLOW.md`:
+**Cross-cutting flows** from `docs/01-overview/DATA_FLOW.md` are preserved:
 
-1. **Импорт книги** (`File`): файл `.vbook`/текст → `POST /api/v1/book/import`
-   (multipart) → открытие книги → авто-переход на `Generate`/`Play`.
-2. **Генерация** (`Generate`): запуск генерации, прогресс по SSE/plain,
-   индикация статуса на иконке вкладки (running/error/success), сигнал
+1. **Book import** (`File`): `.vbook` file/text → `POST /api/v1/book/import`
+   (multipart) → open book → auto-navigate to `Generate`/`Play`.
+2. **Generation** (`Generate`): start generation, SSE/plain progress,
+   status indicator on tab icon (running/error/success), signal
    `playbackPrepared` → `Play`.
-3. **Play**: очередь сцен, preloading **на 3 сцены вперёд**, IU-cycling с
-   субтитрами, gapless-переход между сценами, слои audio/image/video/subtitles,
-   fullscreen, seek по unitIndex, внешний seek из `Navigate`/`Edit`.
-4. **Edit**: таймлайн сцен/юнитов, waveform-представление аудио, изменяемые
-   тайминги (`PUT /scene/.../timings`), слой-config.
-5. **Navigate**: карта глав/сцен/юнитов с переходом → `Play.seekToPosition`.
-6. **Settings**: тема (dark/light/auto), язык (ru/en/auto), данные о книге,
-   экспорт/скачивание, Workflow Manager→Details→TypeList→DeveloperView,
-   VBook/Worker settings, AiAssistant (чат с историей сессий), Library (WebView
+3. **Play**: scene queue, preloading **3 scenes ahead**, IU-cycling with
+   subtitles, gapless scene transitions, audio/image/video/subtitle layers,
+   fullscreen, seek by unitIndex, external seek from `Navigate`/`Edit`.
+4. **Edit**: scene/unit timeline, audio waveform representation, editable
+   timings (`PUT /scene/.../timings`), layer config.
+5. **Navigate**: chapter/scene/unit map with navigation → `Play.seekToPosition`.
+6. **Settings**: theme (dark/light/auto), language (ru/en/auto), book data,
+   export/download, Workflow Manager→Details→TypeList→DeveloperView,
+   VBook/Worker settings, AiAssistant (chat with session history), Library (WebView
    help/release-notes).
 
-## 2. Кросс-платформенные ограничения, требующие фиксации
+## 2. Cross-platform limitations requiring documentation
 
-Браузер ≠ Android по нескольким аспектам; каждое отклонение фиксируется в
+Browser ≠ Android in several aspects; each deviation documented in
 [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md):
 
-| Аспект | Android | Web план |
+| Aspect | Android | Web plan |
 |---|---|---|
-| Медиа-плеер | `MediaPlayer` ×3 (current/next audio + video) | Web Audio API + `<audio>` + `<video>` (детали — риск Player) |
-| Surface для видео | `SurfaceView` | `<video>`/`<canvas>` |
-| Фоновая/карточная навигация | `onHiddenChanged`, lifecycle | visibility route + Page Visibility API |
-| Кэш | `SimpleDiskCache` | Cache API + IndexedDB |
-| Файловые ассоциации | `ACTION_VIEW` для `.vbook` | `<input type=file>` + drag-drop; deep link `?book=` |
-| Шрифты/ плотность | `dp/sp` | `rem`/`vh` + `prefers-reduced-motion` |
+| Media player | `MediaPlayer` ×3 (current/next audio + video) | Web Audio API + `<audio>` + `<video>` (details — Player risk) |
+| Video surface | `SurfaceView` | `<video>`/`<canvas>` |
+| Background/card navigation | `onHiddenChanged`, lifecycle | visibility route + Page Visibility API |
+| Cache | `SimpleDiskCache` | Cache API + IndexedDB |
+| File associations | `ACTION_VIEW` for `.vbook` | `<input type=file>` + drag-drop; deep link `?book=` |
+| Fonts/density | `dp/sp` | `rem`/`vh` + `prefers-reduced-motion` |
 
-## 3. Проверка сохранения дизайна (критерии приёмки)
+## 3. Design preservation verification (acceptance criteria)
 
-Для каждого экрана:
+For each screen:
 
-- ✅ Совпадает состав и порядок контролов из `fragment_*.xml`.
-- ✅ Совпадают цвета/скругления/иконки по таблице токенов.
-- ✅ Совпадает поведение вкладок/кнопок/жестов.
-- ✅ Совпадает текст из `strings.xml` (ru + en) для всех видимых строк.
-- ✅ Воспроизводятся ключевые сценарии из §1.4 на реальном backend.
-- ✅ Зафиксированы (если есть) обоснованные отклонения в
+- ✅ Controls composition and order from `fragment_*.xml` matches.
+- ✅ Colors/rounded corners/icons match token table.
+- ✅ Tab/button/gesture behavior matches.
+- ✅ Text from `strings.xml` (ru + en) matches for all visible strings.
+- ✅ Key scenarios from §1.4 reproduce on real backend.
+- ✅ Justified deviations (if any) documented in
   [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md).

@@ -1,96 +1,96 @@
 # 07. Mobile Web Tester (`tools/mobile-web-tester`)
 
-Инструмент разработчика для визуального тестирования мобильной веб-версии
-Animastor (`frontends/mobile`) на Android-планшете.
+Developer tool for visual testing of the Animastor mobile web version
+(`frontends/mobile`) on an Android tablet.
 
-Открывает мобильный фронтенд в «телефонной рамке» размером типичного смартфона,
-чтобы ловить проблемы вёрстки:
+Opens the mobile frontend in a "phone frame" sized like a typical smartphone
+to catch layout problems:
 
-- элементы налезают друг на друга;
-- кнопки/селекторы не помещаются по ширине;
-- текст обрезается;
-- нижние панели вылезают за экран;
-- неправильное поведение вертикального скролла;
-- элементы генератора требуют слишком большой ширины.
+- elements overlapping each other;
+- buttons/selectors not fitting width;
+- text truncated;
+- bottom panels extending beyond screen;
+- incorrect vertical scrolling behavior;
+- generator elements requiring too much width.
 
-Это **не** браузер и **не** эмуляция конкретного Samsung/iPhone: только
-CSS-эмуляция — узкий viewport, мобильный user-agent, touch, вертикальная
-ориентация, ограниченная область просмотра.
+This is **not** a browser and **not** emulation of a specific Samsung/iPhone: only
+CSS emulation — narrow viewport, mobile user-agent, touch, vertical
+orientation, limited viewing area.
 
-## Как это устроено
+## How it works
 
-- Внутри — обычный Android `WebView` (никаких сторонних зависимостей, только
+- Inside — standard Android `WebView` (no third-party dependencies, only
   framework + Kotlin).
-- Ширина рамки в dp задаёт CSS viewport: в Android WebView **1 CSS px = 1 dp**,
-  поэтому WebView шириной 390 dp рендерит страницу ровно в 390 CSS px.
-- Мобильный фронтенд уже содержит `<meta name="viewport" content="width=device-width, ...">`,
-  а `useWideViewPort=true` заставляет WebView честно реагировать на этот viewport.
-- Mobile user-agent подставляется принудительно (`mobileUA` в `MainActivity.kt`).
-- Рамка автоматически пересчитывается при изменении размера контейнера
-  (сворачивание панели, появление клавиатуры) — ничего не обрезается.
+- Frame width in dp sets CSS viewport: in Android WebView **1 CSS px = 1 dp**,
+  so WebView 390 dp wide renders page exactly 390 CSS px.
+- Mobile frontend already contains `<meta name="viewport" content="width=device-width, ...">`,
+  and `useWideViewPort=true` makes WebView genuinely respond to this viewport.
+- Mobile user-agent forced (`mobileUA` in `MainActivity.kt`).
+- Frame automatically recalculates on container size change
+  (panel collapse, keyboard appearance) — nothing gets clipped.
 
-## Возможности
+## Capabilities
 
-| Элемент | Что делает |
+| Element | What it does |
 |---|---|
-| Кнопки размеров | Переключение viewport: **360×800 / 390×844 / 430×932** (по умолчанию 390×844). При переключении страница перезагружается. |
-| Строка URL | URL мобильной версии; сохраняется между запусками. Можно ввести без схемы — добавится `http://`. |
-| ⟳ | Перезагрузить текущий URL. **Долгое нажатие** — очистить cookies/кэш/HTTP-auth и перезагрузить. |
-| «Назад» | Навигация назад по истории WebView. |
-| Fullscreen API страницы | **Отключён**: `requestFullscreen`/`webkitEnterFullscreen` блокируются инжекцией (кнопка плеера «во весь экран» бездействует) — тестер невозможно «застрять» в фуллскрине, который нечем выйти. |
+| Size buttons | Switch viewport: **360×800 / 390×844 / 430×932** (default 390×844). Page reloads on switch. |
+| URL bar | Mobile version URL; persists between launches. Can enter without scheme — `http://` prepended. |
+| ⟳ | Reload current URL. **Long press** — clear cookies/cache/HTTP-auth and reload. |
+| "Back" | Navigate back in WebView history. |
+| Page Fullscreen API | **Disabled**: `requestFullscreen`/`webkitEnterFullscreen` blocked by injection (player "fullscreen" button inactive) — tester cannot get "stuck" in fullscreen with no way to exit. |
 
-Поддерживается JS, localStorage (IndexedDB), cookies, touch, скролл,
-видео-аудио без жеста пользователя, mixed content (для dev-сервера по http).
+Supports JS, localStorage (IndexedDB), cookies, touch, scroll,
+video/audio without user gesture, mixed content (for dev server via http).
 
 ## Basic Auth (`m.animastor.in`)
 
-`m.animastor.in` защищён Basic Auth (`proxy/conf/.htpasswd`). Тестер
-авторизуется **автоматически**: `onReceivedHttpAuthRequest` → `handler.proceed(...)`
-с зашитыми константами `AUTH_USER` / `AUTH_PASS` в `MainActivity.kt`.
-Если пароль на сервере поменяют — правятся константы (одно место), либо сбрасывается
-кэш авторизации долгим нажатием на ⟳.
+`m.animastor.in` protected by Basic Auth (`proxy/conf/.htpasswd`). Tester
+authorizes **automatically**: `onReceivedHttpAuthRequest` → `handler.proceed(...)`
+with hardcoded `AUTH_USER` / `AUTH_PASS` constants in `MainActivity.kt`.
+If server password changes — edit constants (single location), or clear
+auth cache by long-pressing ⟳.
 
-## Сборка и установка
+## Build and install
 
 ```bash
 ./tools/mobile-web-tester/build-apk.sh
 ```
 
-Скрипт создаёт `local.properties` при необходимости, собирает
-`app/build/outputs/apk/debug/app-debug.apk` и копирует его в
+Script creates `local.properties` if needed, builds
+`app/build/outputs/apk/debug/app-debug.apk` and copies it to
 `/home/sureg/net-disk/mobile-web-tester.apk`.
 
-Установка на планшет (как обычно):
+Install on tablet (as usual):
 `https://animastor.in/net-disk/mobile-web-tester.apk`
 
-### URL по умолчанию
+### Default URL
 
-- По умолчанию: `https://m.animastor.in` (продакшен мобильного фронтенда).
-- Заменить при сборке:
+- Default: `https://m.animastor.in` (production mobile frontend).
+- Override at build:
   ```bash
   cd tools/mobile-web-tester
   ./gradlew assembleDebug -PTESTER_URL=http://192.168.1.50:5174
   ```
-- Либо просто поменять URL в поле ввода в самом приложении — он запоминается
-  в SharedPreferences (`mobile_web_tester`). Важно: сохранённый URL перекрывает
-  дефолт, поэтому после обновления дефолта нужно очистить данные приложения.
+- Or simply change URL in the input field in the app — it persists in
+  SharedPreferences (`mobile_web_tester`). Important: saved URL overrides
+  default, so after updating default, clear app data.
 
-## Требования к сборке
+## Build requirements
 
 - Android SDK (`/home/sureg/Android/Sdk`, android-35), JDK 17,
-  локальный Gradle 8.12 из `frontend/gradle-8.12` (`gradlew` — обёртка, как в `frontend/`).
-- minSdk 26, targetSdk 34, compileSdk 35, AGP 8.7.3, Kotlin 1.9.22 (совпадает с `frontend/`).
+  local Gradle 8.12 from `frontend/gradle-8.12` (`gradlew` wrapper, like `frontend/`).
+- minSdk 26, targetSdk 34, compileSdk 35, AGP 8.7.3, Kotlin 1.9.22 (matches `frontend/`).
 
-## Ограничения
+## Limitations
 
-1. **Высота viewport может быть меньше 844 CSS px.** Если экран планшета в dp
-   короче 844, рамка сжимается по высоте до доступного места (ширина всегда
-   фиксирована); страница нормально скроллится внутри. На 8-дюймовых планшетах
-   с плотностью ≥ 2.0 (например 1920×1200) полные 390×844 помещаются.
-2. **Физический размер картинки меньше, чем на реальном телефоне** — у планшета
-   плотность пикселей ниже флагманского смартфона. Это проверка вёрстки,
-   а не физического размера.
-3. **Нет эмуляции железа**: тач — реальный планшетный (`pointer: coarse`
-   совпадает с телефонным).
-4. **minSdk 26** — для планшетов на Android ≤ 7 понадобится понизить minSdk
-   и добавить PNG-иконку.
+1. **Viewport height may be less than 844 CSS px.** If tablet screen in dp
+   is shorter than 844, frame compresses vertically to available space (width always
+   fixed); page scrolls normally inside. On 8-inch tablets with density ≥ 2.0
+   (e.g., 1920×1200), full 390×844 fits.
+2. **Physical image size smaller than on real phone** — tablet has lower
+   pixel density than flagship smartphone. This tests layout,
+   not physical size.
+3. **No hardware emulation**: touch is real tablet (`pointer: coarse`
+   matches phone).
+4. **minSdk 26** — for tablets on Android ≤ 7, need to lower minSdk
+   and add PNG icon.
