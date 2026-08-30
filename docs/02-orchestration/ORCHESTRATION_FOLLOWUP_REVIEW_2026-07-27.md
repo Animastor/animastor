@@ -1,96 +1,96 @@
-# Фоллоу-ап ревью недавних коммитов оркестрации и task-системы
+# Follow-Up Review of Recent Orchestration and Task System Commits
 
-> **Дата:** 27 июля 2026
-> **Охват:** коммиты 25–27 июля 2026 (вчера + сегодня)
-> **Метод:** git history → чтение diff'ов → сверка с фактическим кодом HEAD → запуск `npm test`
-> **Принцип:** точечные замечания там, где видно реальное окно рассинхрона или регрессии.
-> Не трогать то, что починилось. Без переусложнения.
+> **Date:** 27 July 2026
+> **Scope:** commits from 25–27 July 2026 (yesterday + today)
+> **Method:** git history → read diffs → verify against actual HEAD code → run `npm test`
+> **Principle:** targeted observations where real desynchronization or regression windows are visible.
+> Don't touch what's been fixed. No over-engineering.
 
 ---
 
-## 1. Что происходило (контекст)
+## 1. What Was Happening (Context)
 
-За 25–27 июля в оркестрации/task layer прошла серия крупных артефактов:
+During 25–27 July, a series of significant artifacts landed in orchestration/task layer:
 
-| Группа | Коммиты | Тема |
-|--------|---------|------|
-| **Audio recovery bugfixes** | `8bd08bc`, `84aae09`, `22ed20f`, `c1a97b3`, `4fc9e3d` | 0-segments цикл, scene_not_found бесконечный loop, placeholder-аудио не контент, stale_dispatch чанки |
-| **Quotas / cleanup** | `d8a598a`, `ed1c459` | Увеличение квот 3→8/2→4/1→2, consolidated GPU hub cleanup, gen-scope TTL + startup migration |
-| **Parallel F15** | `6daa5c1`, `090f279`, `0468243`, `62b5679`, `2df246a`, `06188d6`, `5a06f96`, `c6df601`, `5685704`, `5a27db9`, `21eda6b` | Independent parallel tasks, per-task таймеры/expiry, no overwrite `_activeGeneration` |
-| **R audit fixes** | `fa6c039`, `5884139`, `3ae734b` | R1 validate+journal в setScene*, R3 sync после setDone, R6 invariant тесты, R7 bookDiff mandatory, W1 try/catch вокруг markDirty |
+| Group | Commits | Topic |
+|-------|---------|-------|
+| **Audio recovery bugfixes** | `8bd08bc`, `84aae09`, `22ed20f`, `c1a97b3`, `4fc9e3d` | 0-segments cycle, scene_not_found infinite loop, placeholder audio not content, stale_dispatch chunks |
+| **Quotas / cleanup** | `d8a598a`, `ed1c459` | Quota increase 3→8/2→4/1→2, consolidated GPU hub cleanup, gen-scope TTL + startup migration |
+| **Parallel F15** | `6daa5c1`, `090f279`, `0468243`, `62b5679`, `2df246a`, `06188d6`, `5a06f96`, `c6df601`, `5685704`, `5a27db9`, `21eda6b` | Independent parallel tasks, per-task timers/expiry, no overwrite `_activeGeneration` |
+| **R audit fixes** | `fa6c039`, `5884139`, `3ae734b` | R1 validate+journal in setScene*, R3 sync after setDone, R6 invariant tests, R7 bookDiff mandatory, W1 try/catch around markDirty |
 | **Task terminology** | `34862c3`, `7bd8ec4`, `c1b01bc`, `be2ca8f`, `865a38c`, `4717ac7`, `3632ae2` | WorkerUi→TaskRow, buildWorker→buildTaskRows, scopedTaskLabel, `TASK_ARCHITECTURE.md` |
-| **Deps cleanup** | `7761dea`, `ed1c459` | Lazy-require → DI для scheduler/sceneWindow в routes |
+| **Deps cleanup** | `7761dea`, `ed1c459` | Lazy-require → DI for scheduler/sceneWindow in routes |
 
-**Тесты:** 598 passing (проверено `npm test` на HEAD). Регрессий нет.
-
----
-
-## 2. Что починилось корректно (подтверждено кодом)
-
-| Right action | where | verification |
-|--------------|-------|--------------|
-| **R1**: `validateAssetTransition` + journal во всех 4 `setScene*` | `orchestrator.js:322-435` | Все 4 функции имеют `INVALID_STATE_CALLBACK` guard и `SCENE_*` events |
-| **R6**: инвариант-тесты | `backend/tests/orchestration-stabilization.test.js` (+215 строк) | Тесты запускаются, 598 passing |
-| **R7**: `bookDiff` обязательный | `orchestrator.js:594` | `throw new Error` при отсутствии `bookDiff.markDirtyScenes` |
-| **W1**: try/catch вокруг markDirty | `orchestrator.js:602-607` | Гарантирует `addSceneToActiveIndex` даже при ошибке markDirty |
-| **R3 частично**: sync после `setDone` в MERGING→DONE recovery | `reconciliation-engine.js:1413` | `unsafeRestoreAssetState('audio', READY)` после `audioOrch.setDone` |
-| **Audio bugfix**: 0 segments → DONE early | `scene-orchestrator.js:168-177` | Ломает infinite dispatch→pending→re-dispatch loop |
-| **Audio bugfix**: scene_not_found → `completed:true` | `scene-orchestrator.js:65,206,278` | Все 3 executor'а возвращают `completed:true`, scheduler перестаёт re-dispatch'ить |
-| **Audio bugfix**: stale recovery detect chunks before reset | `scene-orchestrator.js:118-132`, `reconciliation-engine.js:1372-1399` | `findExistingSceneChunks` + `completeChunk` вместо слепого FAILED |
-| **Audio bugfix**: placeholder не считать за реальный контент | `scene-restoration.js` (`c1a97b3`) | `placeholderAudio.hasRealAudio` checkdition перед `asset.audio=READY` |
-| **Audio bugfix**: stale_dispatch чанки при WAITING_CHUNKS | `4fc9e3d` | Router to task-handler, не выбрасывает delayed客家й чанк из устаревшей dispatch |
-| **Quotas** 3→8/2→4/1→2 + tests aligned | `d8a598a`, `86defe5` | `happy-path.test.js` ожидает `audio=8/image=4/video=2` |
-| **Consolidated `clearHubDispatches`** | `dispatch-engine.js:977`, `orchestrator.js:471` | Один helper, единая auth + error path across all callers |
-| **Gen-scope TTL + migration** | `gen-scope.js` (TTL 24h, `migrateLegacyScopes`) | Вызывается на startup из `backend.cjs:290` |
-| **DI для scheduler/sceneWindow** в routes | `7761dea` | Lazy-require → DI в generation-routes, легко тестировать |
-
-Все эти точки отпали — повторных замечаний нет.
+**Tests:** 598 passing (verified `npm test` on HEAD). No regressions.
 
 ---
 
-## 3. Что осталось воспаленным (follow-up рекомендации)
+## 2. What Was Fixed Correctly (Verified by Code)
 
-### F1. R3-патч покрыл 1 из 3 audio-orch FAILED recovery веток
+| Correct Fix | Where | Verification |
+|-------------|-------|--------------|
+| **R1**: `validateAssetTransition` + journal in all 4 `setScene*` | `orchestrator.js:322-435` | All 4 functions have `INVALID_STATE_CALLBACK` guard and `SCENE_*` events |
+| **R6**: invariant tests | `backend/tests/orchestration-stabilization.test.js` (+215 lines) | Tests run, 598 passing |
+| **R7**: `bookDiff` mandatory | `orchestrator.js:594` | `throw new Error` when `bookDiff.markDirtyScenes` missing |
+| **W1**: try/catch around markDirty | `orchestrator.js:602-607` | Guarantees `addSceneToActiveIndex` even on markDirty error |
+| **R3 partial**: sync after `setDone` in MERGING→DONE recovery | `reconciliation-engine.js:1413` | `unsafeRestoreAssetState('audio', READY)` after `audioOrch.setDone` |
+| **Audio bugfix**: 0 segments → DONE early | `scene-orchestrator.js:168-177` | Breaks infinite dispatch→pending→re-dispatch loop |
+| **Audio bugfix**: scene_not_found → `completed:true` | `scene-orchestrator.js:65,206,278` | All 3 executors return `completed:true`, scheduler stops re-dispatching |
+| **Audio bugfix**: stale recovery detect chunks before reset | `scene-orchestrator.js:118-132`, `reconciliation-engine.js:1372-1399` | `findExistingSceneChunks` + `completeChunk` instead of blind FAILED |
+| **Audio bugfix**: placeholder not counted as real content | `scene-restoration.js` (`c1a97b3`) | `placeholderAudio.hasRealAudio` check before `asset.audio=READY` |
+| **Audio bugfix**: stale_dispatch chunks at WAITING_CHUNKS | `4fc9e3d` | Routes to task-handler, doesn't drop delayed chunk from stale dispatch |
+| **Quotas** 3→8/2→4/1→2 + tests aligned | `d8a598a`, `86defe5` | `happy-path.test.js` expects `audio=8/image=4/video=2` |
+| **Consolidated `clearHubDispatches`** | `dispatch-engine.js:977`, `orchestrator.js:471` | Single helper, unified auth + error path across all callers |
+| **Gen-scope TTL + migration** | `gen-scope.js` (TTL 24h, `migrateLegacyScopes`) | Called on startup from `backend.cjs:290` |
+| **DI for scheduler/sceneWindow** in routes | `7761dea` | Lazy-require → DI in generation-routes, easy to test |
 
-`reconciliation-engine.js:recoverAudioOrchStates()` (стр. 1365+) имеет три ветки,
-вызывающие `audioOrch.setFailed` напрямую (а не через `failWaitingScene`, который
-сам зовёт `orchestrator.failStage`):
+All these items dropped — no repeat observations.
 
-| Строка | Ветка | Sync asset.audio? | Journal `AUDIO_FAILED`? |
-|--------|-------|-------------------|------------------------|
-| 1401 | `GENERATING/WAITING_CHUNKS → FAILED` (restart_recovery) | ❌ только `markDirtyScene` ниже ставит DIRTY | ❌ нет |
+---
+
+## 3. What Remains Inflamed (Follow-Up Recommendations)
+
+### F1. R3 Patch Covered 1 of 3 audio-orch FAILED Recovery Branches
+
+`reconciliation-engine.js:recoverAudioOrchStates()` (line 1365+) has three branches
+calling `audioOrch.setFailed` directly (not via `failWaitingScene`, which itself
+calls `orchestrator.failStage`):
+
+| Line | Branch | Sync asset.audio? | Journal `AUDIO_FAILED`? |
+|------|--------|-------------------|------------------------|
+| 1401 | `GENERATING/WAITING_CHUNKS → FAILED` (restart_recovery) | ❌ only `markDirtyScene` below sets DIRTY | ❌ no |
 | 1411 | `MERGING → DONE` | ✅ R3: `unsafeRestoreAssetState('audio', READY)` | ✅ (log only, recovery-context) |
-| 1416 | `MERGING → FAILED` (restart_merge_missing) | ❌ только `markDirtyScene` ниже ставит DIRTY | ❌ нет |
+| 1416 | `MERGING → FAILED` (restart_merge_missing) | ❌ only `markDirtyScene` below sets DIRTY | ❌ no |
 
-R3-патч починил только ветку 1411. В ветках 1401 и 1416:
-- asset.audio переводится в `DIRTY` через `markDirtyScene` (transition `GENERATING→DIRTY` валиден по `AssetTransitions`, см. `scene-state.js:54`),
-- но `FAILED` никогда не пишется в asset state и нет события `AUDIO_FAILED` в journal.
+R3 patch only fixed branch 1411. In branches 1401 and 1416:
+- asset.audio transitions to `DIRTY` via `markDirtyScene` (transition `GENERATING→DIRTY` valid per `AssetTransitions`, see `scene-state.js:54`),
+- but `FAILED` is never written to asset state and no `AUDIO_FAILED` event in journal.
 
-**Риск для расследования:** при рестарте backend сцена из «аудио в paused генерации»
-окажется в `DIRTY` без записи об `AUDIO_FAILED` в журнале. Событие `SCENE_DIRTY`/`INVALID_STATE_CALLBACK`
-не скажет о причине (только `[AUDIO-ORCH] Recover ... → FAILED` warn в лог).
+**Investigation Risk:** on backend restart, a scene from "audio in paused generation"
+ends up in `DIRTY` without an `AUDIO_FAILED` record in the journal. The `SCENE_DIRTY`/`INVALID_STATE_CALLBACK`
+event won't explain the cause (only `[AUDIO-ORCH] Recover ... → FAILED` warn in log).
 
-**Рекомендация** (минимально-инвазивная):
+**Recommendation** (minimal-invasive):
 
-В `reconciliation-engine.js` сразу после `audioOrch.setFailed(...)` в строках 1401 и 1416
-добавить синхронизацию asset state по аналогии с уже сделанной для `setDone`:
+In `reconciliation-engine.js`, immediately after `audioOrch.setFailed(...)` at lines 1401 and 1416,
+add asset state sync analogous to what was done for `setDone`:
 
 ```js
 await audioOrch.setFailed(redis, bookId, chapterId, sceneId, 'restart_recovery');
-// F1: синхронизируем asset.audio — FAILED, как в R3 для setDone
+// F1: sync asset.audio — FAILED, like R3 for setDone
 await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.FAILED);
-// Затем markDirtyScene → DIRTY (PENDING-redispatch path for scheduler)
+// Then markDirtyScene → DIRTY (PENDING-redispatch path for scheduler)
 if (deps.orchestrator) {
     await deps.orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, ['audio']);
 }
 ```
 
-Альтернатива (чище, но больше изменений): заменить тройку `setFailed + restoreFailed + markDirtyScene`
-на одну `orchestrator.failStage(..., { redispatch: false })`, а затем `markDirtyScene`. `failStage`
-сам ставит `asset.audio=FAILED`, пишет journal `AUDIO_FAILED`, делает `finalizeDispatch('failure')`.
-Объём: 2 места × ~3 строки = 6 строк. Это **фоллоу-ап R3** для двух пропущенных веток.
+Alternative (cleaner, more changes): replace the trio `setFailed + restoreFailed + markDirtyScene`
+with a single `orchestrator.failStage(..., { redispatch: false })`, then `markDirtyScene`. `failStage`
+itself sets `asset.audio=FAILED`, writes journal `AUDIO_FAILED`, does `finalizeDispatch('failure')`.
+Size: 2 locations × ~3 lines = 6 lines. This is **R3 follow-up** for the two missed branches.
 
-### F2. Race между `setFailed` (audio-orch) и `failStage` (orchestrator) в `/gpu/task/error`
+### F2. Race Between `setFailed` (audio-orch) and `failStage` (orchestrator) in `/gpu/task/error`
 
 `backend/src/routes/generation-routes.cjs:1168-1185`:
 
@@ -109,29 +109,29 @@ const result = await orchestrator.failStage(
 );
 ```
 
-`audioOrch.setFailed` (raw) сам **не** синхронизирует asset.audio — это просто
-`transitionState(redis, ..., PHASES.FAILED)` в `audio-orchestrator.js:158`. Между этим вызовом и
-последующим `failStage` есть окно (< 1 redis round-trip), где `audio-orch.phase == FAILED`,
-а `asset.audio == GENERATING` — инвариант `audio-orch.FAILED ⇒ asset ∈ {FAILED, PENDING}` нарушен.
+`audioOrch.setFailed` (raw) does NOT sync asset.audio — it's just
+`transitionState(redis, ..., PHASES.FAILED)` in `audio-orchestrator.js:158`. Between this call and
+the subsequent `failStage` there's a window (< 1 redis round-trip) where `audio-orch.phase == FAILED`,
+but `asset.audio == GENERATING` — invariant `audio-orch.FAILED ⇒ asset ∈ {FAILED, PENDING}` violated.
 
-**Практический риск:**
-- `reconcileCycle.checkStalledAudioScenes` фильтрует не-WAITING_CHUNKS → безопасно.
-- Scheduler попытается re-dispatch только если lease протух — но lease живёт 15 мин для audio,
-  `failStage` ниже освобождает его через `finalizeDispatch('failure')`. Корректно.
-- Ок短短, но в journal пишется только `failStage`'ов `AUDIO_FAILED` с `reason='worker_error'`,
-  а `chunk_error:5:network_timeout` из raw `setFailed` теряется.
+**Practical Risk:**
+- `reconcileCycle.checkStalledAudioScenes` filters non-WAITING_CHUNKS → safe.
+- Scheduler will attempt re-dispatch only if lease expired — but lease lives 15 min for audio,
+  `failStage` below releases it via `finalizeDispatch('failure')`. Correct.
+- Short window, but journal only records `failStage`'s `AUDIO_FAILED` with `reason='worker_error'`,
+  while `chunk_error:5:network_timeout` from raw `setFailed` is lost.
 
-**Рекомендация** (простая): убрать raw `audioOrch.setFailed` полностью — `orchestrator.failStage`
-уже переводит audio-orch в FAILED сам (через `failWaitingScene` если WAITING_CHUNKS, или через
-синхронизацию в `failStage` для общего случая). Проверить, что `failStage` действительно покрывает
-audio-orch FAILED для(audio_chunk)** stage=audio; если нет — добавить одну строку `audioOrch.setFailed` 
-внутрь `orchestrator.failStage` после `unsafeRestoreAssetState`.
+**Recommendation** (simple): remove raw `audioOrch.setFailed` entirely — `orchestrator.failStage`
+already transitions audio-orch to FAILED (via `failWaitingScene` if WAITING_CHUNKS, or via
+sync in `failStage` for the general case). Verify that `failStage` indeed covers
+audio-orch FAILED for `audio_chunk` stage=audio; if not — add one `audioOrch.setFailed` line
+inside `orchestrator.failStage` after `unsafeRestoreAssetState`.
 
-Объём: ~5 строк чистки. Снижает число «двух точек правды» на error path.
+Size: ~5 lines cleanup. Reduces "two sources of truth" on error path.
 
-### F3. Lazy-require внутри `setScene*` остаётся (cosmetic)
+### F3. Lazy-Require Inside `setScene*` Remains (Cosmetic)
 
-После `fa6c039` каждая из 4 `setScene*` функций делает по 3 `require()` inside тела:
+After `fa6c039`, each of the 4 `setScene*` functions does 3 `require()` inside the body:
 
 ```js
 async function setScenePending(...) {
@@ -142,95 +142,95 @@ async function setScenePending(...) {
 }
 ```
 
-В предыдущем документе это было **R4 (low)**, аудит 27-07 (W2) подтвердил «оставить как есть,
-не refactor». Поддерживаю — `state/journal/scene-utils` безопасно вынести на top-level, но
-это чисто cosmetic, поведение не меняется. **Действие:** никакого, не стоит отдельного коммита.
+In the previous document this was **R4 (low)**, audit 27-07 (W2) confirmed "leave as is,
+don't refactor". Agreed — `state/journal/scene-utils` can safely be moved to top-level, but
+this is purely cosmetic, behavior doesn't change. **Action:** none, not worth a separate commit.
 
-### F4. Поле `workers` в JSON `/progress-panel` vs термин `TaskRow` — закрепить в контракте
+### F4. `workers` Field in `/progress-panel` JSON vs `TaskRow` Term — Lock Down in Contract
 
-`docs/05-frontend/TASK_ARCHITECTURE.md:200` явно фиксирует нестыковку:
+`docs/05-frontend/TASK_ARCHITECTURE.md:200` explicitly documents the mismatch:
 
-> Поле `workers` в JSON ответе осталось для обратной совместимости. На фронтенде объекты
-> называются `ProgressWorker` в API-моделях, но отображаются как `TaskRow`.
+> The `workers` field in JSON response was retained for backward compatibility. On the frontend,
+> objects are called `ProgressWorker` in API models but displayed as `TaskRow`.
 
-Риск: при следующем рефакторинге `progress-panel.cjs` кто-то назовёт переменную `workers` в
-backend, думая, что это термин; на фронтенде будет `TaskRow` — двойное наименование закрепится.
+Risk: next time someone refactors `progress-panel.cjs`, they might name the variable `workers` in
+backend thinking it's the term; on frontend it'll be `TaskRow` — double naming becomes entrenched.
 
-**Рекомендация:** добавить в header `progress-panel.cjs` (рядом с module description) комментарий:
+**Recommendation:** add a comment in the header of `progress-panel.cjs` (next to module description):
 ```js
 // Contract: JSON field "workers" is legacy, retained for backward compatibility.
 // In new code use `rows`/`taskRows`; rename the JSON field only in a coordinated
 // frontend+backend release (see docs/05-frontend/TASK_ARCHITECTURE.md §6).
 ```
-Объём — 4 строки. Backend change `workers → tasks` в JSON — НЕ делать, ломает установленные
-версии приложения.
+Size — 4 lines. Backend change `workers → tasks` in JSON — DO NOT do, breaks installed
+app versions.
 
-### F5. `gen-scope.migrateLegacyScopes` — починилось ✅
+### F5. `gen-scope.migrateLegacyScopes` — Fixed ✅
 
-В процессе ревью подтвердилось, что `migrateLegacyScopes` вызывается на startup из
-`backend.cjs:290` в `setImmediate`-блоке startup-recovery. F5 снято —宠爱 действенное.
+During review, confirmed that `migrateLegacyScopes` is called on startup from
+`backend.cjs:290` in a `setImmediate` block of startup-recovery. F5 resolved.
 
 ---
 
-## 4. Дополнительные наблюдения (не требуют действия)
+## 4. Additional Observations (No Action Required)
 
-### N1._transient inconsistency в `recoverAudioOrchStates`: `MERGING → FAILED` без явной записи
+### N1. Transient Inconsistency in `recoverAudioOrchStates`: `MERGING → FAILED` Without Explicit Write
 
-Строка 1416 `audioOrch.setFailed(..., 'restart_merge_missing')` → следующий if `markDirtyScene`.
-Asset.audio из `GENERATING` (часть инварианта для MERGING) сразу в `DIRTY` (без `FAILED`).
-`AssetTransitions[GENERATING] = [READY, FAILED, DIRTY]` — переход формально валиден, но в журнале
-не пишется `AUDIO_FAILED`. Это часть F1 (см. выше).
+Line 1416 `audioOrch.setFailed(..., 'restart_merge_missing')` → next if `markDirtyScene`.
+Asset.audio goes from `GENERATING` (part of MERGING invariant) directly to `DIRTY` (without `FAILED`).
+`AssetTransitions[GENERATING] = [READY, FAILED, DIRTY]` — transition formally valid, but journal
+doesn't record `AUDIO_FAILED`. This is part of F1 (see above).
 
-### N2. `scene-orchestrator.js` — `audioOrch.setMerging + setDone` без проверки на наличие файла
+### N2. `scene-orchestrator.js` — `audioOrch.setMerging + setDone` Without File Check
 
-В `scene-orchestrator.js:163-164` и `:174-175` fast-track к DONE:
+In `scene-orchestrator.js:163-164` and `:174-175` fast-track to DONE:
 ```js
 await audioOrch.setMerging(redis, ...);
 await audioOrch.setDone(redis, ...);
 ```
-Не проверяется, есть ли на диске merged `.mp3`. `completeStage` ниже через `handleAudioCompleted`
-проверит `audio.isSceneAudioReady()` — если файла нет, вернёт `ok:false, retryable:true`, asset
-останется GENERATING, completeStage не поставит READY. Корректно, но dispatchId вернётся с
-` Geological Surveyed=false, completed=false` для `already_ready` — странно, ведь путь назывался
-`already_ready`. **Не баг, но имена misleading.** Действия не требует.
+No check for merged `.mp3` on disk. `completeStage` below via `handleAudioCompleted`
+checks `audio.isSceneAudioReady()` — if file missing, returns `ok:false, retryable:true`, asset
+stays GENERATING, completeStage won't set READY. Correct, but dispatchId returns with
+`Geological Surveyed=false, completed=false` for `already_ready` — odd, since the path was
+called `already_ready`. **Not a bug, but misleading names.** No action needed.
 
-### N3. Parallel generation: readdToActiveIndex=false path
+### N3. Parallel Generation: readdToActiveIndex=false Path
 
-В `orchestrator.js:612-619` добавлен путь `readdToActiveIndex: false` (сделано в `6daa5c1` для
-selective generation/Navigator-flow, чтобы task registry сам управлял активацией). Если caller
-забыл передать это в `options`, по умолчанию `true` — безопасно. Грепа всех callers с `false`
-не делал, но docstring в `orchestrator.js:395-403` описывает контракт. OK.
-
----
-
-## 5. Приоритет внедрения
-
-| Phase | Задачи | Объём | Риск |
-|-------|--------|-------|------|
-| **A** | F1 (sync asset.audio в 2 ветках recoverAudioOrchStates) | ~6 строк | Низкий |
-| **B** | F2 (убрать дублирующий raw `audioOrch.setFailed` в `/gpu/task/error`) | ~5 строк | Низкий (нужно проверить, что `failStage` покрывает audio-orch FAILED для(audio_chunk) stage=audio; если нет — добавить одну строку внутрь failStage) |
-| **C** | F4 (comment в `progress-panel.cjs` о legacy `workers`) | ~4 строки | Greenwich |
-
-Фоллоу-ап _не_ добавляет новых команд фасада, state-machine, очередей или сервисов.
-Закрывает оставшиеся после R3 ветки рассинхрона audio-orch↔asset. Объём Phase A+B+C
-суммарно — **15 строк**. Тестовое покрытие R6 уже есть (215 строк `orchestration-stabilization.test.js`),
-новые тесты не требуются: достаточно добавить один `it()` на invariant после recovery-branch
-FAILED (если пойдём путём F1).
+In `orchestrator.js:612-619` added `readdToActiveIndex: false` path (done in `6daa5c1` for
+selective generation/Navigator-flow, so task registry manages activation itself). If caller
+forgets to pass this in `options`, default `true` — safe. Haven't grepped all callers with `false`
+but docstring in `orchestrator.js:395-403` describes the contract. OK.
 
 ---
 
-## 6. Чего НЕ делать (консолидация)
+## 5. Implementation Priority
 
-- **Не переименовывать** JSON-поле `workers` в `/progress-panel` — ломает установленные версии.
-- **Не объединять** audio-orch с orchestrator.js — отдельная фазовая машина осмысленна.
-- **Не выносить** lazy-require в `setScene*` на top-level — cosmetic, без выгоды.
-- **Не вводить** централизованный invariant-enforcement wrapper вокруг всех `audioOrch.*` —
-  достаточно локальной синхронизации в 2 местах (F1).
-- **Не мигрировать** reconciliation на 100% через facade (M5 progress: 1 из 18 мест закрыто R3) —
-  это большое рефакторинговое усилие, текущей щель достаточно закрыть F1.
+| Phase | Tasks | Size | Risk |
+|-------|-------|------|------|
+| **A** | F1 (sync asset.audio in 2 branches of recoverAudioOrchStates) | ~6 lines | Low |
+| **B** | F2 (remove duplicate raw `audioOrch.setFailed` in `/gpu/task/error`) | ~5 lines | Low (need to verify `failStage` covers audio-orch FAILED for `audio_chunk` stage=audio; if not — add one line inside failStage) |
+| **C** | F4 (comment in `progress-panel.cjs` about legacy `workers`) | ~4 lines | Zero |
+
+Follow-up does NOT add new facade commands, state machines, queues, or services.
+Closes remaining audio-orch↔asset sync gaps after R3. Phase A+B+C combined —
+**15 lines**. Test coverage R6 already exists (215 lines `orchestration-stabilization.test.js`),
+new tests not needed: one `it()` for invariant after recovery-branch
+FAILED is sufficient (if going with F1).
+
+---
+
+## 6. What NOT To Do (Consolidation)
+
+- **Do NOT rename** JSON field `workers` in `/progress-panel` — breaks installed app versions.
+- **Do NOT merge** audio-orch into orchestrator.js — separate phase machine is meaningful.
+- **Do NOT move** lazy-require in `setScene*` to top-level — cosmetic, no benefit.
+- **Do NOT introduce** centralized invariant-enforcement wrapper around all `audioOrch.*` —
+  local sync in 2 locations (F1) is sufficient.
+- **Do NOT migrate** reconciliation to 100% via facade (M5 progress: 1 of 18 locations closed by R3) —
+  this is a large refactoring effort, current gap is sufficiently closed by F1.
 
 ---
 
 <!-- === Footer === -->
 ---
-*Фоллоу-ап ревью коммитов 25–27 июля 2026. Все проверки — против HEAD `f5bcde0`.*
+*Follow-up review of commits 25–27 July 2026. All checks against HEAD `f5bcde0`.*

@@ -1,94 +1,94 @@
-# MEMORY — ComfyUI GPU instance (animastor worker)
+# MEMORY — ComfyUI GPU Instance (Animastor Worker)
 
-Записка для продолжения работы на GPU-инстансе. Дата последнего обновления: 11 Aug 2026.
+Work notes for continuing on the GPU instance. Last updated: 11 Aug 2026.
 
-## Контекст
+## Context
 
-- Скрипт `worker/start-video.sh` разворачивает ComfyUI на GPU-инстансе (индийская GPU-контора, Ubuntu).
-- Инстанс **обнуляет только системную часть**; `~/` (в т.ч. `~/ComfyUI` и `custom_nodes`) **персистентны** и не трогаются.
-- Работало примерно до **27 июля 2026**, потом новая сборка ComfyUI перестала запускаться.
-- Старый провайдерский ComfyUI работает с qwen-tts/qwen-image, но **слишком стар для LTX 2.3** — поэтому чистый Ubuntu + подбор torch.
-- Custom nodes лежат в `~/ComfyUI/custom_nodes` — **не переменная** (персистентны).
+- Script `worker/start-video.sh` deploys ComfyUI on the GPU instance (Indian GPU provider, Ubuntu).
+- The instance **resets only the system partition**; `~/` (including `~/ComfyUI` and `custom_nodes`) **is persistent** and untouched.
+- Worked until approximately **27 July 2026**, then a new ComfyUI build stopped starting.
+- The provider's stock ComfyUI works with qwen-tts/qwen-image, but is **too old for LTX 2.3** — hence a clean Ubuntu install + torch version selection.
+- Custom nodes live in `~/ComfyUI/custom_nodes` — **not variable** (persistent).
 
-## Матрёшка ComfyUI (4 слоя)
+## ComfyUI Nesting (4 Layers)
 
 ```
 Animastor (worker.cjs)
-  └── ComfyUI backend (Git tag/commit)  ← пиним в скрипте
-        └── comfyui-frontend-package (PyPI, ЗАПИНИВАЕТСЯ в requirements.txt тега)
-              └── comfy-kitchen (PyPI, ЗАПИНИВАЕТСЯ в requirements.txt тега)
-                    └── torch 2.6.0+cu124 (ставится отдельно, cu124-index)
+  └── ComfyUI backend (Git tag/commit)  ← pinned in the script
+        └── comfyui-frontend-package (PyPI, PINNED in the tag's requirements.txt)
+              └── comfy-kitchen (PyPI, PINNED in the tag's requirements.txt)
+                    └── torch 2.6.0+cu124 (installed separately, cu124-index)
                           └── CUDA 12.4
 ```
 
-## Ключевые факты (проверено)
+## Key Facts (Verified)
 
-| Тэг ComfyUI | commit | frontend | comfy-kitchen |
+| ComfyUI Tag | Commit | Frontend | Comfy-kitchen |
 |---|---|---|---|
-| v0.27.0 | `bb131be9e83d2f773c90f1d6f1e4b248a498c8c5` (30.06.2026) | `==1.45.20` | `==0.2.16` |
-| v0.28.0 | `700821e1364eaab0e8f21c538a2131719fec57bf` (15.07.2026) | `==1.45.21` | `==0.2.20` |
+| v0.27.0 | `bb131be9e83d2f773c90f1d6f1e4b248a498c8c5` (30 Jun 2026) | `==1.45.20` | `==0.2.16` |
+| v0.28.0 | `700821e1364eaab0e8f21c538a2131719fec57bf` (15 Jul 2026) | `==1.45.21` | `==0.2.20` |
 
-- `comfyui-frontend-package` и `comfy-kitchen` **пинятся самим тегом** в `requirements.txt` (НЕ плавающие).
-- `torch` в requirements.txt не пинится → скрипт ставит 2.6.0+cu124 с https://download.pytorch.org/whl/cu124.
-- Гипотеза ChatGPT про «общий плавающий frontend» **опровергнута** — frontend запиниван per-tag, разница между v0.27/v0.28 всего 1.45.20→1.45.21, поэтому симптом одинаковый.
+- `comfyui-frontend-package` and `comfy-kitchen` **are pinned by the tag itself** in `requirements.txt` (NOT floating).
+- `torch` is not pinned in requirements.txt → the script installs 2.6.0+cu124 from https://download.pytorch.org/whl/cu124.
+- ChatGPT's hypothesis about "a shared floating frontend" **has been debunked** — frontend is pinned per-tag; the difference between v0.27 and v0.28 is only 1.45.20→1.45.21, so the symptom is identical.
 
-## Известные ошибки
+## Known Errors
 
-- Оригинальная поломка (свежая сборка не стартует): `comfy_kitchen → torch 2.6.0 → infer_schema() → list[int] unsupported`. Это `torch.library.infer_schema` не умеет `list[int]`/`list[Tensor]` в type hints; триггерит comfy-kitchen (quant_ops.py). Требует lock зависимостей.
-- Текущий симптом (v0.27.0/v0.28.0 стартуют): **старые воркфлоу открываются БЕЗ линков**, узлы без связей, «граф руками не соединяется».
-- Из трекера ComfyUI_frontend: frontend **v1.41.x** сломал subgraph'ы/promoted widgets («No link found for link ID», «disconnected»), починено в **v1.43.7+**, документированный стабильный workaround — **v1.39.x**. Воркфлоу, испорченные v1.41.x, могут не восстановиться автоматически.
+- Original failure (new build fails to start): `comfy_kitchen → torch 2.6.0 → infer_schema() → list[int] unsupported`. This is `torch.library.infer_schema` not supporting `list[int]`/`list[Tensor]` in type hints; triggered by comfy-kitchen (quant_ops.py). Requires dependency locking.
+- Current symptom (v0.27.0/v0.28.0 start successfully): **old workflows open WITHOUT links** — nodes are disconnected, "graph cannot be connected manually".
+- From the ComfyUI_frontend tracker: frontend **v1.41.x** broke subgraphs/promoted widgets ("No link found for link ID", "disconnected"), fixed in **v1.43.7+**, the documented stable workaround is **v1.39.x**. Workflows corrupted by v1.41.x may not recover automatically.
 
-## Текущее состояние скрипта worker/start-video.sh
+## Current State of worker/start-video.sh
 
 1. `apt install -y mc git`
-2. Пин ComfyUI: `COMFY_VER="v0.27.0"` — клон с `--branch`, или fetch тега + `checkout -f FETCH_HEAD`.
-3. Верификация: `git describe --tags --exact-match` + `rev-parse HEAD` → в лог `ComfyUI version:` / `ComfyUI commit:`.
-4. Зависимости: если есть `logs/comfy-${COMFY_VER}.lock.txt` — `pip install -r <lock>`, иначе `-r requirements.txt`.
+2. Pin ComfyUI: `COMFY_VER="v0.27.0"` — clone with `--branch`, or fetch tag + `checkout -f FETCH_HEAD`.
+3. Verification: `git describe --tags --exact-match` + `rev-parse HEAD` → logs `ComfyUI version:` / `ComfyUI commit:`.
+4. Dependencies: if `logs/comfy-${COMFY_VER}.lock.txt` exists — `pip install -r <lock>`, otherwise `-r requirements.txt`.
 5. GGUF deps.
 6. torch: uninstall + install torch/torchvision/torchaudio `--index-url .../whl/cu124`.
-7. Старт `nohup python main.py --listen 127.0.0.1 --port 8188 > output.log 2>&1 &`
-8. Health-check `/system_stats` (60×5s). Если OK — сохраняет `pip freeze` (кроме torch-трио) в `logs/comfy-${COMFY_VER}.lock.txt` (lock только с рабочей сборки). Если НЕ OK — tail output.log и exit 1.
-9. Запуск `bash ~/animastor/start-worker.sh video`.
+7. Start `nohup python main.py --listen 127.0.0.1 --port 8188 > output.log 2>&1 &`
+8. Health-check `/system_stats` (60×5s). If OK — saves `pip freeze` (excluding torch trio) to `logs/comfy-${COMFY_VER}.lock.txt` (lock only from a working build). If NOT OK — tail output.log and exit 1.
+9. Launch `bash ~/animastor/start-worker.sh video`.
 
-## Диагностика на инстансе (выполнить!)
+## Diagnostics on Instance (Run These!)
 
 ```bash
-# что реально стоит сейчас
+# what is actually installed right now
 pip show comfyui-frontend-package | grep -E 'Name|Version'
 
-# какой frontend был 27 июля — bootstrap.log копится (append)
+# what frontend was installed on 27 July — bootstrap.log accumulates (append)
 grep -iE 'frontend|front-end|ComfyUI version' ~/animastor/logs/bootstrap.log | tail -30
 
-# сколько классов знает backend
+# how many classes does the backend know
 curl -s http://127.0.0.1:8188/object_info | python3 -c "import json,sys; print(len(json.load(sys.stdin)))"
 
-# какие классы ждёт workflow (заменить путь)
+# which classes does the workflow expect (replace path)
 python3 -c "
 import json
 d=json.load(open('WORKFLOW.json'))
 print(sorted(set(n.get('type') or n.get('class_type') for n in d.get('nodes',[]))))
 "
 
-# формат links в воркфлоу (массив vs объекты)
+# links format in workflow (array vs objects)
 python3 -c "import json; d=json.load(open('WORKFLOW.json')); print(type(d.get('links',[])).__name__); print(json.dumps(d.get('links',[])[:2]))"
 ```
 
-Браузер: F12 → Console при загрузке воркфлоу — искать `No link found for link ID`.
+Browser: F12 → Console when loading a workflow — look for `No link found for link ID`.
 
-## Версии, которые НЕ пиним (для справки)
+## Versions NOT Pinned (Reference Only)
 
-- v0.29.0 = 29.07.2026 (уже ПОСЛЕ проверенной даты), v0.29.2 = 31.07, v0.30.0 = 03.08, v0.31.0 = 08.08.
+- v0.29.0 = 29 Jul 2026 (AFTER the verified date), v0.29.2 = 31 Jul, v0.30.0 = 03 Aug, v0.31.0 = 08 Aug.
 
-## Открытые вопросы
+## Open Questions
 
-1. Какой frontend стоял на инстансе 27 июля 2026? (см. grep bootstrap.log)
-2. Это frontend-формат (массив/объекты links) или отсутствующие классы custom nodes?
-3. Нужен ли пин `--front-end-version Comfy-Org/ComfyUI_frontend@v1.39.x` при запуске (backend v0.27.0 остаётся, тянет LTX 2.3; frontend не жёстко привязан)?
-4. Lock `comfy-v0.27.0.lock.txt` после первого успешного бута — закоммитить в репо.
+1. Which frontend was installed on the instance on 27 July 2026? (see grep bootstrap.log above)
+2. Is this a frontend format issue (array/objects links) or missing custom node classes?
+3. Is a `--front-end-version Comfy-Org/ComfyUI_frontend@v1.39.x` pin needed at main.py launch time (backend v0.27.0 remains, pulls LTX 2.3; frontend is not tightly coupled)?
+4. After a successful boot: commit `logs/comfy-v0.27.0.lock.txt` to the repo.
 
 ## TODO
 
-- [ ] Выполнить диагностику (см. блок команд выше).
-- [ ] Определить виновника: frontend-формат vs custom nodes.
-- [ ] При необходимости добавить `--front-end-version` в строку запуска main.py в start-video.sh.
-- [ ] После рабочего бута: закоммитить `logs/comfy-v0.27.0.lock.txt`.
+- [ ] Run diagnostics (see command block above).
+- [ ] Determine the root cause: frontend format vs custom nodes.
+- [ ] If necessary, add `--front-end-version` to the main.py launch line in start-video.sh.
+- [ ] After a working boot: commit `logs/comfy-v0.27.0.lock.txt`.

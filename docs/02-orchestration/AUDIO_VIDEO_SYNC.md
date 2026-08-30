@@ -1,60 +1,59 @@
-# Синхронизация аудио и видео (raw audio chunks = источник истины)
+# Audio and Video Synchronization (Raw Audio Chunks = Source of Truth)
 
-> Статус: реализовано (2026-08-13), проверено на реальном прогоне сцены
-> `sc-45d38693`. Исследование и обоснование — см. историю ниже.
+> Status: implemented (2026-08-13), verified on real scene run
+> `sc-45d38693`. Research and rationale — see history below.
 
-## Проблема
+## Problem
 
-Синхронизация аудиодорожки сцены с видеодорожкой, собираемой из видеочанков,
-зависела от **прогнозируемых** таймингов юнитов (Postgres `image_units`),
-которые вычислялись пропорционально длине текста. Реальная речь отклоняется
-от прогноза:
+Synchronizing a scene's audio track with the video track assembled from video chunks
+depended on **predicted** unit timings (Postgres `image_units`), which were calculated
+proportional to text length. Actual speech deviates from the prediction:
 
-- расхождение по юниту: **до ±0.77 с**;
-- кумулятивный дрейф к концу сцены: **до +0.64 с** (видео отстаёт/обгоняет речь).
+- per-unit drift: **up to ±0.77 s**;
+- cumulative drift by end of scene: **up to +0.64 s** (video lags/leads speech).
 
-## Решение: фактические длительности raw-чанков
+## Solution: Actual Raw Chunk Durations
 
-Архитектурная цепочка:
+Architectural chain:
 
 ```
 raw audio chunks ──ffprobe──► .chunk-durations.json {chunk_index, unit_id, raw, tail}
                                      │
                                      ▼
-                     IU-RECALC: поюнитная группировка (raw, кроме последнего → tail)
+                     IU-RECALC: per-unit grouping (raw, except last → tail)
                                      │
                                      ▼
-                     PG image_units: start_ms/end_ms/estimated_duration_sec (фактические)
+                     PG image_units: start_ms/end_ms/estimated_duration_sec (actual)
                                      │
                                      ▼
-                     video-workflows: читает фактические тайминги → видеочанки
+                     video-workflows: reads actual timings → video chunks
 ```
 
-### Ключевые компоненты
+### Key Components
 
-| Компонент | Где | Что делает |
+| Component | Location | What It Does |
 |---|---|---|
-| `unit_id` в сегментах | `backend/src/audio/segments.js` | Каждый TTS-сегмент (= чанк) знает свой юнит: dialogue — напрямую, narration — `assignNarrationUnitIds` (маппинг по позиции в тексте) |
-| `unit_id` в Redis | `backend/src/audio/generation.js` + `redis-helpers.cjs` (`saveChunk`) | Пробрасывается в ключ `animastor:chunk:*` при создании **и при каждом приёме чанка** (баг: `saveChunk` перезаписывал ключ фиксированным набором полей и стирал `unit_id` — исправлено) |
-| Замер длительностей | `backend/src/audio/pipeline.js` (`trackChunkDurations`) | Перед merge каждый чанк замеряется ffprobe: `raw_duration_sec` (как на диске) и `tail_duration_sec` (после tail-only обрезки); пишется `<scene>.chunk-durations.json` рядом с merged-файлом |
-| Обновление таймингов юнитов | `backend/src/orchestration/scene-callbacks.js` (IU-RECALC) | Вместо пропорционального сплита — кумулятивные фактические границы `start_ms/end_ms` + `estimated_duration_sec`; пропорциональный сплит остаётся только как fallback (нет per-chunk данных) |
-| Потребление | `backend/src/workflows/video/video-workflows.js` (`readIUMetadata`) | Видео-воркфлоу читает фактические `estimated_duration_sec` из PG — менять его не пришлось |
+| `unit_id` in segments | `backend/src/audio/segments.js` | Each TTS segment (= chunk) knows its unit: dialogue — directly, narration — `assignNarrationUnitIds` (position-based mapping in text) |
+| `unit_id` in Redis | `backend/src/audio/generation.js` + `redis-helpers.cjs` (`saveChunk`) | Passed to `animastor:chunk:*` key on creation **and on every chunk receipt** (bug: `saveChunk` overwrote the key with a fixed field set, erasing `unit_id` — fixed) |
+| Duration measurement | `backend/src/audio/pipeline.js` (`trackChunkDurations`) | Before merge, each chunk is measured by ffprobe: `raw_duration_sec` (as on disk) and `tail_duration_sec` (after tail-only trimming); writes `<scene>.chunk-durations.json` next to merged file |
+| Unit timing update | `backend/src/orchestration/scene-callbacks.js` (IU-RECALC) | Instead of proportional split — cumulative actual `start_ms/end_ms` + `estimated_duration_sec`; proportional split remains only as fallback (no per-chunk data) |
+| Consumer | `backend/src/workflows/video/video-workflows.js` (`readIUMetadata`) | Video workflow reads actual `estimated_duration_sec` from PG — no changes needed |
 
-### Tail-поправка для последнего чанка
+### Tail Correction for Last Chunk
 
-Cleanup обрезает хвостовую тишину только у **последнего** чанка сцены (хвосты
-промежуточных становятся внутренними паузами и сохраняются при concat). Поэтому
-для идеального совпадения с merged-файлом:
+Cleanup trims trailing silence only for the **last** chunk of a scene (trails of
+intermediate chunks become internal pauses and are preserved during concat). Therefore
+for perfect alignment with the merged file:
 
-- чанки 1..N−1 — по `raw_duration_sec`;
-- последний чанк — по `tail_duration_sec`.
+- chunks 1..N−1 — by `raw_duration_sec`;
+- last chunk — by `tail_duration_sec`.
 
-Результат на `sc-45d38693`: Σ таймингов юнитов = **63.720 с** = длительность
-merged-файла (Δ = 0.000).
+Result on `sc-45d38693`: Σ unit timings = **63.720 s** = merged file
+duration (Δ = 0.000).
 
-### Сверка после прогона (2026-08-13, `sc-45d38693`)
+### Post-Run Verification (2026-08-13, `sc-45d38693`)
 
-| Юнит | Было (пропорц.) | Стало (фактич.) | Видео факт. | Δ видео−аудио |
+| Unit | Before (proportional) | After (actual) | Video actual | Δ video−audio |
 |---|---|---|---|---|
 | iu-5a1befa0 | 7.314 | 7.656 | 7.708 | +0.052 |
 | iu-bff1a5bc | 15.614 | 15.264 | 15.375 | +0.111 |
@@ -62,64 +61,63 @@ merged-файла (Δ = 0.000).
 | iu-73ef8ccb | 21.170 | 20.616 | 20.708 | +0.092 |
 | iu-bfea502d | 8.580 | 8.376 (tail) | 8.375 | −0.001 |
 
-Отклонения границ упали с **±0.28…0.77 с** до **±0.00…0.23 с** — это чистый
-квант кадра (24 fps) + выравнивание LTX, без систематического смещения.
+Boundary deviations dropped from **±0.28…0.77 s** to **±0.00…0.23 s** — this is pure
+frame quantum (24 fps) + LTX alignment, without systematic offset.
 
-## Остаточный дрейф: почанковое выравнивание LTX
+## Residual Drift: Per-Chunk LTX Alignment
 
-LTX 2.3 требует число кадров = **8n+1** (официальная таблица: 9, 17, 25, 33…).
-Каждый видеочанк платит «налог» выравнивания (округление суммы кадров вверх до
-8n+1). Если каждый юнит — отдельный чанк, налог платится N раз.
+LTX 2.3 requires frame count = **8n+1** (official table: 9, 17, 25, 33…).
+Each video chunk pays an "alignment tax" (rounding total frames up to
+8n+1). If each unit is a separate chunk, the tax is paid N times.
 
-- Старая схема (5 чанков × 1 юнит): налог **+12 кадров = +0.488 с** на сцену.
-- Новая схема — `selectWorkflowGroups` (DP-оптимизация в `video-workflows.js`):
-  минимизирует суммарный налог при ограничениях (≤ 4 юнита на группу, ≤ 30 с на
-  группу, мягкий штраф за превышение 20 с). На `sc-45d38693` выбрано
-  `[1][2+3][4][5]` → налог **+3 кадра = +0.125 с**.
+- Old scheme (5 chunks × 1 unit): tax **+12 frames = +0.488 s** per scene.
+- New scheme — `selectWorkflowGroups` (DP optimization in `video-workflows.js`):
+  minimizes total tax with constraints (≤ 4 units per group, ≤ 30 s per
+  group, soft penalty for exceeding 20 s). On `sc-45d38693` selected
+  `[1][2+3][4][5]` → tax **+3 frames = +0.125 s**.
 
-DP учитывает, что сумма кадров группы может уже быть 8n+1 (нулевой налог):
-например, `15.264 + 11.808 с` → 649 кадров = 8×81+1.
+DP accounts for the fact that group frame sum may already be 8n+1 (zero tax):
+e.g., `15.264 + 11.808 s` → 649 frames = 8×81+1.
 
-## Устранение налога при мерже (профильное выравнивание)
+## Eliminating Tax at Merge (Profile-Aligned Trimming)
 
-Налог выравнивания остаётся в исходных групповых чанках (`_gN.mp4`), но при
-мерже сцены каждый чанк **обрезается до точного аудио-количества кадров**
-(`alignGroupClips` → `trimVideoToFrames`, frame-exact `-c copy` + faststart), а
-на границах юнитов форсируются keyframe'ы (`forceKeyframesAtUnitBoundaries`).
-Итоговый merged-файл сцены = сумма raw-кадров = аудио-таймлайн (Δ → 0 кадров).
+The alignment tax remains in the source group chunks (`_gN.mp4`), but during
+scene merge each chunk is **trimmed to exact audio frame count**
+(`alignGroupClips` → `trimVideoToFrames`, frame-exact `-c copy` + faststart), and
+keyframes are forced at unit boundaries (`forceKeyframesAtUnitBoundaries`).
+The final merged scene file = sum of raw frames = audio timeline (Δ → 0 frames).
 
-Поведение управляется **видео-профилем** (`ai/profiles/video/{profile}.json`,
-секция `video`):
+Behavior is controlled by the **video profile** (`ai/profiles/video/{profile}.json`,
+`video` section):
 
-| Свойство | ltx-2.3 | Назначение |
+| Property | ltx-2.3 | Purpose |
 |---|---|---|
-| `frameAlignment` | `8` | Шаг валидного числа кадров (8n+1 для LTX); задаёт матчинг и таргеты трима |
-| `requiresTrim` | `true` | Обрезать ли чанки до точных аудио-кадров при мерже |
-| `requiresKeyframeForcing` | `true` | Форсировать ли keyframe'ы на границах юнитов |
+| `frameAlignment` | `8` | Valid frame count step (8n+1 for LTX); sets matching and trim targets |
+| `requiresTrim` | `true` | Whether to trim chunks to exact audio frames at merge |
+| `requiresKeyframeForcing` | `true` | Whether to force keyframes at unit boundaries |
 
-Резолвер `resolveVideoProfileMeta()` (`video-merge.js`): пользовательский
-override → дефолт коннектора (`profile.videoProfile`) → `null`. При
-`null`-профиле сохраняется прежнее поведение (trim идёт; для чанков с точным
-числом кадров он — no-op: таргет равен фактическому количеству кадров, файл не
-трогается).
+The resolver `resolveVideoProfileMeta()` (`video-merge.js`): user
+override → connector default (`profile.videoProfile`) → `null`. With
+`null` profile, previous behavior is preserved (trim proceeds; for chunks with exact
+frame count it's a no-op: target equals actual frame count, file untouched).
 
-Экспорт книги (`mergeBookVideosFromSources`) проходит тот же путь: чанки
-обрезаются, границы юнитов форсируются на SOURCE-битрейте (не playback).
-Одно-групповые сцены выравниваются так же, чтобы таймлайн книги совпадал с
-аудио.
+Book export (`mergeBookVideosFromSources`) follows the same path: chunks are
+trimmed, unit boundaries forced at SOURCE bitrate (not playback).
+Single-group scenes are aligned the same way so book timeline matches
+audio.
 
-## Окружение (research-флаги)
+## Environment (Research Flags)
 
-| Переменная | Назначение |
+| Variable | Purpose |
 |---|---|
-| `KEEP_AUDIO_CHUNKS=1` | Не удалять raw-чанки после merge (первичный источник таймингов + дебаг) |
-| `AUDIO_CLEANUP_TAIL_ONLY=1` | Cleanup обрезает только хвостовую тишину, паузы внутри файла сохраняются |
-| `TRACK_CHUNK_DURATIONS=1` | Замер длительностей чанков в `.chunk-durations.json` при merge |
+| `KEEP_AUDIO_CHUNKS=1` | Don't delete raw chunks after merge (primary timing source + debugging) |
+| `AUDIO_CLEANUP_TAIL_ONLY=1` | Cleanup trims only trailing silence, internal pauses preserved |
+| `TRACK_CHUNK_DURATIONS=1` | Measure chunk durations in `.chunk-durations.json` during merge |
 
-## История
+## History
 
-- **2026-08-13** — исследование: первый прогон показал, что механизм не
-  сработал — `unit_id` стирался в `saveChunk` (`redis-helpers.cjs`). Исправлено,
-  повторный прогон подтвердил всю цепочку: Redis → JSON → PG → видео.
-- **2026-08-13** — LTX-группировка: `selectWorkflowGroups` переписан на DP,
-  налог выравнивания снижен с +12 до +3 кадров на сцену.
+- **2026-08-13** — research: first run showed mechanism didn't
+  fire — `unit_id` was erased in `saveChunk` (`redis-helpers.cjs`). Fixed,
+  re-run confirmed the full chain: Redis → JSON → PG → video.
+- **2026-08-13** — LTX grouping: `selectWorkflowGroups` rewritten with DP,
+  alignment tax reduced from +12 to +3 frames per scene.

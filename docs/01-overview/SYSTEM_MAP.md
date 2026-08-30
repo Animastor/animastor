@@ -1,52 +1,53 @@
 # 01. System Map — Animastor
 
-> Карта текущего устройства системы. Только описание «как есть».
-> Дата составления: 2026-07-06. Основано на чтении исходного кода (не только документации).
-> Раздел 9 отдельно фиксирует места, где документация расходится с кодом.
+> Map of the current system layout. Description of the "as-is" state only.
+> Date: 2026-07-06. Based on source code reading (not just documentation).
+> Section 9 specifically notes where documentation diverges from code.
 >
-> **Источник:** Оригинальный анализ `docs-claude/01_System_Map.md`.
-> **Статус:** Актуален по состоянию на 2026-07-06.
-> Обновления:
-> - Agent pipeline: enrichment-шаг удалён (обогащение перенесено в stepCreateScenes), coreference удалён, unit.participants удалён.
-> - Хранение: locations.json, voices.json, bible.country/epoch.
-> - Книжная структура: agent-service.js разбит на подмодули в `agent/`.
+> **Source:** Original analysis `docs-claude/01_System_Map.md`.
+> **Status:** Current as of 2026-07-06.
+> Updates:
+> - Agent pipeline: enrichment step removed (enrichment moved to stepCreateScenes), coreference removed, unit.participants removed.
+> - Storage: locations.json, voices.json, bible.country/epoch.
+> - Book structure: agent-service.js decomposed into submodules in `agent/`.
 
 ---
 
-## 1. Назначение проекта
+## 1. Project Purpose
 
-Animastor — платформа, превращающая текстовую книгу в мультимедийный «анимированный» формат: аудионаррация (TTS), изображения по кадрам и видео.
+Animastor is a platform that transforms text books into animated multimedia format: audio narration (TTS), images per frame, and video.
 
-Конвейер целиком:
+Full pipeline:
 
 ```
-TXT / VBook  →  AI-анализ (агент)  →  структура книги (главы/сцены/персонажи/локации/кадры)
-             →  генерация ассетов (audio → image → video) на GPU
-             →  воспроизведение в Android-приложении
+TXT / VBook  →  AI analysis (agent)  →  book structure (chapters/scenes/characters/locations/frames)
+             →  asset generation (audio → image → video) on GPU
+             →  playback in Android application
 ```
 
-Дополнительно есть AI-чат-ассистент (tool-based) для редактирования книги.
+Additionally, there is an AI chat assistant (tool-based) for book editing.
 
-Целевой клиент — Android-приложение (Kotlin). Backend — единственный сервер-оркестратор. Генерация вынесена на отдельные GPU-воркеры через промежуточный GPU Hub.
+The primary client is the Android application (Kotlin). Backend is the single orchestrator server. Generation is offloaded to separate GPU workers via an intermediate GPU Hub.
 
 ---
 
-## 2. Основные подсистемы
+## 2. Main Subsystems
 
-Развёртывание (`docker-compose.yml`): `postgres` (PG 16), `redis` (7, persisted volume), `backend`, `gpu-hub`, `nginx`. GPU-воркеры запускаются отдельно (не в compose) и ходят в GPU Hub по HTTP.
+Deployment (`docker-compose.yml`): `postgres` (PG 16), `redis` (7, persisted volume), `backend`, `gpu-hub`, `nginx`. GPU workers run separately (not in compose) and communicate with GPU Hub via HTTP.
 
-| Подсистема | Где живёт | Роль |
+| Subsystem | Location | Role |
 |---|---|---|
-| **Backend / API** | `backend/src/backend.cjs` + `routes/*` | Express-сервер, DI всех сервисов, REST API, оркестрация генерации, startup-resume/recovery. |
-| **Orchestration / Runtime** | `backend/src/runtime/*`, `backend/src/orchestration/*` | Tick-планировщик (5s), dispatch-engine (lease/quota), scene-orchestrator + callbacks, scene-window. |
-| **Agent Service (AI-пайплайн)** | `backend/src/services/agent-service.js` + `agent/` | Пайплайн разбит на подмодули: bootstrap, pipeline-runner, pipeline-steps, coreference (stub). |
-| **AI-чат** | `backend/src/services/chat-engine.cjs` | Tool-based ассистент (режимы chat/edit/director/import/...). |
-| **Генераторы** | `backend/src/{audio,image,video}/*` | Сборка ComfyUI-workflow и отправка задач на GPU. |
-| **Workflow / Connector слой** | `backend/src/workflows/*`, `services/workflow-manager.js`, `backend/ai/workflows/`, `backend/ai/connectors/` | Загрузка и адаптация JSON-шаблонов ComfyUI; коннекторы как декларативные описания задач. |
-| **GPU Hub** | `gpu-hub/gpu-hub.js` | Очереди задач в Redis, раздача воркерам, requeue по таймауту, возврат результата в backend. |
-| **GPU Worker** | `worker/worker/worker.cjs` | CJS-воркер (Node 20+ с global fetch): polling Hub → ComfyUI → результат (base64 / fallback с диска). PW-2: private worker mode, PW-4: FAIL CLOSED. |
-| **Storage** | `backend/src/storage/*`, `book/*` | PostgreSQL (30+ таблиц), Redis (runtime), файловая система (книги multi-file, ассеты). || **Frontend (Web)** | `frontends/app/` (Preact + Vite) | Responsive SPA: MobileShell / DesktopShell; pages: File, Generator, Player, Editor, Navigator, Settings |
-| **Frontend (Android)** | `frontends/android/` (Kotlin) | Single-activity, bottom navigation: файлы/библиотека/редактор/плеер/навигация/AI/настройки. |
+| **Backend / API** | `backend/src/backend.cjs` + `routes/*` | Express server, DI for all services, REST API, generation orchestration, startup-resume/recovery. |
+| **Orchestration / Runtime** | `backend/src/runtime/*`, `backend/src/orchestration/*` | Tick-based scheduler (5s), dispatch engine (lease/quota), scene orchestrator + callbacks, scene window. |
+| **Agent Service (AI Pipeline)** | `backend/src/services/agent-service.js` + `agent/` | Pipeline decomposed into submodules: bootstrap, pipeline-runner, pipeline-steps, coreference (stub). |
+| **AI Chat** | `backend/src/services/chat-engine.cjs` | Tool-based assistant (chat/edit/director/import modes). |
+| **Generators** | `backend/src/{audio,image,video}/*` | ComfyUI workflow assembly and task submission to GPU. |
+| **Workflow / Connector Layer** | `backend/src/workflows/*`, `services/workflow-manager.js`, `backend/ai/workflows/`, `backend/ai/connectors/` | Loading and adapting ComfyUI JSON templates; connectors as declarative task descriptions. |
+| **GPU Hub** | `gpu-hub/gpu-hub.js` | Task queues in Redis, worker distribution, requeue on timeout, result delivery to backend. |
+| **GPU Worker** | `worker/worker/worker.cjs` | CJS worker (Node 20+ with global fetch): polling Hub → ComfyUI → result (base64 / filesystem fallback). PW-2: private worker mode, PW-4: FAIL CLOSED. |
+| **Storage** | `backend/src/storage/*`, `book/*` | PostgreSQL (30+ tables), Redis (runtime), filesystem (multi-file books, assets). |
+| **Frontend (Web)** | `frontends/app/` (Preact + Vite) | Responsive SPA: MobileShell / DesktopShell; pages: File, Generator, Player, Editor, Navigator, Settings. |
+| **Frontend (Android)** | `frontends/android/` (Kotlin) | Single-activity, bottom navigation: files/library/editor/player/navigation/AI/settings. |
 | **Auth & Identity** | `backend/src/auth/`, `backend/src/middleware/` | Authentication MVP: register/login/logout, session cookies, guest workspaces, workspace ownership, book access guards. |
 | **Worker Auth** | `backend/src/services/worker-auth.js`, `worker-repo.js` | FAIL CLOSED credential model: `wrk.*` tokens, Redis mirror, PG authoritative. Private/Share/System modes (PW-4). |
 | **Admin System** | `backend/src/routes/admin-routes.cjs`, `services/system-ai.js` | Platform-level admin: AI kill switch, system provider, requireAdmin guard. |
@@ -55,113 +56,110 @@ TXT / VBook  →  AI-анализ (агент)  →  структура книг
 | **Entity Cleanup** | `services/entity-cleanup.cjs` | Deep cleanup across PG/Redis/FS/GPU-hub for scene/unit deletion. |
 | **Metrics** | `backend/src/metrics/prometheus` | Prometheus metrics endpoint (`/metrics`). |
 
-**Подсистемы, недопредставленные в обзорной документации, но реально присутствующие в коде:**
-- **Connectors** — `connector-loader.js`, `routes/connector-routes.cjs`, `backend/ai/connectors/conn-*.json`. Декларативный слой описания задач генерации.
+**Subsystems underrepresented in overview documentation but present in code:**
+- **Connectors** — `connector-loader.js`, `routes/connector-routes.cjs`, `backend/ai/connectors/conn-*.json`. Declarative generation task description layer.
 - **Workflow Manager** — `services/workflow-manager.js`, `routes/workflow-routes.cjs`.
-- **Startup Recovery** — `services/startup-recovery.js` — модуль восстановления состояния из PG/диска на старте.
-- **Prompt Profile Loader** — `services/prompt-profile-loader.js` — model-specific prompting rules из `backend/ai/skills/`.
-- **Profile Override** — `services/profile-override.js` — user-selected prompt profile per type (global, Redis-persisted).
-- **Progress Pub/Sub** — `services/progress-pubsub.cjs` — Redis pub/sub для real-time SSE progress push.
-- **Generation Progress** — `services/generation-progress.js` — independent generation task registry (per command).
-- **URL Safety** — `services/url-safety.js` — SSRF guard для workspace provider endpoints.
-- **Language Detector** — `services/language-detector.js` — определение языка текста.
+- **Startup Recovery** — `services/startup-recovery.js` — State recovery from PG/disk on startup.
+- **Prompt Profile Loader** — `services/prompt-profile-loader.js` — Model-specific prompting rules from `backend/ai/skills/`.
+- **Profile Override** — `services/profile-override.js` — User-selected prompt profile per type (global, Redis-persisted).
+- **Progress Pub/Sub** — `services/progress-pubsub.cjs` — Redis pub/sub for real-time SSE progress push.
+- **Generation Progress** — `services/generation-progress.js` — Independent generation task registry (per command).
+- **URL Safety** — `services/url-safety.js` — SSRF guard for workspace provider endpoints.
+- **Language Detector** — `services/language-detector.js` — Text language detection.
 
 ---
 
-## 3. Жизненный цикл генерации
+## 3. Generation Lifecycle
 
-### 3.1 Импорт и AI-анализ
+### 3.1 Import and AI Analysis
 
-1. **Импорт** — `POST /api/v1/book/import-txt`. `txt-importer` декодирует буфер (UTF-8/CP1251), `lazy-book.createDraftBook()` создаёт каталог `data/books/<bookId>/` и draft-книгу; источник регистрируется в PG (`book_source`).
-2. **Bootstrap** — `POST /api/v1/book/:id/bootstrap`. Запускается `agent-service.bootstrapWithAgent()`:
-   - **Шаг 0** `stepAnalyzeStructure` — из первых ~80 строк извлекаются автор, заголовок, главы (отдельно, до pipeline).
-   - **runPipeline** по текстовому буферу (`MAX_WINDOW_CHARS=1500`,
-     `MAX_SCENES_PER_CHUNK=3`):
-     - Шаг 1 `stepExtractCharacters` → персонажи
-     - Шаг 2 `stepExtractLocations` → локации
-     - Шаг 3 `stepCreateScenes` → до 3 сцен из начала буфера
-       (title + location.id + environment-override: сцена перекрывает глобальный шаблон локации по-полю)
-     - `resolveSceneProgress` → `nextOffset` по последней созданной сцене
-     - Шаг 4 `stepCreateUnits` (per-scene) → визуальные единицы (IU/кадры)
-     - Шаг 5 `stepCreateVisuals` (per-scene) → визуальные промпты к кадрам
-   - Результаты сохраняются в PG (`agent_sessions`, `agent_steps`, `agent_conversations`, `agent_messages`) и в файлы книги (`chapters/*.json`, `characters.json`, `bible.json`, `locations.json`, `voices.json`).
-   - Если после `nextOffset` остаётся «хвост» → сессия `paused`, следующее
-     окно обрабатывает `bootstrapNextWindow()` (фоновая оконная генерация,
-     `window-generator.cjs`).
+1. **Import** — `POST /api/v1/book/import-txt`. `txt-importer` decodes the buffer (UTF-8/CP1251), `lazy-book.createDraftBook()` creates the `data/books/<bookId>/` directory and draft book; source is registered in PG (`book_source`).
+2. **Bootstrap** — `POST /api/v1/book/:id/bootstrap`. `agent-service.bootstrapWithAgent()` runs:
+   - **Step 0** `stepAnalyzeStructure` — extracts author, title, chapters from the first ~80 lines (separate, before pipeline).
+   - **runPipeline** on the text buffer (`MAX_WINDOW_CHARS=1500`, `MAX_SCENES_PER_CHUNK=3`):
+     - Step 1 `stepExtractCharacters` → characters
+     - Step 2 `stepExtractLocations` → locations
+     - Step 3 `stepCreateScenes` → up to 3 scenes from the beginning of the buffer
+       (title + location.id + environment-override: scene overrides the global location template per field)
+     - `resolveSceneProgress` → `nextOffset` from the last created scene
+     - Step 4 `stepCreateUnits` (per-scene) → visual units (IU/frames)
+     - Step 5 `stepCreateVisuals` (per-scene) → visual prompts for frames
+   - Results are saved to PG (`agent_sessions`, `agent_steps`, `agent_conversations`, `agent_messages`) and to book files (`chapters/*.json`, `characters.json`, `bible.json`, `locations.json`, `voices.json`).
+   - If a "tail" remains after `nextOffset` → session is `paused`, the next window is processed by `bootstrapNextWindow()` (background window generation, `window-generator.cjs`).
 
-AI-провайдер: конфигурируется через `AI_API_BASE_URL` (по умолчанию — OpenRouter, в docker-compose — aicredits.in).
-Модель по умолчанию: `qwen3-32b`. Единый ключ: `OPENROUTER_API_KEY`.
-JSON-ответы модели очищаются от CoT (`<think>`/`<reasoning>`) перед парсингом (`ai-service.parseJsonResponse`).
+AI provider: configured via `AI_API_BASE_URL` (default: OpenRouter, in docker-compose: aicredits.in).
+Default model: `qwen3-32b`. Single key: `OPENROUTER_API_KEY`.
+Model JSON responses are stripped of CoT (`<think>`/`<reasoning>`) before parsing (`ai-service.parseJsonResponse`).
 
-### 3.2 Генерация ассетов (per-asset параллельный диспатч)
+### 3.2 Asset Generation (Per-Asset Parallel Dispatch)
 
-Линейная FSM сцены **удалена** (v2.1.0); канонический источник истины — независимые per-asset состояния `audio` / `image` / `video`:
+The scene's linear FSM **has been removed** (v2.1.0); the canonical source of truth is independent per-asset states `audio` / `image` / `video`:
 
 ```
 NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 ```
 
-Цикл (раз в 5 сек, `runtime-scheduler.SCHEDULER_TICK_MS = 5000`):
+Cycle (every 5 seconds, `runtime-scheduler.SCHEDULER_TICK_MS = 5000`):
 
-1. **Scheduler tick** — берёт активные сцены из Redis, для каждой `shouldScheduleAssets()` решает по per-asset состоянию + layer-config, какие stage готовы:
-   - audio и image диспатчатся **независимо** (параллельно);
-   - video добавляется только если `image=READY` (functional dependency: видео собирается из IU-картинок).
-2. **Dispatch engine** — `dispatchStage()`: проверяет circuit-breaker → дубликат/lease → quota (backpressure) → retry-budget → fairness → берёт lease (NX, TTL) → вызывает orchestrator с `overrideStage`.
-   - Квоты (`QUOTAS`): audio 3, image 2, video 1.
-   - Lease TTL (фактические в `dispatch-engine.js`): audio 15 мин, image 20 мин, video 30 мин.
-3. **Scene orchestrator** — `executeAudio/Image/VideoDispatch()`: per-asset валидация, version-stale check по PG, сборка задачи в соответствующем сервисе, `gpu.send()/sendUnified()`.
-4. **GPU Hub → Worker → ComfyUI** — задача кладётся в Redis-очередь, воркер забирает, гоняет ComfyUI, возвращает результат.
-5. **Callback** — GPU Hub шлёт `POST /gpu/task/result` → `task-handler.cjs` → разбор по типу ассета:
-   - `iu_image` — регистрирует IU, по PG проверяет завершённость всех IU сцены → `handleImageCompleted`;
-   - `audio_chunk` — мерж чанков (ffmpeg) при наличии всех → `handleAudioCompleted`;
-   - `scene_video` → `handleVideoCompleted` (video merge + mux аудио).
-6. **Завершение** — per-asset state → READY; при `video=READY` сцена убирается из активного индекса, `trySlideWindowOnComplete()` сдвигает окно генерации на следующие сцены.
+1. **Scheduler tick** — retrieves active scenes from Redis; for each scene, `shouldScheduleAssets()` decides based on per-asset state + layer-config which stages are ready:
+   - audio and image are dispatched **independently** (in parallel);
+   - video is added only when `image=READY` (functional dependency: video is assembled from IU images).
+2. **Dispatch engine** — `dispatchStage()`: checks circuit-breaker → duplicate/lease → quota (backpressure) → retry-budget → fairness → acquires lease (NX, TTL) → calls orchestrator with `overrideStage`.
+   - Quotas (`QUOTAS`): audio 3, image 2, video 1.
+   - Lease TTL (actual in `dispatch-engine.js`): audio 15 min, image 20 min, video 30 min.
+3. **Scene orchestrator** — `executeAudio/Image/VideoDispatch()`: per-asset validation, version-stale check against PG, builds the task in the corresponding service, `gpu.send()/sendUnified()`.
+4. **GPU Hub → Worker → ComfyUI** — task is placed in Redis queue, worker picks it up, runs ComfyUI, returns the result.
+5. **Callback** — GPU Hub sends `POST /gpu/task/result` → `task-handler.cjs` → routes by asset type:
+   - `iu_image` — registers IU, checks PG for completeness of all scene IUs → `handleImageCompleted`;
+   - `audio_chunk` — merges chunks (ffmpeg) when all are present → `handleAudioCompleted`;
+   - `scene_video` → `handleVideoCompleted` (video merge + audio muxing).
+6. **Completion** — per-asset state → READY; when `video=READY` the scene is removed from the active index, `trySlideWindowOnComplete()` advances the generation window to the next scenes.
 
-### 3.3 Воспроизведение
+### 3.3 Playback
 
-Android-плеер (`PlaybackViewModel` + `SceneAudioPlayer` на ExoPlayer/Media3) тянет чанки/ассеты сцены через REST, предзагружает 3 сцены вперёд, опрашивает готовность видео.
-
----
-
-## 4. Архитектура хранения данных
-
-Истина намеренно разделена на три хранилища (это явно зафиксировано и в коде, и в документации):
-
-### 4.1 PostgreSQL — «то, что нельзя потерять»
-
-30+ таблиц (`storage/postgres/schema.js`). Ключевые группы:
-- **Книга/структура:** `books`, `book_snapshots`, `scenes`, `image_units`, `storyboard_elements`, `audio_layers`, `book_source`.
-- **Состояние генерации:** `scene_assets` (status: pending/ready/stale/failed/missing/placeholder + версии `scene_content_version`, `scene_audio_config_version`), `asset_states`, `asset_dependencies`, `generation_tasks`, `output_manifests`, `book_generation_sessions`, `workers`, `reconciliation_events`.
-- **AI-агент:** `agent_sessions`, `agent_steps`, `agent_conversations`, `agent_messages`.
-- **Чат:** `chat_sessions`, `chat_messages`, `ai_chat_sessions`.
-- **Прочее:** `users`, `cache_entries`, `book_events`.
-
-### 4.2 Redis — runtime-состояние (persisted через volume)
-
-~30+ семейств ключей под префиксом `animastor:`. Основные:
-- Очереди GPU: `animastor:queue:{audio|image|video}`, `animastor:running`, `animastor:result:*`, дедуп `animastor:job:*`.
-- Состояние сцен: `animastor:asset-state:*` (per-asset, канон, HASH), `animastor:iu-progress:*`, `animastor:chunk:*`, `animastor:chunks:*`.
-- Диспатч/координация: `animastor:dispatch-lease:*`, `animastor:dispatch-completed:*`, `animastor:runtime:*`, `animastor:*-lock:*`, `animastor:worker:heartbeat:*`.
-- Конфиг/scope: `animastor:layer-config:*`, `animastor:gen-scope:*`, `animastor:active-scenes`.
-
-### 4.3 Файловая система
-
-- **Книги (multi-file, v2.2):** `data/books/<bookId>/` → `manifest.json`, `book.json`, `bible.json`, `characters.json`, `locations.json`, `voices.json`, `chapters/<chapterId>.json` (плюс `source.txt` для draft).
-  - `locations.json` — все локации (отдельно от bible)
-  - `voices.json` — все голоса персонажей (отдельно от bible)
-  - `bible.json` — включает `country` и `epoch` для image-промптов
-- **Ассеты:** `data/output/<buildId>/` → `*.mp3`, `*.png`, `*.mp4`.
-- **Шаблоны:** `backend/ai/workflows/*.json` (ComfyUI), `backend/ai/connectors/conn-*.json` (декларации задач).
-
-### 4.4 Кто за что отвечает (фактическая модель)
-
-- **PG** — факты: версии, статусы ассетов, dirty-флаги, структура книги, история агента/чата.
-- **Redis** — производное/быстрый кэш: прогресс, очереди, leases, per-asset state (дублирует `scene_assets.status`).
-- **Файлы** — артефакты результата; местами **тоже влияли на решения** — это известная точка размывания источника истины, закрытая в M3 (диск — факт, не решение).
+The Android player (`PlaybackViewModel` + `SceneAudioPlayer` on ExoPlayer/Media3) fetches scene chunks/assets via REST, preloads 3 scenes ahead, and polls for video readiness.
 
 ---
 
-## 5. Взаимодействие UI / Backend / GPU Worker / БД
+## 4. Data Storage Architecture
+
+Truth is intentionally split across three stores (this is explicitly documented in both code and documentation):
+
+### 4.1 PostgreSQL — "what must not be lost"
+
+30+ tables (`storage/postgres/schema.js`). Key groups:
+- **Book/structure:** `books`, `book_snapshots`, `scenes`, `image_units`, `storyboard_elements`, `audio_layers`, `book_source`.
+- **Generation state:** `scene_assets` (status: pending/ready/stale/failed/missing/placeholder + versions `scene_content_version`, `scene_audio_config_version`), `asset_states`, `asset_dependencies`, `generation_tasks`, `output_manifests`, `book_generation_sessions`, `workers`, `reconciliation_events`.
+- **AI agent:** `agent_sessions`, `agent_steps`, `agent_conversations`, `agent_messages`.
+- **Chat:** `chat_sessions`, `chat_messages`, `ai_chat_sessions`.
+- **Other:** `users`, `cache_entries`, `book_events`.
+
+### 4.2 Redis — runtime state (persisted via volume)
+
+~30+ key families under the `animastor:` prefix. Key ones:
+- GPU queues: `animastor:queue:{audio|image|video}`, `animastor:running`, `animastor:result:*`, dedup `animastor:job:*`.
+- Scene state: `animastor:asset-state:*` (per-asset, canonical, HASH), `animastor:iu-progress:*`, `animastor:chunk:*`, `animastor:chunks:*`.
+- Dispatch/coordination: `animastor:dispatch-lease:*`, `animastor:dispatch-completed:*`, `animastor:runtime:*`, `animastor:*-lock:*`, `animastor:worker:heartbeat:*`.
+- Config/scope: `animastor:layer-config:*`, `animastor:gen-scope:*`, `animastor:active-scenes`.
+
+### 4.3 Filesystem
+
+- **Books (multi-file, v2.2):** `data/books/<bookId>/` → `manifest.json`, `book.json`, `bible.json`, `characters.json`, `locations.json`, `voices.json`, `chapters/<chapterId>.json` (plus `source.txt` for draft).
+  - `locations.json` — all locations (separate from bible)
+  - `voices.json` — all character voices (separate from bible)
+  - `bible.json` — includes `country` and `epoch` for image prompts
+- **Assets:** `data/output/<buildId>/` → `*.mp3`, `*.png`, `*.mp4`.
+- **Templates:** `backend/ai/workflows/*.json` (ComfyUI), `backend/ai/connectors/conn-*.json` (task declarations).
+
+### 4.4 Responsibility Model (factual)
+
+- **PG** — facts: versions, asset statuses, dirty flags, book structure, agent/chat history.
+- **Redis** — derived/fast cache: progress, queues, leases, per-asset state (mirrors `scene_assets.status`).
+- **Files** — result artifacts; in some cases **also influenced decisions** — this is a known source-of-truth blurring point, addressed in M3 (disk is fact, not decision).
+
+---
+
+## 5. UI / Backend / GPU Worker / DB Interaction
 
 ```
 ┌──────────┐   HTTPS    ┌─────────┐   /api/ → backend:3000
@@ -171,115 +169,114 @@ Android-плеер (`PlaybackViewModel` + `SceneAudioPlayer` на ExoPlayer/Medi
                              │
               ┌──────────────┴───────────────┐
               ▼                               ▼
-        ┌───────────┐  задачи (HTTP POST)  ┌─────────┐  Redis-очередь  ┌─────────┐
-        │  Backend  │ ───────────────────► │ GPU Hub │ ──────────────► │ Worker  │
-        │  :3000    │ ◄─────────────────── │  :5000  │ ◄────────────── │ ComfyUI │
-        └─────┬─────┘  результат (callback)└────┬────┘   polling/result└─────────┘
+        ┌───────────┐  tasks (HTTP POST)  ┌─────────┐  Redis queue  ┌─────────┐
+        │  Backend  │ ───────────────────► │ GPU Hub │ ────────────► │ Worker  │
+        │  :3000    │ ◄─────────────────── │  :5000  │ ◄──────────── │ ComfyUI │
+        └─────┬─────┘  result (callback)  └────┬────┘   poll/result └─────────┘
               │                                 │
        ┌──────┼─────────────┐                   │
        ▼      ▼             ▼                   ▼
-   PostgreSQL Redis   Filesystem            Redis (общий)
-   (факты)   (runtime) (артефакты)
+   PostgreSQL Redis   Filesystem            Redis (shared)
+   (facts)    (runtime) (artifacts)
 ```
 
 ---
 
-## 6. Redis, очереди и фоновые процессы
+## 6. Redis, Queues, and Background Processes
 
-### 6.1 Назначение Redis
+### 6.1 Redis Purpose
 
-Redis выполняет три роли одновременно:
-1. **Брокер очередей GPU** — списки `animastor:queue:{type}`, дедуп задач `animastor:job:*` (`SET NX EX 3600`), хранение результата `animastor:result:*`.
-2. **Runtime-состояние оркестрации** — per-asset states (HASH), leases, счётчики backpressure, активные сцены, прогресс-чанки, heartbeat воркеров.
-3. **Координация (distributed locks)** — scheduler-tick lock, cleanup lock, audio/video merge locks.
+Redis serves three roles simultaneously:
+1. **GPU Queue Broker** — `animastor:queue:{type}` lists, task dedup `animastor:job:*` (`SET NX EX 3600`), result storage `animastor:result:*`.
+2. **Orchestration Runtime State** — per-asset states (HASH), leases, backpressure counters, active scenes, progress chunks, worker heartbeats.
+3. **Coordination (distributed locks)** — scheduler-tick lock, cleanup lock, audio/video merge locks.
 
-### 6.2 Очереди GPU Hub
+### 6.2 GPU Hub Queues
 
-- Три независимые очереди: `audio`, `image`, `video`.
-- `GPU_TIMEOUT = 600000` (10 мин): если воркер не вернул результат — задача **requeue** в свою очередь.
-- `DELETE /queue/clear?book_id=` — точечная очистка очередей по книге.
+- Three independent queues: `audio`, `image`, `video`.
+- `GPU_TIMEOUT = 600000` (10 min): if a worker hasn't returned a result, the task is **requeued** to its queue.
+- `DELETE /queue/clear?book_id=` — targeted queue cleanup by book.
 
-### 6.3 Фоновые процессы backend
+### 6.3 Backend Background Processes
 
-- **Runtime loop / scheduler tick** — каждые 5 сек; главный двигатель прогресса.
-- **Cleanup service** — периодическая очистка stale-локов, lifecycle сборок.
-- **Window generator** — фоновая обработка следующего окна AI-анализа.
-- **Startup resume** — возобновление прерванных сессий на старте.
-- **Startup recovery** — восстановление Redis-состояния из PG (теперь только логирует, не чинит — R1.1).
+- **Runtime loop / scheduler tick** — every 5 seconds; the main progress engine.
+- **Cleanup service** — periodic cleanup of stale locks, build lifecycle.
+- **Window generator** — background processing of the next AI analysis window.
+- **Startup resume** — recovery of interrupted sessions on startup.
+- **Startup recovery** — Redis state recovery from PG (now logs only, does not fix — R1.1).
 
 ---
 
-## 7. Противоречия документации и кода (на момент составления)
+## 7. Documentation vs. Code Discrepancies (at time of composition)
 
-| # | Утверждение в `docs/` | Факт в коде | Где |
+| # | Claim in `docs/` | Actual in code | Location |
 |---|---|---|---|
 | 7.1 | Rate limiting **100 req/min** | **500 req/min** | `backend.cjs:63-68` |
 | 7.2 | Lease TTL: audio **30min**, image **60min**, video **120min** | audio **15min**, image **20min**, video **30min** | `dispatch-engine.js:43-47` |
-| 7.3 | `gpu-dispatcher` имеет `sendVideo` | Нет такого метода | `gpu-dispatcher.js:56` |
-| 7.4 | Все 6 governance-модулей — **мёртвый код** | 3 живут (`circuit-breaker`, `retry-budget`, `fairness`), 3 удалены | `dispatch-engine.js` |
-| 7.5 | `scene-orchestrator.js` **~1200 строк** | **~173 строки** (фасад) | `orchestration/*` |
-| 7.6 | Route-файлов **4** | **11+**: auth, worker, admin, settings-ai, config + book/ decomposition (17 подмодулей) | `routes/` |
-| 7.7 | Frontend в `frontend/app/...` (Kotlin) | Android в `frontends/android/`, Web в `frontends/app/` (Preact + Vite) | `frontends/` |
-| 7.8 | 10 репозиториев | 15+ репозиториев: +user, workspace, session, guest, worker, generation-cancel | `repositories/` |
+| 7.3 | `gpu-dispatcher` has `sendVideo` | No such method | `gpu-dispatcher.js:56` |
+| 7.4 | All 6 governance modules are **dead code** | 3 are alive (`circuit-breaker`, `retry-budget`, `fairness`), 3 deleted | `dispatch-engine.js` |
+| 7.5 | `scene-orchestrator.js` is **~1200 lines** | **~173 lines** (facade) | `orchestration/*` |
+| 7.6 | Route files: **4** | **11+**: auth, worker, admin, settings-ai, config + book/ decomposition (17 submodules) | `routes/` |
+| 7.7 | Frontend in `frontend/app/...` (Kotlin) | Android in `frontends/android/`, Web in `frontends/app/` (Preact + Vite) | `frontends/` |
+| 7.8 | 10 repositories | 15+ repositories: +user, workspace, session, guest, worker, generation-cancel | `repositories/` |
 
-> **Примечание:** Противоречия 7.1–7.6 исправлены в обновлённых версиях документов (июнь 2026).
+> **Note:** Discrepancies 7.1–7.6 have been corrected in updated document versions (June 2026).
 
-### 7.7 Новые изменения (июль–август 2026)
+### 7.7 Recent Changes (July–August 2026)
 
-| # | Факт в коде |
+| # | Actual in code |
 |---|---|
-| 7.7.1 | Agent pipeline: отдельный шаг `stepEnrichScenes` удалён — title/location.id/environment-override генерирует `stepCreateScenes` |
-| 7.7.2 | `unit.participants` удалён из всей системы |
-| 7.7.3 | `coreference.js` — заглушка, шаг удалён из пайплайна |
-| 7.7.4 | `character_anchors` удалён — позиции в visual.prompt |
-| 7.7.5 | agent-service.js разбит на подмодули в `backend/src/services/agent/` |
-| 7.7.6 | Книги хранят `locations.json` и `voices.json` отдельно от bible |
-| 7.7.7 | `bible.json` включает `country` и `epoch` |
-| 7.7.8 | `AI_API_BASE_URL` конфигурируемый (по умолчанию OpenRouter, модель qwen3-32b) |
-| 7.7.9 | **Auth system** (август 2026): register/login/logout, session cookies, guest workspaces, workspace ownership — полностью реализовано |
+| 7.7.1 | Agent pipeline: separate `stepEnrichScenes` step removed — title/location.id/environment-override generated by `stepCreateScenes` |
+| 7.7.2 | `unit.participants` removed from the entire system |
+| 7.7.3 | `coreference.js` — stub, step removed from pipeline |
+| 7.7.4 | `character_anchors` removed — positions in visual.prompt |
+| 7.7.5 | agent-service.js decomposed into submodules in `backend/src/services/agent/` |
+| 7.7.6 | Books store `locations.json` and `voices.json` separately from bible |
+| 7.7.7 | `bible.json` includes `country` and `epoch` |
+| 7.7.8 | `AI_API_BASE_URL` configurable (default: OpenRouter, model: qwen3-32b) |
+| 7.7.9 | **Auth system** (August 2026): register/login/logout, session cookies, guest workspaces, workspace ownership — fully implemented |
 | 7.7.10 | **Worker auth** (PW-1/2/4): `wrk.*` credential model, private/share/system modes, Redis mirror, PG authoritative |
-| 7.7.11 | **Admin system** (август 2026): AI kill switch, system provider, requireAdmin guard |
-| 7.7.12 | **Workspace AI provider** (август 2026): per-workspace encrypted keys, AES-256-GCM, connection testing |
-| 7.7.13 | **Audio/Video orchestrators** (август 2026): phase machines для merge-оркестрации (WAITING_CHUNKS → MERGING → DONE) |
-| 7.7.14 | **Entity cleanup** (август 2026): deep cleanup across PG/Redis/FS/GPU-hub при удалении scene/unit |
-| 7.7.15 | **Book routes decomposition**: 17 подмодулей в `routes/book/` |
+| 7.7.11 | **Admin system** (August 2026): AI kill switch, system provider, requireAdmin guard |
+| 7.7.12 | **Workspace AI provider** (August 2026): per-workspace encrypted keys, AES-256-GCM, connection testing |
+| 7.7.13 | **Audio/Video orchestrators** (August 2026): phase machines for merge orchestration (WAITING_CHUNKS → MERGING → DONE) |
+| 7.7.14 | **Entity cleanup** (August 2026): deep cleanup across PG/Redis/FS/GPU-hub on scene/unit deletion |
+| 7.7.15 | **Book routes decomposition**: 17 submodules in `routes/book/` |
 | 7.7.16 | **PW-4 (Fail-closed worker model)**: mode='system' workspace-less, workers_scope_check constraint |
 
 ---
 
-## 8. Особенности текущего устройства
+## 8. Current Architecture Highlights
 
-### 8.1 Per-asset state — единственный source of truth (T8 + Dead code cleanup, июль 2026)
+### 8.1 Per-Asset State — The Single Source of Truth (T8 + Dead Code Cleanup, July 2026)
 
-**Линейное состояние (`SceneState` / `animastor:scene-state:*`) полностью удалено.**
-Per-asset состояния (`animastor:asset-state:*`, HSET с полями `audio`/`image`/`video`) —
-единственный runtime source of truth.
+**Linear state (`SceneState` / `animastor:scene-state:*`) has been completely removed.**
+Per-asset states (`animastor:asset-state:*`, HSET with fields `audio`/`image`/`video`) are the **only** runtime source of truth.
 
-### 8.2 Orchestrator-фасад (T3–T7, июнь–июль 2026)
+### 8.2 Orchestrator Facade (T3–T7, June–July 2026)
 
-Все 8+ писателей per-asset состояния сведены к единому фасаду `orchestrator.js` (11 команд). Единственный арбитр записи lifecycle-состояния.
+All 8+ per-asset state writers have been consolidated into a single facade `orchestrator.js` (11 commands). The single arbiter of lifecycle state writes.
 
 ### 8.3 Governance
 
-`circuit-breaker`, `retry-budget`, `fairness` — LIVE. `policy-engine`/`workload-classifier`/`cost-estimator` — удалены.
+`circuit-breaker`, `retry-budget`, `fairness` — LIVE. `policy-engine`/`workload-classifier`/`cost-estimator` — deleted.
 
-### 8.4 Auth & Identity (август 2026)
+### 8.4 Auth & Identity (August 2026)
 
-Полная система аутентификации: register/login/logout (auth-service.js), server-side sessions в PG, guest workspaces с TTL, workspace ownership (workspace-ownership.js), book access guards (requireBookAccess). Cookie-based: `animastor_sid` (user), `animastor_gid` (guest). Кросс-поддоменные через COOKIE_DOMAIN.
+Full authentication system: register/login/logout (auth-service.js), server-side sessions in PG, guest workspaces with TTL, workspace ownership (workspace-ownership.js), book access guards (requireBookAccess). Cookie-based: `animastor_sid` (user), `animastor_gid` (guest). Cross-subdomain via COOKIE_DOMAIN.
 
-### 8.5 Worker Identity Model (PW-1/2/4, август 2026)
+### 8.5 Worker Identity Model (PW-1/2/4, August 2026)
 
-Три режима воркеров:
+Three worker modes:
 - **private** — workspace-owned, serves only that workspace
 - **share** — workspace-owned, volunteered to community pool
 - **system** — Animastor-operated, workspace-less (admin-only creation)
 
 FAIL CLOSED: `workers_scope_check` CHECK constraint — mode ≠ system → workspace_id NOT NULL.
 
-### 8.6 Audio/Video Merge Orchestrators (август 2026)
+### 8.6 Audio/Video Merge Orchestrators (August 2026)
 
-Отдельные state machines для merge-оркестрации аудио/видео. Решают проблему race conditions при параллельном приходе чанков/групп.
+Separate state machines for audio/video merge orchestration. Solves race condition issues with parallel chunk/group arrivals.
 
 ---
 
-*Конец карты. Описание текущего состояния на 2026-08-24 (аудит документации).*
+*End of map. Current state as of 2026-08-24 (documentation audit).*

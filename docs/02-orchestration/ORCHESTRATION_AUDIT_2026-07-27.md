@@ -1,28 +1,28 @@
-# Аудит системы оркестрации — 27 июля 2026
+# Orchestration System Audit — 27 July 2026
 
-> **Автор:** Buffy (AI review)
-> **Основание:** полный код-ревью `backend/src/orchestration/*`, `backend/src/runtime/*`,
+> **Author:** Buffy (AI review)
+> **Basis:** full code review of `backend/src/orchestration/*`, `backend/src/runtime/*`,
 > `backend/src/state/scene-state.js`, `backend/src/services/audio-orchestrator.js`,
-> тесты, документация.
-> **Принцип:** без переусложнения. Система уже рабочая. Нужно найти узкие места,
-> которые реально стреляют, и ничего не трогать, что работает.
+> tests, documentation.
+> **Principle:** no over-engineering. System is already working. Find bottlenecks
+> that actually cause issues, don't touch anything that works.
 
 ---
 
-## Общая архитектура (что есть)
+## Overall Architecture (What Exists)
 
 ```
                    ┌──────────────────────┐
-                   │   Orchestrator Facade │  ← orchestrator.js (14 команд)
-                   │   (единственный       │
-                   │    lifecycle writer)  │
+                   │   Orchestrator Facade │  ← orchestrator.js (14 commands)
+                   │   (single            │
+                   │    lifecycle writer) │
                    └──────┬───────┬───────┘
                           │       │
               ┌───────────┘       └───────────┐
               ▼                               ▼
    ┌──────────────────┐           ┌──────────────────────┐
-   │ Dispatch Engine   │           │ Reconciliation Engine│ ← ~1.5k строк
-   │ (leases, quotas,  │           │ (self-healing, 6 фаз)│
+   │ Dispatch Engine   │           │ Reconciliation Engine│ ← ~1.5k lines
+   │ (leases, quotas,  │           │ (self-healing, 6 phases)│
    │  circuit-breaker) │           └──────────────────────┘
    └────────┬─────────┘
             │
@@ -33,46 +33,46 @@
    └──────────────────┘
 ```
 
-**14 команд фасада:** `markDirty`, `markDirtyScene`, `planScene`, `beginStage`,
+**14 facade commands:** `markDirty`, `markDirtyScene`, `planScene`, `beginStage`,
 `completeStage`, `failStage`, `completeStageWithoutVideo`, `completeStageWithoutImage`,
 `setScenePending`, `setSceneGenerating`, `setSceneAllReady`, `setScenePlaceholder`,
 `reconcile`, `resetScenes`.
 
 ---
 
-## 🟢 Сильные стороны
+## 🟢 Strengths
 
-### 1. Единый фасад работает
-Все lifecycle writes действительно проходят через orchestrator.js. После S2 (переименование
-`setAssetState` → `unsafeRestoreAssetState`) и M5 (миграция прямых вызовов через фасад)
-в production коде **нет** прямых `state.setAssetState` вне whitelist'а.
+### 1. Single Facade Works
+All lifecycle writes genuinely go through orchestrator.js. After S2 (renaming
+`setAssetState` → `unsafeRestoreAssetState`) and M5 (migrating direct calls through facade)
+in production code there are **no** direct `state.setAssetState` outside the whitelist.
 
-### 2. Per-asset state — правильное решение
-Трёхмерная система (`audio/image/video`) вместо линейной `SceneState` была правильным
-выбором. После T8 (удаление `syncLinearState`) source of truth один: Redis hash
+### 2. Per-Asset State — Correct Decision
+Three-dimensional system (`audio/image/video`) instead of linear `SceneState` was the right
+choice. After T8 (removing `syncLinearState`) there is one source of truth: Redis hash
 `animastor:asset-state:{book}:{chapter}:{scene}`.
 
-### 3. Event journal есть и работает
-События пишутся во все lifecycle-команды. С R1 добавлены journal events для `setScene*`.
-TTL 7 дней позволяет расследовать инциденты.
+### 3. Event Journal Exists and Works
+Events are written in all lifecycle commands. With R1, journal events added for `setScene*`.
+TTL 7 days allows incident investigation.
 
-### 4. Reconciliation engine с distributed lock
-`reconcileCycle()` имеет `CLEANUP_LOCK` — два экземпляра backend не конкурируют.
-Фазы A–D покрывают все классы recovery: result keys, stalled audio, version staleness,
+### 4. Reconciliation Engine with Distributed Lock
+`reconcileCycle()` has `CLEANUP_LOCK` — two backend instances don't compete.
+Phases A–D cover all recovery classes: result keys, stalled audio, version staleness,
 scene reconciliation + auto-fix.
 
-### 5. Dispatch identity protocol (+ тесты)
+### 5. Dispatch Identity Protocol (+ Tests)
 `verifyDispatchIdentity` + `finalizeDispatch` — lease token, dispatch ID, protocol version.
-Есть unit-тесты на stale/missing/duplicate dispatch. Это закрыло класс race conditions
+Unit tests exist for stale/missing/duplicate dispatch. This closed a class of race conditions
 (M5).
 
 ---
 
-## 🟡 Слабые стороны (критично)
+## 🟡 Weaknesses (Critical)
 
-### W1. Сложность orchestration слоя — 11k строк в 26 файлах
+### W1. Orchestration Layer Complexity — 11k Lines in 26 Files
 
-| Компонент | Строк |
+| Component | Lines |
 |-----------|-------|
 | `reconciliation-engine.js` | 1,543 |
 | `dispatch-engine.js` | 1,369 |
@@ -87,96 +87,96 @@ scene reconciliation + auto-fix.
 | ... | ... |
 | **Total** | **~11,387** |
 
-**Проблема:** 11k строк в оркестрации — это много для одного Node-процесса.
-Особенно `reconciliation-engine.js` (1.5k) и `dispatch-engine.js` (1.4k).
-Они содержат несколько слабо связанных логик в одном файле.
+**Problem:** 11k lines in orchestration is a lot for a single Node process.
+Especially `reconciliation-engine.js` (1.5k) and `dispatch-engine.js` (1.4k).
+They contain several loosely related logics in one file.
 
-**Что делать:** НЕ рефакторить сейчас. Файлы большие, но self-contained и стабильные.
-Только если будете добавлять новую фазу в reconciliation — вынести в отдельный файл.
+**What to do:** DO NOT refactor now. Files are large but self-contained and stable.
+Only if adding a new phase to reconciliation — extract to a separate file.
 
-### W2. Lazy-require как постоянный костыль
+### W2. Lazy-Require as Permanent Hack
 
-В `orchestrator.js` каждая функция делает 4–6 `require()` внутри тела:
+In `orchestrator.js` every function does 4–6 `require()` inside the body:
 
 ```js
 async function completeStage(...) {
     const callbacks = require('./scene-callbacks');
     const dispatchEngine = require('../runtime/dispatch-engine');
     const state = require('../state');
-    // ... ещё 5 requires
+    // ... 5 more requires
 ```
 
-**Почему это слабость:** не читаемость (Node кэширует), а то, что циклические зависимости
-между `orchestration/` и `runtime/` НИКОГДА не будут явными. Lazy-require скрывает
-реальный граф зависимостей. При добавлении новой команды легко создать неявный цикл.
+**Why this is a weakness:** not readability (Node caches), but that cyclic dependencies
+between `orchestration/` and `runtime/` will NEVER be explicit. Lazy-require hides
+the real dependency graph. When adding a new command it's easy to create an implicit cycle.
 
-**Что делать:** оставить как есть. Рефакторинг циклических зависимостей — отдельный
-крупный проект (interface extraction + DI). Только следить, чтобы новые зависимости
-не создавали новые циклы.
+**What to do:** leave as is. Refactoring cyclic dependencies is a separate
+major project (interface extraction + DI). Just watch that new dependencies
+don't create new cycles.
 
-### W3. `resetScenes` — 10 шагов без транзакции
+### W3. `resetScenes` — 10 Steps Without Transaction
 
-Функция делает: force-dispatch → journal → remove from index → clear leases →
+The function does: force-dispatch → journal → remove from index → clear leases →
 clear hub queues → delete PNGs → clear IU progress → markDirty → add to index →
-journal. Между шагами 3 и 9 система в несогласованном состоянии.
+journal. Between steps 3 and 9 the system is in an inconsistent state.
 
-**Проблема:** сбой между шагами 5-8 (очистка очередей → markDirty) оставляет сцены
-без lease, без dispatch, без dirty-статуса. Scheduler не подхватит, сцена зависнет.
+**Problem:** failure between steps 5-8 (clearing queues → markDirty) leaves scenes
+without lease, without dispatch, without dirty status. Scheduler won't pick it up, scene stuck.
 
-**Что делать:** добавить try/catch с восстановлением active index. Если markDirty
-упал — addSceneToActiveIndex всё равно должен быть вызван (сцена хотя бы будет
-видна scheduler'у, даже если не dirty).
+**What to do:** add try/catch with active index recovery. If markDirty
+fails — addSceneToActiveIndex should still be called (scene at least visible
+to scheduler, even if not dirty).
 
-### W4. Тесты на reconciliation — почти нет
+### W4. Reconciliation Tests — Almost None
 
-`reconciliation-engine.js` = 1,543 строк. Тестов: `reconciliation-engine.test.js`
-(~600 строк, в основном моки). Проверяется только, что `setScenePending` вызывается,
-но не реальная логика reconciliation (orphan detection, stale locks, invariant checks).
+`reconciliation-engine.js` = 1,543 lines. Tests: `reconciliation-engine.test.js`
+(~600 lines, mostly mocks). Only checks that `setScenePending` is called,
+but not actual reconciliation logic (orphan detection, stale locks, invariant checks).
 
-**Риск:** любое изменение в `reconcileScene()` или `reconcileCycle()` непроверяемо.
+**Risk:** any change to `reconcileScene()` or `reconcileCycle()` is untested.
 
-**Что делать:** **не** писать тесты на всю 1.5k строку сейчас. Вместо этого:
-- Если меняете конкретную фазу (A/B/C/D) — добавьте 1 тест на эту фазу.
-- `checkAudioOrchInvariants()` уже есть — тест на неё написан (R6).
+**What to do:** do NOT write tests for the full 1.5k lines now. Instead:
+- If changing a specific phase (A/B/C/D) — add 1 test for that phase.
+- `checkAudioOrchInvariants()` already exists — test for it was written (R6).
 
-### W5. Audio-orch и asset state — ручная синхронизация
+### W5. Audio-Orch and Asset State — Manual Synchronization
 
-Инвариант `audio-orch.phase == DONE ⇔ asset.audio == READY` поддерживается
-в 3+ местах: `completeStage` (через handler callback), `failStage` (прямая запись),
-`recoverAudioOrchStates` (R3 — теперь sync после setDone). Любое новое место,
-меняющее audio-orch, должно не забыть синхронизировать asset state.
+Invariant `audio-orch.phase == DONE ⇔ asset.audio == READY` is maintained
+in 3+ places: `completeStage` (via handler callback), `failStage` (direct write),
+`recoverAudioOrchStates` (R3 — now sync after setDone). Any new place
+changing audio-orch must not forget to sync asset state.
 
-**Что делать:** ввести проверку инварианта после КАЖДОГО изменения audio-orch
-через единый wrapper. Альтернатива — `checkAudioOrchInvariants()` вызывается
-в `reconcileScene()` и исправляет расхождение. Достаточно для production.
-
----
-
-## 🟢 Что НЕ трогать (работает и не требует изменений)
-
-| Компонент | Почему не трогать |
-|-----------|------------------|
-| **Per-asset state machine** (scene-state.js) | 219 строк, стабильна, атомарные HSET, validateAssetTransition покрыт тестами |
-| **Event journal** (event-journal.js) | 248 строк, append-only, 7-day TTL, все типы событий есть |
-| **Dispatch engine** (dispatch-engine.js) | Большой (1.4k), но стабильный. Lease/identity logic проверена тестами |
-| **Failure taxonomy** (failure-taxonomy.js) | 125 строк, enum-based, не меняется |
-| **Circuit breaker** (circuit-breaker.js) | 497 строк, но не меняется месяцами |
-| **Scene callbacks** (scene-callbacks.js) | 435 строк, handler chain audio→image→video, стабильно |
+**What to do:** introduce invariant check after EVERY audio-orch change
+via a single wrapper. Alternative — `checkAudioOrchInvariants()` is called
+in `reconcileScene()` and corrects divergence. Sufficient for production.
 
 ---
 
-## 🎯 Что я бы сделал прямо сейчас (без переусложнения)
+## 🟢 What NOT To Touch (Works and Needs No Changes)
 
-### Приоритет 1: try/catch в resetScenes для восстановления active index
+| Component | Why Not Touch |
+|-----------|---------------|
+| **Per-asset state machine** (scene-state.js) | 219 lines, stable, atomic HSET, validateAssetTransition covered by tests |
+| **Event journal** (event-journal.js) | 248 lines, append-only, 7-day TTL, all event types present |
+| **Dispatch engine** (dispatch-engine.js) | Large (1.4k) but stable. Lease/identity logic verified by tests |
+| **Failure taxonomy** (failure-taxonomy.js) | 125 lines, enum-based, doesn't change |
+| **Circuit breaker** (circuit-breaker.js) | 497 lines but hasn't changed in months |
+| **Scene callbacks** (scene-callbacks.js) | 435 lines, handler chain audio→image→video, stable |
+
+---
+
+## 🎯 What I'd Do Right Now (Without Over-Engineering)
+
+### Priority 1: try/catch in resetScenes for Active Index Recovery
 
 ```js
-// После markDirty — гарантировать addSceneToActiveIndex
+// After markDirty — guarantee addSceneToActiveIndex
 try {
     const { computed, marked } = await markDirty(...);
     // ...
 } catch (err) {
     warn(`[RESET-SCENES] markDirty failed: ${err.message}`);
-    // Не бросаем — scenes должны быть хотя бы видны scheduler'у
+    // Don't throw — scenes must at least be visible to scheduler
 } finally {
     if (readdToActiveIndex) {
         for (const ds of scenes) {
@@ -186,38 +186,38 @@ try {
 }
 ```
 
-Сейчас `markDirty` вызывается без try, и если он упал — `addSceneToActiveIndex`
-(шаг 9) не выполняется. Объём: ~10 строк.
+Currently `markDirty` is called without try, and if it fails — `addSceneToActiveIndex`
+(step 9) doesn't execute. Size: ~10 lines.
 
-### Приоритет 2: Удалить deprecated aliases `setAssetState`/`setAssetStates`
+### Priority 2: Remove Deprecated Aliases `setAssetState`/`setAssetStates`
 
-Да, они используются в тестах. Миграция: заменить все вызовы в тестовых файлах
-на `unsafeRestoreAssetState`/`unsafeRestoreAssetStates`. Это ~10 файлов, 5 минут
+Yes, they're used in tests. Migration: replace all calls in test files with
+`unsafeRestoreAssetState`/`unsafeRestoreAssetStates`. ~10 files, 5 minutes
 search+replace.
 
-### Приоритет 3: Вынести inline SQL из completeStage (R8)
+### Priority 3: Extract Inline SQL from completeStage (R8)
 
-Добавить `sceneAssetsRepo.getSceneVersions(bookId, chapterId, sceneId)` и заменить
-inline `SELECT content_version, audio_config_version FROM scenes`. Объём: ~15 строк.
+Add `sceneAssetsRepo.getSceneVersions(bookId, chapterId, sceneId)` and replace
+inline `SELECT content_version, audio_config_version FROM scenes`. Size: ~15 lines.
 
-### Приоритет 4: Добавить try/catch в resetScenes вокруг очистки PNG/IU
+### Priority 4: Add try/catch in resetScenes Around PNG/IU Cleanup
 
-Сейчас `fs.unlinkSync` (шаг 6) и `redis.del` (шаг 7) не имеют общего try.
-Если очистка PNG упала (например, permission denied) — `markDirty` не вызовется.
-Объём: ~5 строк (обернуть шаги 6-7 в try/catch, логировать ошибку).
+Currently `fs.unlinkSync` (step 6) and `redis.del` (step 7) have no shared try.
+If PNG cleanup fails (e.g., permission denied) — `markDirty` won't be called.
+Size: ~5 lines (wrap steps 6-7 in try/catch, log error).
 
 ---
 
-## Резюме
+## Summary
 
-| Аспект | Оценка |
-|--------|--------|
-| **Архитектура** | ✅ Правильная (facade + dispatch + per-asset) |
-| **Надёжность** | 🟡 Есть щели (resetScenes без try, lazy-require) |
-| **Тесты** | 🟡 598 тестов + new 3 (R6), но reconciliation не покрыт |
-| **Наблюдаемость** | ✅ Journal events, audio-orch invariant checks |
-| **Сложность** | 🟡 11k строк, но стабильно |
+| Aspect | Assessment |
+|--------|------------|
+| **Architecture** | ✅ Correct (facade + dispatch + per-asset) |
+| **Reliability** | 🟡 Gaps remain (resetScenes without try, lazy-require) |
+| **Tests** | 🟡 598 tests + new 3 (R6), but reconciliation untested |
+| **Observability** | ✅ Journal events, audio-orch invariant checks |
+| **Complexity** | 🟡 11k lines, but stable |
 
-**Главный риск:** `resetScenes` — единственное место в системе, где последовательность
-из 10 шагов может прерваться на середине. Это самый вероятный источник production-инцидента.
-Всё остальное — косметика или уже защищено тестами.
+**Main risk:** `resetScenes` — the only place in the system where a sequence
+of 10 steps can be interrupted mid-way. This is the most likely source of a production
+incident. Everything else is cosmetic or already protected by tests.

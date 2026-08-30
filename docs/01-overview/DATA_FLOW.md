@@ -1,27 +1,27 @@
 # Data Flow: Animastor
 
-## Сценарий 1: Импорт TXT-файла
+## Scenario 1: TXT File Import
 
-**Запрос:** `POST /api/v1/book/import-txt` (multipart file upload)
+**Request:** `POST /api/v1/book/import-txt` (multipart file upload)
 
-**Участвующие компоненты:**
+**Components involved:**
 1. `routes/book/import-routes.cjs` → Route handler (book-routes decomposition)
-2. `txt-importer.js:decodeTxtBuffer()` → Декодирование (UTF-8/CP1251)
-3. `lazy-book.js:createDraftBook()` → Создание draft-книги (RAW_IMPORTED)
-4. `book-source-repo.js:registerSource()` → Регистрация в PG
+2. `txt-importer.js:decodeTxtBuffer()` → Decoding (UTF-8/CP1251)
+3. `lazy-book.js:createDraftBook()` → Draft book creation (RAW_IMPORTED)
+4. `book-source-repo.js:registerSource()` → PG registration
 
-**Поток данных:**
+**Data flow:**
 ```
 Client → [HTTP POST multipart] → book-routes
   → Buffer (TXT) → txtImporter.decodeTxtBuffer()
-    → Определение кодировки (encoding-detect.js)
-    → Возврат UTF-8 текста
+    → Encoding detection (encoding-detect.js)
+    → Returns UTF-8 text
   → lazyBook.createDraftBook(sourceText, SourceType.TXT, title)
-    → Создание manifest.json с bookId
-    → Создание директории data/books/<bookId>/
-    → Сохранение sourceText в source.txt
-    → Сохранение book.json (метаданные)
-    → Установка состояния RAW_IMPORTED
+    → Creates manifest.json with bookId
+    → Creates directory data/books/<bookId>/
+    → Saves sourceText to source.txt
+    → Saves book.json (metadata)
+    → Sets state to RAW_IMPORTED
   → bookSourceRepo.registerSource(hash, filename, size, bookId, 'txt')
     → INSERT INTO book_sources
   → Response: { book_id, title, state: RAW_IMPORTED }
@@ -29,80 +29,80 @@ Client → [HTTP POST multipart] → book-routes
 
 ---
 
-## Сценарий 2: Bootstrap (AI-анализ текста)
+## Scenario 2: Bootstrap (AI Text Analysis)
 
-**Запрос:** `POST /api/v1/book/:bookId/bootstrap`
+**Request:** `POST /api/v1/book/:bookId/bootstrap`
 
-**Участвующие компоненты:**
+**Components involved:**
 1. `routes/book/import-routes.cjs` → Route handler (bootstrap)
-2. `txt-importer.js:bootstrapImportedText()` → Вход в AI-пайплайн
-3. `agent-service.js:bootstrapWithAgent()` → AI-анализ
+2. `txt-importer.js:bootstrapImportedText()` → AI pipeline entry
+3. `agent-service.js:bootstrapWithAgent()` → AI analysis
 
-**Пошаговая цепочка:**
+**Step-by-step chain:**
 ```
 book-routes → txtImporter.bootstrapImportedText(bookId)
-  → Очистка артефактов предыдущих failed bootstrap
+  → Cleanup artifacts from previous failed bootstraps
   → agentService.bootstrapWithAgent(bookId, progress)
     → createSession(bookId, 'txt_import')
       → INSERT INTO agent_sessions (status: running)
     
-    → getWindowText() — текстовый буфер от currentOffset (~1500 символов)
+    → getWindowText() — text buffer from currentOffset (~1500 characters)
     
-    → Шаг 0: stepAnalyzeStructure(text, bookId)
+    → Step 0: stepAnalyzeStructure(text, bookId)
       → aiService.callAI() → structure { author, title, chapters }
-      → Обновление book.json (author, title, structure)
+      → Updates book.json (author, title, structure)
     
-    → runPipeline() — 5 шагов:
-      → Шаг 1: stepExtractCharacters() → characters[]
-      → Шаг 2: stepExtractLocations() → locations[]
-      → Шаг 3: stepCreateScenes() → scenes[] (до 3 сцен из начала буфера)
-        + title, location.id, environment-override (глобальный шаблон локации vs сцена)
-        → resolveSceneProgress() → nextOffset по последней созданной сцене
-        → Валидация coverage (gap/overlap) + duration → при неудаче repair retry → fallback
-      → Шаг 4: stepCreateUnits() per scene (без unit.participants — удалён)
-      → Шаг 5: stepCreateVisuals() per scene (inferCharactersFromPrompt)
+    → runPipeline() — 5 steps:
+      → Step 1: stepExtractCharacters() → characters[]
+      → Step 2: stepExtractLocations() → locations[]
+      → Step 3: stepCreateScenes() → scenes[] (up to 3 scenes from buffer start)
+        + title, location.id, environment-override (global location template vs scene)
+        → resolveSceneProgress() → nextOffset from last created scene
+        → Coverage validation (gap/overlap) + duration → on failure repair retry → fallback
+      → Step 4: stepCreateUnits() per scene (without unit.participants — removed)
+      → Step 5: stepCreateVisuals() per scene (inferCharactersFromPrompt)
     
-    → lazyBook.createFromAnalysis() — сохранение:
+    → lazyBook.createFromAnalysis() — saves:
       → characters.json, bible.json, chapters/*.json
       → Cover chapter (createCoverChapter + saveCoverChapter)
     
-    → window_data.currentOffset = nextOffset, а не plannedEndOffset
-    → Если после nextOffset остаётся текст → paused (ждут следующего окна)
-    → Если всё → completed
+    → window_data.currentOffset = nextOffset, not plannedEndOffset
+    → If text remains after nextOffset → paused (waits for next window)
+    → If all done → completed
     
-  → book-routes получает результат
-    → Создание Redis chunks для каждой сцены
-    → Создание placeholder audio
-    → Response с данными bootstrap
+  → book-routes receives result
+    → Creates Redis chunks for each scene
+    → Creates placeholder audio
+    → Response with bootstrap data
 ```
 
 ---
 
-## Сценарий 3: Генерация сцены (Per-Asset Parallel Dispatch)
+## Scenario 3: Scene Generation (Per-Asset Parallel Dispatch)
 
-**Триггер:** Scene added to active-scenes index
+**Trigger:** Scene added to active-scenes index
 
-**Ключевое изменение (v2.1.0):** Линейная FSM удалена. Все callback'и проверяют per-asset state. `transitionSceneState` — прямой write без валидации. `decideStage` удалён — dispatch-engine всегда передаёт `overrideStage`.
+**Key change (v2.1.0):** Linear FSM removed. All callbacks check per-asset state. `transitionSceneState` — direct write without validation. `decideStage` removed — dispatch engine always passes `overrideStage`.
 
-**Участвующие компоненты:**
+**Components involved:**
 
 ### 3a: Runtime Scheduler Tick
 
 ```
-runtime-scheduler.tick() [каждые 5 секунд]
+runtime-scheduler.tick() [every 5 seconds]
   → acquireSchedulerTickLock()
   → activeScenes.getAllActiveSceneKeys()
-  → Для каждой сцены: attemptDispatch()
-    → shouldScheduleAssets() — ПРОВЕРКА PER-ASSET СОСТОЯНИЙ
+  → For each scene: attemptDispatch()
+    → shouldScheduleAssets() — CHECK PER-ASSET STATES
       → assetStates = getAssetStates() (audio/image/video)
       → layer config (audio_enabled/image_enabled/video_enabled)
-      → PG version-stale check (если asset_version < scene_version)
-      → Решение: какие stage'ы готовы к диспетчеризации
-      → Audio: не ready и не generating → dispatch
-      → Image: не ready и не generating → dispatch (независимо от audio!)
-      → Video: не ready, не generating, image=ready → dispatch
+      → PG version-stale check (if asset_version < scene_version)
+      → Decision: which stages are ready for dispatch
+      → Audio: not ready and not generating → dispatch
+      → Image: not ready and not generating → dispatch (independent of audio!)
+      → Video: not ready, not generating, image=ready → dispatch
       → per-asset: NEW/DIRTY/PENDING → dispatch; GENERATING/READY → skip
-    → Для каждого eligible stage:
+    → For each eligible stage:
       → dispatchEngine.dispatchStage(stage)
 ```
 
@@ -110,81 +110,81 @@ runtime-scheduler.tick() [каждые 5 секунд]
 
 ```
 dispatchEngine.dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBook, buildId, { force })
-  → Check circuit breaker (LIVE — прямой require)
-  → Check duplicate/lease (force=true → очистка существующего lease)
-  → Acquire quota (атомарно через Lua EVAL — устранён race GET+INCR)
-  → Check retry budget (LIVE — прямой require)
-  → Check fairness (LIVE — прямой require)
+  → Check circuit breaker (LIVE — direct require)
+  → Check duplicate/lease (force=true → clears existing lease)
+  → Acquire quota (atomic via Lua EVAL — eliminates GET+INCR race)
+  → Check retry budget (LIVE — direct require)
+  → Check fairness (LIVE — direct require)
   → Acquire stage lease (NX, TTL: audio 15min, image 20min, video 30min)
-  → Clear dispatch-completed marker (для idempotent completion)
-  → orchestrator.dispatchStage() с overrideStage
+  → Clear dispatch-completed marker (for idempotent completion)
+  → orchestrator.dispatchStage() with overrideStage
 ```
 
-### 3c: Audio Generation (через Orchestrator Facade)
+### 3c: Audio Generation (via Orchestrator Facade)
 
-> **UPD 2026-06-28 (M5):** Все lifecycle-переходы через `orchestrator.completeStage`.
-> GENERATING выставляется в beginStage через scene-orchestrator (дыра §5.1 FIXED).
-> PG `scene_assets.status='ready'` пишется в callback'ах (C2 FIXED).
+> **UPD 2026-06-28 (M5):** All lifecycle transitions go through `orchestrator.completeStage`.
+> GENERATING is set in beginStage via scene-orchestrator (gap §5.1 FIXED).
+> PG `scene_assets.status='ready'` is written in callbacks (C2 FIXED).
 
 ```
 orchestrator.beginStage() → dispatchEngine.dispatchStage()
   → scene-orchestrator.executeAudioDispatch()
-    → per-asset GENERATING (выставляется)
+    → per-asset GENERATING (set)
     → audio.generateSceneAudio() → segments → gpu.send()
   → callback → task-handler → orchestrator.completeStage('audio')
     → scene-callbacks.handleAudioCompleted()
       → Per-asset check: audio GENERATING/PENDING/DIRTY
-      → Валидация файла
+      → File validation
       → PG markReady('audio') — C2 FIXED
-      → placeholder replacement
-    → Version gate: проверка asset_version < scene_version
-      → stale → DIRTY (force-regen не отменяется)
-      → OK → setAssetState(READY) (syncLinearState удалён — T8)
-    → finally: markDispatchCompleted (release lease + quota, РОВНО один раз — C1/C4)
+      → Placeholder replacement
+    → Version gate: checks asset_version < scene_version
+      → stale → DIRTY (force-regen not cancelled)
+      → OK → setAssetState(READY) (syncLinearState removed — T8)
+    → finally: markDispatchCompleted (release lease + quota, exactly once — C1/C4)
 ```
 
-### 3d: Image Generation (независим от audio!)
+### 3d: Image Generation (independent from audio!)
 
-> **UPD 2026-06-28:** version-stale check — явный пред-проход в attemptDispatch() (Д.2).
-> dirty unit IDs из PG передаются в executeImageDispatch для регенерации конкретных IU.
+> **UPD 2026-06-28:** version-stale check — explicit pre-pass in attemptDispatch() (D.2).
+> Dirty unit IDs from PG passed to executeImageDispatch for targeted IU regeneration.
 
 ```
 orchestrator.beginStage() → dispatchEngine.dispatchStage()
   → scene-orchestrator.executeImageDispatch()
-    → per-asset GENERATING (выставляется)
-    → Чтение dirtyUnitIds из PG (для точечной регенерации IU)
+    → per-asset GENERATING (set)
+    → Read dirtyUnitIds from PG (for targeted IU regeneration)
     → image.generateSceneIUImages() → build prompts → gpu.send()
-  → callback → task-handler (проверка IU completion)
-    → saveIURegistry → проверка всех IU для сцены
+  → callback → task-handler (IU completion check)
+    → saveIURegistry → check all IUs for scene
     → orchestrator.completeStage('image')
       → scene-callbacks.handleImageCompleted()
         → Per-asset check: image GENERATING/PENDING/DIRTY
         → PG markReady('image') — C2 FIXED
-        → Очистка только завершённых dirty unit IDs
-        → Сброс IU-счётчика на актуальное количество файлов
-        → Очистка in-flight markers
+        → Cleanup only completed dirty unit IDs
+        → Reset IU counter to actual file count
+        → Clear in-flight markers
       → Version gate → READY or DIRTY
       → finally: markDispatchCompleted (release lease + quota)
 ```
 
-### 3e: Video Generation (зависит от IMAGE_READY)
+### 3e: Video Generation (depends on IMAGE_READY)
 
-> **UPD 2026-06-28:** Video — последняя стадия. После READY → remove from active index + auto-slide.
+> **UPD 2026-06-28:** Video — final stage. After READY → remove from active index + auto-slide.
 
 ```
 orchestrator.beginStage() → dispatchEngine.dispatchStage()
   → scene-orchestrator.executeVideoDispatch()
-    → per-asset GENERATING (выставляется)
-    → Проверка: image=READY? (asset states + chunk fallback)
+    → per-asset GENERATING (set)
+    → Check: image=READY? (asset states + chunk fallback)
     → video.generateVideoAnimation() → jobSpecs
-    → gpu.sendUnified() для каждой группы
+    → gpu.sendUnified() for each group
   → callback → orchestrator.completeStage('video')
     → scene-callbacks.handleVideoCompleted()
       → Per-asset check: video GENERATING/PENDING/DIRTY
-      → Валидация .mp4 файла
+      → .mp4 file validation
       → PG markReady('video') — C2 FIXED
       → updateSceneVideoStatus → updateSceneChunks
-      → clearDirtyFlag в PG
+      → clearDirtyFlag in PG
       → publishProgress
       → removeSceneFromActiveIndex
       → trySlideWindowOnComplete() → auto-slide
@@ -194,72 +194,72 @@ orchestrator.beginStage() → dispatchEngine.dispatchStage()
 
 ---
 
-## Сценарий 4: Загрузка и просмотр книги (Android)
+## Scenario 4: Book Loading and Viewing (Android)
 
-**Запрос:** `GET /api/v1/book/:bookId`
+**Request:** `GET /api/v1/book/:bookId`
 
 ```
 Android → [HTTP GET] → book-routes
   → book.loadBook(bookId)
-    → Многофайловый формат: manifest.json + book.json + chapters/*.json
+    → Multi-file format: manifest.json + book.json + chapters/*.json
   → placeholderAudio.recoverMissingPlaceholders()
-    → Проверка наличия MP3-файлов
-    → Создание отсутствующих заглушек
+    → Check for MP3 files
+    → Create missing placeholders
   → recoverMissingRedisChunks()
-    → Проверка наличия Redis chunks для каждой сцены
-    → Создание отсутствующих
-  → Response: JSON книги
-    → Android: UI fragments рендерят структуру
+    → Check for Redis chunks for each scene
+    → Create missing ones
+  → Response: JSON book
+    → Android: UI fragments render structure
 ```
 
 ---
 
-## Сценарий 5: AI-чат ассистент (tool-based)
+## Scenario 5: AI Chat Assistant (Tool-Based)
 
-**Запрос:** `POST /api/v1/ai/chat`
+**Request:** `POST /api/v1/ai/chat`
 
 ```
 Android → [HTTP POST] → ai-routes
   → chatEngine.sendMessage(bookId, message, history)
-    → Сборка контекста (book data, правила)
-    → Определение режима: chat/edit/director/import/analyze/validate
-    → Выбор tool'ов для режима:
+    → Context assembly (book data, rules)
+    → Mode determination: chat/edit/director/import/analyze/validate
+    → Tool selection for mode:
       - chat: edit_book, write_storyboard, extract_entities, validate_book
-      - edit: edit_book (только если не locked)
+      - edit: edit_book (only if not locked)
       - director: write_storyboard
       - import: import_book
-    → aiService.callAI() с tools
-    → Парсинг ответа: reply + patches
-    → Применение JSON Patch (applyPatches) если есть
-    → Сохранение в chat_messages
-    → Response: текст ответа
+    → aiService.callAI() with tools
+    → Response parsing: reply + patches
+    → Apply JSON Patch (applyPatches) if present
+    → Save to chat_messages
+    → Response: reply text
 ```
 
 ---
 
-## Сценарий 6: Воспроизведение (Android)
+## Scenario 6: Playback (Android)
 
 ```
 PlayFragment → PlaybackViewModel.loadScene(bookId, chapterId, sceneId)
   → Repository → BackendApi.getChunk()
   → SceneAudioPlayer.play(audioUrl) → ExoPlayer (Media3)
   → PlaybackViewModel.pollForVideoReady()
-  → Если video ready → загрузка видео
-  → preloadAhead() — предзагрузка 3 сцен вперёд
-  → Навигация по сценам
+  → If video ready → load video
+  → preloadAhead() — preload 3 scenes ahead
+  → Scene navigation
 ```
 
 ---
 
-## Сценарий 7: Graceful Shutdown (SIGTERM)
+## Scenario 7: Graceful Shutdown (SIGTERM)
 
-**Триггер:** Docker stop / kill сигнал
+**Trigger:** Docker stop / kill signal
 
-**Участвующие компоненты:**
+**Components involved:**
 1. `backend.cjs` — process.on('SIGTERM')
 2. `gpu-hub.js` — process.on('SIGTERM')
 
-**Поток:**
+**Flow:**
 ```
 docker stop → SIGTERM → backend.cjs / gpu-hub.js
   → log('[SHUTDOWN] Graceful shutdown initiated')
@@ -271,97 +271,86 @@ docker stop → SIGTERM → backend.cjs / gpu-hub.js
 
 ---
 
-## Сценарий 8: Startup Resume (восстановление сессий)
+## Scenario 8: Startup Resume (Session Recovery)
 
-**Триггер:** Запуск backend
+**Trigger:** Backend startup
 
 ```
 backend.cjs → startServer()
   → resumeIncompleteSessions(log, windowGenerator.runBackgroundWindowGeneration)
-    → genSessionRepo.getActiveSessions() — PG запрос
-    → Для каждой generating/pending сессии:
+    → genSessionRepo.getActiveSessions() — PG query
+    → For each generating/pending session:
       → update status → 'pending'
       → setImmediate(() → runBackgroundWindowGeneration())
 ```
 
 ---
 
-## Сценарий 9: Слайд окна (продвижение генерации)
+## Scenario 9: Window Slide (Generation Advancement)
 
-**Триггер:** Сцена достигла VIDEO_READY или таймаут
+**Trigger:** Scene reaches VIDEO_READY or timeout
 
 ```
 scene-window.js:trySlideWindowOnComplete()
   → isCancelled() check
-  → reconcileWindowStatuses() — сверка чанков с файлами на диске
-  → isWindowComplete() — все сцены в окне ready?
-    → Проверка per-asset состояний + layer config
-    → Если да → slideWindow()
-      → sceneHasValidContent() — проверка контента на диске
-      → Для каждой новой сцены:
-        → startScene() — создание chunk metadata + placeholder audio
-        → Регистрация в active scenes
-    → Если нет → ожидание следующего tick
+  → reconcileWindowStatuses() — verify chunks match files on disk
+  → isWindowComplete() — all scenes in window ready?
+    → Check per-asset states + layer config
+    → If yes → slideWindow()
+      → sceneHasValidContent() — verify content on disk
+      → For each new scene:
+        → startScene() — create chunk metadata + placeholder audio
+        → Register in active scenes
+    → If no → wait for next tick
 ```
 
 ---
 
-## Сценарий 10: Book Sync (синхронизация JSON ↔ DB)
+## Scenario 10: Book Sync (JSON ↔ DB Synchronization)
 
-**Триггер:** Изменение книги (редактирование/импорт)
+**Trigger:** Book change (editing/import)
 
 ```
 book-sync.js:syncBook(bookId)
   → detectChangedScenes()
-    → getBookFingerprint() — хэши всех сцен из JSON
-    → SELECT scene_hash FROM scenes — хэши из БД
-    → Сравнение: added / changed / removed
+    → getBookFingerprint() — hashes of all scenes from JSON
+    → SELECT scene_hash FROM scenes — hashes from DB
+    → Comparison: added / changed / removed
   → updateSceneHashes() — INSERT/UPDATE scenes
   → markSceneAssetsStale() — upsert: UPDATE existing rows + INSERT synthetic 'audio' row if none exist
-  → markGenerationTasksStale() — cancel для changed scenes
+  → markGenerationTasksStale() — cancel for changed scenes
   → purgeRemovedSceneRows() — DELETE orphan rows
 ```
 
 ---
 
-## Сценарий 11: Восстановление сессии книги между клиентами
+## Scenario 11: Book Session Recovery Across Clients
 
-**Запросы:** `GET /api/v1/books` (список книг на сервере), `GET /api/v1/book/:bookId/status` (валидация)
+**Requests:** `GET /api/v1/books` (server book list), `GET /api/v1/book/:bookId/status` (validation)
 
-**Проблема, которую решает:** открытая книга была привязана к одному клиенту —
-Android стирал `bookId` при каждом холодном старте, мобильный веб держал его только
-в памяти, а сервер не умел «отдать» список книг. Книга, импортированная на вебе,
-не появлялась на Android.
+**Problem it solves:** An open book was bound to one client — Android cleared `bookId` on every cold start, mobile web held it only in memory, and the server couldn't "serve" a book list. A book imported on web wouldn't appear on Android.
 
-**Источник правды — сервер:** связка SHA-256 TXT → `book_id` живёт в PG-таблице
-`book_source` (регистрируется при импорте, используется для дедупликации).
-`GET /api/v1/books` (`recent-books-routes.cjs`) отдаёт последние книги: записи из
-PG `book_source` (для каждой — статус из `lazy-book` манифеста: state/title/build_id)
-+ скан директории `data/books/` для vbook-импортов без PG-записи; сортировка по
-`updated_at`, лимит 20. Строки с книгами, которых больше нет на диске, отбрасываются.
+**Source of truth — server:** the SHA-256 TXT → `book_id` mapping lives in the PG `book_source` table (registered on import, used for deduplication). `GET /api/v1/books` (`recent-books-routes.cjs`) returns recent books: records from PG `book_source` (for each — status from `lazy-book` manifest: state/title/build_id) + directory scan of `data/books/` for vbook imports without PG records; sorted by `updated_at`, limit 20. Rows for books no longer on disk are discarded.
 
-**Клиентское восстановление (зеркально на Android и web):**
+**Client recovery (mirrored on Android and web):**
 ```
-Холодный старт клиента
-  → 1. Сохранённый book_id (Android: SharedPreferences / web: localStorage)
-       → GET /book/:id/status — валидация на сервере
-         → 200 → восстановить эту книгу
-         → 404/иная ошибка → шаг 2
-  → 2. Fallback: GET /api/v1/books → первая (самая свежая) книга
-       → книга найдена → сохранить book_id/build_id локально
-  → 3. Прогрев плеера: GET /book/:id → сцены + обложка
-       → emit playbackPrepared (без авто-навигации по вкладкам)
-  → Сервер недоступен → держим сохранённый id оптимистично (prefs/localStorage
-    не чистятся, восстановится при следующем запуске)
+Cold client start
+  → 1. Saved book_id (Android: SharedPreferences / web: localStorage)
+       → GET /book/:id/status — server validation
+         → 200 → restore this book
+         → 404/other error → step 2
+  → 2. Fallback: GET /api/v1/books → first (most recent) book
+       → book found → save book_id/build_id locally
+  → 3. Player warmup: GET /book/:id → scenes + cover
+       → emit playbackPrepared (no auto-tab navigation)
+  → Server unavailable → hold saved id optimistically (prefs/localStorage
+    not cleared, restored on next launch)
 ```
 
-**Защита от гонок:** если за время восстановления пользователь открыл другую книгу
-(deep-link `?book=…` на web, `.vbook` ACTION_VIEW на Android), тёплый эмит старой
-книги отбрасывается (guard после fetch). Явное закрытие книги (`closeBook`/«Создать
-новую книгу», «Удалить vBook») по-прежнему чистит сохранённый id.
+**Race protection:** if during recovery the user opened another book (deep-link `?book=…` on web, `.vbook` ACTION_VIEW on Android), the warm emit for the old book is discarded (guard after fetch). Explicit book close (`closeBook`/"Create new book", "Delete vBook") still clears the saved id.
 
-**Участвующие компоненты:**
+**Components involved:**
 1. `recent-books-routes.cjs` → `GET /api/v1/books`
 2. `book-source-repo.js:listRecent()` → PG `book_source`
 3. `GenerateViewModel.restoreBookSession()` (Android) / `generateStore.restoreBookSession()` (web)
-4. `MainActivity` (Android) / `main.tsx` (web) — вызов при холодном старте
+4. `MainActivity` (Android) / `main.tsx` (web) — called on cold start

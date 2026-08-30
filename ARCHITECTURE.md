@@ -1,65 +1,65 @@
 # Animastor — Architecture Map
 
-Одна страница: карта доменов и репозитория. Для людей и AI-кодеров.
+One page: domain map and repository layout. For humans and AI coders.
 
-## Домены (production)
+## Domains (Production)
 
-| Домен              | Что отдаёт                                                                 | Auth |
-|--------------------|----------------------------------------------------------------------------|------|
-| `animastor.in`     | **Публичный сайт**: beta-портал, `/docs/` (markdown-дерево), публичная Library, вход/регистрация | нет |
-| `app.animastor.in` | **Веб-приложение** — responsive: `MobileShell` / `DesktopShell`             | Basic Auth, кроме `/library` |
-| `admin.animastor.in` | **Админ** — тот же SPA dist, корень → `/admin`                            | Basic Auth + backend `requireAdmin` |
+| Domain              | What it serves                                                                 | Auth |
+|---------------------|----------------------------------------------------------------------------|------|
+| `animastor.in`     | **Public site**: beta portal, `/docs/` (markdown tree), public Library, login/registration | none |
+| `app.animastor.in` | **Web application** — responsive: `MobileShell` / `DesktopShell`             | Basic Auth, except `/library` |
+| `admin.animastor.in` | **Admin** — same SPA dist, root → `/admin`                            | Basic Auth + backend `requireAdmin` |
 
-Публичный сайт и приложение используют **один backend и одну систему
-аутентификации** (`/api/v1/auth/*`): сессия — HttpOnly cookie
-`animastor_sid` c `Domain=animastor.in` (env `COOKIE_DOMAIN`), поэтому
-вход на `animastor.in` действует и на `app.animastor.in`. Админ в публичной
-навигации сайта не упоминается.
+The public site and application share **one backend and one authentication
+system** (`/api/v1/auth/*`): session is an HttpOnly cookie
+`animastor_sid` with `Domain=animastor.in` (env `COOKIE_DOMAIN`), so
+logging in on `animastor.in` also works on `app.animastor.in`. Admin is not
+mentioned in the public site navigation.
 
-Правило: **hostname определяет приложение, viewport определяет presentation**.
-Один frontend, один API, одни stores. Layout зависит только от ширины вьюпорта:
+Rule: **hostname determines the application, viewport determines the presentation**.
+One frontend, one API, shared stores. Layout depends solely on viewport width:
 
 ```
-< 1180px  → MobileShell   (нижний таб-бар: Файл/Генератор/Плеер/Редактор/Навигатор)
->= 1180px → DesktopShell  (шапка Generator/Player/Editor + панели слева/справа)
+< 1180px  → MobileShell   (bottom tab bar: File/Generator/Player/Editor/Navigator)
+>= 1180px → DesktopShell  (header Generator/Player/Editor + left/right panels)
 ```
 
-## Репозиторий
+## Repository Layout
 
 ```
 frontends/
-├── website/          ← animastor.in — публичный сайт (статика + public /library)
-├── app/              ← app.animastor.in — responsive веб-приложение (Preact)
+├── website/          ← animastor.in — public site (static + public /library)
+├── app/              ← app.animastor.in — responsive web application (Preact)
 │   └── src/
 │       ├── layouts/  ←   MobileShell / DesktopShell
 │       ├── pages/    ←   File, Generator, Player, Editor, Navigator, Settings…
 │       ├── components/
-│       ├── stores/   ←   единые stores для всех представлений
-│       ├── api/      ←   /api/v1 (относительный base — hostname не зашит)
+│       ├── stores/   ←   shared stores for all views
+│       ├── api/      ←   /api/v1 (relative base — hostname not hardcoded)
 │       └── styles/
-└── android/          ← Android-приложение (Kotlin, Gradle)
+└── android/          ← Android application (Kotlin, Gradle)
 
-backend/              ← API-сервер + оркестрация генерации (Node.js, Docker)
-worker/               ← GPU-воркеры (ComfyUI + Node.js)
-gpu-hub/              ← диспетчер GPU-очередей
-proxy/                ← nginx: домены, Basic Auth, reverse proxy (proxy/conf/default.conf)
-tools/                ← тестеры для планшета (mobile-web-tester, desktop-web-tester)
-docs/                 ← подробная документация (по фазам миграций и подсистемам)
+backend/              ← API server + generation orchestration (Node.js, Docker)
+worker/               ← GPU workers (ComfyUI + Node.js)
+gpu-hub/              ← GPU queue dispatcher
+proxy/                ← nginx: domains, Basic Auth, reverse proxy (proxy/conf/default.conf)
+tools/                ← tablet/mobile/desktop testers (mobile-web-tester, desktop-web-tester)
+docs/                 ← detailed documentation (by migration phases and subsystems)
 ```
 
-## Ключевые факты
+## Key Facts
 
-- `app.animastor.in` — единственный эндпоинт приложения. `/library` на нём —
-  единственный публичный роут (nginx `location = /library`, auth off, содержимое —
-  из публичного сайта). История-роуты SPA (`/file`, `/generate`, `/play`, `/edit`,
-  `/navigate`, `/settings`) — за Basic Auth (тот же `proxy/conf/.htpasswd`).
-- API: `/api/v1` → backend:3000, `/gpu` → gpu-hub:5000 — на обоих доменах.
-- Basic Auth на текущем этапе — существующая Nginx-авторизация; отдельной системы
-  авторизации нет.
-- SSL: Let's Encrypt — один сертификат на всё семейство: `animastor.in,
-  app.animastor.in, www.animastor.in` (SANs обновлены 2026-08-12;
-  `m.animastor.in` выведен из эксплуатации). Продление — webroot на
-  `frontends/website` (ACME HTTP-01, `certbot.timer` ежедневно), проверено
+- `app.animastor.in` is the single application endpoint. `/library` on it is
+  the only public route (nginx `location = /library`, auth off, content from
+  the public site). SPA history routes (`/file`, `/generate`, `/play`, `/edit`,
+  `/navigate`, `/settings`) are behind Basic Auth (same `proxy/conf/.htpasswd`).
+- API: `/api/v1` → backend:3000, `/gpu` → gpu-hub:5000 — on both domains.
+- Basic Auth at this stage is the existing Nginx authorization; there is no
+  separate authorization system.
+- SSL: Let's Encrypt — one certificate covering the entire family: `animastor.in,
+  app.animastor.in, www.animastor.in` (SANs updated 2026-08-12;
+  `m.animastor.in` has been retired). Renewal — webroot on
+  `frontends/website` (ACME HTTP-01, `certbot.timer` daily), verified
   `--dry-run` — success.
 - TLS certificates: configurable via `LETS_ENCRYPT_DIR` env var (default: `/etc/letsencrypt`).
   See `docs/architecture/EXPERIMENTAL_BETA_DOCKER_DEPLOYMENT.md`.

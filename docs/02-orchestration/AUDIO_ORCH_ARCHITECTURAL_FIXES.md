@@ -1,206 +1,206 @@
-# Audio Orchestration — архитектурные Fixes против «сработало — и ладно»
+# Audio Orchestration — Architectural Fixes Against "It Worked, So Leave It"
 
-> **Дата:** 2026-07-20
-> **Контекст:** серия сегодняшних коммитов (`281d192`, `ebbcb4f`, `4a17f55`,
-> `ecde189`, `1ce49ee`, `02e99a5`) латала аудио-оркестрацию точечно — таймаутами,
-> skip-fail, хардкодами и защитными guard'ами. Ниже фиксируется, какой дизайн
-> должен быть в ядре, чтобы эти патчи ушли как симптомы, а не как_LONG-TERM решения.
+> **Date:** 2026-07-20
+> **Context:** series of today's commits (`281d192`, `ebbcb4f`, `4a17f55`,
+> `ecde189`, `1ce49ee`, `02e99a5`) patched audio orchestration ad-hoc — timeouts,
+> skip-fail, hardcodes, and defensive guards. Below documents what the core design
+> should be so these patches disappear as symptoms, not as_LONG-TERM solutions.
 >
-> **Стиль:** каждый раздел описывает (а) текущий_st костыль, (б) почему он
-> существует, (в) как должно быть архитектурно, (г) шаги миграции.
+> **Style:** each section describes (a) the current hack, (b) why it exists,
+> (c) what it should be architecturally, (d) migration steps.
 
 ---
 
-## 1. Таймауты не должны подбираться вручную
+## 1. Timeouts Should Not Be Manually Tuned
 
-### Текущий костыль (`281d192`)
+### Current Hack (`281d192`)
 ```js
 // runtime-config.js
-AUDIO_CHUNK_STALL_MS: 900000, // 15 мин
-LEASE_TTL_S.AUDIO:    20 * 60, // 20 мин
-// gpu-hub GPU_TIMEOUT: 10 мин (env)
+AUDIO_CHUNK_STALL_MS: 900000, // 15 min
+LEASE_TTL_S.AUDIO:    20 * 60, // 20 min
+// gpu-hub GPU_TIMEOUT: 10 min (env)
 ```
-Коммит-сообщение буквально фиксирует invariant «GPU_TIMEOUT < STALL < LEASE_TTL»
-подбором констант. Любое изменение `GPU_TIMEOUT` в env молча ломает оркестрацию.
+The commit message literally fixes the invariant "GPU_TIMEOUT < STALL < LEASE_TTL"
+by tuning constants. Any change to `GPU_TIMEOUT` in env silently breaks orchestration.
 
-### Почему существует
-Watchdog `checkStalledAudioScenes` не знает, мёртв ли воркер или просто долго
-генерирует. Поэтому выбирается «безопасная» верхняя граница, которая всегда
-больше таймаута GPU.
+### Why It Exists
+The watchdog `checkStalledAudioScenes` doesn't know whether the worker is dead or
+just taking a long time. So a "safe" upper bound is chosen that is always
+larger than the GPU timeout.
 
-### Как должно быть
-**Источником истины должен быть callback от воркера/хаба, а не таймер.**
+### What It Should Be
+**The source of truth should be the callback from the worker/hub, not a timer.**
 
-- `gpu-hub` уже умеет в `GPU_TIMEOUT` — он НЕ репортит «success», а кидает
-  явную ошибку `worker_dead` / `job_timeout`.
-- Эта ошибка должна прийти в backend как асинхронное событие (через callback
-  endpoint или Redis pub/sub `animastor:gpu:events`), а НЕ молчаливо
-  дожидаться истечения `AUDIO_CHUNK_STALL_MS`.
-- Watchdog `checkStalledAudioScenes` остаётся **только как failsafe** для
-  случая «воркер умер и hub об этом не сообщил» (например, потеря сети между
-  hub и backend). Его таймаут должен быть **мультипликативно больше** любого
-  разумного сценария, а не выверен в硕士学位 миллисекундах:
+- `gpu-hub` already handles `GPU_TIMEOUT` — it does NOT report "success", but
+  sends an explicit `worker_dead` / `job_timeout` error.
+- This error should reach backend as an asynchronous event (via callback
+  endpoint or Redis pub/sub `animastor:gpu:events`), NOT silently waiting
+  for `AUDIO_CHUNK_STALL_MS` to expire.
+- The `checkStalledAudioScenes` watchdog remains **only as a failsafe** for
+  the case "worker died and hub didn't report it" (e.g., network loss between
+  hub and backend). Its timeout should be **multiplicatively larger** than any
+  reasonable scenario, not tuned to millisecond precision:
 
 ```js
-// Архитектурный инвариант:
+// Architectural invariant:
 //   STALL_FAILSAFE_MS = max_gpu_timeout_ms * 3
-// Задан формулой от GPU_TIMEOUT, а не независимой константой.
+// Derived from GPU_TIMEOUT, not an independent constant.
 const GPU_TIMEOUT_MS = Number(process.env.GPU_TIMEOUT_MS ?? 600_000);
-const STALL_FAILSAFE_MS = GPU_TIMEOUT_MS * 3;  // 30 мин при 10-минутном GPU
+const STALL_FAILSAFE_MS = GPU_TIMEOUT_MS * 3;  // 30 min with 10-min GPU
 
-// LEASE_TTL только страхует от потерянных callbacks:
+// LEASE_TTL only insures against lost callbacks:
 const LEASE_TTL_S = { AUDIO: Math.ceil(STALL_FAILSAFE_MS / 1000) + 60 };
 ```
 
-- Если hub присылает явный `job_timeout` — `failWaitingScene` вызывается сразу,
-  без ожидания watchdog'а.
-- В конфиге остаётся ОДНА входная константа (`GPU_TIMEOUT_MS`), остальные
-  вычисляются. Никаких «STALL = 15, LEASE = 20, GPU = 10» — формула вместо
-  магических чисел.
+- If hub sends explicit `job_timeout` — `failWaitingScene` is called immediately,
+  without waiting for the watchdog.
+- The config retains ONE input constant (`GPU_TIMEOUT_MS`), everything else is
+  computed. No more "STALL = 15, LEASE = 20, GPU = 10" — formula instead of
+  magic numbers.
 
-### Миграция
-1. Ввести `GPU_TIMEOUT_MS` как single source of truth, вычислить `STALL` и
-   `LEASE_TTL` от него.
-2. Добавить в `task-handler.cjs` обработку `gpu_hub_error` события → прямой
-   вызов `failWaitingScene(reason='gpu_timeout')`.
-3. Тест `runtime-timeouts.test.js` переписать на проверку формулы, а не
-   хардкод-значений.
+### Migration
+1. Introduce `GPU_TIMEOUT_MS` as single source of truth, derive `STALL` and
+   `LEASE_TTL` from it.
+2. Add handling in `task-handler.cjs` for `gpu_hub_error` event → direct
+   call to `failWaitingScene(reason='gpu_timeout')`.
+3. Rewrite test `runtime-timeouts.test.js` to verify the formula, not
+   hardcoded values.
 
 ---
 
-## 2. 0-байтные чанки — retry, а не skip
+## 2. Zero-Byte Chunks — Retry, Not Skip
 
-### Текущий костыль (`ebbcb4f`)
+### Current Hack (`ebbcb4f`)
 ```js
 const MIN_CHUNK_BYTES = 100;
 if (size < MIN_CHUNK_BYTES) {
-    fs.unlinkSync(chunkPath);            // молча удалить
-    await redis.del(`...:${chunkId}:audio`); // очистить dedup
+    fs.unlinkSync(chunkPath);            // silently delete
+    await redis.del(`...:${chunkId}:audio`); // clear dedup
 }
-// далее в merge эти индексы просто отсутствуют
+// these indices are simply absent from merge
 ```
-TTS вернул 0 байт → файл удаляется → чанк считается «missing» → ждём
-re-dispatch. Симптом (пустой выход TTS) маскируется вместо того, чтобы стать
-диагностикой.
+TTS returned 0 bytes → file deleted → chunk treated as "missing" → wait for
+re-dispatch. The symptom (empty TTS output) is masked instead of becoming a
+diagnostic.
 
-### Почему существует
-GPU hub иногда возвращает 200 OK с пустым телом (edge-case таймаута модели).
-Логика merge не должна падать на пустых данных — поэтому их «вырезают».
+### Why It Exists
+GPU hub sometimes returns 200 OK with empty body (edge-case model timeout).
+Merge logic shouldn't fail on empty data — so they are "cut out."
 
-### Как должно быть
-**Пустой результат TTS — это recoverable error с явным retry-контрактом, а не
+### What It Should Be
+**Empty TTS output is a recoverable error with an explicit retry contract, not
 just-skip-it.**
 
-- TTS-провайдер возвращает explicit error вместо пустого буфера. Если провайдер
-  этого не делает — `task-handler.cjs` валидирует результат и публикует
-  failure-событие с `reason='tts_empty_output'`, НЕ записывая 0-байтный файл.
-- Оркестратор держит **per-chunk retry budget** (см. §4): например,
-  `max_attempts=2` per chunk. Пустой выход → retry. После исчерпания budget →
-  chunk помечается `permanently_failed`, вся сцена идёт в `FAILED` с понятной
-  причиной (а не молчаливым absent в merge).
-- `MIN_CHUNK_BYTES` остаётся только как **defense-in-depth** для случая, когда
-  файл всё-таки был записан (crash между записью и валидацией). Nobody relies
-  on это для нормального flow.
+- TTS provider returns explicit error instead of empty buffer. If the provider
+  doesn't do this — `task-handler.cjs` validates the result and publishes a
+  failure event with `reason='tts_empty_output'`, NOT writing a 0-byte file.
+- Orchestrator maintains a **per-chunk retry budget** (see §4): e.g.,
+  `max_attempts=2` per chunk. Empty output → retry. After budget exhausted →
+  chunk marked `permanently_failed`, entire scene goes to `FAILED` with a clear
+  reason (not silent absent in merge).
+- `MIN_CHUNK_BYTES` remains only as **defense-in-depth** for the case where
+  the file was written anyway (crash between write and validation). Nobody relies
+  on it for normal flow.
 
-### Миграция
-1. В `task-handler.cjs` добавить валидацию: `if (result.length < MIN) emit('chunk_failed', { chunkId, reason: 'empty' })`.
-2. В `audio-orchestrator.js` ввести `retry_count` per chunk в state:
+### Migration
+1. In `task-handler.cjs` add validation: `if (result.length < MIN) emit('chunk_failed', { chunkId, reason: 'empty' })`.
+2. In `audio-orchestrator.js` introduce `retry_count` per chunk in state:
    ```js
    chunks: { 1: { attempts: 2, status: 'ok' }, 2: { attempts: 3, status: 'failed' } }
    ```
-3. `completeChunk` не проверяет байты для normal path, только для recovery path.
+3. `completeChunk` doesn't check bytes for normal path, only for recovery path.
 
 ---
 
-## 3. Stale re-dispatch — явные lease, а не phase guards
+## 3. Stale Re-Dispatch — Explicit Leases, Not Phase Guards
 
-### Текущий костыль (`4a17f55`)
+### Current Hack (`4a17f55`)
 ```js
-// executeAudioDispatch начало:
+// executeAudioDispatch start:
 if (phase === WAITING_CHUNKS || phase === MERGING) {
-    return { completed: true }; // guard от повторного диспатча
+    return { completed: true }; // guard against re-dispatch
 }
 ```
-Guard добавлен, потому что scheduler мог передиспатчить сцену, у которой чанки
-уже в полёте. Это фикс симптома (scheduler не знает, что сцена занята), а не
-причины.
+Guard added because scheduler could re-dispatch a scene whose chunks are
+already in flight. This fixes the symptom (scheduler doesn't know scene is busy),
+not the cause.
 
-### Почему существует
-Между `executeAudioDispatch` и `setWaitingChunks` есть окно, в котором state
-сцены = `GENERATING`, но dispach уже отправлен. Scheduler на следующем tick'е
-видит «не DONE, не FAILED» → передиспатчит. Новый dispatchId делают все
-старые результаты `stale_dispatch`.
+### Why It Exists
+Between `executeAudioDispatch` and `setWaitingChunks` there's a window where the
+scene state = `GENERATING`, but dispatch is already sent. Scheduler on next tick
+sees "not DONE, not FAILED" → re-dispatches. New dispatchId makes all
+old results `stale_dispatch`.
 
-### Как должно быть
-**Dispatch — это lease, а не фаза.** Lease — это эксклюзивное право на
-продолжение работы, с TTL и явным owner'ом.
+### What It Should Be
+**Dispatch is a lease, not a phase.** A lease is an exclusive right to continue
+work, with TTL and explicit owner.
 
-- При входе в `executeAudioDispatch` оркестратор берёт
-  `dispatch-lease:{sceneId}` с TTL = `STALL_FAILSAFE_MS` и owner =
-  `dispatchId`. Если lease занят — выходим с `completed: true` БЕЗусловно.
-- `setWaitingChunks`, `completeChunk` и т.д. принимают `dispatchId` и
-  проверяют, что он совпадает с владельцем lease. Mismatch → silent drop
-  (входящий результат не наш).
-- Watchdog при stall': не «сбрасывает фазу», а **отзывает lease** (TTL истёк
-  → автоматически свободно) и потом переводит state в PENDING для scheduler'а.
-- Phase guards (`WAITING_CHUNKS && return`) удаляются — они избыточны при
-  наличии lease.
+- On entering `executeAudioDispatch`, the orchestrator acquires
+  `dispatch-lease:{sceneId}` with TTL = `STALL_FAILSAFE_MS` and owner =
+  `dispatchId`. If lease is occupied — exit with `completed: true` UNCONDITIONALLY.
+- `setWaitingChunks`, `completeChunk`, etc. accept `dispatchId` and
+  verify it matches the lease owner. Mismatch → silent drop
+  (incoming result is not ours).
+- Watchdog on stall': doesn't "reset phase" but **revokes the lease** (TTL expired
+  → automatically free) then transitions state to PENDING for the scheduler.
+- Phase guards (`WAITING_CHUNKS && return`) are removed — they're redundant with
+  a lease.
 
 ```js
-// Псевдокод:
+// Pseudocode:
 async function executeAudioDispatch(redis, scene, dispatchId) {
     const lease = await acquireLease(redis, scene, dispatchId, TTL_MS);
     if (!lease.acquired) {
         log(`scene already under dispatch (owner=${lease.owner}) — skip`);
         return { completed: true };
     }
-    // фаза — ONLY between lease acquire и release;
-    // если сюда дойдёт второй вызов с тем же dispatchId — lease уже наш,
-    // но это бессмысленно (idempotent by design).
+    // phase — ONLY between lease acquire and release;
+    // if a second call with same dispatchId reaches here — lease is already ours,
+    // but it's meaningless (idempotent by design).
     ...
 }
 ```
 
-### Миграция
-1. Ввести `acquireDispatchLease` / `releaseDispatchLease` в Redis (SETNX +
-   TTL). Это уже частично есть (`DISPATCH_LEASE_PREFIX`), но используется только
-   для quotas — расширить до эксклюзивного владения сценой.
-2. Все приемники chunk-result'ов (`completeChunk`, `task-handler`)在校学生
-   validate `dispatchId === lease.owner`, иначе drop.
-3. Удалить phase-guard в начале `executeAudioDispatch`.
-4. Сигнализация: если `completeChunk` получает mismatch, метрика
+### Migration
+1. Introduce `acquireDispatchLease` / `releaseDispatchLease` in Redis (SETNX +
+   TTL). This partially exists (`DISPATCH_LEASE_PREFIX`) but is used only for
+   quotas — extend to exclusive scene ownership.
+2. All chunk-result receivers (`completeChunk`, `task-handler`) must
+   validate `dispatchId === lease.owner`, otherwise drop.
+3. Remove phase-guard at start of `executeAudioDispatch`.
+4. Signaling: if `completeChunk` receives mismatch, emit metric
    `audio.stale_result_dropped{reason=dispatch_id_mismatch}`.
 
 ---
 
-## 4. «9+9 дубликаты» — cache-hit по чанкам, а не bulk-delete
+## 4. "9+9 Duplicates" — Cache-Hit Per Chunk, Not Bulk-Delete
 
-### Текущий костыль (`ecde189`)
-Коммит удалил `bulk-delete` чанков при `existingCount !== expectedCount`.
-Раньше `generateSceneAudio` сносил все чанки и re-dispatchил всё. Это был
- ziebart'ный способ «начать заново», уничтожающий частичный прогресс.
+### Current Hack (`ecde189`)
+Commit removed `bulk-delete` of chunks when `existingCount !== expectedCount`.
+Previously `generateSceneAudio` wiped all chunks and re-dispatched everything.
+This was a scorched-earth "start over" approach that destroyed partial progress.
 
-### Почему существует
-Размер ожидаемого комплекта чанков != размер дискового кеша — нет доверия к
-кешу. «Безопасное» решение — пересчитать всё.
+### Why It Exists
+Expected chunk count != disk cache size — no trust in cache. "Safe" approach is
+to recalculate everything.
 
-### Как должно быть
-**Chunk — атомарная idempotent единица с persistent identity и own cache.**
+### What It Should Be
+**Chunk is an atomic idempotent unit with persistent identity and own cache.**
 
-- Каждый chunk имеет стабильный id `{sceneId, chunkIndex}` и content hash
-  (от исходного текста). Cache key = `{chunkId, contentHash}`.
-- `sendPerSegmentAudio` уже делает per-chunk cache-hit (commit это и отметил).
-  Это и есть правильное поведение — все вызовы диспатча idempotent per-chunk.
-- `generateSceneAudio` НЕ должен знать про кеш чанков ВООБЩЕ. Его
-  ответственность — «дай мне expected chunks», а наличие/отсутствие каждого
-  разрешается ниже.
-- «Expected count mismatch» означает, что проектная сегментация изменилась
-  (например, текст сцены отредактирован). В этом случае **кеш конкретных
-  чанков инвалидируется по content hash**, а не сносом всего. Чанки, чей
-  content hash совпал — остаются; новые/изменённые — переотправляются.
+- Each chunk has stable id `{sceneId, chunkIndex}` and content hash
+  (from source text). Cache key = `{chunkId, contentHash}`.
+- `sendPerSegmentAudio` already does per-chunk cache-hit (commit noted this).
+  This is the correct behavior — all dispatch calls are idempotent per-chunk.
+- `generateSceneAudio` should NOT know about chunk cache AT ALL. Its
+  responsibility is "give me expected chunks"; presence/absence of each
+  is resolved below.
+- "Expected count mismatch" means project segmentation changed
+  (e.g., scene text was edited). In this case, **chunk cache is invalidated by
+  content hash**, not by wiping everything. Chunks whose content hash matches —
+  remain; new/changed — re-sent.
 
 ```js
-//orrect flow:
+// Correct flow:
 async function dispatchSceneChunks(scene, expectedChunks) {
     for (const chunk of expectedChunks) {
         const hash = contentHash(chunk.text);
@@ -208,170 +208,170 @@ async function dispatchSceneChunks(scene, expectedChunks) {
         if (cached) {
             markChunkReady(chunk.id, cached);
         } else {
-            await cache.invalidate(chunk.id); // только этот
+            await cache.invalidate(chunk.id); // only this one
             await sendToGpu(chunk);
         }
     }
 }
 ```
 
-- Хардкод «9+9» в сообщении коммита — это просто симптом; архитектурно
-  числа нигде не должны фигурировать.
+- Hardcoded "9+9" in commit message is just a symptom; architecturally,
+  numbers should not appear anywhere.
 
-### Миграция
-1. Ввести `chunk.content_hash` в `chunk-metadata` (Redis) при сегментации.
-2. `findExistingSceneChunks` возвращает `[{ index, hash }]`, а не `[index]`.
-3. `sendPerSegmentAudio` сверяет hash; mismatch = invalidate + redispatch
-   ОДНОГО чанка.
+### Migration
+1. Introduce `chunk.content_hash` in `chunk-metadata` (Redis) at segmentation.
+2. `findExistingSceneChunks` returns `[{ index, hash }]`, not `[index]`.
+3. `sendPerSegmentAudio` compares hash; mismatch = invalidate + redispatch
+   ONE chunk.
 
 ---
 
-## 5. Batch dispatch — явный plan, а не «сначала narration, потом dialogue»
+## 5. Batch Dispatch — Explicit Plan, Not "Narration First, Then Dialogue"
 
-### Текущий коммит (`1ce49ee`)
+### Current Commit (`1ce49ee`)
 ```js
-// send Chung сначала куски narration, потом dialogue
+// Send Chung first narration pieces, then dialogue
 ```
-Сообщения wenig informative. Изменение семантики диспетчера под конкретный
-edge-case (вероятно — приоритизация или порядок низкого latency для
-нарратива).
+Commit messages lack information. Semantic change of dispatcher for a specific
+edge-case (probably latency prioritization or ordering for narration).
 
-### Почему существует
-Dialogue chunks, видимо, дороже/дольше, или их хочется отложить, чтобы narration
-был готов раньше. Но это **политика приоритизации**, закопанная в dispatch order.
+### Why It Exists
+Dialogue chunks are apparently more expensive/slower, or they're deferred so
+narration is ready sooner. But this is **prioritization policy**, buried in
+dispatch order.
 
-### Как должно быть
-- Dispatch должен принимать **plan** (`ordered list of chunk specs`), а не
-  свободный список. Plan формируется в одном месте (segmentation layer), где
- .liveётся знание о типах чанков.
-- Тип чанка (`narration`/`dialogue`) — атрибут plan'а, неcargo dispatch'а.
-- Приоритизация (если нужна) — отдельная стратегия:
+### What It Should Be
+- Dispatch should accept a **plan** (`ordered list of chunk specs`), not a
+  free list. Plan is formed in one place (segmentation layer), where
+  knowledge about chunk types lives.
+- Chunk type (`narration`/`dialogue`) is a plan attribute, not a dispatch concern.
+- Prioritization (if needed) — separate strategy:
   ```js
   const ORDERING = { LOW_LATENCY_PREVIEW: 'narration-first', UNIFORM: 'round-robin' };
   dispatchSceneChunks(scene, { ordering: ORDERING.LOW_LATENCY_PREVIEW });
   ```
-- Сейчас это закопано в `1ce49ee` без тестов и без упоминания в docs —
-  любое следующее изменение семантики снова пойдёт через «исправить и забыть».
+- Currently buried in `1ce49ee` without tests and without docs mention —
+  any next semantic change will go through "fix and forget" again.
 
-### Миграция
-1. Вынести тип-параметр в сигнатуру `generateSceneAudio(scene, { ordering })`.
-2. Документировать в `ORCHESTRATION.md` текущую политику и rationale.
-3. Тест на порядок (reconstruct plan from dispatch journal).
+### Migration
+1. Extract type parameter into `generateSceneAudio(scene, { ordering })` signature.
+2. Document current policy and rationale in `ORCHESTRATION.md`.
+3. Test ordering (reconstruct plan from dispatch journal).
 
 ---
 
-## 6. Filesystem order — deterministic naming, не sort как patch
+## 6. Filesystem Order — Deterministic Naming, Not Sort-As-Patch
 
-### Текущий коммит (`02e99a5`)
+### Current Commit (`02e99a5`)
 ```js
 // chunks.js
 chunks.sort((a, b) => a - b);
 ```
-Комментарий буквально говорит: «CRITICAL: sort numerically — filesystem order
-... is NOT deterministic». Это правильно, но это — hậu factum патч, выявивший
-что **имена файлов не были детерминированным источником порядка**.
+Comment literally says: "CRITICAL: sort numerically — filesystem order
+... is NOT deterministic." This is correct, but it's a post-hoc patch revealing
+that **filenames were not a deterministic source of order**.
 
-### Почему существует
-`readdirSync` на EXT4 возвращает hash-table order. Если потребитель
-не сортирует — он получает мусор. До этого merge кормил ffmpeg concat
-чанками в произвольном порядке — диалоги терялись, никто не понимал почему.
+### Why It Exists
+`readdirSync` on EXT4 returns hash-table order. If consumer
+doesn't sort — it gets garbage. Before this, merge fed ffmpeg concat
+chunks in arbitrary order — dialogues were lost, nobody understood why.
 
-### Как должно быть
-- **Chunk id encoding должен быть самодокументируемым и sort-stable**: то, что
-  `pad(4)` (`0001`, `0002`)sortable as string equals numeric sort — это
-  важно и должно быть invariant'ом, а не случайностью.
-- Все consumers chunk files **должны работать с ordered index list**, а не с
-  raw `readdirSync`. Например:
+### What It Should Be
+- **Chunk id encoding should be self-documenting and sort-stable**: the fact
+  that `pad(4)` (`0001`, `0002`) sortable as string equals numeric sort is
+  important and should be an invariant, not an accident.
+- All chunk file consumers **must work with an ordered index list**, not with
+  raw `readdirSync`. For example:
   ```js
   function listSceneChunksOrdered(sceneId, expectedCount) {
-      // Не readdir — explicitly enumerate expected indices.
+      // Not readdir — explicitly enumerate expected indices.
       return Array.from({ length: expectedCount }, (_, i) => i + 1)
           .filter(i => fs.existsSync(path(i)));
   }
   ```
-  Это устраняет саму возможность «readdir вернул в любом порядке».
-- `findExistingSceneChunks` переименовать в `getExistingChunkIndices` и
-  сделать enumeration-based, не readdir-based.
-- `.sort()` остаётся как cheap defense-in-depth, но ответственности не несёт.
+  This eliminates the possibility of "readdir returned arbitrary order."
+- Rename `findExistingSceneChunks` to `getExistingChunkIndices` and make it
+  enumeration-based, not readdir-based.
+- `.sort()` remains as cheap defense-in-depth, but carries no responsibility.
 
-### Миграция
-1. Переписать `chunks.js::findExistingSceneChunks` на enumeration (expected_count подаётся из orchestrator state, не из fs).
-2. Audit всех потребителей `findExistingSceneChunks` — должны ли они знать
-   count? Если да — передавать `expectedCount`, чтобы не было Wild fs scans.
-3. Тест: создать чанки 1, 9, 10 → merge должен дать порядок [1, 9, 10],
-   не [1, 10, 9].
-
----
-
-## 7. Общие принципы, которых пока не хватает
-
-| Принцип | Текущее состояние | Должно быть |
-|---|---|---|
-| **Single source of truth для таймаутов** | 3 независимые константы | формула от `GPU_TIMEOUT_MS` |
-| **Idempotent dispatch** | sheriff phase guards | lease per dispatchId + validate на каждом шаге |
-| **Chunk as cache atom** | bulk-delete при mismatch | per-chunk content hash cache |
-| **Recoverable vs permanent failure** | всё разбирается по факту | retry budget per chunk, explicit after-budget failure |
-| **Dispatch plan** | спрятан в коде | явный ordered plan + policy |
-| **Deterministic data ops** | sort как patch | explicit enumeration, не readdir-семантика |
-| **Failure signalling** | `[DEBUG]` логи | structured events в journal + метрики |
+### Migration
+1. Rewrite `chunks.js::findExistingSceneChunks` to enumeration (expected_count passed from orchestrator state, not from fs).
+2. Audit all consumers of `findExistingSceneChunks` — should they know
+   count? If yes — pass `expectedCount` to avoid Wild fs scans.
+3. Test: create chunks 1, 9, 10 → merge should yield order [1, 9, 10],
+   not [1, 10, 9].
 
 ---
 
-## 8. Приоритеты миграции
+## 7. General Principles Currently Missing
 
-1. **P0 (data loss risk):** §6 — enumeration вместо readdir. Дешёвый фикс,
-   устраняет целый класс багов.
-2. **P0 (silent corruption):** §2 — empty TTS как retry-able failure, не skip.
-   Сейчас empty chunks просто исчезают.
-3. **P1 (reliability):** §4 — per-chunk content hash cache. Устраняет duplicate
-   dispatch как класс.
-4. **P1 (operations):** §3 — lease вместо phase guards. Это базовый пункт для
-   всей остальной оркестрации.
-5. **P2 (cleanup):** §1 — таймауты через формулу. Сегодня работает, но
-   нагадит при первом изменении GPU_TIMEOUT.
-6. **P2 (documentation):** §5 — вынести batch dispatch в явный plan + doc.
+| Principle | Current State | Should Be |
+|-----------|---------------|-----------|
+| **Single source of truth for timeouts** | 3 independent constants | formula from `GPU_TIMEOUT_MS` |
+| **Idempotent dispatch** | sheriff phase guards | lease per dispatchId + validate at every step |
+| **Chunk as cache atom** | bulk-delete on mismatch | per-chunk content hash cache |
+| **Recoverable vs permanent failure** | everything triaged after the fact | retry budget per chunk, explicit after-budget failure |
+| **Dispatch plan** | hidden in code | explicit ordered plan + policy |
+| **Deterministic data ops** | sort as patch | explicit enumeration, not readdir semantics |
+| **Failure signalling** | `[DEBUG]` logs | structured events in journal + metrics |
 
 ---
 
-## 9. Антипаттерны, которых избегать при реализации
+## 8. Migration Priorities
 
-- **«Залатать и забыть»**: каждый из перечисленных разделов сегодня —
-  patch на симптом. Не повторять такое при миграции: если вводишь retry —
-  вводи retry budget и metric, не «один раз пробуем ещё».
-- **State machine с implicit transitions**: `GENERATING → WAITING_CHUNKS`
-  делается из трёх мест (`executeAudioDispatch`, `completeChunk` race-condition
-  branch, `failWaitingScene` recovery). Каждая implicit-транзакция = будущий
-  баг. Transitions должны быть одним owner per phase.
-- **DEBUG-логи вместо structured events**: `[DEBUG]` строки сегодня
-  единственный способ понять, что произошло. Это debugging tool, не
+1. **P0 (data loss risk):** §6 — enumeration instead of readdir. Cheap fix,
+   eliminates an entire class of bugs.
+2. **P0 (silent corruption):** §2 — empty TTS as retry-able failure, not skip.
+   Currently empty chunks simply disappear.
+3. **P1 (reliability):** §4 — per-chunk content hash cache. Eliminates duplicate
+   dispatch as a class.
+4. **P1 (operations):** §3 — lease instead of phase guards. This is a foundational
+   item for all remaining orchestration.
+5. **P2 (cleanup):** §1 — timeouts via formula. Works today, but will bite
+   on first GPU_TIMEOUT change.
+6. **P2 (documentation):** §5 — extract batch dispatch to explicit plan + doc.
+
+---
+
+## 9. Anti-Patterns to Avoid During Implementation
+
+- **"Patch and forget"**: every section listed is today a
+  symptom patch. Don't repeat this in migration: if introducing retry —
+  introduce retry budget and metric, not "try once more."
+- **State machine with implicit transitions**: `GENERATING → WAITING_CHUNKS`
+  is done from three places (`executeAudioDispatch`, `completeChunk` race-condition
+  branch, `failWaitingScene` recovery). Each implicit transition = future
+  bug. Transitions should have one owner per phase.
+- **DEBUG logs instead of structured events**: `[DEBUG]` strings are today
+  the only way to understand what happened. This is a debugging tool, not
   observability. Events (`chunk_received`, `merge_started`, `lease_acquired`)
-  должны пойти в journal.
-- **«Heat» invariant'ов в комментариях**: комментарии вида «инвариант: GPU <
-  STALL < LEASE» — это OK как документация, но должен быть ещё и runtime
-  assertion (по образцу `tests/runtime-timeouts.test.js`, расширить на все
-  инварианты).
+  should go to the journal.
+- **"Heat" invariants in comments**: comments like "invariant: GPU <
+  STALL < LEASE" are OK as documentation, but there should also be runtime
+  assertions (following the pattern in `tests/runtime-timeouts.test.js`,
+  extend to all invariants).
 
 ---
 
-## TL;DR для авторов следующих патчей
+## TL;DR for Next Patch Authors
 
-> Если вы сейчас пишете ещё один фикс по аудио-оркестрации — сначала проверьте,
-> не относится ли он к одному из семи пунктов выше. В 90% случаев «новый баг»
-> — это тот же симптом в другой обёртке, и чинить его надо на уровне
-> архитектуры, а не ещё одним `if (phase === ...)` в начале функции.
+> If you're writing another audio orchestration fix right now — first check
+> whether it relates to one of the seven points above. In 90% of cases "new bug"
+> is the same symptom in a different wrapper, and it should be fixed at the
+> architecture level, not with yet another `if (phase === ...)` at the top of a function.
 
 ---
 
-## Статус реализации на 2026-07-21
+## Implementation Status as of 2026-07-21
 
-| § | Пункт | Статус | Примечание |
-|---|-------|--------|------------|
-| 1 | Таймауты через формулу | ✅ Внедрено | `GPU_TIMEOUT_MS` → STALL *3 → LEASE +60s |
-| 2 | 0-байтные чанки как retry | ❌ Пропущен | Текущий watchdog работает; explicit retry — переусложнение |
-| 3 | Lease вместо phase guards | ✅ Внедрено | Guard удалён; A2 гарантирует LEASE > STALL |
-| 4 | Per-chunk content hash | ❌ Пропущен | «9+9» уже пофикшено; файловый кеш работает |
-| 5 | Явный dispatch plan | ❌ Пропущен | Нет второй альтернативы — overengineering |
-| 6 | Deterministic enumeration | ✅ Внедрено | `expectedCount` → enumeration; readdir fallback |
-| 7 | Общие принципы | 🟡 Частично | SSOT (таймауты) + lease (диспатч) — сделано. Остальное — отложено |
+| § | Item | Status | Note |
+|---|------|--------|------|
+| 1 | Timeouts via formula | ✅ Implemented | `GPU_TIMEOUT_MS` → STALL *3 → LEASE +60s |
+| 2 | Zero-byte chunks as retry | ❌ Skipped | Current watchdog works; explicit retry — over-engineering |
+| 3 | Lease instead of phase guards | ✅ Implemented | Guard removed; A2 ensures LEASE > STALL |
+| 4 | Per-chunk content hash | ❌ Skipped | "9+9" already fixed; file cache works |
+| 5 | Explicit dispatch plan | ❌ Skipped | No second alternative — overengineering |
+| 6 | Deterministic enumeration | ✅ Implemented | `expectedCount` → enumeration; readdir fallback |
+| 7 | General principles | 🟡 Partial | SSOT (timeouts) + lease (dispatch) done. Rest — deferred |
 
-**Детали:** см. `docs/02-orchestration/AUDIO_ORCH_ARCHITECTURAL_TODO.md`
+**Details:** see `docs/02-orchestration/AUDIO_ORCH_ARCHITECTURAL_TODO.md`

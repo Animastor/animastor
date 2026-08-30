@@ -1,19 +1,19 @@
-# Animastor — Система оркестрации
+# Animastor — Orchestration System
 
-> **Единый документ.** Актуальное состояние на **11 августа 2026** (видео-оркестрация внедрена), ревизия `a58676e+`.
-> Замещает: `ORCHESTRATOR_LIFECYCLE.md`, `ORCHESTRATOR_ARCHITECTURE_WITH_AUDIO.md`,
+> **Single document.** Current state as of **11 August 2026** (video orchestration implemented), revision `a58676e+`.
+> Supersedes: `ORCHESTRATOR_LIFECYCLE.md`, `ORCHESTRATOR_ARCHITECTURE_WITH_AUDIO.md`,
 > `AUDIO_ORCHESTRATOR.md`, `REGENERATION_SYSTEM.md`, `ORCHESTRATION_SYSTEM_AUDIT.md`,
-> `CAPACITY_AND_COMPLEXITY.md`. Все ответы на вопросы об оркестрации — здесь.
-> Детали видео-пайплайна: `VIDEO_ORCHESTRATION.md`.
+> `CAPACITY_AND_COMPLEXITY.md`. All orchestration answers are here.
+> Video pipeline details: `VIDEO_ORCHESTRATION.md`.
 
 ---
 
-## 1. Общая архитектура
+## 1. Overall Architecture
 
 ```
                    ┌──────────────────────────────────────────┐
                    │         runtime-loop (tick 5s)           │
-                   │  reconcile-цикл (60s) ←── CLEANUP_LOCK   │
+                   │  reconcile cycle (60s) ←── CLEANUP_LOCK   │
                    └────┬───────────┬──────────────┬──────────┘
                         │           │              │
                    ┌────▼───┐  ┌───▼─────┐  ┌─────▼────────┐
@@ -49,47 +49,47 @@
       └── Worker (worker.cjs) ←──→ ComfyUI
 ```
 
-### Ключевые решения
+### Key Decisions
 
-| Решение | Обоснование |
-|---------|------------|
-| **Один процесс Node.js** | Нет кластеризации. Всё: API, tick, reconcile, SSE — в одном event loop. |
-| **Redis** | Runtime-состояние: очереди, блокировки, asset states, lease, квоты. |
-| **PostgreSQL** | Канон: сцены, версии, scene_assets (status), book JSON. |
-| **Файловая система** | OUTPUT_DIR — байты результата (.mp3, .png, .mp4). |
+| Decision | Rationale |
+|----------|-----------|
+| **Single Node.js process** | No clustering. Everything: API, tick, reconcile, SSE — in one event loop. |
+| **Redis** | Runtime state: queues, locks, asset states, leases, quotas. |
+| **PostgreSQL** | Canonical: scenes, versions, scene_assets (status), book JSON. |
+| **Filesystem** | OUTPUT_DIR — result bytes (.mp3, .png, .mp4). |
 
 ---
 
-## 2. Компоненты системы
+## 2. System Components
 
 ### 2.1 Orchestrator Facade (`orchestrator.js`)
 
-Единственный модуль, который пишет lifecycle-состояние. **Никто не вызывает `state.setAssetState()` или `audioOrch.*()` напрямую** — только через фасад.
+The only module that writes lifecycle state. **Nobody calls `state.setAssetState()` or `audioOrch.*()` directly** — only through the facade.
 
 ```
-  Команда                | asset state       | audio-orch
+  Command                | asset state       | audio-orch
   ───────────────────────|───────────────────|──────────────────────────
-  setScenePending        | → PENDING         | если DONE → deleteState
-  setSceneGenerating     | → GENERATING      | DONE? → skip; иначе → GENERATING
+  setScenePending        | → PENDING         | if DONE → deleteState
+  setSceneGenerating     | → GENERATING      | DONE? → skip; otherwise → GENERATING
   setScenePlaceholder    | → PLACEHOLDER     | —
-  completeStage          | → READY           | → DONE (синхронно)
+  completeStage          | → READY           | → DONE (synchronous)
   failStage              | → FAILED → PENDING | → FAILED
-  markDirtyScene         | → DIRTY           | если DONE → deleteState
-  setSceneAllReady       | все → READY       | все → DONE
-  resetScenes            | все → DIRTY       | все → deleteState/FAILED
+  markDirtyScene         | → DIRTY           | if DONE → deleteState
+  setSceneAllReady       | all → READY       | all → DONE
+  resetScenes            | all → DIRTY       | all → deleteState/FAILED
 ```
 
 ### 2.2 Dispatch Engine (`dispatch-engine.js`)
 
-- **Lease** (`SET NX` + TTL): защита от двойного dispatch. TTL: audio 15min, image 20min, video 30min.
-- **Quota** (`INCR` + check): backpressure. Лимиты: audio 3, image 2, video 1.
+- **Lease** (`SET NX` + TTL): prevents double dispatch. TTL: audio 15min, image 20min, video 30min.
+- **Quota** (`INCR` + check): backpressure. Limits: audio 3, image 2, video 1.
 - **Circuit breaker**: 5 failures → open → 30s cooldown → half-open.
-- **Retry budget**: per-(scene, stage) счётчик INCR + TTL. `consumeRetryBudget` в `finalizeDispatch('failure')`.
-- **Dispatch ID**: UUID v4, `verifyDispatchIdentity` в колбэке.
+- **Retry budget**: per-(scene, stage) INCR + TTL counter. `consumeRetryBudget` in `finalizeDispatch('failure')`.
+- **Dispatch ID**: UUID v4, `verifyDispatchIdentity` in callback.
 
 ### 2.3 Audio Orchestrator (`audio-orchestrator.js`)
 
-Детальная state machine для аудио-пайплайна:
+Detailed state machine for the audio pipeline:
 
 ```
 NEW ──→ PLACEHOLDER_READY ──→ GENERATING ──→ WAITING_CHUNKS ──→ MERGING ──→ DONE
@@ -98,14 +98,14 @@ NEW ──→ PLACEHOLDER_READY ──→ GENERATING ──→ WAITING_CHUNKS �
 ```
 
 - Key: `animastor:audio-orch:{bookId}:{chapterId}:{sceneId}`
-- Хранит: `phase, expected_count, chunks_received, last_chunk_at, started_at, build_id`
-- Watchdog в reconcileCycle: `checkStalledAudioScenes()` — проверяет `last_chunk_at || started_at`
-- Recovery: если чанки на диске без last_chunk_at → доиграть merge
-- Инвариант: `phase == DONE ⇔ asset.audio == READY`
+- Stores: `phase, expected_count, chunks_received, last_chunk_at, started_at, build_id`
+- Watchdog in reconcileCycle: `checkStalledAudioScenes()` — checks `last_chunk_at || started_at`
+- Recovery: if chunks on disk without last_chunk_at → resume merge
+- Invariant: `phase == DONE ⇔ asset.audio == READY`
 
 ### 2.4 Video Orchestrator (`video-orchestrator.js`)
 
-Детальная state machine для видео-пайплайна — **зеркало audio-orchestrator**, внедрена 2026-08-11 (см. `VIDEO_ORCHESTRATION.md`):
+Detailed state machine for the video pipeline — **mirror of audio-orchestrator**, implemented 2026-08-11 (see `VIDEO_ORCHESTRATION.md`):
 
 ```
 GENERATING ──→ WAITING_CHUNKS ──→ MERGING ──→ DONE
@@ -114,16 +114,16 @@ GENERATING ──→ WAITING_CHUNKS ──→ MERGING ──→ DONE
 ```
 
 - Key: `animastor:video-orch:{bookId}:{chapterId}:{sceneId}`
-- Хранит: `phase, groups (unit_ids + статус), groups_received, build_id, dispatch_id`
-- Группы остаются отдельными файлами `_gN.mp4`; `scene.mp4` — только результат склейки ДЛЯ ПЛЕЕРА (не pipeline).
-- Stale-accept: поздние группы со старым dispatch_id принимаются в WAITING_CHUNKS/MERGING.
-- Dirty-регенерация точечная: перегенерируются только группы с грязными юнитами.
-- Watchdog: `checkStalledVideoScenes()` (порог от layer-config), recovery `recoverVideoOrchStates()`.
-- Инвариант: `phase == DONE ⇔ asset.video == READY` (проверяется в reconcileCycle).
+- Stores: `phase, groups (unit_ids + status), groups_received, build_id, dispatch_id`
+- Groups remain separate files `_gN.mp4`; `scene.mp4` — only the concatenated result FOR THE PLAYER (not pipeline).
+- Stale-accept: late groups with old dispatch_id are accepted in WAITING_CHUNKS/MERGING.
+- Dirty-regeneration is targeted: only groups with dirty units are regenerated.
+- Watchdog: `checkStalledVideoScenes()` (threshold from layer-config), recovery `recoverVideoOrchStates()`.
+- Invariant: `phase == DONE ⇔ asset.video == READY` (checked in reconcileCycle).
 
 ### 2.5 Asset State (`state.js`)
 
-High-level per-asset состояния:
+High-level per-asset states:
 
 ```
 NEW → PENDING → GENERATING → READY
@@ -132,43 +132,43 @@ NEW → PENDING → GENERATING → READY
 ```
 
 - Key: `animastor:asset-state:{bookId}:{chapterId}:{sceneId}`
-- Поля: `{ audio, image, video }` ∈ {NEW, PENDING, GENERATING, READY, FAILED, DIRTY, PLACEHOLDER}
-- **Единственный источник истины** для lifecycle с точки зрения scheduler'а.
-- ~~`syncLinearState()`~~ — удалён (T8). Per-asset — единственный source of truth.
+- Fields: `{ audio, image, video }` ∈ {NEW, PENDING, GENERATING, READY, FAILED, DIRTY, PLACEHOLDER}
+- **Single source of truth** for lifecycle from the scheduler's perspective.
+- ~~`syncLinearState()`~~ — removed (T8). Per-asset is the only source of truth.
 
 ### 2.6 Runtime Loop (`runtime-loop.js`)
 
-- **Tick** (каждые 5s): быстрый цикл — сбор active-scenes, вызов scheduler.tick(), counter-reconciliation.
-- **Reconcile** (каждые 60s): полный цикл самовосстановления с distributed lock.
+- **Tick** (every 5s): fast cycle — collect active-scenes, call scheduler.tick(), counter-reconciliation.
+- **Reconcile** (every 60s): full self-healing cycle with distributed lock.
   - Phase A: orphan audio state cleanup
   - Phase B1: orphan file reconciliation
   - Phase C0/C1/C2: active state fixes
-  - Phase C4: counter reconciliation (с PG deps)
+  - Phase C4: counter reconciliation (with PG deps)
   - Phase C5: session resume
   - Phase D: audio-orch invariants check + video-orch invariants check
 
 ### 2.7 Scene Orchestrator (`scene-orchestrator.js`)
 
-Выполняет dispatch по типу: `executeAudioDispatch()`, `executeImageDispatch()`, `executeVideoDispatch()`.
-Каждый:
-1. Вызывает `orchestrator.setSceneGenerating(stage)` через фасад
-2. Готовит данные (segments для audio, IU для image, frames для video)
-3. Отправляет задачу в GPU Hub через `gpu.send()`
-4. Возвращает `{ dispatched, jobs, reason }`
+Executes dispatch by type: `executeAudioDispatch()`, `executeImageDispatch()`, `executeVideoDispatch()`.
+Each:
+1. Calls `orchestrator.setSceneGenerating(stage)` via facade
+2. Prepares data (segments for audio, IU for image, frames for video)
+3. Submits task to GPU Hub via `gpu.send()`
+4. Returns `{ dispatched, jobs, reason }`
 
-Video-ветка дополнительно: инициализирует video-orch state (состав групп + unit_ids),
-перегенерирует только группы с грязными юнитами (точечная dirty-регенерация),
-при полном кэше — fast-track merge без отправки job'ов.
+Video branch additionally: initializes video-orch state (group composition + unit_ids),
+regenerates only groups with dirty units (targeted dirty-regeneration),
+on full cache — fast-track merge without job submission.
 
 ### 2.8 GPU Hub (`gpu-hub/gpu-hub.js`)
 
-Прокси между backend и удалёнными GPU worker'ами:
-- Принимает задачи в Redis-очереди `animastor:queue:{audio|image|video}`
-- Дедуплицирует (`animastor:job:{job_id}`, SET NX EX 3600)
-- Отслеживает heartbeat worker'ов (обновление каждые 10s)
-- Re-queue при timeout (10 min)
+Proxy between backend and remote GPU workers:
+- Accepts tasks into Redis queues `animastor:queue:{audio|image|video}`
+- Deduplicates (`animastor:job:{job_id}`, SET NX EX 3600)
+- Tracks worker heartbeats (updates every 10s)
+- Re-queue on timeout (10 min)
 - Callback: POST /gpu/task/result
-- **GPU_HUB_API_KEY** — опциональная аутентификация (env, не задан → open access)
+- **GPU_HUB_API_KEY** — optional authentication (env, not set → open access)
 
 ### 2.9 Regeneration System
 
@@ -177,31 +177,31 @@ Edit → Save → PUT /api/v1/book/:bookId → disk
   → Regenerate → POST /api/v1/book/:bookId/regenerate
     → computeBookDiff(oldBook, newBook)
     → filterDirtyScenesByScope(scope)
-    → removeScenesFromActiveIndex() (только dirty)
-    → clearLeasesForScenes() (только dirty)
-    → clearGpuHubQueues() (только dirty)
+    → removeScenesFromActiveIndex() (dirty only)
+    → clearLeasesForScenes() (dirty only)
+    → clearGpuHubQueues() (dirty only)
     → markDirtyScenes() (Lua atomic: chunks + state + active index)
     → restoreChunkStatusForScene()
     → Scheduler picks up dirty scenes
 ```
 
-**Dependency Graph (версионный):**
+**Dependency Graph (versioned):**
 ```
 SceneText ──┬──► Audio (mp3)
             └──► UnitText ──► ImagePrompt ──► Image (png) ──► Video (mp4)
-                                              └──► Video НЕ зависит от Audio
+                                              └──► Video does NOT depend on Audio
 ```
-- Audio + Image независимы, параллельны.
-- Video зависит ТОЛЬКО от Image.
-- Audio change НЕ делает Video dirty (видео без звука, mux на экспорте).
+- Audio + Image are independent, parallel.
+- Video depends ONLY on Image.
+- Audio change does NOT make Video dirty (video without sound, mux on export).
 - Cross-cutting: Character.appearance → Image, Character.voice → Audio, Location → Image.
 
-**Data Provenance — как собирается Image Prompt** (`image-service.js` `buildImagePrompt()`):
+**Data Provenance — how Image Prompt is assembled** (`image-service.js` `buildImagePrompt()`):
 
 ```
 Final Image Prompt = [renderMode] + [style] + [location_description]
   + [env_epoch/time/season/weather/mood/atmosphere/lighting] ← scene.location.environment
-    (мёржится с locations.json → environment как fallback: сцена перекрывает шаблон по-полю)
+    (merged with locations.json → environment as fallback: scene overrides template per-field)
   + [shot_type] ← unit.visual.shot
   + [character_passport] ← book.characters[id].passport (via inferCharactersFromPrompt())
   + [character_state] ← scene.state[id] || chapter.state[id]
@@ -209,29 +209,30 @@ Final Image Prompt = [renderMode] + [style] + [location_description]
   + [quality] ← unit.visual.quality || scene.visual.quality
 ```
 
-Персонажи определяются **только** через `inferCharactersFromPrompt()`, сканирующий `visual.prompt` на `character_id`. `unit.participants` удалён (июль 2026).
+Characters are determined **only** through `inferCharactersFromPrompt()`, scanning `visual.prompt` for `character_id`. `unit.participants` has been removed (July 2026).
 
 `resolveVisualStyle()` fallback: `unit.visual.style → scene.visual.style → scene.style → bible.render_rules.style`.
 
 **Prompt Dependency Registry** (`prompt-dependency-registry.js`):
-Единый реестр полей → dirty layers. `diffScene()` и `buildImagePrompt()` читают из одного registry.
+Single registry of fields → dirty layers. `diffScene()` and `buildImagePrompt()` read from the same registry.
+
 ---
 
 ## 3. Dual State Machine (Design)
 
-### 3.1 Зачем две машины
+### 3.1 Why Two Machines
 
-| Аспект | Asset State | Audio-Orch |
+| Aspect | Asset State | Audio-Orch |
 |--------|------------|------------|
 | Key | `scene-assets-state:{bid}:{cid}:{sid}` | `audio-orch:{bid}:{cid}:{sid}` |
-| Фазы | NEW, PENDING, GENERATING, READY, FAILED, DIRTY, PLACEHOLDER | NEW, PLACEHOLDER_READY, GENERATING, WAITING_CHUNKS, MERGING, DONE, FAILED |
-| Семантика | Высокоуровневый статус ассета | Детальный статус аудио-пайплайна |
-| Кто читает | Scheduler (что диспатчить), плеер | watchdogs, recovery, merge |
+| Phases | NEW, PENDING, GENERATING, READY, FAILED, DIRTY, PLACEHOLDER | NEW, PLACEHOLDER_READY, GENERATING, WAITING_CHUNKS, MERGING, DONE, FAILED |
+| Semantics | High-level asset status | Detailed audio pipeline status |
+| Readers | Scheduler (what to dispatch), player | watchdogs, recovery, merge |
 
-**Asset state** — для scheduler'а: «нужно ли диспатчить» (PENDING/DIRTY → да, READY → нет).  
-**Audio-orch** — для пайплайна: «сколько чанков пришло, не пора ли мержить, не застряло ли».
+**Asset state** — for the scheduler: "should I dispatch" (PENDING/DIRTY → yes, READY → no).
+**Audio-orch** — for the pipeline: "how many chunks arrived, time to merge, stuck?"
 
-### 3.2 Инвариант
+### 3.2 Invariant
 
 ```
 audio-orch.phase == DONE   ⇔   asset.audio == READY       [always true]
@@ -240,13 +241,13 @@ audio-orch.phase ∈ {WAITING_CHUNKS, MERGING, GENERATING}
                             ⇒   asset.audio == GENERATING
 ```
 
-Проверяется в `reconcileCycle` → `checkAudioOrchInvariants()`.
+Checked in `reconcileCycle` → `checkAudioOrchInvariants()`.
 
 ---
 
 ## 4. Call Flows
 
-### 4.1 Штатная генерация аудио
+### 4.1 Normal Audio Generation
 
 ```
 Scheduler tick → attemptDispatch()
@@ -273,11 +274,11 @@ Chunk 0009 arrives
     → orchestrator.completeStage('audio')
       → handleAudioCompleted()
       → version gate (PG)
-      → asset.audio = READY  (синхронно с audio-orch DONE)
+      → asset.audio = READY  (synchronous with audio-orch DONE)
       → finalizeDispatch(success)
 ```
 
-### 4.2 Watchdog (timeout)
+### 4.2 Watchdog (Timeout)
 
 ```
 reconcileCycle → checkStalledAudioScenes()
@@ -285,7 +286,7 @@ reconcileCycle → checkStalledAudioScenes()
   → audioOrch.failWaitingScene()
     └─ orchestrator.failStage('audio')
       → asset.audio = FAILED
-      → audio-orch = FAILED (синхронно)
+      → audio-orch = FAILED (synchronous)
       → finalizeDispatch(failure)
 
 Scheduler tick (next)
@@ -293,7 +294,7 @@ Scheduler tick (next)
   → dispatchStage('audio')
     └─ orchestrator.setSceneGenerating('audio')
       → audio-orch FAILED → GENERATING (valid)
-      → dispatch заново
+      → dispatch again
 ```
 
 ### 4.3 Regenerate
@@ -301,7 +302,7 @@ Scheduler tick (next)
 ```
 User edits → POST /regenerate
   → orchestrator.resetScenes()
-    → clearLeases, clear queues (только dirty)
+    → clearLeases, clear queues (dirty only)
     → orchestrator.markDirtyScene('audio')
       → audio-orch DONE? → deleteState
       → asset.audio = DIRTY
@@ -316,135 +317,135 @@ Scheduler tick
       → dispatch to GPU
 ```
 
-### 4.4 Stale recovery (DONE guard)
+### 4.4 Stale Recovery (DONE Guard)
 
 ```
-После рестарта: audio-orch в WAITING_CHUNKS (старая генерация)
-  → Scheduler видит asset.audio = GENERATING
+After restart: audio-orch in WAITING_CHUNKS (old generation)
+  → Scheduler sees asset.audio = GENERATING
   → dispatchStage('audio')
     → orchestrator.setSceneGenerating('audio')
       → setGenerating() → FAILS (WAITING_CHUNKS → GENERATING invalid)
       → stale-phase recovery:
-        → deleteState (только WAITING_CHUNKS/GENERATING/FAILED — НЕ DONE)
+        → deleteState (only WAITING_CHUNKS/GENERATING/FAILED — NOT DONE)
         → initPlaceholderReady → setGenerating ✅
-      → dispatch to GPU (свежая генерация)
+      → dispatch to GPU (fresh generation)
 ```
 
 ---
 
-## 5. Ёмкость и производительность
+## 5. Capacity and Performance
 
-### Текущие лимиты
+### Current Limits
 
-| Ресурс | Максимум | Описание |
-|--------|----------|---------|
-| Audio генерация | 3 одновременно | quota `maxActiveAudio: 3` |
-| Image генерация | 2 одновременно | quota `maxActiveImage: 2` |
-| Video генерация | 1 одновременно | quota `maxActiveVideo: 1` |
-| Scheduler tick | 1 экземпляр | distributed lock |
-| Node.js процесс | 1 (single-threaded) | без кластеризации |
-| Redis | 1 инстанс | Lua-скрипты |
-| GPU Hub | 1 прокси | без шардирования |
+| Resource | Maximum | Description |
+|----------|---------|-------------|
+| Audio generation | 3 concurrent | quota `maxActiveAudio: 3` |
+| Image generation | 2 concurrent | quota `maxActiveImage: 2` |
+| Video generation | 1 concurrent | quota `maxActiveVideo: 1` |
+| Scheduler tick | 1 instance | distributed lock |
+| Node.js process | 1 (single-threaded) | no clustering |
+| Redis | 1 instance | Lua scripts |
+| GPU Hub | 1 proxy | no sharding |
 
-**Система рассчитана на 1–5 concurrent пользователей.** Дизайн под одного пользователя с одной книгой.
+**System designed for 1–5 concurrent users.** Designed for a single user with one book.
 
-### Без усложнения (твик конфигов)
+### Without Code Changes (Config Tweaks)
 
-| Изменение | Результат |
-|-----------|-----------|
-| `maxActiveAudio: 3 → 10` | 3× больше аудио |
-| `maxActiveImage: 2 → 6` | 3× больше image |
-| `maxActiveVideo: 1 → 3` | 3× больше видео |
-| GPU Hub → +1 инстанс | отказоустойчивость |
+| Change | Result |
+|--------|--------|
+| `maxActiveAudio: 3 → 10` | 3× more audio |
+| `maxActiveImage: 2 → 6` | 3× more image |
+| `maxActiveVideo: 1 → 3` | 3× more video |
+| GPU Hub → +1 instance | high availability |
 
-→ **10–15 concurrent пользователей** без нового кода.
+→ **10–15 concurrent users** without new code.
 
-### Для 50+ пользователей
+### For 50+ Users
 
-Нужны: очередь задач (RabbitMQ/Redis Streams), кластеризация Node.js, S3-хранилище, балансировка GPU Hub.
+Required: job queue (RabbitMQ/Redis Streams), Node.js clustering, S3 storage, GPU Hub load balancing.
 
 ---
 
 ## 6. Current Status (verified against code, 19 July 2026)
 
-### ✅ Что работает (проверено по коду)
+### ✅ Working (verified by code review)
 
-| Гипотеза | Статус | Ссылка |
-|----------|--------|--------|
-| Worker syntax error в `waitForFileReady()` | ✅ Исправлено | `worker.cjs` — `node --check` OK |
-| `completeStage()` игнорирует result handler | ✅ Исправлено | `orchestrator.js:119-184` — `handlerOk` обязателен |
-| `failStage()` пишет success finalization | ✅ Исправлено | `orchestrator.js:280-289` → `finalizeDispatch('failure')` |
-| Executor возвращает `dispatched:true` без отправки job | ✅ Исправлено | `scene-orchestrator.js` возвращает `{ dispatched, jobs, reason }` |
-| Lease renewal не стартует | ✅ Исправлено | `dispatch-engine.js:594` — после `dispatched:true` |
-| Runtime tick гоняет полный reconcile без lock | ✅ Исправлено | `runtime-loop.js:65-120` — tick без reconcile |
-| `active-scenes` управляются двумя API | ✅ Исправлено | `runtime-scheduler.js:82-100` → `active-scenes-index.js` |
-| SQL-инъекция в `agent-session.js` | ✅ Исправлено | `services/agent-session.js:21` — `ALLOWED_UPDATE_COLUMNS` |
-| `redis.keys()` блокирует Redis | ✅ Убрано | grep не находит `keys('animastor...')` |
-| ReferenceError `pendingState` в reconcile | ✅ Исправлено | `reconciliation-engine.js:834-851` |
-| GPU Hub auth не передаётся | ✅ Исправлено | `gpu-dispatcher.js:46-49` — `x-api-key` |
+| Hypothesis | Status | Reference |
+|------------|--------|-----------|
+| Worker syntax error in `waitForFileReady()` | ✅ Fixed | `worker.cjs` — `node --check` OK |
+| `completeStage()` ignores result handler | ✅ Fixed | `orchestrator.js:119-184` — `handlerOk` required |
+| `failStage()` writes success finalization | ✅ Fixed | `orchestrator.js:280-289` → `finalizeDispatch('failure')` |
+| Executor returns `dispatched:true` without sending job | ✅ Fixed | `scene-orchestrator.js` returns `{ dispatched, jobs, reason }` |
+| Lease renewal doesn't start | ✅ Fixed | `dispatch-engine.js:594` — after `dispatched:true` |
+| Runtime tick runs full reconcile without lock | ✅ Fixed | `runtime-loop.js:65-120` — tick without reconcile |
+| `active-scenes` managed by two APIs | ✅ Fixed | `runtime-scheduler.js:82-100` → `active-scenes-index.js` |
+| SQL injection in `agent-session.js` | ✅ Fixed | `services/agent-session.js:21` — `ALLOWED_UPDATE_COLUMNS` |
+| `redis.keys()` blocks Redis | ✅ Removed | grep finds no `keys('animastor...')` |
+| ReferenceError `pendingState` in reconcile | ✅ Fixed | `reconciliation-engine.js:834-851` |
+| GPU Hub auth not passed | ✅ Fixed | `gpu-dispatcher.js:46-49` — `x-api-key` |
 
-Дополнительно:
-- `completeStage` НЕ пишет `READY` без `handler.ok === true` + version gate (PG)
-- `failStage` НЕ пишет `recordSuccess` — идёт через `finalizeDispatch('failure')`
-- Lease/quota освобождаются при `dispatched:false`
-- Все production JS проходят `node --check` (syntax-smoke в pretest)
-- **576 тестов passing**, zero warnings про missing mock functions
+Additionally:
+- `completeStage` NEVER writes `READY` without `handler.ok === true` + version gate (PG)
+- `failStage` NEVER writes `recordSuccess` — goes through `finalizeDispatch('failure')`
+- Lease/quota freed on `dispatched:false`
+- All production JS passes `node --check` (syntax-smoke in pretest)
+- **576 tests passing**, zero warnings about missing mock functions
 - Graceful shutdown (SIGTERM/SIGINT) + `/health` endpoint
-- DONE guard в `scene-orchestrator.js`: не перезапускает готовое аудио
-- Stale phase recovery: WAITING_CHUNKS/GENERATING/FAILED → reset; DONE — не трогать
-- Прямые asset-state writes только через `unsafe*` методы (restore-only)
-- `fairness-engine.js` удалён (−618 строк)
-- `failure-taxonomy.js` сокращён с 424 до ~100 строк
-- `retry-budget-manager.js` сокращён с 520 до ~165 строк (только check/consume)
-- Phase C3 удалена из reconciliation (−32 строки)
-- S4: фикс тест-моков — zero warnings
+- DONE guard in `scene-orchestrator.js`: doesn't restart completed audio
+- Stale phase recovery: WAITING_CHUNKS/GENERATING/FAILED → reset; DONE — untouched
+- Direct asset-state writes only through `unsafe*` methods (restore-only)
+- `fairness-engine.js` removed (−618 lines)
+- `failure-taxonomy.js` reduced from 424 to ~100 lines
+- `retry-budget-manager.js` reduced from 520 to ~165 lines (only check/consume)
+- Phase C3 removed from reconciliation (−32 lines)
+- S4: test mock fixes — zero warnings
 
-### ⚠️ Оставшиеся дефекти
+### ⚠️ Remaining Defects
 
-| # | Проблема | Серьёзность | Статус |
-|---|---------|------------|--------|
-| P1 | Прямые writes state в обход фасада (`scene-restoration.js`, `startup-recovery.js`) | Средняя | Используют `unsafe*` методы → приемлемо |
-| P2 | GPU Hub auth: env var не задан в `.env` | Низкая | Код корректный, нужен deploy-секрет |
-| P3 | Counter reconciliation — safety net (нужен) | Средняя | Оставлен, полезен |
-| P4 | Нет единого теста на force-regen + stale файлы | Средняя | Coverage gap |
+| # | Issue | Severity | Status |
+|---|-------|----------|--------|
+| P1 | Direct state writes bypassing facade (`scene-restoration.js`, `startup-recovery.js`) | Medium | Use `unsafe*` methods → acceptable |
+| P2 | GPU Hub auth: env var not set in `.env` | Low | Code correct, needs deploy secret |
+| P3 | Counter reconciliation — safety net (needed) | Medium | Kept, useful |
+| P4 | No single test for force-regen + stale files | Medium | Coverage gap |
 
-### 🔴 Чего НЕ делать (согласовано)
+### 🔴 What NOT To Do (Agreed)
 
-- Не добавлять Kafka, RabbitMQ, BullMQ
-- Не вводить второй state-machine поверх asset FSM
-- Не переносить lifecycle в PostgreSQL одним PR
-- Не переписывать audio pipeline
-- Не добавлять новый reconciliation service
-- Не расширять facade десятками методов (текущих 13 команд достаточно)
+- Don't add Kafka, RabbitMQ, BullMQ
+- Don't introduce a second state machine on top of asset FSM
+- Don't move lifecycle to PostgreSQL in one PR
+- Don't rewrite audio pipeline
+- Don't add a new reconciliation service
+- Don't expand facade beyond 13 commands (current count is sufficient)
 
 ---
 
-## 7. Интеграции
+## 7. Integrations
 
-### 7.1 GPU Hub → Backend callback
+### 7.1 GPU Hub → Backend Callback
 
-`POST /gpu/task/result` — поток:
-1. Валидация: `job_id, result_base64, build_id, dispatch_id, protocol_version`
-2. `parseJobId` → определение stage (audio_chunk/image/video)
-3. `verifyDispatchIdentity` — проверка dispatch-token
-4. Дедуп: `animastor:result-processed:{job_id}:{build_id}` SET NX
-5. `handleTaskResult()` → сохранение файла + завершение stage
+`POST /gpu/task/result` — flow:
+1. Validation: `job_id, result_base64, build_id, dispatch_id, protocol_version`
+2. `parseJobId` → determine stage (audio_chunk/image/video)
+3. `verifyDispatchIdentity` — check dispatch-token
+4. Dedup: `animastor:result-processed:{job_id}:{build_id}` SET NX
+5. `handleTaskResult()` → save file + complete stage
 
 ### 7.2 Frontend (Android)
 
-- `Repository.kt`: кэш чанков по `${id}_${buildId}` — stale cache invalidation
+- `Repository.kt`: chunk cache keyed by `${id}_${buildId}` — stale cache invalidation
 - `GenerateViewModel.kt`: `regenerateFromSnapshot()`, `snapshotCurrentBook()`
-- `EditFragment.kt`: редактор сцены → PUT /api/v1/book/:bookId
+- `EditFragment.kt`: scene editor → PUT /api/v1/book/:bookId
 
 ### 7.3 Storage
 
-| Хранилище | Роль | Кто пишет |
-|-----------|------|-----------|
-| **PG** `scene_assets` | Канон lifecycle | только `orchestrator.*` |
-| **Redis** `asset-state:*` | Кэш для scheduler | только `orchestrator.*` |
-| **Redis** lease/quota | Координация | dispatch-engine |
-| **Redis** chunks | Метаданные чанков | audio-orch |
-| **Файлы** OUTPUT_DIR | Байты | worker → fs |
+| Store | Role | Writer |
+|-------|------|--------|
+| **PG** `scene_assets` | Canonical lifecycle | only `orchestrator.*` |
+| **Redis** `asset-state:*` | Cache for scheduler | only `orchestrator.*` |
+| **Redis** lease/quota | Coordination | dispatch-engine |
+| **Redis** chunks | Chunk metadata | audio-orch |
+| **Files** OUTPUT_DIR | Bytes | worker → fs |
 
 ---
 
@@ -484,54 +485,54 @@ animastor:cleanup-lock                             # reconcile lock
 
 ## 9. Configuration
 
-| Параметр | Файл | Значение |
-|----------|------|----------|
+| Parameter | File | Value |
+|-----------|------|-------|
 | `maxActiveAudio` | `dispatch-engine.js` | 3 |
 | `maxActiveImage` | `dispatch-engine.js` | 2 |
 | `maxActiveVideo` | `dispatch-engine.js` | 1 |
 | `LEASE_TTL_audio` | `lease-manager.js` | 15 min |
 | `LEASE_TTL_image` | `lease-manager.js` | 20 min |
 | `LEASE_TTL_video` | `lease-manager.js` | 30 min |
-| `GPU_TIMEOUT` | `gpu-hub.js` (env `GPU_TIMEOUT`) | 600000 ms (10 min), per-job переопределяется `timeout_ms` из body |
+| `GPU_TIMEOUT` | `gpu-hub.js` (env `GPU_TIMEOUT`) | 600000 ms (10 min), per-job overridden by `timeout_ms` from body |
 | `SCHEDULER_TICK_INTERVAL` | `runtime-loop.js` | 5000 ms |
 | `RECONCILE_INTERVAL_MS` | `runtime-loop.js` | 60000 ms |
 | `AUDIO_CHUNK_STALL_MS` | `runtime-config.js` | 300000 ms |
-| `VIDEO_CHUNK_STALL_MS` | `runtime-config.js` | fallback watchdog; основной порог — из layer-config `video_timeout_minutes` |
-| `video_timeout_minutes` | `layer-config.js` | 60 min (дефолт), 10–180 диапазон |
-| `VIDEO_RESULT_TIMEOUT_MS` | `worker.cjs` (env) | 7200000 ms (2 ч), fallback воркера |
+| `VIDEO_CHUNK_STALL_MS` | `runtime-config.js` | fallback watchdog; main threshold from layer-config `video_timeout_minutes` |
+| `video_timeout_minutes` | `layer-config.js` | 60 min (default), 10–180 range |
+| `VIDEO_RESULT_TIMEOUT_MS` | `worker.cjs` (env) | 7200000 ms (2 hours), worker fallback |
 
 ---
 
 ## 10. Files
 
-| Файл | Строк | Роль |
+| File | Lines | Role |
 |------|-------|------|
-| `backend/src/orchestration/orchestrator.js` | ~500 | Facade — единый владелец состояния |
-| `backend/src/orchestration/scene-orchestrator.js` | ~300 | Выполнение dispatch по типу |
-| `backend/src/orchestration/event-journal.js` | ~100 | Журнал событий (TTL 7d) |
+| `backend/src/orchestration/orchestrator.js` | ~500 | Facade — single state owner |
+| `backend/src/orchestration/scene-orchestrator.js` | ~300 | Dispatch execution by type |
+| `backend/src/orchestration/event-journal.js` | ~100 | Event journal (TTL 7d) |
 | `backend/src/runtime/dispatch-engine.js` | ~960 | Lease, quota, governance |
-| `backend/src/runtime/reconciliation-engine.js` | ~1200 | Самовосстановление (6 фаз) |
+| `backend/src/runtime/reconciliation-engine.js` | ~1200 | Self-healing (6 phases) |
 | `backend/src/runtime/runtime-loop.js` | ~150 | Tick (5s) + reconcile (60s) |
 | `backend/src/runtime/runtime-scheduler.js` | ~320 | Tick dispatch |
 | `backend/src/runtime/lease-manager.js` | ~200 | Redis lease (SET NX + TTL + renewal) |
-| `backend/src/runtime/counter-reconciliation.js` | ~200 | Фикс дрейфа квот |
-| `backend/src/runtime/job-schema.js` | ~100 | Формат job_id |
-| `backend/src/runtime/failure-taxonomy.js` | ~100 | Классификация ошибок |
+| `backend/src/runtime/counter-reconciliation.js` | ~200 | Quota drift fix |
+| `backend/src/runtime/job-schema.js` | ~100 | job_id format |
+| `backend/src/runtime/failure-taxonomy.js` | ~100 | Error classification |
 | `backend/src/runtime/retry-budget-manager.js` | ~165 | Per-scene retry budget |
-| `backend/src/state/scene-state.js` | ~250 | Per-asset state (unsafe* методы) |
+| `backend/src/state/scene-state.js` | ~250 | Per-asset state (unsafe* methods) |
 | `backend/src/services/audio-orchestrator.js` | ~450 | Audio phase machine |
-| `backend/src/services/video-orchestrator.js` | ~400 | Video phase machine (группы, merge для плеера) |
-| `backend/src/video/video-merge.js` | ~210 | Склейка групп → scene.mp4 (NX-лок) |
-| `backend/src/services/task-handler.cjs` | ~300 | Callback обработка |
+| `backend/src/services/video-orchestrator.js` | ~400 | Video phase machine (groups, merge for player) |
+| `backend/src/video/video-merge.js` | ~210 | Group concatenation → scene.mp4 (NX lock) |
+| `backend/src/services/task-handler.cjs` | ~300 | Callback handling |
 | `backend/src/services/gen-scope.js` | ~130 | Scope management |
 | `backend/src/services/layer-config.js` | ~120 | Profile management |
 | `backend/src/services/book-diff.cjs` | ~360 | Diff scenes, mark dirty |
 | `backend/src/services/prompt-dependency-registry.js` | ~200 | Prompt field → dirty layer |
-| `backend/src/services/startup-recovery.js` | ~300 | 5-step recovery на старте |
+| `backend/src/services/startup-recovery.js` | ~300 | 5-step recovery on startup |
 | `backend/src/runtime/scene-window.js` | ~680 | Window slide, cache check |
-| `gpu-hub/gpu-hub.js` | ~400 | GPU прокси |
+| `gpu-hub/gpu-hub.js` | ~400 | GPU proxy |
 | `worker/worker/worker.cjs` | ~250 | GPU worker |
 
 <!-- === Footer === -->
 ---
-*Единый документ оркестрации. Обновлён 11 августа 2026 (видео-оркестрация).*
+*Single orchestration document. Updated 11 August 2026 (video orchestration).*
