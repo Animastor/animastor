@@ -11,21 +11,21 @@
 | Metric | Count |
 |--------|-------|
 | Total markdown files scanned | 199 |
-| Files containing Russian text | ~68 |
-| Files translated (this session) | 29 |
-| Files remaining with Russian | ~39 |
-| Estimated work remaining | ~20% of files |
+| Files containing Russian text | ~67 |
+| Files translated (all sessions) | ~75 |
+| Files remaining with Russian | ~67 |
+| Estimated work remaining | ~34% of files |
 
 ---
 
-## Language Distribution (Pre-Translation)
+## Language Distribution (Current)
 
 | Category | Files | Description |
 |----------|-------|-------------|
-| **EN** (pure English) | 88 | Already in English, no changes needed |
+| **EN** (pure English) | 132 | Already in English, no changes needed |
 | **MIXED_LIGHT** (<30% RU) | 13 | Minor Russian phrases, mostly English |
-| **MIXED_HEAVY** (30-70% RU) | 85 | Significant Russian content mixed with English |
-| **RU** (mostly Russian) | 13 | Predominantly Russian, requires full translation |
+| **MIXED_HEAVY** (30-70% RU) | 48 | Significant Russian content mixed with English |
+| **RU** (mostly Russian) | 6 | Predominantly Russian, requires full translation |
 
 ---
 
@@ -97,6 +97,60 @@
 | `UNIT_SPLIT_POST_STEP.md` | ✅ Translated | Unit split post-step |
 | `WORKFLOWS.md` | ✅ Translated | Workflow system overview |
 | `SCENE_PIPELINE.md` | ✅ Translated | Scene pipeline architecture |
+
+### docs/07-agents-and-generators/ (5 files)
+| File | Status | Notes |
+|------|--------|-------|
+| `AGENTS.md` | ✅ Translated | Agents pipeline architecture |
+| `GENERATORS.md` | ✅ Translated | Generator types |
+| `IU_MODAL_REFACTORING.md` | ✅ Translated | IU modal refactoring |
+| `LANGUAGE_ARCHITECTURE.md` | ✅ Translated | Language architecture |
+| `DIALOGUE_TTS_PIPELINE.md` | ✅ Translated | Dialogue TTS pipeline |
+
+### docs/08-mobile-web-migration/ (8 files)
+| File | Status | Notes |
+|------|--------|-------|
+| `README.md` | ✅ Translated | Migration overview |
+| `01-MIGRATION-STRATEGY.md` | ✅ Translated | Migration strategy |
+| `02-DESIGN-PRESERVATION-PRINCIPLES.md` | ✅ Translated | Design preservation principles |
+| `03-MOBILE-WEB-ARCHITECTURE.md` | ✅ Translated | Mobile/web architecture |
+| `04-MAPPING-TABLES.md` | ✅ Translated | Component mapping tables |
+| `05-SCREEN-IMPLEMENTATION-ORDER.md` | ✅ Translated | Screen implementation order |
+| `06-RISKS-AND-ALTERNATIVES.md` | ✅ Translated | Risks and alternatives |
+| `07-MOBILE-WEB-TESTER.md` | ✅ Translated | Mobile/web tester |
+| `TODO.md` | ✅ Translated | Migration TODO |
+
+### docs/09-desktop-migration/ (2 files)
+| File | Status | Notes |
+|------|--------|-------|
+| `README.md` | ✅ Translated | Desktop migration overview |
+| `02-PROGRESS.md` | ✅ Translated | Migration progress |
+
+### docs/architecture/ (2 files)
+| File | Status | Notes |
+|------|--------|-------|
+| `decisions.md` | ✅ Translated | Architecture decisions |
+| `roadmap.md` | ✅ Translated | Architecture roadmap |
+
+### docs/03-audit/ (additional files this session)
+| File | Status | Notes |
+|------|--------|-------|
+| `PLAYER_AUDIT.md` | ✅ Translated | Player audit |
+| `AUDIO_8_9_RACE_CONDITION.md` | ✅ Translated | Audio race condition analysis |
+| `DEPENDENCY_ANALYSIS.md` | ✅ Translated | Dependency analysis |
+| `DELETE_LIFECYCLE_AUDIT.md` | ✅ Translated | Delete lifecycle audit |
+| `PLAYER_AUDIO_MASTER_TIMELINE_TODO.md` | ✅ Translated | Player audio timeline TODO |
+| `PLAYER_AUDIO_MASTER_TIMELINE.md` | ✅ Translated | Player audio timeline audit |
+| `CROSS_PROMPT_CONSISTENCY.md` | ✅ Translated | Cross-prompt consistency |
+| `CONTEXT_POISONING_RULES_EXAMPLES.md` | ✅ Translated | Context poisoning rules |
+| `image-ghost-runtime-incident-forensic-2026-08-28.md` | ✅ Translated | Image ghost incident forensic |
+| `image-ghost-generating-forensic-audit-2026-08-28.md` | ✅ Translated | Image ghost forensic audit |
+
+### docs/99-archive/ (2 files)
+| File | Status | Notes |
+|------|--------|-------|
+| `ARCHITECTURE_REVIEW.md` | ✅ Translated | Architecture review |
+| `LLM_AUDIT_CONTEXT.md` | ✅ Translated | LLM audit context |
 
 ### docs/07-agents-and-generators/ (2 files)
 | File | Status | Notes |
