@@ -1,171 +1,171 @@
-# Архитектурная эссенция Animastor
+# The Architectural Essence of Animastor
 
-Рассматривать книгу не как набор текста, а как процесс чтения.
+Think of a book not as a collection of text, but as a reading process.
 
-Animastor моделирует не литературоведа и не систему полного анализа произведения.
+Animastor does not model a literary critic or a complete analysis system.
 
-Animastor моделирует читателя.
-
----
-
-## Основной принцип
-
-Книга читается последовательно.
-
-Система знает только то, что уже было прочитано.
-
-Мир книги не строится заранее.
-
-Мир книги постепенно формируется по мере чтения произведения.
+Animastor models a reader.
 
 ---
 
-## Источники истины
+## Core Principle
 
-**Источник истины №1:**
+A book is read sequentially.
 
-TXT-файл книги.
+The system knows only what has already been read.
 
-Это оригинальный текст произведения.
+Book world is not built in advance.
 
-**Источник истины №2:**
+Book world gradually forms as the work is read.
+
+---
+
+## Sources of Truth
+
+**Source of Truth #1:**
+
+The book's TXT file.
+
+This is the original text of the work.
+
+**Source of Truth #2:**
 
 `currentOffset`.
 
-Это текущая позиция чтения.
+This is the current reading position.
 
-Позиция чтения является абсолютным источником истины для всей системы.
+The reading position is the absolute source of truth for the entire system.
 
-Следующее окно всегда начинается с позиции окончания предыдущего окна.
+The next window always begins at the position where the previous window ended.
 
-**Источник истины №3:**
+**Source of Truth #3:**
 
-JSON книги.
+The book's JSON.
 
-JSON является памятью прочитанного.
+JSON is the memory of what has been read.
 
-Это не просто результат генерации.
+It is not just a generation result.
 
-Это структурированная память о том, что уже было прочитано и понято системой.
+It is structured memory of what has already been read and understood by the system.
 
 ---
 
-## Что такое JSON
+## What JSON Is
 
-JSON является первым уровнем памяти книги.
+JSON is the first level of book memory.
 
-По сути это каркас прочитанного произведения.
+It is essentially the skeleton of the read work.
 
-TXT содержит книгу.
+TXT contains the book.
 
-JSON содержит понимание уже прочитанной части книги.
+JSON contains the understanding of the already-read portion of the book.
 
-Таким образом происходит преобразование:
+Thus, the transformation is:
 
 ```
 TXT
-→ Чтение
-→ Понимание
+→ Reading
+→ Understanding
 → JSON
 ```
 
-Каждое новое окно чтения должно иметь возможность использовать уже накопленную память из ранее сформированного JSON.
+Each new reading window must be able to use the accumulated memory from the previously formed JSON.
 
 ---
 
-## Формирование мира книги
+## Book World Formation
 
-Мир книги возникает не до чтения.
+Book world does not emerge before reading.
 
-Мир книги возникает в процессе чтения.
+Book world emerges during reading.
 
-Каждое новое окно:
+Each new window:
 
-- читает следующий фрагмент текста;
-- использует уже накопленную память;
-- расширяет существующую память;
-- сохраняет результат обратно в JSON.
+- reads the next text fragment;
+- uses accumulated memory;
+- extends existing memory;
+- saves the result back to JSON.
 
-Таким образом память постепенно растёт вместе с продвижением по книге.
-
----
-
-## Персонажи
-
-Персонажи не являются фиксированными объектами.
-
-Персонажи постепенно уточняются по мере чтения.
-
-Новые сведения могут:
-
-- дополнять образ;
-- уточнять образ;
-- заменять устаревшие характеристики.
-
-Например:
-
-Глава 1:
-персонаж гладко выбрит.
-
-Глава 20:
-персонаж носит бороду.
-
-Для визуализации используется наиболее актуальное состояние персонажа на текущий момент чтения.
-
-Таким образом персонаж развивается вместе с повествованием.
+Thus, memory grows gradually along with progress through the book.
 
 ---
 
-## Локации
+## Characters
 
-Локации также формируются накопительно.
+Characters are not fixed objects.
 
-Если появляется новое описание локации, оно дополняет уже известное описание.
+Characters are refined gradually as reading progresses.
 
-Если появляются уточнения, память локации расширяется.
+New information can:
 
-Недостающие детали допускается достраивать средствами модели, исходя из контекста произведения и культурной среды текста.
+- supplement the image;
+- refine the image;
+- replace outdated characteristics.
 
----
+For example:
 
-## Разведка вперёд
+Chapter 1:
+character is clean-shaven.
 
-Допускается ограниченный просмотр текста вперёд.
+Chapter 20:
+character wears a beard.
 
-Разведка служит только для улучшения локального контекста.
+For visualization, the most current state of the character at the current reading moment is used.
 
-Разведка не должна изменять порядок чтения.
-
-Разведка не должна менять `currentOffset`.
-
-Разведка не должна использоваться для перескока по книге.
-
----
-
-## Развитие памяти
-
-На текущем этапе JSON является основной памятью книги.
-
-В будущем память может расширяться дополнительными структурами данных и базой данных.
-
-Но эти структуры должны рассматриваться как развитие существующей памяти, а не как отдельная система.
-
-Основой остаётся накопление знаний в процессе последовательного чтения.
+Thus, the character evolves with the narrative.
 
 ---
 
-## Целевая модель
+## Locations
+
+Locations are also accumulated.
+
+If a new location description appears, it supplements the existing description.
+
+If clarifications appear, the location memory is extended.
+
+Missing details may be filled in by the model, based on the work's context and the text's cultural setting.
+
+---
+
+## Forward Scouting
+
+A limited forward look at the text is permitted.
+
+Scouting serves only to improve local context.
+
+Scouting must not change the reading order.
+
+Scouting must not change `currentOffset`.
+
+Scouting must not be used to skip ahead in the book.
+
+---
+
+## Memory Development
+
+At the current stage, JSON is the primary book memory.
+
+In the future, memory may expand with additional data structures and a database.
+
+But these structures should be seen as evolution of existing memory, not a separate system.
+
+The foundation remains the accumulation of knowledge through sequential reading.
+
+---
+
+## Target Model
 
 ```
 TXT
-→ Последовательное чтение
-→ Память прочитанного (JSON)
-→ Накопление знаний
-→ Обогащение мира книги
+→ Sequential reading
+→ Read memory (JSON)
+→ Knowledge accumulation
+→ Book world enrichment
 ```
 
-Мы не строим модель книги заранее.
+We do not build a book model in advance.
 
-Мы читаем книгу и постепенно строим память о ней.
+We read the book and gradually build memory about it.
 
-Память рождается из чтения.
+Memory is born from reading.
