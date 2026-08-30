@@ -1,13 +1,13 @@
-# TODO: Оставшиеся баги аудита оркестрации
+# TODO: Remaining Orchestration Audit Bugs
 
-**Дата:** 2026-07-16
-**Основание:** Фильтрация `docs/03-audit/ORCHESTRATION_FULL_AUDIT.md` (B1–B9, P1–P10)
-**Контекст:** T1–T8 (архитектурная консолидация) **выполнены** — см. `ORCHESTRATION_CONSOLIDATION_TODO.md` (✅ R1–R8/K1–K9 закрыты).  
-Ниже — только то, что **реально осталось сломано** после T1–T8.
+**Date:** 2026-07-16
+**Basis:** Filtered from `docs/03-audit/ORCHESTRATION_FULL_AUDIT.md` (B1–B9, P1–P10)
+**Context:** T1–T8 (architectural consolidation) **completed** — see `ORCHESTRATION_CONSOLIDATION_TODO.md` (✅ R1–R8/K1–K9 closed).
+Below — only what is **actually still broken** after T1–T8.
 
 ---
 
-## 🔴 P0 — Критические баги (ломают прод)
+## 🔴 P0 — Critical Bugs (break production)
 
 ### Б1. ReferenceError в `applyFix MOVE_TO_PENDING` ✅
 
@@ -48,7 +48,7 @@
 
 ---
 
-## 🟡 P1 — Высокая важность
+## 🟡 P1 — High Importance
 
 ### Б5. `releaseQuota` на backpressure path (дрифт счётчика) ✅
 
@@ -80,7 +80,7 @@ Quota не была захвачена (Lua вернул 0), так что relea
 
 ---
 
-## 🟢 P2 — Средняя важность
+## 🟢 P2 — Medium Importance
 
 ### Б6. `refillBudgets` с wildcard `*` ✅
 
@@ -101,7 +101,7 @@ Quota не была захвачена (Lua вернул 0), так что relea
 
 ---
 
-## ⚪ P3 — Низкая приоритет / Cleanup
+## ⚪ P3 — Low Priority / Cleanup
 
 ### Консолидация FakeRedis
 `FakeRedis` дублирован в 6+ тестовых файлах с разными возможностями. Нужен один общий мок.
@@ -149,32 +149,32 @@ Quota не была захвачена (Lua вернул 0), так что relea
 
 ---
 
-## Статус исправлений
+## Fix Status
 
-| Блок | Приоритет | Статус | Коммит |
+| Block | Priority | Status | Commit |
 |---|---|---|---|
-| Б1 ReferenceError в applyFix | 🔴 P0 | ✅ | `8d0a079` |
-| Б2 sceneState undefined | 🔴 P0 | ✅ | `8d0a079` |
-| Б3 lease не продлевается | 🔴 P0 | ✅ | `af017f2` |
-| Б4 SQL-инъекция | 🔴 P0 | ✅ | `9457af3` |
-| Б5 releaseQuota на backpressure | 🟡 P1 | ✅ | `5dcb091` |
-| Б7 redis.keys() → SCAN | 🟡 P1 | ✅ | `5dcb091` |
-| Б9 isStarving создаёт новый Redis | 🟡 P1 | ✅ | `5dcb091` |
-| Б6 refillBudgets wildcard `*` | 🟢 P2 | ✅ | `fe9e02f` |
-| Б8 recordSuccess OPEN→HALF_OPEN | 🟢 P2 | ✅ | `fe9e02f` |
+| B1 ReferenceError in applyFix | 🔴 P0 | ✅ | `8d0a079` |
+| B2 sceneState undefined | 🔴 P0 | ✅ | `8d0a079` |
+| B3 lease not renewing | 🔴 P0 | ✅ | `af017f2` |
+| B4 SQL injection | 🔴 P0 | ✅ | `9457af3` |
+| B5 releaseQuota on backpressure | 🟡 P1 | ✅ | `5dcb091` |
+| B7 redis.keys() → SCAN | 🟡 P1 | ✅ | `5dcb091` |
+| B9 isStarving creates new Redis | 🟡 P1 | ✅ | `5dcb091` |
+| B6 refillBudgets wildcard `*` | 🟢 P2 | ✅ | `fe9e02f` |
+| B8 recordSuccess OPEN→HALF_OPEN | 🟢 P2 | ✅ | `fe9e02f` |
 
-## Остаётся (P3 — Cleanup, не баги)
+## Remaining (P3 — Cleanup, not bugs)
 
-- P3 → Тесты: reconciliation-engine (1468 строк без тестов)
-- P3 → Консолидация FakeRedis (5 из 6 файлов всё ещё определяют свой FakeRedis, есть общий `tests/mocks/redis-mock.js`)
-- P3 → Worker: OOM (base64 in memory), fs.writeFileSync блокирует event loop, ESM/CJS mix
+- P3 → Tests: reconciliation-engine (1468 lines without tests)
+- P3 → FakeRedis consolidation (5 of 6 files still define their own FakeRedis, shared `tests/mocks/redis-mock.js` exists)
+- P3 → Worker: OOM (base64 in memory), fs.writeFileSync blocks event loop, ESM/CJS mix
 
-## Выполнено (Cleanup, эту сессию)
+## Completed (Cleanup, this session)
 
-- ✅ `coreference-cleanup.test.js` удалён (пустой файл)
-- ✅ `retention-manager.js`: unreachable return убран
+- ✅ `coreference-cleanup.test.js` removed (empty file)
+- ✅ `retention-manager.js`: unreachable return removed
 - ✅ `gpu-hub/gpu-hub.js`: hardcoded Redis URL → `process.env.REDIS_URL || "redis://animastor-redis:6379"`
-- ✅ Coverage reporting: `nyc` в devDependencies, `test:coverage` скрипт в `package.json`
+- ✅ Coverage reporting: `nyc` in devDependencies, `test:coverage` script in `package.json`
 
 ## T9–T10: GPU Hub contract и финальная проверка — ВЫПОЛНЕНО ✅
 

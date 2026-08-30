@@ -1,11 +1,11 @@
-# Ёмкость и сложность системы оркестрации
+# Orchestration System Capacity and Complexity
 
-> **Дата:** 19 июля 2026
-> **Вопрос:** На сколько пользователей рассчитана система, если довести до ума без усложнения? Система не переусложнена?
+> **Date:** July 19, 2026
+> **Question:** How many users is the system designed for if polished without adding complexity? Is the system over-engineered?
 
 ---
 
-## 1. Текущие лимиты системы
+## 1. Current System Limits
 
 | Ресурс | Максимум | Узкое место |
 |--------|----------|-------------|
@@ -25,7 +25,7 @@
 
 ---
 
-## 2. Почему не больше
+## 2. Why Not More
 
 ### 2.1 Quota жёстко зашиты в коде
 
@@ -72,7 +72,7 @@ Instance 2: CLEANUP_LOCK занят → SKIP → 60s → SKIP → ... вечно
 
 ---
 
-## 3. Что можно сделать без усложнения
+## 3. What Can Be Done Without Adding Complexity
 
 Если не строить полноценный SaaS, а просто дать системе дышать:
 
@@ -87,9 +87,9 @@ Instance 2: CLEANUP_LOCK занят → SKIP → 60s → SKIP → ... вечно
 
 ---
 
-## 4. Что нужно для 50+ пользователей
+## 4. What's Needed for 50+ Users
 
-Для **50+ concurrent пользователей** уже понадобится архитектурная работа:
+For **50+ concurrent users**, architectural work will be required:
 
 | Компонент | Сейчас | Нужно |
 |-----------|--------|-------|
@@ -104,9 +104,9 @@ Instance 2: CLEANUP_LOCK занят → SKIP → 60s → SKIP → ... вечно
 
 ---
 
-## 5. Система не переусложнена?
+## 5. Is the System Over-Engineered?
 
-### 5.1 ✅ Что оправдано
+### 5.1 ✅ What's Justified
 
 | Механизм | Почему |
 |----------|--------|
@@ -118,7 +118,7 @@ Instance 2: CLEANUP_LOCK занят → SKIP → 60s → SKIP → ... вечно
 | **Event journal** | Отладка без него — ад. "Почему сцена не сгенерировалась?" — заглянул в journal и увидел последнее событие. |
 | **Version gate (PG перед READY)** | Без него stale артефакты — тихий убийца консистентности. Была проблема — решилась version gate'ом. |
 
-### 5.2 ⚠️ Что, скорее всего, избыточно
+### 5.2 ⚠️ What's Likely Excessive
 
 | Механизм | Строк кода | Вердикт | Почему |
 |----------|-----------|---------|--------|
@@ -136,7 +136,7 @@ Instance 2: CLEANUP_LOCK занят → SKIP → 60s → SKIP → ... вечно
 - lease renewal (в `lease-manager.js`)
 - C3/C4/C5 из `reconciliation-engine.js`
 
-### 5.3 Чего не хватает для production-readiness
+### 5.3 What's Missing for Production-Readiness
 
 | Компонент | Статус | Описание |
 |-----------|--------|----------|
@@ -150,9 +150,9 @@ Instance 2: CLEANUP_LOCK занят → SKIP → 60s → SKIP → ... вечно
 
 ---
 
-## 6. Итоговый вердикт
+## 6. Final Verdict
 
-### Система НЕ переусложнена для production-сервиса с GPU-генерацией
+### The System Is NOT Over-Engineered for a Production GPU Generation Service
 
 Каждый механизм решает реальную проблему, которая была в продакшне:
 - stale артефакты → version gate
@@ -161,11 +161,11 @@ Instance 2: CLEANUP_LOCK занят → SKIP → 60s → SKIP → ... вечно
 - зависшие чанки → watchdog
 - потерянные результаты → recovery phase
 
-### Система переусложнена, если это хобби-проект одного разработчика
+### The System IS Over-Engineered If This Is a Solo Developer Hobby Project
 
 4 уровня retry, fairness engine, failure taxonomy с 100 строками pattern matching — это **overengineering для сценария "один пользователь нажимает generate"**.
 
-### Практический план упрощения
+### Practical Simplification Plan
 
 ```
 Шаг 1: Удалить retry-budget-manager.js + fairness-engine.js + failure-taxonomy.js  (~500 строк)
@@ -178,7 +178,7 @@ Instance 2: CLEANUP_LOCK занят → SKIP → 60s → SKIP → ... вечно
 
 После этого система станет **понятнее на 30%** без потери надёжности.
 
-### Производительность
+### Performance
 
 | Сценарий | Пользователей | Что менять |
 |----------|---------------|------------|
