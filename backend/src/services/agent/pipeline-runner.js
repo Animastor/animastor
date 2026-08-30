@@ -412,6 +412,13 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     if (analysisMode === layerConfig.ANALYSIS_MODES.PARALLEL) {
         const parallelOrchestrator = require('./parallel-analysis-orchestrator');
         publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: effectiveChunkSize, message: PROGRESS_STAGES.extracting_chars });
+        // Wrapper that stamps bookId on every per-task progress event so the
+        // SSE channel can route it to the correct subscriber.
+        const publishAnalysis = (event) => {
+            if (publishProgress && bookId) {
+                try { publishProgress(bookId, event); } catch (_) { /* best-effort */ }
+            }
+        };
         try {
             analysisOrchestratorResult = await parallelOrchestrator.run({
                 // Voices is intentionally NOT in the orchestrator's task list
@@ -434,6 +441,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
                 promptProfiles: options.promptProfiles,
                 stepIndex,
                 publishVBook: _progress,
+                publishAnalysis,
                 checkCancelled,
                 parallelism: analysisParallelism,
             });

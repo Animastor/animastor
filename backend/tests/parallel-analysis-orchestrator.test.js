@@ -274,6 +274,35 @@ it('runs three tasks: characters + locations in wave 1, voices after characters 
         expect(err.message).to.match(/sessionId is required/);
     });
 
+    it('emits per-task analysis events with the spec shape', async () => {
+        const events = [];
+        await orchestrator.run({
+            ...baseCtx,
+            characters: [{ id: 'r', name: 'Real' }],
+            analyzers: makeAnalyzers({
+                characters: async () => ({ characters: [{ id: 'r', name: 'Real' }], mentions: {} }),
+                locations:  async () => [{ id: 'l', name: 'L' }],
+                voices:     async () => ({ voices: { r: 'soft' } }),
+            }),
+            taskIds: ['characters', 'locations', 'voices'],
+            parallelism: 3,
+            publishAnalysis: (e) => events.push(e),
+        });
+
+        // Every task must have emitted task_started + task_completed.
+        const completed = events.filter((e) => e.type === 'analysis' && e.event === 'task_completed');
+        expect(completed).to.have.lengthOf(3);
+        for (const e of completed) {
+            expect(e.type).to.equal('analysis');
+            expect(e.status).to.equal('completed');
+            expect(e.total_tasks).to.equal(3);
+            expect(typeof e.completed_tasks).to.equal('number');
+            expect(typeof e.failed_tasks).to.equal('number');
+            expect(typeof e.duration_ms).to.equal('number');
+            expect(e.duration_ms).to.be.at.least(0);
+        }
+    });
+
     it('can orchestrate voices as wave-2 dependency (future milestone hook)', async () => {
         // The orchestrator's voices entry is available but the pipeline-runner
         // currently runs voices in its legacy slot (because voices mutates
@@ -281,7 +310,7 @@ it('runs three tasks: characters + locations in wave 1, voices after characters 
         // merge logic moves inside the orchestrator (next milestone), the
         // pipeline can drop voices from its own loop and pass all three task
         // ids here. This test pins the dependency wave ordering.
-        const calls = { characters: 0, voices: 0, chars_done_at: 0, voices_start_at: 0 };
+        const calls = { characters: 0, voices: 0 };
         const result = await orchestrator.run({
             ...baseCtx,
             characters: [{ id: 'r', name: 'Real', appearance: 'described' }],

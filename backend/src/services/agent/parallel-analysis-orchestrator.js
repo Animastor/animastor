@@ -167,7 +167,10 @@ function planTasks(taskIds) {
  * @param {string}   input.language
  * @param {Object}   input.promptProfiles
  * @param {number}   input.stepIndex
- * @param {Function} input.publishVBook        progress publisher (side-effect free)
+ * @param {Function} input.publishVBook        progress publisher for 'vbook' events (side-effect free)
+ * @param {Function} input.publishProgress     OPTIONAL publisher for 'analysis' per-task events.
+ *                                            If omitted, no per-task events are emitted.
+ *                                            Shape: publishProgress(bookId, { type:'analysis', ... })
  * @param {Function} input.checkCancelled      async fn that throws on cancellation
  * @param {number}   [input.parallelism=3]     max concurrent AI calls (1..8)
  * @param {Function} [input.onTaskEvent]       optional hook (event, task, completed, total)
@@ -205,6 +208,7 @@ async function run(input) {
         promptProfiles,
         stepIndex,
         publishVBook = () => {},
+        publishAnalysis = null,
         checkCancelled = async () => {},
         parallelism = 3,
         onTaskEvent = null,
@@ -272,6 +276,37 @@ async function run(input) {
         voicesResult: null,
     };
 
+    // Per-task progress event hook: emit a lightweight 'analysis' event on
+    // every task transition so the SSE channel can render a live
+    // "Analysis: N/M" counter and per-task status without polling.
+    // Shape:
+    //   { type: 'analysis', task, status, completed_tasks, total_tasks,
+    //     duration_ms? , error? }
+    // The 'analysis' type is NEW and additive — the existing 'vbook' type
+    // is unchanged. Frontends can subscribe to either channel.
+    //
+    // publishAnalysis(event) is provided by the caller (typically a thin
+    // wrapper that prepends bookId to publishProgress(bookId, event)). If
+    // null, no per-task events are emitted — the rest of the contract
+    // (lifecycle, failure isolation, cancellation) still holds.
+    const fireAnalysis = (event, task, statusOverride) => {
+        if (typeof publishAnalysis !== 'function') return;
+        const status = statusOverride || task.status;
+        try {
+            publishAnalysis({
+                type: 'analysis',
+                task: task.id,
+                status,
+                completed_tasks: completedCount,
+                failed_tasks: failedCount,
+                total_tasks: total,
+                duration_ms: task.durationMs,
+                error: task.error,
+                event,
+            });
+        } catch (_) { /* best-effort */ }
+    };
+
     for (const wave of waves) {
         if (cancelled) break;
 
@@ -281,11 +316,13 @@ async function run(input) {
                 if (cancelled) {
                     task.status = TASK_STATUS.CANCELLED;
                     fire('task_skipped', task);
+                    fireAnalysis('task_skipped', task);
                     return;
                 }
                 task.status = TASK_STATUS.RUNNING;
                 task.startedAt = Date.now();
                 fire('task_started', task);
+                fireAnalysis('task_started', task);
                 try {
                     // Cancellation gate at task start — fast no-op when not cancelled.
                     await checkCancelled();
@@ -297,6 +334,7 @@ async function run(input) {
                     task.finishedAt = Date.now();
                     task.durationMs = task.finishedAt - task.startedAt;
                     fire('task_completed', task);
+                    fireAnalysis('task_completed', task);
                 } catch (err) {
                     // Cancellation propagates as a thrown error from the
                     // step itself or from checkCancelled. Mark cancelled
@@ -306,6 +344,7 @@ async function run(input) {
                         task.error = err.message;
                         cancelled = true;
                         fire('task_cancelled', task);
+                        fireAnalysis('task_cancelled', task);
                         return;
                     }
                     task.status = TASK_STATUS.FAILED;
@@ -317,6 +356,7 @@ async function run(input) {
                     // does not mean the pipeline failed (failure isolation).
                     console.warn(`[PARALLEL-ANALYSIS] task ${task.id} failed: ${task.error}`);
                     fire('task_failed', task);
+                    fireAnalysis('task_failed', task);
                 }
             });
         });
