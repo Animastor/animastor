@@ -60,6 +60,87 @@ function createRealIo() {
                 error: r.error ? String(r.error.message || r.error) : null,
             };
         },
+        /**
+         * Asynchronous command execution — same result shape as exec(), but
+         * the Node event loop stays free, so the terminal busy spinner keeps
+         * animating while a long pip/npm/git step runs. Used for the slow
+         * steps (pip install requirements/torch, …).
+         *
+         * Options: { cwd, env, timeout, onLine }.
+         * `onLine(line)` receives COMPLETE output lines as they are produced
+         * (both streams), with carriage-return progress-bar redraws filtered
+         * out — useful output (Collecting/Installing/Successfully…) can be
+         * surfaced through the terminal renderer while the full raw output is
+         * still captured for diagnostics and error messages.
+         */
+        async execAsync(command, args = [], opts = {}) {
+            const { cwd, env, timeout = 10 * 60 * 1000, onLine = null } = opts;
+            return await new Promise((resolve) => {
+                let child;
+                try {
+                    child = spawn(command, args, { cwd, env: env || process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+                } catch (err) {
+                    resolve({ code: -1, stdout: '', stderr: '', error: String(err.message || err) });
+                    return;
+                }
+                let stdout = '';
+                let stderr = '';
+                let outBuf = '';
+                let errBuf = '';
+                let settled = false;
+                let timedOut = false;
+
+                const emitLines = (bufferKey, chunk) => {
+                    let buf = bufferKey === 'out' ? outBuf : errBuf;
+                    buf += chunk;
+                    const parts = buf.split('\n');
+                    buf = parts.pop(); // last (possibly incomplete) segment stays buffered
+                    for (const line of parts) {
+                        if (onLine && !line.includes('\r')) onLine(line);
+                    }
+                    if (bufferKey === 'out') outBuf = buf; else errBuf = buf;
+                };
+
+                const timer = setTimeout(() => {
+                    timedOut = true;
+                    try { child.kill('SIGTERM'); } catch (_) { /* already gone */ }
+                }, timeout);
+
+                const finish = (code, error = null) => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    resolve({
+                        code,
+                        stdout,
+                        stderr,
+                        error: timedOut ? `timed out after ${timeout} ms` : error,
+                    });
+                };
+
+                child.stdout.setEncoding('utf8');
+                child.stdout.on('data', (chunk) => {
+                    stdout += chunk;
+                    emitLines('out', chunk);
+                });
+                child.stderr.setEncoding('utf8');
+                child.stderr.on('data', (chunk) => {
+                    stderr += chunk;
+                    emitLines('err', chunk);
+                });
+                child.on('error', (err) => finish(-1, String(err.message || err)));
+                child.on('close', (code) => {
+                    // flush trailing lines that were not newline-terminated
+                    if (onLine) {
+                        if (outBuf !== '' && !outBuf.includes('\r')) onLine(outBuf);
+                        if (errBuf !== '' && !errBuf.includes('\r')) onLine(errBuf);
+                        outBuf = '';
+                        errBuf = '';
+                    }
+                    finish(code === null ? -1 : code);
+                });
+            });
+        },
         /** Detached long-running process (ComfyUI server). Returns pid. */
         spawnDaemon(command, args = [], opts = {}) {
             const out = opts.logFile

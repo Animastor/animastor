@@ -498,7 +498,7 @@ describe('engine: broken/incomplete existing venv', () => {
         assert.strictEqual(calls.exec.filter((c) => c.cmd === 'python3' && c.args.join(' ') === '-m venv /tmp/comfy/venv').length, 1);
     });
 
-    it('V2: venv with python but broken pip that ensurepip cannot fix → structured PrerequisiteError', () => {
+    it('V2: venv with python but broken pip that ensurepip cannot fix → structured PrerequisiteError', async () => {
         const { io } = createMockIo({
             execResults: {
                 '/tmp/comfy/venv/bin/python -m pip --version': { code: 1, stdout: '', stderr: 'No module named pip' },
@@ -508,7 +508,7 @@ describe('engine: broken/incomplete existing venv', () => {
             preDirs: ['/tmp/comfy/venv/bin'],
             files: { '/tmp/comfy/venv/bin/python': '#!/bin/sh' },
         });
-        assert.throws(
+        await assert.rejects(
             () => comfyui.preparePythonRuntime(io, { root: '/tmp/comfy', torchSpec: null, log: null }),
             (err) => err.name === 'PrerequisiteError'
                 && err.code === 'MISSING_ENSUREPIP'
@@ -516,7 +516,7 @@ describe('engine: broken/incomplete existing venv', () => {
         );
     });
 
-    it('V2b: syncComfyUIRequirements constrains the whole torch family to the installed ABI', () => {
+    it('V2b: syncComfyUIRequirements constrains the whole torch family to the installed ABI', async () => {
         const { io, calls, fs } = createMockIo({
             files: {
                 '/tmp/comfy/main.py': '# comfy',
@@ -528,7 +528,7 @@ describe('engine: broken/incomplete existing venv', () => {
                 '/tmp/comfy/venv/bin/python -m pip install -r /tmp/comfy/requirements.txt -c /tmp/comfy/venv/.animastor-torch-constraints.txt --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple': { code: 0, stdout: '', stderr: '' },
             },
         });
-        const r = comfyui.syncComfyUIRequirements(io, {
+        const r = await comfyui.syncComfyUIRequirements(io, {
             root: '/tmp/comfy',
             torchSpec: { pin: '2.10.0+cpu', index_url: 'https://download.pytorch.org/whl/cpu' },
             log: null,
@@ -543,7 +543,7 @@ describe('engine: broken/incomplete existing venv', () => {
         assert.ok(pipCalls[0].args.includes('--index-url'), 'CPU index must be passed so +cpu builds win');
     });
 
-    it('V2c: syncComfyUIRequirements without torchSpec adds no constraint file and runs plain pip', () => {
+    it('V2c: syncComfyUIRequirements without torchSpec adds no constraint file and runs plain pip', async () => {
         const { io, calls, fs } = createMockIo({
             files: {
                 '/tmp/comfy/main.py': '# comfy',
@@ -555,14 +555,14 @@ describe('engine: broken/incomplete existing venv', () => {
                 '/tmp/comfy/venv/bin/python -m pip install -r /tmp/comfy/requirements.txt': { code: 0, stdout: '', stderr: '' },
             },
         });
-        comfyui.syncComfyUIRequirements(io, { root: '/tmp/comfy', torchSpec: null, log: null });
+        await comfyui.syncComfyUIRequirements(io, { root: '/tmp/comfy', torchSpec: null, log: null });
         assert.strictEqual(fs.existsSync('/tmp/comfy/venv/.animastor-torch-constraints.txt'), false);
         const pipCalls = calls.exec.filter((c) => c.args && c.args.includes('-m') && c.args.includes('install'));
         assert.strictEqual(pipCalls.length, 1);
         assert.ok(!pipCalls[0].args.includes('-c'), 'no constraint expected without a torch spec');
     });
 
-    it('V2d: syncComfyUIRequirements force-reinstalls same-version tv/ta wheels lacking the torch local tag', () => {
+    it('V2d: syncComfyUIRequirements force-reinstalls same-version tv/ta wheels lacking the torch local tag', async () => {
         const metaFor = (d) => `from importlib.metadata import version; print(version("${d}"))`;
         const { io, calls } = createMockIo({
             files: {
@@ -579,7 +579,7 @@ describe('engine: broken/incomplete existing venv', () => {
                 '/tmp/comfy/venv/bin/python -m pip install --force-reinstall --no-deps torchvision==0.25.0 --index-url https://download.pytorch.org/whl/cpu': { code: 0, stdout: '', stderr: '' },
             },
         });
-        comfyui.syncComfyUIRequirements(io, {
+        await comfyui.syncComfyUIRequirements(io, {
             root: '/tmp/comfy',
             torchSpec: { pin: '2.10.0+cpu', index_url: 'https://download.pytorch.org/whl/cpu' },
             log: null,

@@ -250,13 +250,17 @@ async function cmdPlan(flags) {
 
 /**
  * The shared terminal renderer for an install run: ONE stream for installer
- * status (logger sink) and the download progress line, so log lines erase
- * and redraw around the live progress instead of overwriting it.
+ * status (logger sink), the download progress line and the busy spinner, so
+ * log lines erase and redraw around the live status instead of overwriting
+ * it. Terminals with a non-UTF-8 locale get an ASCII spinner fallback.
  */
 function createScreen() {
+    const locale = String(process.env.LC_ALL || process.env.LANG || '');
+    const ascii = locale !== '' && !/utf-?8/i.test(locale);
     return createTermRenderer({
         isTTY: !!process.stdout.isTTY,
         write: (s) => { process.stdout.write(s); },
+        ascii,
     });
 }
 

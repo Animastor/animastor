@@ -231,6 +231,13 @@ async function runInstallation(args) {
         repoRoot = null, hubUrl = null,
     } = roots;
 
+    // Busy indicator for long subprocess steps (pip/npm/git/waiting): ONE
+    // shared spinner through the terminal renderer. Without a term (tests,
+    // library use) it is a no-op passthrough.
+    const term = options.term || null;
+    const withBusy = (label, fn, o) => (term ? term.withBusy(label, fn, o) : fn());
+    const withBusySync = (label, fn) => (term ? term.withBusySync(label, fn) : fn());
+
     const result = {
         status: 'incomplete',
         mode,
@@ -417,7 +424,7 @@ async function runInstallation(args) {
                         reason: `canonical ComfyUI pin is unknown (D1); the known-working reference is ${src.source.repository} @ ${src.source.commit || src.source.tag} — confirm accept_reference_runtime to install it`,
                     });
                 } else {
-                    const r = await log.step('install ComfyUI', async () => comfyui.installComfyUI(io, { root: comfyuiRoot, source: src.source, log }));
+                    const r = await log.step('install ComfyUI', () => withBusySync('Cloning ComfyUI', () => comfyui.installComfyUI(io, { root: comfyuiRoot, source: src.source, log })));
                     result.results.comfyui = r.ok ? { op, grade: src.grade, ...r.value } : { op, failed: String(r.error && r.error.message) };
                     if (!r.ok) result.warnings.push(`ComfyUI install failed: ${r.error && r.error.message}`);
                     // installComfyUI refuses non-empty targets — success ⇒ the
@@ -434,7 +441,8 @@ async function runInstallation(args) {
                     result.blocked.push({ step: 'comfyui-update', reason: gate.reason });
                 } else {
                     const target = pickUpdateTarget(manifests[0]);
-                    const r = await log.step(`${op} ComfyUI`, async () => comfyui.updateComfyUI(io, { root: comfyuiRoot, target, state: st, log }));
+                    const busyLabel = op === 'downgrade_comfyui' ? 'Downgrading ComfyUI' : 'Updating ComfyUI';
+                    const r = await log.step(`${op} ComfyUI`, () => withBusySync(busyLabel, () => comfyui.updateComfyUI(io, { root: comfyuiRoot, target, state: st, log })));
                     result.results.comfyui = r.ok ? { op, ...r.value } : { op, failed: String(r.error && r.error.message) };
                     // An updated/downgraded ComfyUI pre-existed — record ownership
                     // honestly so the uninstaller never removes it wholesale.
@@ -486,11 +494,12 @@ async function runInstallation(args) {
                 if (torchEntry && torchEntry.status === 'missing' && !torchSpec) {
                     result.blocked.push({ step: 'runtime', reason: 'torch requirement cannot be satisfied: no canonical pin and reference not accepted' });
                 } else {
-                    const r = await log.step('prepare Python runtime', async () => comfyui.preparePythonRuntime(io, {
+                    const r = await log.step('prepare Python runtime', () => withBusy('Installing Python runtime', () => comfyui.preparePythonRuntime(io, {
                         root: comfyuiRoot,
                         torchSpec: torchSpec ? torchSpec.spec : null,
                         log,
-                    }));
+                        term,
+                    })));
                     result.results.runtime = r.ok ? { device, grade: torchSpec ? torchSpec.grade : null, ...r.value } : { failed: String(r.error && r.error.message) };
                     if (r.ok) {
                         // The venv under the ComfyUI root is created by this
@@ -527,9 +536,9 @@ async function runInstallation(args) {
             // torchvision/torchaudio edges must not drift off the installed
             // torch ABI. Idempotent sync constrained to the torch family.
             const torchSpec = pickTorchSpec(manifests, decisions, result.warnings, device);
-            const r = await log.step('sync ComfyUI requirements', async () => comfyui.syncComfyUIRequirements(io, {
-                root: comfyuiRoot, torchSpec: torchSpec ? torchSpec.spec : null, log,
-            }));
+            const r = await log.step('sync ComfyUI requirements', () => withBusy('Installing ComfyUI requirements', () => comfyui.syncComfyUIRequirements(io, {
+                root: comfyuiRoot, torchSpec: torchSpec ? torchSpec.spec : null, log, term,
+            })));
             if (!r.ok) result.warnings.push(`ComfyUI requirements sync failed: ${r.error && r.error.message}`);
         }
 
@@ -595,12 +604,12 @@ async function runInstallation(args) {
                     review: [],
                 };
             const nodeTorchSpec = pickTorchSpec(manifests, decisions, result.warnings, device);
-            const r = await log.step('install custom nodes', async () => nodes.installCustomNodes(io, {
+            const r = await log.step('install custom nodes', () => withBusySync('Installing custom nodes', () => nodes.installCustomNodes(io, {
                 root: comfyuiRoot, manifests, planStep: effectiveStep,
                 python: io.fs.existsSync(python) ? python : null,
                 torchSpec: nodeTorchSpec ? nodeTorchSpec.spec : null,
                 retryDeps, log,
-            }));
+            })));
             result.results.custom_nodes = r.ok ? r.value : [{ status: 'failed', reason: String(r.error && r.error.message) }];
             for (const item of result.results.custom_nodes) {
                 // Only directories the installer actually created are ours.
@@ -618,11 +627,11 @@ async function runInstallation(args) {
             const nodesChanged = result.results.custom_nodes.some((x) => x.status === 'installed' && !x.reason);
             if (nodesChanged && options.startComfyui !== false) {
                 const port = options.comfyPort || 8188;
-                const rr = await log.step('restart ComfyUI', async () => comfyui.restartManagedComfyUI(io, {
+                const rr = await log.step('restart ComfyUI', () => withBusy('Waiting for ComfyUI to restart', () => comfyui.restartManagedComfyUI(io, {
                     root: comfyuiRoot, port, device, log,
                     verifyTimeoutMs: options.verifyTimeoutMs || 120000,
                     pollIntervalMs: options.pollIntervalMs || 2000,
-                }));
+                })));
                 const res = rr.ok ? rr.value : null;
                 if (res && res.restarted && res.up) {
                     st.comfyui_runtime = { port, pid: res.pid, started_at: io.now() };
@@ -779,10 +788,10 @@ async function runInstallation(args) {
                         }
                     }
                     try {
-                        return worker.installWorkerBundle(io, {
+                        return withBusySync('Installing worker bundle', () => worker.installWorkerBundle(io, {
                             workerDir, manifest, repoRoot, bundleDir, hubUrl,
                             httpFetchText: null, log,
-                        });
+                        }));
                     } finally {
                         if (bundleTmp) {
                             try { io.fs.rmSync(bundleTmp, { recursive: true, force: true }); } catch (_) { /* best effort */ }
@@ -948,13 +957,14 @@ async function runVerification({ io, manifests, roots, options, log, crypto, tok
     // managed mode (files on disk are NOT sufficient verification).
     const port = options.comfyPort || 8188;
     const baseUrl = `http://127.0.0.1:${port}`;
+    const withBusy = (label, fn, o) => (options.term ? options.term.withBusy(label, fn, o) : fn());
     let stats = await comfyui.systemStats(io, baseUrl);
     if (!stats && options.startComfyui && io.fs.existsSync(comfyuiRoot)) {
-        const started = await log.step('start ComfyUI', async () => {
+        const started = await log.step('start ComfyUI', () => withBusy('Starting ComfyUI', async () => {
             const { pid } = comfyui.startComfyUI(io, { root: comfyuiRoot, port, device });
             const up = await comfyui.waitForApi(io, baseUrl, { timeoutMs: options.verifyTimeoutMs || 120000, intervalMs: options.pollIntervalMs || 2000 });
             return { pid, up };
-        });
+        }));
         if (started.ok && started.value.up.ok) {
             stats = started.value.up.system_stats;
             emit('comfyui_started', { pid: started.value.pid, port });

@@ -43,6 +43,9 @@ function createLogger({ io, sink = null, quiet = false } = {}) {
         registerSecret(value) {
             if (value) secrets.add(String(value));
         },
+        /** Redact secrets from a string WITHOUT logging it — used when
+         *  subprocess output lines are surfaced through the terminal. */
+        scrub: (msg) => redact(String(msg), secrets),
         info: (msg) => emit('INFO', msg),
         warn: (msg) => emit('WARN', msg),
         error: (msg) => emit('ERROR', msg),

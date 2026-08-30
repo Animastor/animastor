@@ -165,10 +165,29 @@ function quarantineBrokenVenv(io, venvDir, reason, log) {
     return quarantine;
 }
 
+/**
+ * Long-running command runner for python runtime steps: prefers io.execAsync
+ * (event loop stays free — the terminal busy spinner keeps animating) and
+ * streams meaningful output lines (Collecting/Installing/Successfully…) to
+ * the terminal renderer, secret-scrubbed via the logger. Falls back to the
+ * synchronous io.exec for mock io in tests. Carriage-return progress-bar
+ * redraws are filtered out by execAsync; the full raw output is still
+ * captured and available for error messages.
+ */
+function makeLongRunner(io, { term = null, log = null } = {}) {
+    const onLine = (term && log && typeof log.scrub === 'function')
+        ? (line) => term.print(log.scrub(line))
+        : null;
+    return (cmd, args, opts = {}) => (typeof io.execAsync === 'function'
+        ? io.execAsync(cmd, args, { ...opts, onLine })
+        : Promise.resolve(io.exec(cmd, args, opts)));
+}
+
 /** Install ComfyUI python requirements + torch pin into a venv. */
-function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log }) {
+async function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log, term = null }) {
     const venvDir = path.join(root, 'venv');
     const py = path.join(venvDir, 'bin', 'python');
+    const execLong = makeLongRunner(io, { term, log });
 
     let venvCreated = false;
     let quarantined = null;
@@ -183,7 +202,7 @@ function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log }) {
     }
 
     if (!io.fs.existsSync(py)) {
-        let r = io.exec('python3', ['-m', 'venv', venvDir]);
+        const r = await execLong('python3', ['-m', 'venv', venvDir], { timeout: 15 * 60 * 1000 });
         if (r.code !== 0) {
             const versionRes = io.exec('python3', ['--version']);
             const vMatch = /Python\s+([0-9][0-9.]*)/.exec(String(versionRes.stdout) + String(versionRes.stderr));
@@ -205,7 +224,7 @@ function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log }) {
     // The managed venv must have pip before torch/requirements installs.
     const pipCheck = io.exec(py, ['-m', 'pip', '--version']);
     if (pipCheck.code !== 0) {
-        const boot = io.exec(py, ['-m', 'ensurepip', '--upgrade']);
+        const boot = await execLong(py, ['-m', 'ensurepip', '--upgrade'], { timeout: 15 * 60 * 1000 });
         if (boot.code !== 0) {
             const versionRes = io.exec(py, ['--version']);
             const vMatch = /Python\s+([0-9][0-9.]*)/.exec(String(versionRes.stdout) + String(versionRes.stderr));
@@ -229,7 +248,7 @@ function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log }) {
         const version = pin.split('+')[0];
         const args = ['-m', 'pip', 'install', `torch==${version}`];
         if (torchSpec.index_url) args.push('--index-url', torchSpec.index_url);
-        const r = io.exec(py, args, { timeout: 60 * 60 * 1000 });
+        const r = await execLong(py, args, { timeout: 60 * 60 * 1000 });
         if (r.code !== 0) throw new Error(`pip install torch==${version} failed: ${String(r.stderr).slice(-500)}`);
         if (log) log.info(`torch ${pin} installed${torchSpec.index_url ? ` (from ${torchSpec.index_url})` : ''}`);
     }
@@ -250,7 +269,7 @@ function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log }) {
                 args.push('--index-url', torchSpec.index_url, '--extra-index-url', 'https://pypi.org/simple');
             }
         }
-        const r = io.exec(py, args, { timeout: 30 * 60 * 1000 });
+        const r = await execLong(py, args, { timeout: 30 * 60 * 1000 });
         if (r.code !== 0) throw new Error(`pip install -r requirements.txt failed: ${String(r.stderr).slice(-500)}`);
         if (log) log.info('ComfyUI requirements installed');
     }
@@ -271,10 +290,11 @@ function preparePythonRuntime(io, { root, torchSpec, pythonMinimum, log }) {
  * pip skips satisfied deps in seconds, so this is safe on every run.
  * @returns {{ skipped: boolean }}
  */
-function syncComfyUIRequirements(io, { root, torchSpec = null, log }) {
+async function syncComfyUIRequirements(io, { root, torchSpec = null, log = null, term = null }) {
     const py = path.join(root, 'venv', 'bin', 'python');
     const req = path.join(root, 'requirements.txt');
     if (!io.fs.existsSync(py) || !io.fs.existsSync(req)) return { skipped: true };
+    const execLong = makeLongRunner(io, { term, log });
 
     let args = ['-m', 'pip', 'install', '-r', req];
     const pin = torchSpec && torchSpec.pin ? String(torchSpec.pin).split('+')[0] : null;
@@ -296,7 +316,7 @@ function syncComfyUIRequirements(io, { root, torchSpec = null, log }) {
             args.push('--index-url', torchSpec.index_url, '--extra-index-url', 'https://pypi.org/simple');
         }
     }
-    const r = io.exec(py, args, { timeout: 30 * 60 * 1000 });
+    const r = await execLong(py, args, { timeout: 30 * 60 * 1000 });
     if (r.code !== 0) throw new Error(`pip install -r requirements.txt failed: ${String(r.stderr).slice(-500)}`);
     if (log) log.info('ComfyUI requirements synced');
 
@@ -316,7 +336,7 @@ function syncComfyUIRequirements(io, { root, torchSpec = null, log }) {
         for (const dist of ['torchvision', 'torchaudio']) {
             const v = distVersion(dist);
             if (v && !v.includes('+')) {
-                const fix = io.exec(py, ['-m', 'pip', 'install', '--force-reinstall', '--no-deps',
+                const fix = await execLong(py, ['-m', 'pip', 'install', '--force-reinstall', '--no-deps',
                     `${dist}==${v.split('+')[0]}`, '--index-url', torchSpec.index_url], { timeout: 30 * 60 * 1000 });
                 if (fix.code !== 0) throw new Error(`pip install --force-reinstall ${dist} failed: ${String(fix.stderr).slice(-500)}`);
                 if (log) log.info(`${dist} reinstalled from ${torchSpec.index_url} (ABI-matched ${torchLocal} build)`);
