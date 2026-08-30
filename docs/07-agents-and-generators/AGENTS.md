@@ -301,9 +301,95 @@ Files in `backend/ai/`:
 - Model configurable via `AI_API_BASE_URL` and `OPENROUTER_MODEL`
   (default: `qwen3-32b` via OpenRouter).
 - No fallback to other model on current model failure.
-- No parallel step execution.
+- Parallel step execution is OPT-IN via `analysis_mode = 'parallel'` in
+  per-book layer-config (default: `'sequential'` — every existing user
+  and config keeps the legacy behaviour unchanged). See "Parallel
+  Analysis Mode" below.
 - Buffer size: 1500 characters (`MAX_WINDOW_CHARS`),
   up to 3 scenes (`MAX_SCENES_PER_CHUNK`).
 - AI call timeout: 180s, maxTokens: 2048 (except scenes: 6144).
 - Retry count: 3 (`STEP_RETRIES`).
 - Progress messages in Russian (not internationalized).
+
+## Parallel Analysis Mode (Milestone #1)
+
+The first parallel phase of TXT AI analysis runs the three independent
+extraction tasks — characters, locations, and voices — through a small
+dedicated orchestrator (`backend/src/services/agent/parallel-analysis-orchestrator.js`).
+
+Topology:
+```
+TXT
+        ├── stepExtractCharacters ─┐
+        │                         ├─ merge ─► existing pipeline (scenes, units, ...)
+        └── stepExtractLocations ─┘
+                       │
+                (after stepExtractCharacters) ─► stepGenerateVoices ─► merge
+```
+
+Sequential mode (default, backwards-compatible):
+- `stepExtractCharacters` → `stepGenerateVoices` → `stepExtractLocations`
+- One AI call at a time. Same as legacy.
+
+Parallel mode (`analysis_mode: 'parallel'`):
+- Wave 1 (concurrent, capped by `analysis_parallelism`, default 3):
+  `stepExtractCharacters` + `stepExtractLocations`
+- Wave 2 (after characters completes): `stepGenerateVoices`
+- Voices is in its own wave because it mutates `characters[i].voice`
+  and needs the MERGED character set (post `mergeCharacterLists`).
+- Pipeline-runner runs voices in its legacy slot — same semantics as
+  sequential mode.
+
+Config (`layer-config.js`):
+- `analysis_mode: 'sequential' | 'parallel'` (default `'sequential'`)
+- `analysis_parallelism: 1..8` (default `3`) — max concurrent LLM calls
+
+Failure isolation: a single task failing does NOT abort siblings. The
+orchestrator records the failure on the task (`status: 'failed'`,
+`error: <message>`) and the pipeline continues with whatever results
+siblings produced. There is NO silent fallback to sequential — that
+would risk double AI calls for the same window. When BOTH parallel
+tasks fail, a loud `analysis_phase_total_failure` log is emitted.
+
+Cancellation: the existing `checkCancelled()` is awaited before every
+parallel task starts. When a task trips cancellation, the orchestrator
+breaks before scheduling the next wave; pending tasks are uniformly
+marked `cancelled`. The existing SESSION_CANCELLED contract is
+preserved end-to end — the bootstrap.js catch handler sets session
+status to `'cancelled'` exactly as it does for sequential mode.
+
+Progress: the orchestrator publishes `{ type: 'analysis', task, status,
+completed_tasks, failed_tasks, total_tasks, duration_ms }` events on
+every task lifecycle transition (additive — the existing `'vbook'`
+type is unchanged). Plus a `{ stage: 'analysis_parallel',
+analysis_completed, analysis_failed, analysis_total }` heartbeat
+between waves for the legacy `vbook` channel.
+
+Persistence: every step function still persists its own `agent_steps`
+row through `createStep` / `completeStep` / `failStep`. Sequential
+and parallel modes write the SAME row count per window — no schema
+change required, the existing `pipeline-step-types.test.js` schema
+guard test continues to pass.
+
+AI transport: unchanged. The orchestrator does NOT introduce a second
+AI transport; every parallel task routes through the existing
+`pipelineSteps.stepXxx` → `ai-caller.callAI` chain under the
+AsyncLocalStorage provider context set by `bootstrap.js`. One provider
+can serve several parallel tasks; per-task provider/model overrides
+are supported in forward-compatible form (Commit 8 acceptance suite).
+
+Tests: 46 new tests across 5 files (orchestrator, concurrency,
+acceptance, pipeline dispatch, layer-config). Total local suite
+(excluding tests that need PostgreSQL/Redis): 76 passing.
+
+Files added:
+- `backend/src/services/agent/parallel-analysis-orchestrator.js`
+- `backend/tests/parallel-analysis-orchestrator.test.js`
+- `backend/tests/parallel-analysis-concurrency.test.js`
+- `backend/tests/parallel-analysis-acceptance.test.js`
+- `backend/tests/pipeline-runner-parallel.test.js`
+
+Files modified:
+- `backend/src/services/layer-config.js` — `analysis_mode` + `analysis_parallelism`
+- `backend/src/services/agent/bootstrap.js` — `_readAnalysisConfig` plumbed into `runPipeline`
+- `backend/src/services/agent/pipeline-runner.js` — parallel branch dispatch + `analysis_phase_duration` instrumentation

@@ -1,225 +1,225 @@
-# Архитектура языков в проекте
+# Language Architecture in the Project
 
-> **Статус:** принято как архитектурное правило проекта (RFC).
-> **Сфера действия:** все модули, работающие с данными книги и генерацией (агент, генераторы, редактор, чат).
+> **Status:** accepted as project architectural rule (RFC).
+> **Scope:** all modules working with book data and generation (agent, generators, editor, chat).
 
-## 1. Правило: язык данных для генерации
+## 1. Rule: data language for generation
 
-Единое правило по всему проекту:
+Single rule across entire project:
 
-> **Все данные, которые используются как вход для AI-моделей, хранятся на английском языке, даже если эти поля отображаются в редакторе пользователю.**
+> **All data used as input for AI models is stored in English, even if these fields are displayed in the editor to the user.**
 >
-> **Локализуются только те данные, которые предназначены исключительно для отображения пользователю и не используются в генерации.**
+> **Only data intended exclusively for user display and not used in generation is localized.**
 >
-> **Параметр `language` (из `book.json`) влияет ТОЛЬКО на пользовательские поля.**
+> **The `language` parameter (from `book.json`) affects ONLY user-facing fields.**
 
-Пользователь видит AI-facing поля на английском — это **осознанный компромисс в пользу качества генерации** (LTX 2.3 — English-only video model, Qwen TTS/Image стабильнее на английских инструкциях). При необходимости пользователь переводит текст любым переводчиком или через встроенный AI-чат.
+User sees AI-facing fields in English — this is a **deliberate trade-off for generation quality** (LTX 2.3 — English-only video model, Qwen TTS/Image more stable on English instructions). If needed, user translates text via any translator or built-in AI chat.
 
-## 2. Категории полей
+## 2. Field categories
 
-### Категория A — Контент (никогда не переводится)
+### Category A — Content (never translated)
 
-Вербатим исходника, язык произведения по определению:
+Verbatim source material, language of the work by definition:
 
-- `scene.text`, `unit.text`, `audio.full_text` (текст TTS — на языке книги!)
-- исходный текст (`source.txt` / `draft.sourceText`)
+- `scene.text`, `unit.text`, `audio.full_text` (TTS text — in book language!)
+- source text (`source.txt` / `draft.sourceText`)
 
-Это текст самой книги. Его нельзя переводить, переписывать или «локализовывать» — только использовать как есть.
+This is the book text itself. Cannot be translated, rewritten or "localized" — only used as-is.
 
-### Категория B — Пользовательские (локализуются по `language`)
+### Category B — User-facing (localized by `language`)
 
-Только те поля, что **не используются в генерации**:
+Only fields **not used in generation**:
 
-- `scene.title` (название сцены)
-- `character.name`, `location.name` (в т.ч. «in original language» из правил — это уже локализация)
-- элементы интерфейса и подписи
-- прочие пользовательские описания, не попадающие в промпты
+- `scene.title` (scene name)
+- `character.name`, `location.name` (including "in original language" from rules — already localization)
+- UI elements and labels
+- other user descriptions not entering prompts
 
-В промпты эти поля попадают только как **контекст** (напр. `Title: ${scene.title}` в `stepCreateVisuals`) — это безопасно: локализованный контекст модели понимают в любом языке.
+These fields enter prompts only as **context** (e.g., `Title: ${scene.title}` in `stepCreateVisuals`) — safe: localized context models understand in any language.
 
-### Категория C — AI-facing (всегда English, независимо от `language`)
+### Category C — AI-facing (always English, regardless of `language`)
 
-Все поля, которые попадают в промпты моделей:
+All fields entering model prompts:
 
-- системные инструкции (промпты `ai/rules/*.md`)
+- system instructions (`ai/rules/*.md` prompts)
 - `image.prompt`, `video.action`
-- инструкции и описания для TTS (voice instruction) — с маркером «Native <Lang> pronunciation»
-- паспорта персонажей (`passport.*`: `appearance`, `clothes`, `video_tokens`)
-- описания локаций (`locations.json`) и значения `environment.*` (`time`, `season`, `lighting`, `weather`, `mood`, `atmosphere`)
-- любые другие поля, попадающие в промпты моделей
+- TTS instructions and descriptions (voice instruction) — with "Native <Lang> pronunciation" marker
+- character passports (`passport.*`: `appearance`, `clothes`, `video_tokens`)
+- location descriptions (`locations.json`) and `environment.*` values (`time`, `season`, `lighting`, `weather`, `mood`, `atmosphere`)
+- any other fields entering model prompts
 
-### Никогда не переводятся
+### Never translated
 
-- идентификаторы: `character_id`, `location_id`, `scene_id`
-- имена ключей JSON
-- значения в формате snake_case
-- служебные технические поля
+- identifiers: `character_id`, `location_id`, `scene_id`
+- JSON key names
+- snake_case values
+- service technical fields
 
-## 3. Исключение: TTS
+## 3. Exception: TTS
 
-Сам **текст озвучки** (`audio.full_text`) — это категория A, он на языке книги (`language=ru, en, de...`). А **инструкция голоса** (категория C) — всегда English, но содержит маркер «Native <Lang> pronunciation» согласно языку книги.
+The **voicing text** (`audio.full_text`) is category A, in book language (`language=ru, en, de...`). The **voice instruction** (category C) is always English, but contains "Native <Lang> pronunciation" marker per book language.
 
-Двухканальная модель уже реализована в коде:
-- `create.js:505-521` — `audio.full_text` отдельно от `scene.text`;
-- `entity-schema.js:269` — поле `language` в TTS-workflow;
-- `voice_generation.md` — инструкция English + строка `TTS output language: %LANGUAGE%` для маркера «Native <Lang> pronunciation».
+Dual-channel model already implemented in code:
+- `create.js:505-521` — `audio.full_text` separate from `scene.text`;
+- `entity-schema.js:269` — `language` field in TTS workflow;
+- `voice_generation.md` — English instruction + `TTS output language: %LANGUAGE%` line for "Native <Lang> pronunciation" marker.
 
-## 4. Механизм: плейсхолдер `%LANGUAGE%` в правилах
+## 4. Mechanism: `%LANGUAGE%` placeholder in rules
 
-Промпты остаются едиными и языконезависимыми — **никаких отдельных каталогов примеров на каждый язык** (KISS). Язык подставляется прямо в файлы правил `ai/rules/*.md` через плейсхолдер `%LANGUAGE%`, который ставится **точечно — рядом с user-facing полями**:
+Prompts remain unified and language-independent — **no separate example directories per language** (KISS). Language substituted directly into `ai/rules/*.md` files via `%LANGUAGE%` placeholder, placed **pointwise — near user-facing fields**:
 
 ```
 "name": "Location Name (in %LANGUAGE%)"
 ```
 
-На этапе сборки промпта плейсхолдер заменяется конкретным значением — например
-`"name": "Location Name (in German (de))"`. Современные LLM (Qwen) прекрасно понимают такие
-инструкции; переводы примеров не нужны — примеры демонстрируют форму, а не язык.
-GPU-поля (appearance, environment) плейсхолдер не получают — им задан явный мандат English.
+At prompt build stage, placeholder replaced with concrete value — e.g.
+`"name": "Location Name (in German (de))"`. Modern LLMs (Qwen) understand such
+instructions well; translations of examples not needed — examples demonstrate form, not language.
+GPU fields (appearance, environment) don't get placeholder — have explicit English mandate.
 
-### Как плейсхолдер расставлен по правилам (точечно, не глобально)
+### How placeholder is distributed across rules (pointwise, not global)
 
-Плейсхолдер `%LANGUAGE%` ставится **точечно — рядом с конкретными user-facing полями**,
-а не одной строкой на весь файл. GPU-поля внутри тех же файлов остаются English и получают
-явный мандат (по аналогии с `characters.md`):
+`%LANGUAGE%` placeholder is placed **pointwise — near specific user-facing fields**,
+not as a single line for entire file. GPU fields within same files stay English and receive
+explicit mandate (per `characters.md` pattern):
 
-- **UI-facing правила** (`structure`, `characters`, `locations`, `scenes`) —
-  `%LANGUAGE%` стоит только у полей, которые видит пользователь:
-  - `structure.md`: `author`, `title`, имена частей и глав;
-  - `characters.md`: `name`, `description`, `traits` (а `appearance` — `MUST be ENGLISH`);
-  - `locations.md`: `name` (а `description` и `environment.*` — `MUST be ENGLISH`;
-    `description` инжектится в image/video-промпты, поэтому он тоже категория C);
-  - `scenes.md`: `title` (а `text` — verbatim, не переводится; `environment`-переопределения — `MUST be ENGLISH`).
-- **GPU-facing правила** (`visuals`, `storyboard_polish`, `video_action_reconciliation`,
-  `video_action_polish`, `passport_reconciliation`) — их выход (`image.prompt`,
-  `video.action`, паспорта) кормит генерационные модели: фиксированная строка
-  `Result language: English (en)` — без плейсхолдера.
-- **`voice_generation.md`** — двухканальный TTS: инструкция голоса остаётся English
-  (`Result language: English (en)`), а строка `TTS output language: %LANGUAGE%`
-  подставляет язык книги для маркера «Native <Lang> pronunciation».
+- **UI-facing rules** (`structure`, `characters`, `locations`, `scenes`) —
+  `%LANGUAGE%` only on fields user sees:
+  - `structure.md`: `author`, `title`, part and chapter names;
+  - `characters.md`: `name`, `description`, `traits` (but `appearance` — `MUST be ENGLISH`);
+  - `locations.md`: `name` (but `description` and `environment.*` — `MUST be ENGLISH`;
+    `description` injected into image/video prompts, so also category C);
+  - `scenes.md`: `title` (but `text` — verbatim, not translated; `environment` overrides — `MUST be ENGLISH`).
+- **GPU-facing rules** (`visuals`, `storyboard_polish`, `video_action_reconciliation`,
+  `video_action_polish`, `passport_reconciliation`) — their output (`image.prompt`,
+  `video.action`, passports) feeds generative models: fixed string
+  `Result language: English (en)` — no placeholder.
+- **`voice_generation.md`** — dual-channel TTS: voice instruction stays English
+  (`Result language: English (en)`), `TTS output language: %LANGUAGE%` line
+  substitutes book language for "Native <Lang> pronunciation" marker.
 
-### Как это реализовано в пайплайне
+### How implemented in pipeline
 
-- **`resolveBookLanguage(draft)`** (`agent-prompts.js`) — резолвит язык книги:
-  `draft.book.language || detectLanguage(sourceText) || 'en'` (без скрытого `defaults.language`
-  и без старого дефолта `'ru'`).
-- **`buildLangInstruction(lang)`** (`agent-prompts.js`) — возвращает **значение** для
-  плейсхолдера, например `Russian (ru)`.
-- **`fillLang(template, lang)`** (`agent-prompts.js`) — заменяет **все** вхождения
-  `%LANGUAGE%` в шаблоне (split/join, а не `.replace` — тот заменяет только первое,
-  а `characters.md` содержит плейсхолдер 4 раза, `locations.md` — 2).
-- **`pipeline-steps.js`** — текстовые шаги собирают системный промпт через `fillLang(...)`.
-  Если правила не содержат плейсхолдера (GPU-шаги) — подмена безопасно ничего не меняет.
-- **Проброс:** `bootstrap.js` (есть `draft`) → `runPipeline(options.language)` →
-  шаги `pipeline-steps.js`.
+- **`resolveBookLanguage(draft)`** (`agent-prompts.js`) — resolves book language:
+  `draft.book.language || detectLanguage(sourceText) || 'en'` (no hidden `defaults.language`
+  and no old `'ru'` default).
+- **`buildLangInstruction(lang)`** (`agent-prompts.js`) — returns **value** for
+  placeholder, e.g., `Russian (ru)`.
+- **`fillLang(template, lang)`** (`agent-prompts.js`) — replaces **all** occurrences
+  of `%LANGUAGE%` in template (split/join, not `.replace` — which replaces only first,
+  and `characters.md` contains placeholder 4 times, `locations.md` — 2).
+- **`pipeline-steps.js`** — text steps build system prompt via `fillLang(...)`.
+  If rules don't contain placeholder (GPU steps) — substitution safely changes nothing.
+- **Pass-through:** `bootstrap.js` (has `draft`) → `runPipeline(options.language)` →
+  `pipeline-steps.js` steps.
 
-Визуальные шаги параметр языка **не получают** — их выход (`image.prompt`, `video.action`)
-всегда English, и в их правилах уже зафиксировано `Result language: English (en)`.
+Visual steps don't receive language parameter — their output (`image.prompt`, `video.action`)
+is always English, and their rules already have `Result language: English (en)` fixed.
 
-### Правила в `ai/rules/*.md` уже соблюдают категории
+### Rules in `ai/rules/*.md` already follow categories
 
-- `characters.md`: `appearance`/`clothes`/`video_tokens` MUST be ENGLISH (для LTX 2.3) —
-  мандат продублирован **инлайн** в описании каждого поля (не только в конце файла), чтобы
-  агент не «заражался» языком соседних user-facing полей (`name`/`description`/`traits` —
+- `characters.md`: `appearance`/`clothes`/`video_tokens` MUST be ENGLISH (for LTX 2.3) —
+  mandate duplicated **inline** in each field description (not only at file end), so
+  agent doesn't "infect" from neighboring user-facing fields (`name`/`description`/`traits` —
   in original language).
-- `voice_generation.md`: инструкция голоса — ENGLISH + «Native <Lang> pronunciation».
-- `locations.md`: `name` — in original language; `description` и `environment`-значения — English.
-- `scenes.md`: примеры названий — это примеры формы (2-6 слов), не языка;
-  язык задаётся плейсхолдером `%LANGUAGE%` у поля `title` (а `text`/`environment` — verbatim/English).
+- `voice_generation.md`: voice instruction — ENGLISH + "Native <Lang> pronunciation".
+- `locations.md`: `name` — in original language; `description` and `environment` values — English.
+- `scenes.md`: title examples — form examples (2-6 words), not language;
+  language set by `%LANGUAGE%` placeholder on `title` field (but `text`/`environment` — verbatim/English).
 
-## 5. Мультиязычные книги (перспектива)
+## 5. Multilingual books (future)
 
-Вместо жёсткой привязки к языку оригинала используется **глобальная переменная `language`**:
+Instead of hard-binding to original language, uses **global `language` variable**:
 
-- оригинал книги — русский;
-- `language = de` → итоговая книга, сцены и озвучка создаются на немецком;
-- `language = en` → всё создаётся на английском;
-- исходный текст книги остаётся неизменным и хранится как оригинал (категория A).
+- original book — Russian;
+- `language = de` → output book, scenes and voicing created in German;
+- `language = en` → everything created in English;
+- book source text remains unchanged and stored as original (category A).
 
-### Оценка сложности: низкая-средняя, архитектурных препятствий нет
+### Complexity assessment: low-medium, no architectural obstacles
 
-Пайплайн механически языко-агностичен — windowing, coverage, юниты, визуалы работают с любым текстом.
-Перевод — это вопрос *где* вставить трансляцию:
+Pipeline is mechanically language-agnostic — windowing, coverage, units, visuals work with any text.
+Translation is a question of *where* to insert translation:
 
-**Стратегия A — перевод до сплита (рекомендуется):** перевод окна текста в начале `runPipeline`,
-дальше все шаги работают как обычно. Ноль изменений в coverage/юнитах/визуалах.
-⚠️ Единственный подводный камень: `getWindowText` считает оффсеты в **оригинальном** тексте,
-а перевод меняет длину → переводить окно по оригинальным оффсетам, coverage проверять против
-переведённого окна, следующий оффсет брать из оригинального потреблённого.
+**Strategy A — translate before split (recommended):** translate text window at start of `runPipeline`,
+all subsequent steps work as usual. Zero changes to coverage/units/visuals.
+⚠️ Only caveat: `getWindowText` calculates offsets in **original** text,
+and translation changes length → translate window by original offsets, check coverage against
+translated window, take next offset from original consumed.
 
-**Стратегия B — перевод после сплита:** сцены из оригинала (coverage цел), затем
-`audio.full_text` = перевод, тайтлы переведены. Оригинал остаётся нетронутым (`scene.text`).
-⚠️ Два языка в одном объекте сцены, визуалы строятся от оригинала, озвучка от перевода.
+**Strategy B — translate after split:** scenes from original (coverage intact), then
+`audio.full_text` = translation, titles translated. Original untouched (`scene.text`).
+⚠️ Two languages in one scene object, visuals built from original, voicing from translation.
 
-**Стоимость:** дополнительный LLM-проход ≈ +30–50% времени/токенов импорта + поддержка
-согласованности имён персонажей между окнами.
+**Cost:** additional LLM pass ≈ +30–50% import time/tokens + supporting
+character name consistency across windows.
 
-**Фундамент уже заложен:** проброс `language` (раздел 4) — это единственная точка, которая
-нужна для любой из стратегий. Сам перевод — отдельная фича (новый шаг + `ai/rules/translate.md`),
-реализуется позже, когда практика покажет нужность.
+**Foundation already laid:** `language` passthrough (section 4) — this is the single point needed
+for either strategy. The translation itself is a separate feature (new step + `ai/rules/translate.md`),
+implemented later when practice shows need.
 
-### Как определяется язык исходника (`book.json.language`)
+### How source language is determined (`book.json.language`)
 
-`book.json.language` — это язык **исходного текста** (source language). Он определяется
-**программно** на этапе импорта (`TXT → language detection → book.json → pipeline`),
-сразу после чтения файла и ДО запуска генерации сцен/агентов:
+`book.json.language` is **source text** language. Determined
+**programmatically** at import stage (`TXT → language detection → book.json → pipeline`),
+immediately after file read and BEFORE scene/agent generation starts:
 
-1. Если `book.json.language` уже задан явно — автоматически не переписывается.
-2. Если пусто — определение идёт по исходному TXT (`services/language-detector.js`, библиотека
-   **tinyld**: чистый JS, без LLM, коды ISO 639-1, 62 языка; украинский/болгарский больше не
-   путаются с русским, как в старой эвристике «кириллица = ru»).
-3. Если detector уверен — код записывается в `book.json` (и в `defaults.language`).
-4. Если detector не смог определить (пустой/слишком короткий/низкая уверенность) — `'en'`.
+1. If `book.json.language` already explicitly set — not auto-overwritten.
+2. If empty — detection runs on source TXT (`services/language-detector.js`, library
+   **tinyld**: pure JS, no LLM, ISO 639-1 codes, 62 languages; Ukrainian/Bulgarian no longer
+   confused with Russian, as in old "Cyrillic = ru" heuristic).
+3. If detector confident — code written to `book.json` (and `defaults.language`).
+4. If detector couldn't determine (empty/too short/low confidence) — `'en'`.
 
-Старый дефолт `'ru'` убран по всему бэкенду (draft, pipeline-runner, Postgres, промпты).
-Для книг, импортированных до этой схемы, пустой `language` дополняется лениво при загрузке
-черновика (backfill из исходника, явно заданное значение не трогается).
+Old `'ru'` default removed throughout backend (draft, pipeline-runner, Postgres, prompts).
+For books imported before this scheme, empty `language` lazily backfilled on draft load
+from source material; explicitly set values untouched.
 
-Будущее разделение «source language / output (generation) language» (перевод книги) —
-отдельная архитектурная задача; текущее решение её не блокирует, т.к. `language`
-трактуется именно как язык исходника.
+Future "source language / output (generation) language" split (book translation) —
+separate architectural task; current decision doesn't block it, since `language`
+is interpreted exactly as source language.
 
-## 6. Конвенция для новых модулей
+## 6. Convention for new modules
 
-1. Новое поле, попадающее в промпты моделей → **English** (категория C) + явный мандат в правиле.
-2. Новое поле только для отображения пользователю → **локализуется** по `language` (категория B),
-   плейсхолдер `%LANGUAGE%` ставится точечно рядом с этим полем.
-3. Новый AI-шаг, генерирующий пользовательский текст → ставит `%LANGUAGE%` у user-facing полей
-   своего `.md` и заменяет плейсхолдер через `fillLang(template, lang)` (все вхождения).
-   Если в правиле есть GPU-поля (категория C), их EN-мандат дублируется **инлайн**,
-   в описании самого поля (по образцу `characters.md`).
-4. Визуальный/аудио AI-шаг → в `.md` фиксированная строка `Result language: English (en)`,
-   параметр языка не получает.
-5. Новые языки добавляются **без изменения кода** — достаточно, чтобы модель знала язык
-   (map языков в `langName` расширяется при необходимости).
+1. New field entering model prompts → **English** (category C) + explicit mandate in rule.
+2. New field only for user display → **localized** by `language` (category B),
+   `%LANGUAGE%` placeholder placed pointwise near this field.
+3. New AI step generating user text → places `%LANGUAGE%` on user-facing fields
+   in its `.md` and replaces placeholder via `fillLang(template, lang)` (all occurrences).
+   If rule has GPU fields (category C), their EN mandate duplicated **inline**
+   in field description (per `characters.md` pattern).
+4. Visual/audio AI step → in `.md` fixed string `Result language: English (en)`,
+   doesn't receive language parameter.
+5. New languages added **without code changes** — model needs to know the language
+   (language map in `langName` expanded as needed).
 
-## 7. Будущее: AI-перевод полей редактора (архитектурная идея, низкий приоритет)
+## 7. Future: AI translation of editor fields (architectural idea, low priority)
 
-**Статус:** идея на будущее, не задача с высоким приоритетом. Отдельный сервис перевода НЕ нужен —
-используется уже существующий AI-агент проекта.
+**Status:** future idea, not high-priority task. Separate translation service NOT needed —
+uses existing project AI agent.
 
-**Проблема, которую решает:** пользователи, не владеющие английским, видят в редакторе AI-facing поля
-(паспорта персонажей, описания локаций, environment) на английском (см. трейд-офф в разделе 1).
+**Problem it solves:** users without English see AI-facing fields
+(character passports, location descriptions, environment) in English (see trade-off in section 1).
 
-**Идея:** рядом с такими полями добавляется небольшая кнопка (например, SVG-иконка 🌐).
+**Idea:** small button next to such fields (e.g., SVG icon 🌐).
 
-При нажатии **не выполняется автоматический перевод и ничего не сохраняется**:
+On press, **no automatic translation is performed and nothing is saved**:
 
-1. Вызывается AI-агент, которому передаётся содержимое текущего поля + целевой язык
-   (язык интерфейса или язык книги).
-2. Агент возвращает перевод.
-3. Перевод отображается во всплывающем окне или отдельной панели — **только для просмотра**.
+1. AI agent called with current field content + target language
+   (interface language or book language).
+2. Agent returns translation.
+3. Translation displayed in popup or separate panel — **view only**.
 
-### Инварианты
+### Invariants
 
-- исходный английский текст **не изменяется**;
-- перевод **никуда не сохраняется** и **не участвует в генерации**;
-- все AI-модели продолжают работать только с английским оригиналом (категория C);
-- единственный источник данных остаётся на английском.
+- original English text **not modified**;
+- translation **not saved anywhere** and **doesn't participate in generation**;
+- all AI models continue working only with English original (category C);
+- single data source remains English.
 
-### Почему это хорошо
+### Why this is good
 
-- редактор становится удобным для пользователей без английского;
-- архитектура языка (разделы 1–3) не меняется — перевод живёт вне данных;
-- не нужен отдельный сервис перевода: AI-агент уже является частью системы;
-- потенциально реализуемо и на бэкенде (endpoint агента), и на фронте (вызов чата).
+- editor becomes usable for users without English;
+- language architecture (sections 1–3) unchanged — translation lives outside data;
+- no separate translation service needed: AI agent already part of system;
+- potentially implementable on both backend (agent endpoint) and frontend (chat call).

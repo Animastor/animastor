@@ -1,98 +1,98 @@
 # Dialogue TTS Pipeline
 
-## Цель
+## Purpose
 
-Автоматическая генерация многоголосой озвучки диалогов через TTS.  
-Диалоговые сцены получают `voice='dialogue'` и маршрутятся в многоголосый Qwen3-TTS workflow.
+Automatic multi-voice dialogue voicing generation via TTS.
+Dialogue scenes receive `voice='dialogue'` and route to multi-voice Qwen3-TTS workflow.
 
-## Pipeline (реальный порядок)
+## Pipeline (actual order)
 
 ```
 AI Pipeline (runPipeline):
-1. stepAnalyzeStructure          — структура (bootstrap)
-2. stepExtractCharacters         — персонажи без voice (single responsibility)
-3. stepGenerateVoices            — голоса для диалоговых персонажей
-   ↑ LLM только что извлекла персонажей — контекст свежий, полный текст в памяти
-4. stepExtractLocations          — локации
-5. stepCreateScenes             — сцены (title + location.id + environment-override)
-6. stepCreateUnits               — юниты со speaker: { type: "dialogue", speaker: "berlioz", text: "..." }
+1. stepAnalyzeStructure          — structure (bootstrap)
+2. stepExtractCharacters         — characters without voice (single responsibility)
+3. stepGenerateVoices            — voices for dialogue characters
+   ↑ LLM just extracted characters — context fresh, full text in memory
+4. stepExtractLocations          — locations
+5. stepCreateScenes             — scenes (title + location.id + environment-override)
+6. stepCreateUnits               — units with speaker: { type: "dialogue", speaker: "berlioz", text: "..." }
 7. stepCreateVisuals             — visual prompts
-8. stepReconcilePassports        — чистка промптов
+8. stepReconcilePassports        — prompt cleanup
 9. stepPolishStoryboard          — continuity
 
          ↓
-create.js (сохранение в JSON):
-  narration scene →  voice='narrator',  full_text=литературный текст
-  dialogue scene  →  voice='dialogue', full_text=литературный текст (с «—»)
-  (скрипт speaker:текст НЕ сохраняется, строится при генерации)
+create.js (save to JSON):
+  narration scene →  voice='narrator',  full_text=literary text
+  dialogue scene  →  voice='dialogue', full_text=literary text (with "—")
+  (speaker:text script NOT saved, built at generation time)
 
          ↓
 generateSceneAudio() → buildSegments():
-  dialogue:  собирает units[].speaker + units[].text в скрипт, чанкует
-  narration: берёт audio.full_text, чанкует по предложениям
+  dialogue:  assembles units[].speaker + units[].text into script, chunks
+  narration: takes audio.full_text, chunks by sentences
 
          ↓
 ComfyUI / GPU Hub:
   dialogue  → tts-qwen-dialogue (Role Bank: character1 + character2)
-  narration → tts-qwen-narrator (один голос)
+  narration → tts-qwen-narrator (single voice)
 ```
 
-## Ключевые архитектурные решения
+## Key architectural decisions
 
-### `audio.full_text` = литературный текст, не скрипт
-- `full_text` хранит оригинальный текст с «—» (читабелен для человека)
-- Скрипт `speaker: текст` строится **только в `buildSegments()`** из `units[].speaker`
-- Единый источник истины: `units[]`, а не дублирование в `full_text`
-- Редактирование units → скрипт перестраивается автоматически
+### `audio.full_text` = literary text, not script
+- `full_text` stores original text with "—" (human-readable)
+- `speaker: text` script built **only in `buildSegments()`** from `units[].speaker`
+- Single source of truth: `units[]`, not duplication in `full_text`
+- Editing units → script rebuilds automatically
 
-### `stepGenerateVoices` — шаг №3 (после characters, до scenes)
-- LLM только что извлекла персонажей — контекст свежий
-- Полный текст ещё не разбит на сцены — лучший анализ диалоговых реплик
-- Созданные голоса потом доступны всем downstream-шагам
+### `stepGenerateVoices` — step #3 (after characters, before scenes)
+- LLM just extracted characters — context fresh
+- Full text not yet split into scenes — best analysis of dialogue lines
+- Created voices then available to all downstream steps
 
-### Narrator — программно, не AI
-- Добавляется в `create.js` всегда первым:
+### Narrator — programmatic, not AI
+- Added in `create.js` always first:
   ```js
   const voices = { narrator: { instruction: narratorVoice } };
   ```
-- Ни один AI-промпт не создаёт narrator
+- No AI prompt creates narrator
 
 ### `buildSegments()` — hybrid + embedded narration + fallback
-- Строит TTS-скрипт из `units[].speaker`
-- **Гибридные сцены:** dialogue-ветка `buildSegments()` итерируется по ВСЕМ юнитам:
-  - `dialogue` юниты → `segment_type: "dialogue"` (character voice)
+- Builds TTS script from `units[].speaker`
+- **Hybrid scenes:** dialogue branch of `buildSegments()` iterates over ALL units:
+  - `dialogue` units → `segment_type: "dialogue"` (character voice)
   - `narration/perception/description/action/transition/performance` → `segment_type: "narration"` (narrator voice)
   - `typography` → skip
-  - Порядок сегментов = порядок юнитов в сцене
+  - Segment order = unit order in scene
 
-- **Гибридные диалоговые юниты (embedded narration):** Если AI создал ОДИН `dialogue` unit, где `unit.text` содержит не только реплику, но и авторскую атрибуцию (Pattern A: «— Диалог, — сказал он.» или Pattern B: «Он сказал: — Диалог.»), `extractNarrationFromDialogueUnit()` извлекает нарратив и создаёт ДВА сегмента:
+- **Hybrid dialogue units (embedded narration):** If AI created ONE `dialogue` unit where `unit.text` contains not only dialogue but also author attribution (Pattern A: "— Dialogue, — said he." or Pattern B: "He said: — Dialogue."), `extractNarrationFromDialogueUnit()` extracts narration and creates TWO segments:
 
-  | Pattern | Порядок | Пример |
-  |---------|---------|--------|
-  | A (post) | `[dialogue] → [narration]` | «— Нарзану нету, — ответила женщина.» → персонаж, затем диктор |
-  | B (pre) | `[narration] → [dialogue]` | «Женщина ответила: — Нарзану нету.» → диктор, затем персонаж |
-  | Both | `[narration] → [dialogue] → [narration]` | «Он подошёл: — Привет, — сказал он.» |
+  | Pattern | Order | Example |
+  |---------|-------|---------|
+  | A (post) | `[dialogue] → [narration]` | "— No narzan, — replied the woman." → character, then narrator |
+  | B (pre) | `[narration] → [dialogue]` | "The woman replied: — No narzan." → narrator, then character |
+  | Both | `[narration] → [dialogue] → [narration]` | "He approached: — Hello, — said he." |
 
-  Пунктуация (запятые, тире) сохраняется — она несёт просодическую информацию и влияет на расчёт таймингов.
+  Punctuation (commas, dashes) preserved — it carries prosodic information and affects timing calculations.
 
-- **Fallback (word-boundary guard):** Если `audio.text` совпадает внутри другого слова (substring collision, напр. «да» внутри «дала»), или `indexOf` не находит совпадения (AI inconsistency), или `audio.text` состоит только из opener-символов — `extractNarrationFromDialogueUnit()` возвращает `null`. Весь `unit.text` целиком уходит диктору (narration-сегмент). Безопаснее, чем персонаж скажет не тот текст.
+- **Fallback (word-boundary guard):** If `audio.text` matches inside another word (substring collision, e.g., "да" inside "дала"), or `indexOf` doesn't find match (AI inconsistency), or `audio.text` consists only of opener characters — `extractNarrationFromDialogueUnit()` returns `null`. Entire `unit.text` goes to narrator (narration segment). Safer than character saying wrong text.
 
-- **Мультиязычность:** Нормализация opener-маркеров (`—`, `"`, `«`, `„`, `'`) покрывает 🇷🇺 русский, 🇬🇧 английский, 🇫🇷 французский, 🇩🇪 немецкий, 🇪🇸 испанский и другие.
+- **Multilingual:** Opener marker normalization (`—`, `"`, `«`, `„`, `'`) covers 🇷🇺 Russian, 🇬🇧 English, 🇫🇷 French, 🇩🇪 German, 🇪🇸 Spanish and others.
 
-- Короткие narration-тексты (< 40 символов) паддятся (дублируются для минимальной длительности TTS)
-- Если сцена не имеет валидных юнитов → `[]` (логируется warning)
+- Short narration texts (< 40 characters) padded (duplicated for minimum TTS duration)
+- If scene has no valid units → `[]` (warning logged)
 
-## Статус
+## Status
 
-- [x] `speaker` добавлен в `SYSTEM_PROMPTS.units`
-- [x] `stepCreateUnits()` сохраняет `speaker` из AI
-- [x] `create.js` — литературный `full_text`, `voice='dialogue'`
-- [x] `buildSegments()` — hybrid: narration + dialogue юниты в одной сцене
-- [x] `stepGenerateVoices` — на позиции 3 (после characters)
-- [x] Примеры (`ai/examples/`) согласованы
-- [x] `extractNarrationFromDialogueUnit()` — embedded narration из dialogue unit (Pattern A + B)
+- [x] `speaker` added to `SYSTEM_PROMPTS.units`
+- [x] `stepCreateUnits()` saves `speaker` from AI
+- [x] `create.js` — literary `full_text`, `voice='dialogue'`
+- [x] `buildSegments()` — hybrid: narration + dialogue units in same scene
+- [x] `stepGenerateVoices` — at position 3 (after characters)
+- [x] Examples (`ai/examples/`) aligned
+- [x] `extractNarrationFromDialogueUnit()` — embedded narration from dialogue unit (Pattern A + B)
 - [x] Word-boundary guard + fallback (crooked unit.text → narrator)
-- [x] `{pre, post}` — корректный порядок сегментов для pre/post-паттернов
-- [x] Пунктуация сохранена (просодия + тайминги)
-- [x] Мультиязычная нормализация opener-маркеров
-- [x] 473 теста проходят
+- [x] `{pre, post}` — correct segment order for pre/post patterns
+- [x] Punctuation preserved (prosody + timing)
+- [x] Multilingual opener marker normalization
+- [x] 473 tests passing
