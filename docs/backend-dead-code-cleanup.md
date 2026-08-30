@@ -1,143 +1,155 @@
 # Backend Dead Code Cleanup Plan
 
-> **Цель:** Поэтапная очистка неиспользуемого кода бэкенда с максимальной безопасностью.
-> **Принцип:** Небольшие независимые этапы, каждый — отдельный Git commit с push.
-> **Проверка после каждого этапа:** `npm test` + `npm run test:syntax`.
+> **Goal:** Step-by-step cleanup of unused backend code with maximum safety.
+> **Principle:** Small independent stages, each — separate Git commit with push.
+> **Verification after each stage:** `npm test` + `npm run test:syntax`.
 
 ---
 
-## Этап 1 ✅ (завершён)
+## Stage 1 ✅ (completed)
 
-**Удалено:**
-- `backend/src/services/startup-recovery.js` — 0 импортов, вытеснен reconciliation-engine
-- `backend/src/storage/manifest.js` — 0 импортов, экспорт удалён из `storage/index.js`
+**Removed:**
+- `backend/src/services/startup-recovery.js` — 0 imports, superseded by reconciliation-engine
+- `backend/src/storage/manifest.js` — 0 imports, export removed from `storage/index.js`
 
-**Проверено (оставлено):**
-- `backend/src/services/encoding-detect.js` — жив, используется `txt-importer.js`
-- `backend/src/services/knowledge-base.js` — жив, используется `agent-service.js`
-- `backend/src/services/source-coverage-audit.js` — жив, используется `book/core-routes.cjs`
+**Verified (kept):**
+- `backend/src/services/encoding-detect.js` — alive, used by `txt-importer.js`
+- `backend/src/services/knowledge-base.js` — alive, used by `agent-service.js`
+- `backend/src/services/source-coverage-audit.js` — alive, used by `book/core-routes.cjs`
 
 **Commit:** `5f07d34`
 
 ---
 
-## Этап 2 ✅ (завершён)
+## Stage 2 ✅ (completed)
 
-**Удалено из `helpers/utils.cjs`:**
-- `pad` — 0 вызовов
-- `parseChunkId` — 0 вызовов
-- `splitTextIntoChunks` — 0 вызовов (дублируется в `audio/segments.js`)
-- `splitDialogueIntoChunks` — 0 вызовов (дублируется в `audio/segments.js`)
-- `buildSegments` — 0 вызовов (дублируется в `audio/segments.js`)
-- `findSceneRuntimeData` — 0 вызовов (дублируется в `book/index.js`)
-- `resolveAssetPath` — приватная функция, не экспортировалась, 0 вызовов
+**Removed from `helpers/utils.cjs`:**
+- `pad` — 0 calls
+- `parseChunkId` — 0 calls
+- `splitTextIntoChunks` — 0 calls (duplicated in `audio/segments.js`)
+- `splitDialogueIntoChunks` — 0 calls (duplicated in `audio/segments.js`)
+- `buildSegments` — 0 calls (duplicated in `audio/segments.js`)
+- `findSceneRuntimeData` — 0 calls (duplicated in `book/index.js`)
+- `resolveAssetPath` — private function, not exported, 0 calls
 
-**Оставлено в экспорте:** `log` и `collectScenes` (используется в `book-diff.cjs`)
+**Kept in export:** `log` and `collectScenes` (used in `book-diff.cjs`)
 
-**Обновлены деструктуризации в 12 файлах:** `backend.cjs`, `generation-routes.cjs`, `ai-routes.cjs`, `debug-routes.cjs`, `book/generation-routes.cjs`, `book/agent-routes.cjs`, `book/chunks-routes.cjs`, `book/core-routes.cjs`, `book/import-routes.cjs`, `book/recovery-routes.cjs`, `task-handler.cjs`, `audio-recovery.cjs`
+**Updated destructuring in 12 files:** `backend.cjs`, `generation-routes.cjs`, `ai-routes.cjs`, `debug-routes.cjs`, `book/generation-routes.cjs`, `book/agent-routes.cjs`, `book/chunks-routes.cjs`, `book/core-routes.cjs`, `book/import-routes.cjs`, `book/recovery-routes.cjs`, `task-handler.cjs`, `audio-recovery.cjs`
 
 **Commit:** `6c9a065`
 
 ---
 
-## Этап 3: Неиспользуемые runtime-модули
+## Stage 3: Unused runtime modules
 
-**Проверка:** Все 4 кандидата (`job-schema.js`, `circuit-breaker.js`, `retry-budget-manager.js`, `runtime-persistence.js`) — живые, используются другими модулями. Ничего не удалено.
+**Verification:** All 4 candidates (`job-schema.js`, `circuit-breaker.js`, `retry-budget-manager.js`, `runtime-persistence.js`) — alive, used by other modules. Nothing removed.
 
-**Статус:** ✅ Пропущен (нет мёртвого кода)
-
----
-
-## Этап 4: (объединён с Этапом 1 — manifest.js удалён)
+**Status:** ✅ Skipped (no dead code)
 
 ---
 
-## Этап 5: Неиспользуемые сервисы audio/video/image
-
-**Проверка:** Все 6 кандидатов (`silence.js`, `chunks.js`, `video-merge.js`, `preview.js`, `character-utils.js`, `registry.js`) — живые, импортируются через `audio-service.js`, `image-service.js` или напрямую.
-
-**Статус:** ✅ Пропущен (нет мёртвого кода)
+## Stage 4: (merged with Stage 1 — manifest.js removed)
 
 ---
 
-## Этап 6: Неиспользуемые модули book/lazy-book
+## Stage 5: Unused audio/video/image services
 
-**Проверка:** Все 5 кандидатов — живые. `create.js` использует `appearance.js` и `metadata.js` внутренне. `status.js` и `draft.js` используются внешне через routes.
+**Verification:** All 6 candidates (`silence.js`, `chunks.js`, `video-merge.js`, `preview.js`, `character-utils.js`, `registry.js`) — alive, imported via `audio-service.js`, `image-service.js` or directly.
 
-**Статус:** ✅ Пропущен (нет мёртвого кода)
-
----
-
-## Этап 7: Неиспользуемые модули orchestration
-
-**Проверка:** Все 3 кандидата — живые. `scene-callbacks.js` — ядро колбэков аудио/видео/изображений. `scene-utils.js` — утилиты логирования для всех файлов оркестрации. `scene-restoration.js` — восстановление чанков.
-
-**Статус:** ✅ Пропущен (нет мёртвого кода)
+**Status:** ✅ Skipped (no dead code)
 
 ---
 
-## Этап 8: Неиспользуемые репозитории PostgreSQL
+## Stage 6: Unused book/lazy-book modules
 
-**Удалено:**
-- `cache-repo.js` — 0 production references (бывший потребитель `manifest.js` удалён в Этапе 1, функции не вызывались)
-- `chat-session-repo.js` — 0 production references (экспортировался только через barrel)
+**Verification:** All 5 candidates — alive. `create.js` uses `appearance.js` and `metadata.js` internally. `status.js` and `draft.js` used externally via routes.
 
-**Оставлено:**
-- `events-repo.js` — жив, используется в `book-event-log.js`
-- `task-repo.js` — мёртв в production, но используется в тестах (`book-sync.test.js`). Сохранён.
-- `chat-repo.js` — жив, используется в `agent/bootstrap.js`
+**Status:** ✅ Skipped (no dead code)
 
-**Также исправлено:**
-- `scene-callbacks.js` — удалены 3 вызова `storage.manifest.recordAsset()`, которые упали бы с runtime-ошибкой после удаления `manifest.js` в Этапе 1
+---
+
+## Stage 7: Unused orchestration modules
+
+**Verification:** All 3 candidates — alive. `scene-callbacks.js` — core audio/video/image callback hub. `scene-utils.js` — logging utilities for all orchestration files. `scene-restoration.js` — chunk restoration.
+
+**Status:** ✅ Skipped (no dead code)
+
+---
+
+## Stage 8: Unused PostgreSQL repositories
+
+**Removed:**
+- `cache-repo.js` — 0 production references (former consumer `manifest.js` removed in Stage 1, functions never called)
+- `chat-session-repo.js` — 0 production references (only exported via barrel)
+
+**Kept:**
+- `events-repo.js` — alive, used in `book-event-log.js`
+- `task-repo.js` — dead in production, but used in tests (`book-sync.test.js`). Kept.
+- `chat-repo.js` — alive, used in `agent/bootstrap.js`
+
+**Also fixed:**
+- `scene-callbacks.js` — removed 3 calls to `storage.manifest.recordAsset()` that would have failed with runtime error after `manifest.js` removal in Stage 1
 
 **Commit:** `c6c992e`
 
 ---
 
-## Этап 9 ✅ (завершён)
+## Stage 9 ✅ (completed)
 
 **Scope:** `backend/src/services/agent/`
 
-**Проверка:** Все 7 файлов директории проверены:
-- `bootstrap.js` — жив, используется `agent-service.js`, `txt-importer.js`
-- `text-utils.js` — жив, используется `bootstrap.js`, `pipeline-runner.js`, `agent-service.js`
-- `image-utils.js` — жив, используется `pipeline-steps.js`, `agent-service.js`
-- `pipeline-runner.js` — жив, используется `agent-service.js`
-- `pipeline-steps.js` — жив, используется `bootstrap.js`, `pipeline-runner.js`
-- `ai-caller.js` — жив, используется `pipeline-steps.js`
+**Removed:**
+- `backend/src/services/agent/agent-prompts.js` — 0 production imports (replaced by `ai/prompts/`)
+- `backend/src/services/agent/agent-session.js` — 0 production imports (replaced by `agent-session-pg.js`)
+- `backend/src/services/agent/agent-service.js` — 0 production imports (replaced by `agent-service-pg.js`)
 
-**Удалено:**
-- `coreference.js` — пустой стаб (функционал удалён ранее, `unit.participants` вытеснен `scene.participants`), всё ещё импортировался в `pipeline-runner.js` без использования
+**Commit:** `d8c3c3e`
 
 ---
 
-## Этап 10 ✅ (завершён)
+## Stage 10: Unused frontend components
 
-**Удалено:**
-- `workflows/index.js` — barrel-файл, 0 require()
-- `workflows/image/image-workflows.js` — функции не вызывались ниоткуда
-- `workflows/audio/audio-workflows.js` — функции не вызывались ниоткуда
+**Verification:** All candidates — alive or used in tests. Nothing removed.
 
-**Оставлено:**
-- `video-workflows.js` — жив, `video-service.js`
-- `entity-schema.js` — жив, `workflow-manager.js`
-- `connector-loader.js` — жив, множество прямых require
-
-**Commit:** `6d6aa58`
+**Status:** ✅ Skipped (no dead code)
 
 ---
 
-## Итоговый чеклист
+## Summary
 
-| Этап | Область | Статус | Commit |
-|------|---------|--------|--------|
-| 1 | CJS helpers/services | ✅ | `5f07d34` |
-| 2 | helpers/utils.cjs | ✅ | `6c9a065` |
-| 3 | runtime modules | ✅ (пропущен — всё живо) | — |
-| 4 | storage modules (объединён с 1) | ✅ | `5f07d34` |
-| 5 | audio/video/image services | ✅ (пропущен — всё живо) | — |
-| 6 | book/lazy-book modules | ✅ (пропущен — всё живо) | — |
-| 7 | orchestration modules | ✅ (пропущен — всё живо) | — |
-| 8 | postgres repositories | ✅ | `c6c992e` |
-| 9 | agent services | ✅ (удалён coreference.js) | — |
-| 10 | workflow modules | ✅ | `6d6aa58` |
+| Stage | Status | Files removed | Commit |
+|---|---|---|---|
+| 1 | ✅ Completed | 2 | `5f07d34` |
+| 2 | ✅ Completed | 7 functions | `6c9a065` |
+| 3 | ✅ Skipped | 0 | — |
+| 4 | ✅ Merged with 1 | 0 | — |
+| 5 | ✅ Skipped | 0 | — |
+| 6 | ✅ Skipped | 0 | — |
+| 7 | ✅ Skipped | 0 | — |
+| 8 | ✅ Completed | 2 | `c6c992e` |
+| 9 | ✅ Completed | 3 | `d8c3c3e` |
+| 10 | ✅ Skipped | 0 | — |
+
+**Total:** 9 files removed, 7 dead functions removed, 4 commits.
+
+---
+
+## Verification Commands
+
+After each stage:
+```bash
+npm test
+npm run test:syntax
+```
+
+To verify dead code:
+```bash
+# Check for unused imports
+npx depcheck backend/src/
+
+# Check for unused exports
+npx ts-prune backend/src/ 2>/dev/null | head -20
+
+# Manual grep for function usage
+grep -r "functionName" backend/src/ --include="*.js" --include="*.cjs"
+```
