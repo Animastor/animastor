@@ -393,3 +393,109 @@ Files modified:
 - `backend/src/services/layer-config.js` — `analysis_mode` + `analysis_parallelism`
 - `backend/src/services/agent/bootstrap.js` — `_readAnalysisConfig` plumbed into `runPipeline`
 - `backend/src/services/agent/pipeline-runner.js` — parallel branch dispatch + `analysis_phase_duration` instrumentation
+
+## Parallel Analysis Mode — Frontend Wiring (Milestone #2)
+
+The frontend consumes the backend's parallel-analysis contract (Milestone #1)
+through three additive layers — no new SSE channel, no new HTTP endpoint,
+no second transport. Everything routes through the existing
+`/book/:id/layer-config` REST API and the existing `/book/:id/progress-stream`
+SSE channel.
+
+### Settings UI (`/settings/vbook`)
+
+The VBook settings page gains two new controls in the same instant-apply
+pattern as `chunk_size`:
+
+  - **AI Analysis Mode** (segmented control): Sequential / Parallel.
+    Default: Sequential. Existing books / users see no change unless they
+    opt in.
+  - **Max parallel tasks** (select 1..8): only enabled when AI Analysis
+    Mode === Parallel. Visually wrapped in `card__row--disabled` when
+    Sequential is selected — reuses the existing `.select:disabled`
+    opacity pattern at the row level so the label + helper text fade
+    together.
+
+Both controls PUT partial updates to `/book/:id/layer-config`; the
+backend merges them into the per-book layer-config schema (Milestone #1
+Commit 1). No new REST endpoint, no breaking changes to other settings.
+
+### Progress UI (Generate page, VBook section)
+
+`pages/AnalysisProgressPanel.tsx` renders a per-task row list plus an
+"Overall" row inside the VBook section's `.gen-rows` slot. The component:
+
+  - Returns `null` when `analysisMode.value !== 'parallel'` — sequential
+    mode keeps the legacy single indeterminate VBook row.
+  - Renders three rows (Characters, Locations, Voices) with: status
+    glyph (✓ ● ○ ✗), name (truncated with ellipsis), localized status
+    text, %, mm:ss timer, 3 px progress bar (determinate for terminal
+    states, indeterminate pulse while running, error tint for failed),
+    inline error message.
+  - Renders an Overall row below a divider: aggregate %,
+    `(completed + failed) / total`, with phase timer and a
+    "Total analysis time: mm:ss" caption when all tasks terminal.
+  - Uses the same Unicode-icon vocabulary as the rest of the page
+    (✓ ✗ ● ○) and the same `--accent / --success / --error` color
+    tokens — no new icon system.
+  - Mobile responsive: at ≤480px widths, timer + pct fonts shrink so
+    the row never overflows narrow phones.
+
+### State management
+
+`state/generateStore.ts` exposes:
+
+  - `analysisMode` and `analysisParallelism` signals sourced from
+    `loadLayerConfig()`. Backend authoritative — missing fields map
+    to `sequential` / `3` matching backend DEFAULTS.
+  - `vbookAnalysisProgress` signal — `Record<taskId, AnalysisTaskRow>`
+    plus aggregate counters + phase timing. ONE row per AI task.
+  - `applyAnalysisEvent(prev, ev)` — PURE transition function.
+    Recomputes totals from row statuses (NEVER trusts late-arriving
+    orchestrator counters). Sets `startedAt` on first 'running',
+    `finishedAt` + `durationMs` from `event.duration_ms`, derives
+    `phaseStartedAt / phaseFinishedAt` for the overall timer.
+  - `analysisOverallPercent(p)` — `(completed + failed) / total * 100`.
+    Failed counts as "done for the bar" but is surfaced as a failure
+    on the row, not as success.
+  - `resetAnalysisProgress()` — wipes state. Called in lockstep with
+    `clearVBookProgress()` and `cancelGeneration()` so cancellation /
+    new run / book switch never leaks stale rows.
+
+### SSE contract (additive)
+
+`handleProgressEvent()` adds ONE new branch:
+
+  - `ev.type === 'analysis'` → `applyAnalysisEvent(vbookAnalysisProgress.value, ev)`.
+
+The existing `vbook` branch gains a sub-branch for the orchestrator's
+inter-wave heartbeat `{ stage: 'analysis_parallel', analysis_completed,
+analysis_failed, analysis_total, analysis_mode }`. The legacy
+`vbook` signal is untouched.
+
+No new SSE channel, no new event type schema, no breaking changes to
+existing `vbook` / `generation_complete` / `import_complete` events.
+
+### Files added
+- `frontends/app/src/pages/AnalysisProgressPanel.tsx`
+- `frontends/app/src/state/generateStore.analysis.test.ts`
+
+### Files modified
+- `frontends/app/src/pages/SettingsPage.tsx` — VBookSection + LayerConfig type
+- `frontends/app/src/pages/GeneratePage.tsx` — WorkerSection accepts children slot
+- `frontends/app/src/state/generateStore.ts` — signals + transition + reset hooks
+- `frontends/app/src/api/models.ts` — LayerConfigResponse / ProgressEvent
+- `frontends/app/src/app/i18n.ts` — 12 new keys (ru + en), 2 helper functions
+- `frontends/app/src/styles/base.css` — `.analysis-panel` + `.analysis-row__*`
+  + `.analysis-overall__*` + 480 px responsive breakpoint
+
+### Tests
+19 vitest tests for the parallel-analysis state machine (pure helpers):
+- 11 tests for `applyAnalysisEvent` (pure transition, failure isolation,
+  totals derived from row statuses, idempotency)
+- 3 tests for `analysisOverallPercent`
+- 1 test for `resetAnalysisProgress`
+- 3 tests for `loadLayerConfig` roundtrip (parallel/sequential/missing/clamping)
+- 1 integration test for the SSE lifecycle
+
+Total vitest: 155 tests passing (was 136 — +19 new for this milestone).
