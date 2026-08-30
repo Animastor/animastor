@@ -31,7 +31,7 @@
 
 ### F. Unwind the lazy-require dependency cycles
 - Introduce an interface seam so `dispatch-engine` and `runtime-scheduler` do not `require('../orchestration')` at runtime (e.g. callback injection via deps, as already done for `bookDiff`).
-- *Rationale:* removes the acknowledged "Шаг 0 компромисс" cycle without changing behavior.
+- *Rationale:* removes the acknowledged "Step 0 compromise" cycle without changing behavior.
 
 ### G. Doc refresh
 - Update stale `docs/03-audit/ARCHITECTURAL_DEBT.md` (routes split, dual-state §16) and any `scenes.status` claims in `docs/01-overview/`.

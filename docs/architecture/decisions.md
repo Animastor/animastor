@@ -7,7 +7,7 @@
 ## D1. Per-asset Redis state is the single source of truth for the generation lifecycle
 
 - **Decision:** One hash `animastor:asset-state:{book}:{ch}:{sc}` with `audio/image/video` values (`new|dirty|pending|generating|ready|failed|placeholder`); linear scene FSM removed.
-- **Evidence:** `backend/src/state/scene-state.js` ("Per-asset states … are the ONLY source of truth. SceneState/linear state has been removed."); `orchestrator.js` "T8: syncLinearState удалён"; `asset-state.test.js` asserts the 7-value model.
+- **Evidence:** `backend/src/state/scene-state.js` ("Per-asset states … are the ONLY source of truth. SceneState/linear state has been removed."); `orchestrator.js` "T8: syncLinearState removed"; `asset-state.test.js` asserts the 7-value model.
 
 ## D2. All lifecycle state writes go through one facade (`orchestration/orchestrator.js`)
 
@@ -17,7 +17,7 @@
 ## D3. Decision (when) is separated from mutation (what)
 
 - **Decision:** `shouldScheduleAssets` is a pure read; the version-stale READY→DIRTY reset is an explicit pre-pass (`detectVersionStale` + `markVersionStaleDirty`) in `attemptDispatch`.
-- **Evidence:** `runtime-scheduler.js` comments (Д.2) and function structure; state-writers map P3 in `audit.md` §4.
+- **Evidence:** `runtime-scheduler.js` comments (D.2) and function structure; state-writers map P3 in `audit.md` §4.
 
 ## D4. Redis is runtime transport, PostgreSQL is persistent truth, filesystem is artifact storage
 
@@ -37,7 +37,7 @@
 ## D7. GPU Hub is a dumb transport; the backend owns scheduling and retries
 
 - **Decision:** Hub does queues, dedup, timeouts, error forwarding — no requeue, no policy. Retries/circuit-breakers/retry-budgets live in `dispatch-engine`.
-- **Evidence:** `gpu-hub/gpu-hub.js` (no requeue; "hub — тупой транспорт" comment); `dispatch-engine` retry budget + circuit breaker.
+- **Evidence:** `gpu-hub/gpu-hub.js` (no requeue; "hub — dumb transport" comment); `dispatch-engine` retry budget + circuit breaker.
 
 ## D8. Layer-level state machines for chunked/merged generation
 
