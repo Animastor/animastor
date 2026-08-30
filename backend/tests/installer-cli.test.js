@@ -234,6 +234,7 @@ t('C8: REGRESSION interactive CPU install (audio/qwen-tts, managed) rebuilds the
     // secret prompt ends with ": ". Answers are consumed strictly in order.
     const answers = [
         [/Continue with the CPU-only installation\? \[Yes\/No\]/, 'yes'],
+        [/Install command-line management tools\? \[Yes\/No\]/, 'yes'], // management tools
         [/Install this reference ComfyUI\? \[Yes\/No\]/, 'yes'], // D1 consent
         [/component\(s\) missing\. Install\?[\s\S]*?\[Yes\/No\]/, 'yes'], // custom nodes
         [/component\(s\) missing\. Install\?[\s\S]*?\[Yes\/No\]/, 'yes'], // models
@@ -286,6 +287,7 @@ t('C8: REGRESSION interactive CPU install (audio/qwen-tts, managed) rebuilds the
     assert.strictEqual(st.decisions.workflows, 'none', 'workflows decline kept');
     assert.strictEqual(st.decisions.worker_setup, true, 'worker selection kept');
     assert.strictEqual(st.decisions.worker_key_provided, true, 'typed token counts as provided');
+    assert.strictEqual(st.decisions.install_management_tools, true, 'management tools selection kept');
     // Secret hygiene: the typed value never appears in output or state
     assert.ok(!out.includes(TOKEN), 'token value must never be printed');
     assert.ok(!fs.readFileSync(statePath, 'utf8').includes(TOKEN), 'token value must never be persisted in state');

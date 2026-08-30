@@ -16,6 +16,7 @@
 
 const path = require('path');
 const { parseEnvKeys } = require('./probe');
+const { currentUid } = require('./prereq');
 
 function findWorkerManifest(manifests, workerEntryId) {
     return manifests.find((m) => `worker:${m.profile.id}` === workerEntryId) || null;
@@ -316,10 +317,84 @@ function startWorker(io, { workerDir, logFile = null, graceMs = 3000, sleep = nu
     return { started: true, pid, alive, reason: alive ? null : 'worker exited immediately — see the log file' };
 }
 
+/**
+ * Uid of a process (from /proc/<pid> stat) or null when unavailable.
+ */
+function pidUid(io, pid) {
+    try {
+        const st = io.fs.statSync(`/proc/${pid}`);
+        return typeof st.uid === 'number' ? st.uid : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+/**
+ * Stop a RUNNING worker of THIS installation (pid from findRunningWorkerPid,
+ * i.e. cwd-verified) and wait for it to exit. Never uses pkill/killall: the
+ * pid is addressed directly, and a pid owned by a DIFFERENT account is
+ * refused (shared host with several Animastor installations).
+ * @returns {{ stopped: boolean, pid: number|null, reason: string|null }}
+ */
+async function stopManagedWorker(io, { workerDir, stopTimeoutMs = 15000, pollMs = 300, log = null }) {
+    const pid = findRunningWorkerPid(io, workerDir);
+    if (!pid) return { stopped: false, pid: null, reason: 'no running worker process found for this installation' };
+    const me = currentUid();
+    const owner = pidUid(io, pid);
+    if (me != null && owner != null && me !== 0 && owner !== me) {
+        return { stopped: false, pid, reason: `worker process ${pid} is owned by uid ${owner} — refusing to signal a foreign process` };
+    }
+    if (log) log.info(`stopping worker (pid ${pid})`);
+    try {
+        if (typeof io.kill === 'function') io.kill(pid, 'SIGTERM');
+        else process.kill(pid, 'SIGTERM');
+    } catch (_) {
+        return { stopped: true, pid, reason: null }; // already gone
+    }
+    const alive = () => { try { process.kill(pid, 0); return true; } catch (_) { return false; } };
+    const deadline = (io.now ? io.now() : Date.now()) + stopTimeoutMs;
+    while (alive() && (io.now ? io.now() : Date.now()) < deadline) {
+        await new Promise((r) => setTimeout(r, pollMs));
+    }
+    if (alive()) {
+        try { if (typeof io.kill === 'function') io.kill(pid, 'SIGKILL'); else process.kill(pid, 'SIGKILL'); } catch (_) { /* gone */ }
+    }
+    return { stopped: true, pid, reason: null };
+}
+
+/**
+ * Restart the managed worker of THIS installation: stop the running process
+ * (cwd-verified, uid-guarded — a foreign worker is never signaled), then
+ * start a fresh one via startWorker (which is idempotent, refuses a broken
+ * bundle, and reports liveness after a grace period). Also used when the
+ * worker is already stopped: the stop step is skipped and it is just started.
+ * @returns {{ restarted: boolean, previously_running: boolean, pid: number|null,
+ *             alive: boolean, reason: string|null }}
+ */
+async function restartManagedWorker(io, { workerDir, log = null, stopTimeoutMs = 15000, pollMs = 300, graceMs = 3000 }) {
+    const previouslyRunning = !!findRunningWorkerPid(io, workerDir);
+    if (previouslyRunning) {
+        const stop = await stopManagedWorker(io, { workerDir, stopTimeoutMs, pollMs, log });
+        if (!stop.stopped) {
+            return { restarted: false, previously_running: true, pid: stop.pid, alive: false, reason: stop.reason };
+        }
+    }
+    const start = startWorker(io, { workerDir, graceMs, log });
+    if (!start.started) {
+        return { restarted: true, previously_running: previouslyRunning, pid: null, alive: false, reason: start.reason };
+    }
+    if (start.already_running) {
+        return { restarted: false, previously_running: true, pid: start.pid, alive: true, reason: null };
+    }
+    return { restarted: true, previously_running: previouslyRunning, pid: start.pid, alive: start.alive, reason: start.reason };
+}
+
 module.exports = {
     installWorkerBundle,
     fetchHubWorkerBundle,
     startWorker,
+    stopManagedWorker,
+    restartManagedWorker,
     findRunningWorkerPid,
     workerEnvIsNewer,
     configureEnv,

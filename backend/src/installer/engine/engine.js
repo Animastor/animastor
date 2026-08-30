@@ -34,6 +34,7 @@ const workflowsInstall = require('./workflows');
 const downloader = require('./downloader');
 const worker = require('./worker');
 const prereq = require('./prereq');
+const management = require('../management');
 const { createProgressReporter } = require('./progress');
 const { buildVerificationReport } = require('../verification-report');
 
@@ -160,6 +161,7 @@ const PERSISTED_DECISION_KEYS = Object.freeze([
     'comfyui_update', 'install_custom_nodes', 'install_models',
     'workflows', 'restore_baseline', 'worker_setup', 'worker_key_provided',
     'accept_reference_runtime', 'accept_runtime_change',
+    'install_management_tools',
 ]);
 
 function sanitizeDecisions(decisions) {
@@ -228,7 +230,7 @@ async function runInstallation(args) {
     const log = logger || { info: () => {}, warn: () => {}, error: () => {}, output: () => {}, step: async (n, fn) => ({ ok: true, value: await fn() }), registerSecret: () => {} };
     const {
         comfyuiRoot, workerDir, statePath,
-        repoRoot = null, hubUrl = null,
+        repoRoot = null, hubUrl = null, toolsDir = null,
     } = roots;
 
     // Busy indicator for long subprocess steps (pip/npm/git/waiting): ONE
@@ -354,7 +356,7 @@ async function runInstallation(args) {
     const currentUid = options.currentUid !== undefined ? options.currentUid : prereq.currentUid();
     const home = options.home !== undefined ? options.home : prereq.currentHome();
     const ownership = prereq.checkOwnership(io, {
-        paths: [comfyuiRoot, statePath, workerDir].filter(Boolean),
+        paths: [comfyuiRoot, statePath, workerDir, toolsDir].filter(Boolean),
         home,
         currentUid,
         stateUid: st.owner_uid != null ? st.owner_uid : null,
@@ -902,6 +904,37 @@ async function runInstallation(args) {
         if (startedEv && startedEv.port) {
             st.comfyui_runtime = { port: startedEv.port, pid: startedEv.pid, started_at: io.now() };
             save();
+        }
+
+        // 4.10 Management tools ---------------------------------------------------
+        // Optional component (install decision install_management_tools). The
+        // tools are thin wrappers around this CLI's management commands — the
+        // runtime logic is shared (management.js), never duplicated. Installing
+        // is idempotent: a re-run overwrites the same files (no duplicates) and
+        // the files are registered as owned so the uninstaller removes them
+        // precisely. A tools failure must never fail the installation itself.
+        if (decisions.install_management_tools === true && toolsDir && !dryRun) {
+            try {
+                const r = await log.step('install management tools', async () => withBusySync('Installing management tools', () => management.installManagementTools(io, {
+                    toolsDir,
+                    nodePath: process.execPath,
+                    cliPath: path.join(__dirname, '..', 'cli.js'),
+                    statePath,
+                    root: comfyuiRoot,
+                    workerDir,
+                    log,
+                })));
+                result.results.management_tools = r;
+                for (const f of r.files) {
+                    state.addOwnedComponent(st, 'services', { id: 'management-tools', path: f });
+                }
+                state.setArtifact(st, 'management-tools', 'installed', { dir: r.toolsDir });
+                save();
+            } catch (err) {
+                result.warnings.push(`management tools could not be installed: ${err.message}`);
+                state.setArtifact(st, 'management-tools', 'failed', { reason: err.message });
+                save();
+            }
         }
 
         if (runtimeFatal) {

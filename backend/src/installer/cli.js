@@ -37,6 +37,8 @@ const { createTermRenderer } = require('./engine/term');
 const { probeEnvironment, renderDetection } = require('./engine/probe');
 const { runInstallation, loadResumableState, renderResumeSummary } = require('./engine/engine');
 const prereq = require('./engine/prereq');
+const stateStore = require('./engine/state');
+const management = require('./management');
 const resolver = require('./compatibility-resolver');
 const { buildInstallPlan, renderPlanText } = require('./install-plan');
 const manifest = require('./install-manifest');
@@ -64,7 +66,7 @@ function parseArgs(argv) {
         const a = args[i];
         if (a.startsWith('--')) {
             const key = a.slice(2);
-            if (['yes', 'dry-run', 'resume', 'start-comfy', 'start-worker', 'no-start-comfy', 'no-start-worker', 'all', 'accept-reference-runtime', 'accept-runtime-change'].includes(key)) {
+            if (['yes', 'dry-run', 'resume', 'start-comfy', 'start-worker', 'no-start-comfy', 'no-start-worker', 'all', 'accept-reference-runtime', 'accept-runtime-change', 'install-tools', 'no-tools'].includes(key)) {
                 parsed.flags[key] = true;
             } else {
                 const val = args[++i];
@@ -102,6 +104,68 @@ function resolveRepoRoot(flags) {
 
 function resolveStatePath(flags) {
     return flags.state || path.join(resolveRoot(flags), '.animastor-installer', 'install-state.json');
+}
+
+/**
+ * Management tools install directory: next to the worker/runtime
+ * (<workerDir parent>/tools, e.g. ~/animastor/tools). Overridable.
+ */
+function resolveToolsDir(flags) {
+    return flags['tools-dir'] || path.join(path.dirname(resolveWorkerDir(flags)), 'tools');
+}
+
+/**
+ * Resolve the management runtime targets for the tool subcommands
+ * (status / monitor / reboot-*). Explicit flags win over the install state;
+ * a missing worker dir falls back to the documented default layout.
+ */
+function managementTargets(io, flags) {
+    const targets = management.resolveTargets(io, {
+        statePath: resolveStatePath(flags),
+        root: flags.root || null,
+        workerDir: flags['worker-dir'] || null,
+        port: flags.port ? Number(flags.port) : null,
+    });
+    if (!targets.workerDir) targets.workerDir = DEFAULT_WORKER_DIR;
+    return targets;
+}
+
+/**
+ * Shared ownership guard for every management command: blocks a sudo run
+ * against a user-owned installation and any cross-tenant access (same rules
+ * as the installer gates). Prints the violations and sets the exit code.
+ * @returns {boolean} true when access is allowed
+ */
+function guardManagementAccess(io, targets) {
+    const access = management.checkAccess(io, targets);
+    if (!access.ok) {
+        console.error('Management tools stopped because of an ownership mismatch:');
+        for (const v of access.violations) console.error(`  ${v.message}`);
+        process.exitCode = 1;
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Management-tools decision: explicit flags win; a decision recorded by a
+ * previous run is kept (tools are part of the installation state and are
+ * refreshed idempotently); otherwise ask / default to Yes (interactive runs
+ * prompt "Install command-line management tools?").
+ */
+async function resolveToolsDecision({ flags, prompt = null, prior = null }) {
+    if (flags['no-tools']) return false;
+    if (flags['install-tools']) return true;
+    if (prior === true || prior === false) return prior;
+    if (prompt) return prompt.confirm('Install command-line management tools?');
+    return true; // non-interactive default: tools are part of a normal installation
+}
+
+function priorToolsDecision(io, statePath) {
+    const st = statePath ? stateStore.loadState(io, statePath) : null;
+    return st && st.decisions && typeof st.decisions.install_management_tools === 'boolean'
+        ? st.decisions.install_management_tools
+        : null;
 }
 
 /**
@@ -296,7 +360,7 @@ async function cmdInstall(flags) {
     // python3.X-venv must be reported up front, with the exact apt command,
     // not after the user has answered every prompt.
     runHostGates(realIo, {
-        paths: [root, workerDir, statePath].filter(Boolean),
+        paths: [root, workerDir, statePath, resolveToolsDir(flags)].filter(Boolean),
         dryRun,
         deep: true,
         venvDir: path.join(root, 'venv'),
@@ -344,6 +408,11 @@ async function cmdInstall(flags) {
     if (plan.awaiting_decisions.length > 0 && !yes) {
         const prompt = createPrompt();
         const decisions = {};
+        // Management tools: a decision from a previous run is kept; otherwise
+        // ask (explicit flags still win).
+        decisions.install_management_tools = await resolveToolsDecision({
+            flags, prompt, prior: priorToolsDecision(realIo, statePath),
+        });
         // Explicit consent flags apply to interactive runs exactly as they do
         // to --yes runs (parity): without them a reference-grade ComfyUI
         // source (manifest basis=unknown, D1) can never be accepted here.
@@ -406,7 +475,7 @@ async function cmdInstall(flags) {
 
         const result = await runInstallation({
             manifests: loadedManifests, mode, io,
-            roots: { comfyuiRoot: root, workerDir, statePath, repoRoot, hubUrl },
+            roots: { comfyuiRoot: root, workerDir, statePath, repoRoot, hubUrl, toolsDir: resolveToolsDir(flags) },
             decisions, secretProvider: makeSecretProvider(secrets),
             logger, crypto, env, dryRun, options: { ...installOptions(flags), term: screen },
         });
@@ -424,9 +493,12 @@ async function cmdInstall(flags) {
             if (flags['accept-reference-runtime']) decisions.accept_reference_runtime = true;
             if (flags['accept-runtime-change']) decisions.accept_runtime_change = true;
         }
+        decisions.install_management_tools = await resolveToolsDecision({
+            flags, prompt: null, prior: priorToolsDecision(realIo, statePath),
+        });
         const result = await runInstallation({
             manifests: loadedManifests, mode, io,
-            roots: { comfyuiRoot: root, workerDir, statePath, repoRoot, hubUrl },
+            roots: { comfyuiRoot: root, workerDir, statePath, repoRoot, hubUrl, toolsDir: resolveToolsDir(flags) },
             decisions, logger, crypto, env, dryRun, options: { ...installOptions(flags), term: screen },
         });
         printResult(result);
@@ -481,7 +553,7 @@ async function cmdResume(flags) {
     // another user must never be continued under the current one (that is
     // how root-owned files end up inside a user's home).
     runHostGates(io, {
-        paths: [root, statePath, workerDir].filter(Boolean),
+        paths: [root, statePath, workerDir, resolveToolsDir(flags)].filter(Boolean),
         dryRun: false,
         deep: true,
         venvDir: path.join(root, 'venv'),
@@ -510,10 +582,15 @@ async function cmdResume(flags) {
     const decisions = { ...(st.decisions || {}), ...(flags.yes ? yesDecisions() : {}) };
     if (flags['accept-reference-runtime']) decisions.accept_reference_runtime = true;
     if (flags['accept-runtime-change']) decisions.accept_runtime_change = true;
+    // --no-tools / --install-tools override a previously recorded decision on
+    // resume too; otherwise the recorded decision (or install default) applies.
+    decisions.install_management_tools = await resolveToolsDecision({
+        flags, prompt: null, prior: priorToolsDecision(io, statePath),
+    });
 
     const result = await runInstallation({
         manifests: loadedManifests, mode, io,
-        roots: { comfyuiRoot: root, workerDir, statePath, repoRoot, hubUrl },
+        roots: { comfyuiRoot: root, workerDir, statePath, repoRoot, hubUrl, toolsDir: resolveToolsDir(flags) },
         decisions,
         secretProvider: null, // secrets are never persisted; enter them via a fresh `install` if truly required
         logger, crypto, env, initialState: st,
@@ -786,6 +863,102 @@ async function cmdValidateManifests(flags) {
 }
 
 // ---------------------------------------------------------------------------
+// Management tools — status / monitor / reboot (shared runtime logic lives in
+// management.js; these handlers only resolve targets, guard access, render
+// through the shared terminal renderer and set exit codes)
+// ---------------------------------------------------------------------------
+
+/** Resolve targets for a tool command; exit 2 when no installation is found. */
+function managementTargetsOrExit(io, flags, label) {
+    const targets = managementTargets(io, flags);
+    if (!targets.found) {
+        console.log(`${label}`);
+        console.log('');
+        console.log('✗ installation not found');
+        console.log(`  (looked for state at ${targets.statePath || '—'}, root ${targets.comfyuiRoot || '—'}, worker ${targets.workerDir || '—'})`);
+        process.exitCode = 2;
+        return null;
+    }
+    return targets;
+}
+
+async function cmdStatus(flags) {
+    const io = createRealIo();
+    const targets = managementTargetsOrExit(io, flags, 'Animastor status');
+    if (!targets) return;
+    if (!guardManagementAccess(io, targets)) return;
+    const screen = createScreen();
+    const snapshot = await management.collectStatus(io, targets);
+    for (const line of management.renderStatus(snapshot).split('\n')) screen.print(line);
+    process.exitCode = management.statusExitCode(snapshot);
+}
+
+async function cmdMonitor(flags) {
+    const io = createRealIo();
+    const targets = managementTargetsOrExit(io, flags, 'Animastor ComfyUI Monitor');
+    if (!targets) return;
+    if (!guardManagementAccess(io, targets)) return;
+    const screen = createScreen();
+    const data = await management.collectMonitor(io, targets, {
+        historyMax: flags['history-max'] ? Number(flags['history-max']) : 24,
+    });
+    for (const line of management.renderMonitor(data).split('\n')) screen.print(line);
+    process.exitCode = data.api.ok ? 0 : 1;
+}
+
+async function cmdRebootWorker(flags) {
+    const io = createRealIo();
+    const targets = managementTargetsOrExit(io, flags, 'Animastor Worker restart');
+    if (!targets) return;
+    if (!guardManagementAccess(io, targets)) return;
+    const screen = createScreen();
+    let res;
+    try {
+        res = await management.restartWorker(io, targets, { term: screen });
+    } catch (err) {
+        screen.print(`[✗] Worker restart failed: ${err.message}`);
+        process.exitCode = 1;
+        return;
+    }
+    if (res.ok && res.healthy) {
+        screen.print('[✓] Worker is healthy');
+        process.exitCode = 0;
+    } else {
+        screen.print(`[✗] Worker restart failed: ${res.detail || 'unknown reason'}`);
+        process.exitCode = 1;
+    }
+}
+
+async function cmdRebootComfyUI(flags) {
+    const io = createRealIo();
+    const targets = managementTargetsOrExit(io, flags, 'Animastor ComfyUI restart');
+    if (!targets) return;
+    if (!guardManagementAccess(io, targets)) return;
+    const screen = createScreen();
+    let res;
+    try {
+        res = await management.restartComfyUI(io, targets, {
+            term: screen,
+            verifyTimeoutMs: flags['verify-timeout-ms'] ? Number(flags['verify-timeout-ms']) : 120000,
+        });
+    } catch (err) {
+        screen.print(`[✗] ComfyUI restart failed: ${err.message}`);
+        process.exitCode = 1;
+        return;
+    }
+    if (res.ok && res.up !== false) {
+        screen.print(`[✓] API ready on :${res.port}`);
+        process.exitCode = 0;
+    } else if (res.ok) {
+        screen.print(`[!] ComfyUI restarted but the API is not ready: ${res.detail || 'unknown reason'}`);
+        process.exitCode = 1;
+    } else {
+        screen.print(`[✗] ComfyUI restart failed: ${res.detail || 'unknown reason'}`);
+        process.exitCode = 1;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -815,8 +988,20 @@ async function main() {
         case 'uninstall':
             await cmdUninstall(args.flags);
             break;
+        case 'status':
+            await cmdStatus(args.flags);
+            break;
+        case 'monitor':
+            await cmdMonitor(args.flags);
+            break;
+        case 'reboot-worker':
+            await cmdRebootWorker(args.flags);
+            break;
+        case 'reboot-comfyui':
+            await cmdRebootComfyUI(args.flags);
+            break;
         default:
-            console.error('Usage: animastor-installer <detect|plan|install|verify|validate|resume|uninstall> [options]');
+            console.error('Usage: animastor-installer <detect|plan|install|verify|validate|resume|uninstall|status|monitor|reboot-worker|reboot-comfyui> [options]');
             console.error('  --profile P[,P2]   Generation profile id');
             console.error('  --mode MODE        managed | existing | shared');
             console.error('  --root PATH        ComfyUI root (default: ~/ComfyUI)');
@@ -827,6 +1012,10 @@ async function main() {
             console.error('  managed mode starts ComfyUI + worker automatically and picks');
             console.error('  a free port when 8188 is taken; opt out:');
             console.error('    --no-start-comfy  --no-start-worker  --comfy-port N');
+            console.error('  management tools (installed next to the worker, ~/animastor/tools):');
+            console.error('    status | monitor | reboot-worker | reboot-comfyui');
+            console.error('    (--state/--root/--worker-dir/--port override discovery)');
+            console.error('    installer flags: --install-tools / --no-tools / --tools-dir PATH');
             console.error('  uninstall flags:');
             console.error('    --all            Full uninstall (remove everything recorded as installed by Animastor)');
             console.error('    --state PATH     Install state file path');
@@ -841,4 +1030,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseArgs, cmdDetect, cmdPlan, cmdInstall, cmdVerify, cmdValidateManifests, cmdResume, cmdUninstall, resolveAndPlan, makeSecretProvider };
+module.exports = { parseArgs, cmdDetect, cmdPlan, cmdInstall, cmdVerify, cmdValidateManifests, cmdResume, cmdUninstall, cmdStatus, cmdMonitor, cmdRebootWorker, cmdRebootComfyUI, resolveAndPlan, makeSecretProvider, resolveToolsDecision, resolveToolsDir };

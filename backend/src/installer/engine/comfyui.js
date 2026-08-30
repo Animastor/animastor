@@ -417,9 +417,22 @@ function findManagedComfyUIPids(io, { root, port = null }) {
  * `root`, start a fresh one, and wait for the API. Used after custom nodes
  * changed — ComfyUI imports custom nodes ONLY at startup, so a node
  * installed or repaired while it runs never appears in /object_info.
+ * `allowedUids` (opt-in, used by the management tools): when given, only
+ * processes owned by those uids are signaled — a foreign account's ComfyUI
+ * running from the same root (shared host) is left alone.
  */
-async function restartManagedComfyUI(io, { root, port, device = null, log = null, verifyTimeoutMs = 120000, pollIntervalMs = 2000 }) {
-    const pids = findManagedComfyUIPids(io, { root, port });
+async function restartManagedComfyUI(io, { root, port, device = null, log = null, verifyTimeoutMs = 120000, pollIntervalMs = 2000, allowedUids = null }) {
+    let pids = findManagedComfyUIPids(io, { root, port });
+    if (allowedUids && pids.length > 0) {
+        pids = pids.filter((pid) => {
+            try {
+                const st = io.fs.statSync(`/proc/${pid}`);
+                return typeof st.uid === 'number' ? allowedUids.includes(st.uid) : true;
+            } catch (_) {
+                return false; // already gone
+            }
+        });
+    }
     if (pids.length === 0) {
         return { restarted: false, reason: 'no running ComfyUI process found for this installation root' };
     }
