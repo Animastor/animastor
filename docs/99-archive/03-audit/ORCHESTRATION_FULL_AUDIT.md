@@ -1,12 +1,12 @@
-# Полный аудит системы оркестрации
+# Full Orchestration System Audit
 
-**Дата:** 2026-07-16
-**Область:** `backend/src/orchestration`, `backend/src/runtime`, `backend/src/state`, `gpu-hub/`, `worker/`, `backend/tests/`
-**Контекст:** система оркестрации GPU-генерации сценок (audio, image, video) для анимации книг. После M5 (фасад оркестратора) — аудит архитектуры, логики, качества кода, тестов и ошибок.
+**Date:** 2026-07-16
+**Scope:** `backend/src/orchestration`, `backend/src/runtime`, `backend/src/state`, `gpu-hub/`, `worker/`, `backend/tests/`
+**Context:** GPU scene generation orchestration system (audio, image, video) for animated books. After M5 (orchestrator facade) — audit of architecture, logic, code quality, tests, and bugs.
 
 ---
 
-## Сводка
+## Summary
 
 Система оркестрации имеет **крепкое ядро** (фасад из 13 команд, per-asset FSM, version-gate, lease/quota/идемпотентность) и **серьёзные проблемы** на периферии: 3 критических бага (ReferenceError, сломанное продление lease, SQL-инъекция), размазанная логика recovery, дублирование кода и пробелы в тестах.
 
@@ -19,7 +19,7 @@
 
 ---
 
-## 1. Архитектура: что хорошо
+## 1. Architecture: What's Good
 
 ### 1.1. Per-asset FSM — канонический ✅
 
@@ -66,7 +66,7 @@
 
 ---
 
-## 2. Критические ошибки (CRITICAL)
+## 2. Critical Bugs (CRITICAL)
 
 ### Б1. ReferenceError в reconciliation-engine.js
 
@@ -119,7 +119,7 @@ const setClauses = Object.keys(updates)
 
 ---
 
-## 3. Ошибки средней тяжести (HIGH)
+## 3. Medium Severity Bugs (HIGH)
 
 ### Б5. Не-атомарный releaseQuota на backpressure path
 
@@ -172,7 +172,7 @@ const states = await assetStates.getAssetStates(
 
 ---
 
-## 4. Качество кода
+## 4. Code Quality
 
 ### 4.1. Дублирование кода
 
@@ -217,7 +217,7 @@ const fetch = global.fetch || (await import("node-fetch")).default  // top-level
 
 ---
 
-## 5. Качество тестов
+## 5. Test Quality
 
 ### 5.1. Статистика
 
@@ -267,7 +267,7 @@ const fetch = global.fetch || (await import("node-fetch")).default  // top-level
 
 ---
 
-## 6. Проблемы GPU-hub и worker
+## 6. GPU Hub and Worker Issues
 
 ### 6.1. GPU Hub
 
@@ -288,7 +288,7 @@ const fetch = global.fetch || (await import("node-fetch")).default  // top-level
 
 ---
 
-## 7. Рекомендации
+## 7. Recommendations
 
 ### P1 (CRITICAL): Исправить ReferenceError в reconciliation-engine.js
 
@@ -357,7 +357,7 @@ if (!quota.acquired) {
 
 ---
 
-## 8. Инварианты после исправлений
+## 8. Invariants After Fixes
 
 1. Per-asset FSM — единственный источник истины
 2. Любой переход через команду фасада

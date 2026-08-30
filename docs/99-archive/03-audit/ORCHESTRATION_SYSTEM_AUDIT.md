@@ -1,21 +1,21 @@
-# Аудит системы оркестрации — aktuell
+# Orchestration System Audit — Current
 
-> **Дата:** 19 июля 2026
-> **Ревизия:** `d29eca0` (поэтапно завершены T0–T10)
-> **Область:** `backend/src/orchestration`, `backend/src/runtime`, `backend/src/services`,
+> **Date:** July 19, 2026
+> **Revision:** `d29eca0` (T0–T10 completed incrementally)
+> **Scope:** `backend/src/orchestration`, `backend/src/runtime`, `backend/src/services`,
 > `gpu-hub/`, `worker/`
-> **Цель:** не усложнять систему, а сделать стабильной.
-> **Опирается на:**
-> - `docs/02-orchestration/ORCHESTRATOR_ARCHITECTURE_WITH_AUDIO.md` — целевой дизайн фасада
->   и двойной state-machine (asset FSM + audio-orch FSM).
-> - `docs/03-audit/CAPACITY_AND_COMPLEXITY.md` — ёмкость, избыточность и что можно
->   удалить без потери надёжности.
-> **Замещает:** `ORCHESTRATION_STABILIZATION_AUDIT.md` (от 18.07), `ORCHESTRATION_FULL_AUDIT.md`
-> как исторический baseline. Старые документы не удаляются, но статус T1–T10 сверяется с кодом здесь.
+> **Goal:** Don't complicate the system, make it stable.
+> **Based on:**
+> - `docs/02-orchestration/ORCHESTRATOR_ARCHITECTURE_WITH_AUDIO.md` — target facade design
+>   and dual state-machine (asset FSM + audio-orch FSM).
+> - `docs/03-audit/CAPACITY_AND_COMPLEXITY.md` — capacity, redundancy, and what can be
+>   removed without losing reliability.
+> **Replaces:** `ORCHESTRATION_STABILIZATION_AUDIT.md` (from 18.07), `ORCHESTRATION_FULL_AUDIT.md`
+> as historical baseline. Old documents are not deleted, but T1–T10 status is verified against code here.
 
 ---
 
-## Прогресс выполнения (обновлено 2026-07-19)
+## Execution Progress (updated 2026-07-19)
 
 | Этап | Статус | Коммиты | Эффект |
 |---|---|---|---|
@@ -36,7 +36,7 @@
 
 ---
 
-## 0. Итог
+## 0. Summary
 
 Система **не требует новых подсистем**. T0–T10 закрыли все P0-дефекты прошлого аудита:
 
@@ -82,7 +82,7 @@
 
 ---
 
-## 1. Что подтверждено кодом
+## 1. What's Verified by Code
 
 | Гипотеза из прошлых аудитов | Статус сейчас | Ссылка на код |
 |---|---|---|
@@ -106,7 +106,7 @@
 
 ---
 
-## 2. Ёмкость и сложность — что подтверждено из `CAPACITY_AND_COMPLEXITY.md`
+## 2. Capacity and Complexity — What's Verified from `CAPACITY_AND_COMPLEXITY.md`
 
 ### 2.1 Конфиг узких мест (без новых движков)
 
@@ -160,7 +160,7 @@ log-only фазы, которые никогда ничего не делают�
 
 ---
 
-## 3. Оставшиеся дефекты (после T0–T10)
+## 3. Remaining Defects (after T0–T10)
 
 ### P1. Прямые writes state в обход фасада (средне)
 
@@ -230,7 +230,7 @@ test-mock, который не подключает полный `audioOrch` о�
 
 ---
 
-## 4. Канонический контракт (справочно)
+## 4. Canonical Contract (reference)
 
 Из `ORCHESTRATOR_ARCHITECTURE_WITH_AUDIO.md` §2 + сверен с кодом:
 
@@ -254,7 +254,7 @@ audio-orch.phase ∈ {WAITING_CHUNKS, MERGING, GENERATING}
 
 ---
 
-## 5. План стабилизации (без усложнения)
+## 5. Stabilization Plan (without adding complexity)
 
 Порядок — strictly из принципа «сначала.FromSeconds удалить, потом добавлять»:
 
@@ -296,7 +296,7 @@ audio-orch.phase ∈ {WAITING_CHUNKS, MERGING, GENERATING}
 
 ---
 
-## 6. Критерий готовности стабилизации
+## 6. Stabilization Readiness Criteria
 
 Система считается стабильной, когда одновременно:
 
@@ -335,7 +335,7 @@ audio-orch.phase ∈ {WAITING_CHUNKS, MERGING, GENERATING}
 
 ---
 
-## 8. Ссылки
+## 8. References
 
 - `docs/02-orchestration/ORCHESTRATOR_ARCHITECTURE_WITH_AUDIO.md` — целевой инвариант
   фасада и audio-orch state.
