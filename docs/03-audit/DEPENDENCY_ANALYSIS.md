@@ -1,50 +1,50 @@
 # Dependency Analysis: Animastor
 
-## Метод анализа
+## Analysis Method
 
-Анализ выполнен на основе статического анализа кода: `require()`/`import` зависимостей, архитектурных паттернов вызовов, и логических связей между модулями.
+Analysis performed based on static code analysis: `require()`/`import` dependencies, architectural call patterns, and logical connections between modules.
 
 ---
 
-## 1. Циклические зависимости
+## 1. Circular Dependencies
 
 ### 1.1 backend.cjs ↔ task-handler.cjs
 
-- `backend.cjs` импортирует `task-handler.cjs`
-- `task-handler.cjs` получает `backend.cjs` через DI (объект deps) и использует экспортированные модули
+- `backend.cjs` imports `task-handler.cjs`
+- `task-handler.cjs` receives `backend.cjs` via DI (deps object) and uses exported modules
 
-**Тип:** Косвенная циклическая зависимость через DI-контейнер.
+**Type:** Indirect circular dependency through DI container.
 
 ### 1.2 scene-orchestrator.js ↔ dispatch-engine.js
 
-- `scene-orchestrator.js` вызывается `dispatch-engine.js` для выполнения dispatch'а
-- `dispatch-engine.js` является частью runtime, который импортируется `scene-orchestrator.js` через цепочку вызовов
+- `scene-orchestrator.js` is called by `dispatch-engine.js` for dispatch execution
+- `dispatch-engine.js` is part of the runtime imported by `scene-orchestrator.js` through the call chain
 
-**Тип:** Функциональная циклическая зависимость. Orchestrator вызывает dispatch-engine (через runtime-scheduler), dispatch-engine вызывает orchestrator.
+**Type:** Functional circular dependency. Orchestrator calls dispatch-engine (via runtime-scheduler), dispatch-engine calls orchestrator.
 
 ---
 
-## 2. Сильные связности
+## 2. High Coupling
 
-### 2.1 backend.cjs (центральная точка связывания)
+### 2.1 backend.cjs (Central Binding Point)
 
-**Проблема:** `backend.cjs` является **единственной точкой** DI всех зависимостей. Он импортирует ~30 модулей и передаёт зависимости в 4 route-модуля.
+**Problem:** `backend.cjs` is the **single point** of DI for all dependencies. It imports ~30 modules and passes dependencies to 4 route modules.
 
-**Связность:** Высокая. Любая новая зависимость требует изменений в backend.cjs.
+**Coupling:** High. Any new dependency requires changes in backend.cjs.
 
-**Затрагиваемые компоненты:**
-- Все 4 route-модуля (book-routes, generation-routes, ai-routes, debug-routes)
-- task-handler.cjs (получает deps)
-- book-diff.cjs (получает deps)
-- audio-recovery.cjs (получает deps)
+**Affected components:**
+- All 4 route modules (book-routes, generation-routes, ai-routes, debug-routes)
+- task-handler.cjs (receives deps)
+- book-diff.cjs (receives deps)
+- audio-recovery.cjs (receives deps)
 
-### 2.2 scene-orchestrator.js (~173 строки, фасад)
+### 2.2 scene-orchestrator.js (~173 lines, Facade)
 
-**Проблема (было):** Содержал логику диспетчеризации, обработки callback'ов, state management, layer config checks, padded text trimming.
+**Problem (was):** Contained dispatch logic, callback handling, state management, layer config checks, padded text trimming.
 
-**Исправлено:** Логика вынесена в `scene-callbacks.js`, `scene-restoration.js`, `scene-utils.js`. Сейчас `scene-orchestrator.js` — фасад **~173 строки**.
+**Fixed:** Logic extracted to `scene-callbacks.js`, `scene-restoration.js`, `scene-utils.js`. Now `scene-orchestrator.js` is a facade of **~173 lines**.
 
-**Связность (историческая):** Зависит от:
+**Coupling (historical):** Depends on:
 - audio/index.js, image/index.js, video/index.js
 - scene-state.js (dual model: per-asset + linear FSM)
 - event-journal.js
@@ -58,80 +58,80 @@
 - scene-window.js
 - worker-health.js
 
-### 2.3 book-routes.cjs (~1800+ строк)
+### 2.3 book-routes.cjs (~1800+ lines)
 
-**Проблема:** Содержит все endpoints для книг, включая импорт, bootstrap, trigger-next-window, agent-status, generation-state, и десятки других.
+**Problem:** Contains all endpoints for books, including import, bootstrap, trigger-next-window, agent-status, generation-state, and dozens more.
 
-**Связность:** Чрезвычайно высокая. Зависит от ~20+ сервисов.
+**Coupling:** Extremely high. Depends on ~20+ services.
 
 ---
 
-## 3. Потенциальные архитектурные узкие места
+## 3. Potential Architectural Bottlenecks
 
-### 3.1 GPU Hub (единая точка отказа)
+### 3.1 GPU Hub (Single Point of Failure)
 
-**Проблема:** Все GPU-задачи проходят через единственный GPU Hub.
+**Problem:** All GPU tasks pass through a single GPU Hub.
 
-**Текущее состояние (улучшено):**
-- ✅ REQUEUE при timeout воркера (10 min)
-- ✅ Дедупликация задач
+**Current state (improved):**
+- ✅ REQUEUE on worker timeout (10 min)
+- ✅ Task deduplication
 - ✅ Graceful shutdown
-- ❌ Нет failover, нет репликации
+- ❌ No failover, no replication
 
-### 3.2 Redis (единая точка отказа для runtime)
+### 3.2 Redis (Single Point of Failure for Runtime)
 
-**Проблема:** Runtime-состояние (active scenes, dispatch leases, quotas, event journal, worker health, очереди) полностью зависит от Redis.
+**Problem:** Runtime state (active scenes, dispatch leases, quotas, event journal, worker health, queues) depends entirely on Redis.
 
-**Текущее состояние:**
-- ✅ Redis persistence через docker volume (redis-data:/data)
-- ❌ Нет Redis Sentinel/Cluster конфигурации в docker-compose
+**Current state:**
+- ✅ Redis persistence via docker volume (redis-data:/data)
+- ❌ No Redis Sentinel/Cluster configuration in docker-compose
 
-### 3.3 OpenRouter API / Nvidia API (единая точка отказа для AI)
+### 3.3 OpenRouter API / Nvidia API (Single Point of Failure for AI)
 
-**Проблема:** Весь AI-пайплайн (agent-service, chat-engine) зависит от внешнего API.
+**Problem:** The entire AI pipeline (agent-service, chat-engine) depends on external APIs.
 
-**Текущее состояние:**
-- ✅ AI_API_BASE_URL конфигурируется (OpenRouter, Nvidia, custom)
-- ❌ Нет автоматического переключения между провайдерами
-- ❌ Нет fallback цепочки
+**Current state:**
+- ✅ AI_API_BASE_URL is configurable (OpenRouter, Nvidia, custom)
+- ❌ No automatic provider failover
+- ❌ No fallback chain
 
-### 3.4 Runtime Scheduler (единственный планировщик)
+### 3.4 Runtime Scheduler (Single Scheduler)
 
-**Проблема:** Весь прогресс генерации зависит от одного tick-планировщика (5s). При его остановке — генерация сцен прекращается.
+**Problem:** All generation progress depends on a single tick scheduler (5s). When it stops — scene generation halts.
 
 ---
 
-## 4. Компоненты с чрезмерной ответственностью
+## 4. Components with Excessive Responsibility
 
 ### 4.1 scene-orchestrator.js
 
-> **UPD 2026-06-26:** Логика callback'ов вынесена в `scene-callbacks.js` (R3). Сейчас orchestrator — фасад ~173 строки.
-> stale state tolerance убран (R3.1 = R6.5).
-> GENERATING per-asset добавлен при диспатче (Н.7/§5.1).
+> **UPDATE 2026-06-26:** Callback logic extracted to `scene-callbacks.js` (R3). Now orchestrator is a facade of ~173 lines.
+> stale state tolerance removed (R3.1 = R6.5).
+> GENERATING per-asset added at dispatch (N.7/§5.1).
 
-**Текущая ответственность:**
-- Dispatch execution для audio/image/video
+**Current responsibility:**
+- Dispatch execution for audio/image/video
 - Layer config checks (audio_enabled/image_enabled/video_enabled)
 - Lane management (completeWithoutVideo/Image)
 - Event journal logging
 
-**Ответственность (ВЫНЕСЕНА в scene-callbacks.js):**
-- Callback handling для всех трёх типов
+**Responsibility (EXTRACTED to scene-callbacks.js):**
+- Callback handling for all three types
 - State machine management (per-asset state)
 
-**Убрано:**
+**Removed:**
 - stale state tolerance (R6.5)
-- padded text trimming (в audio-service, передаётся через DI)
-- syncLinearState вызовы (→ per-asset API, R6.1)
+- padded text trimming (in audio-service, passed via DI)
+- syncLinearState calls (→ per-asset API, R6.1)
 
-**Оценка:** Существенно уменьшена, но всё ещё фасад с несколькими обязанностями.
+**Assessment:** Substantially reduced, but still a facade with multiple responsibilities.
 
 ### 4.2 book-routes.cjs
 
-**Ответственность:**
-- CRUD книг
-- Импорт TXT (декодирование, дедупликация)
-- Bootstrap (запуск AI-пайплайна)
+**Responsibility:**
+- Book CRUD
+- TXT import (decoding, deduplication)
+- Bootstrap (AI pipeline launch)
 - Trigger next window
 - Agent status
 - Generation state
@@ -140,11 +140,11 @@
 - Scene reorder
 - Book diff/apply
 
-**Оценка:** Слишком много ответственности для одного файла.
+**Assessment:** Too much responsibility for a single file.
 
-### 4.3 dispatch-engine.js (~1000 строк)
+### 4.3 dispatch-engine.js (~1000 lines)
 
-**Ответственность:**
+**Responsibility:**
 - Lease management
 - Quota management
 - Circuit breaker integration (safeRequire)
@@ -154,82 +154,82 @@
 - Decision tracing
 - Counter reconciliation
 
-**Оценка:** Интегрирует слишком много cross-cutting concerns. Однако governance-модули загружаются лениво (safeRequire).
+**Assessment:** Integrates too many cross-cutting concerns. However, governance modules are lazy-loaded (safeRequire).
 
 ### 4.4 scene-state.js
 
-**Ответственность:**
+**Responsibility:**
 - Dual state model (per-asset + linear FSM)
-- State transitions для обоих моделей
+- State transitions for both models
 - Heartbeat management
 - Stuck detection
 - Redis read/write
 
 ---
 
-## 5. Компоненты, через которые проходит слишком много логики
+## 5. Components with Too Much Logic Flowing Through Them
 
 ### 5.1 backend.cjs
 
-**Поток логики:**
-- Инициализация → подключение Redis/PG
-- Загрузка workflow
-- DI всех сервисов (30+)
-- Монтирование всех роутов
-- Запуск runtime loop
-- Запуск cleanup/audio-recovery/startup-resume
+**Logic flow:**
+- Initialization → Redis/PG connection
+- Workflow loading
+- DI of all services (30+)
+- Mounting all routes
+- Starting runtime loop
+- Starting cleanup/audio-recovery/startup-resume
 - Graceful shutdown
 
-**Оценка:** ~265 строк для ~30 зависимостей.
+**Assessment:** ~265 lines for ~30 dependencies.
 
 ### 5.2 task-handler.cjs
 
-**Поток логики:**
-- Callback от GPU Hub (audio, image, video)
-- IU image completion с проверкой PG
-- Аудио-мерж с padded text trimming
-- Регистрация asset'ов
+**Logic flow:**
+- Callback from GPU Hub (audio, image, video)
+- IU image completion with PG validation
+- Audio merge with padded text trimming
+- Asset registration
 
 ### 5.3 scene-orchestrator.js
 
-**Поток логики:**
-- dispatching → выполнение → callback → state update → window slide
-- Проходит через orchestrator практически вся бизнес-логика
+**Logic flow:**
+- dispatching → execution → callback → state update → window slide
+- Virtually all business logic flows through the orchestrator
 
-**Оценка:** Является центральным "мозгом" системы.
+**Assessment:** Acts as the central "brain" of the system.
 
 ---
 
-## 6. Slim runtime (v2.0.0)
+## 6. Slim Runtime (v2.0.0)
 
-Модуль `runtime/index.js` экспортирует только core pipeline. Governance-модули загружаются лениво через `runtime.index.debug`.
+The `runtime/index.js` module exports only the core pipeline. Governance modules are lazy-loaded via `runtime.index.debug`.
 
-**Core (всегда загружены):**
+**Core (always loaded):**
 - scheduler, loop, activeScenes, reconciliation, dispatch, leaseManager, counterReconciliation, metrics, gpuDispatcher, workerHealth, sceneWindow
 
-**Error handling (загружены):**
+**Error handling (loaded):**
 - failureTaxonomy, retryManager, retentionManager
 
-**Debug (ленивая загрузка):**
+**Debug (lazy-loaded):**
 - snapshotManager, circuitBreaker, priorityManager, fairness, retryBudget, policyEngine, workloadClassifier, costEstimator, decisionTrace, feedback, governanceMetrics, adaptationController, governanceStability, governanceHealth, executionSemantics
 
-**Debug/Experimental (ленивая загрузка):**
+**Debug/Experimental (lazy-loaded):**
 - policySimulator, sandbox, failureReplay, validator
 
 ---
 
-## Визуализация графа зависимостей (критические пути)
+## Dependency Graph Visualization (Critical Paths)
 
 ```
                     ┌──────────────────────┐
-                    │     backend.cjs      │◄─── Центральный DI (30+ зависимостей)
+                    │     backend.cjs      │◄─── Central DI (30+ dependencies)
                     └──────────┬───────────┘
                                │
          ┌─────────────────────┼─────────────────────┐
          ▼                     ▼                      ▼
    ┌──────────┐       ┌──────────────┐       ┌──────────────┐
    │ Routes   │       │  Runtime     │       │  Services    │
-   │ (4 файла)│       │  Scheduler   │       │  (20+)       │
+   │ (4 files)│       │  Scheduler   │       │  (20+)       │
    └──────────┘       └──────┬───────┘       └──────────────┘
                              │
                     ┌────────┴────────┐
@@ -239,8 +239,8 @@
                     └────────┬────────┘
                              │
                     ┌────────┴────────┐
-                    │  Scene          │◄─── Чрезмерная ответственность
-                    │  Orchestrator   │     (1200 строк, layer-aware)
+                    │  Scene          │◄─── Excessive responsibility
+                    │  Orchestrator   │     (1200 lines, layer-aware)
                     └────────┬────────┘
                              │
          ┌───────────────────┼───────────────────┐
@@ -258,7 +258,7 @@
                     └──────┬───────┘
                            │
                     ┌──────┴───────┐
-                    │   GPU Hub    │◄─── Единая точка отказа
+                    │   GPU Hub    │◄─── Single point of failure
                     │ (10min t/o)  │     (+ requeue)
                     └──────────────┘
 ```

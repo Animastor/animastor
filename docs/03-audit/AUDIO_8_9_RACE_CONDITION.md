@@ -1,35 +1,35 @@
 # Audio 8/9 Race Condition — Retry Timer vs GPU Hub
 
-> **Дата:** 2026-07-18  
-> **Статус:** Костыль заменён оркестрацией  
-> **Теги:** `audio`, `race-condition`, `retry`, `gpu-hub`, `completeChunk`
+> **Date:** 2026-07-18  
+> **Status:** Workaround replaced by orchestration  
+> **Tags:** `audio`, `race-condition`, `retry`, `gpu-hub`, `completeChunk`
 
 ---
 
-## 1. Симптом
+## 1. Symptom
 
-При генерации аудио для сцены с 9 чанками прогресс доходил до 8/9 и **начинался заново** — бесконечный цикл:
+When generating audio for a scene with 9 chunks, progress would reach 8/9 and then **restart from zero** — an infinite loop:
 
 ```
 8/9 → retry → max retries → failStage → re-dispatch → 8/9 → ...
 ```
 
-Визуально в UI: прогресс растёт до 8/9, затем сбрасывается и начинается с 0.
+Visually in the UI: progress grows to 8/9, then resets and starts from 0.
 
 ---
 
-## 2. Диагностика
+## 2. Diagnostics
 
-Добавлены debug-логи с префиксами `[DEBUG-CHUNK]`, `[DEBUG-AUDIO]`, `[DEBUG-RESULT]`, `[DEBUG-DISPATCH]` в 4 файла:
+Debug logs were added with prefixes `[DEBUG-CHUNK]`, `[DEBUG-AUDIO]`, `[DEBUG-RESULT]`, `[DEBUG-DISPATCH]` in 4 files:
 
-| Префикс | Файл | Что логирует |
+| Prefix | File | What it logs |
 |---------|------|-------------|
-| `[DEBUG-DISPATCH]` | `scene-orchestrator.js` | После `setWaitingChunks` и `generateSceneAudio` |
-| `[DEBUG-AUDIO]` | `generation.js` | Количество сегментов, их типы, отправка каждого чанка |
-| `[DEBUG-RESULT]` | `task-handler.cjs` | Приход каждого результата от GPU hub |
-| `[DEBUG-CHUNK]` | `audio-orchestrator.js` | Вызов `completeChunk`, какие чанки есть на диске, retry-попытки |
+| `[DEBUG-DISPATCH]` | `scene-orchestrator.js` | After `setWaitingChunks` and `generateSceneAudio` |
+| `[DEBUG-AUDIO]` | `generation.js` | Segment count, types, and individual chunk dispatch |
+| `[DEBUG-RESULT]` | `task-handler.cjs` | Each result arriving from GPU hub |
+| `[DEBUG-CHUNK]` | `audio-orchestrator.js` | `completeChunk` calls, which chunks are on disk, retry attempts |
 
-Логи показали:
+Logs showed:
 
 ```
 [DEBUG-AUDIO] ✅ SENT chunk 0001 (1/9)
@@ -47,7 +47,7 @@
 [DEBUG-CHUNK] ⛔ MAX RETRIES EXCEEDED: .../sc-e4da99bd expected=9 missing=[2,3,4,5,6,7,8,9]
 ```
 
-GPU hub логи:
+GPU hub logs:
 
 ```
 import_..._sc-e4da99bd_0002:audio Hub rejected result: HTTP 409
@@ -55,143 +55,143 @@ import_..._sc-e4da99bd_0002:audio Hub rejected result: HTTP 409
 
 ---
 
-## 3. Причина
+## 3. Root Cause
 
-### 3.1 Конфигурация retry (до фикса)
+### 3.1 Retry Configuration (Before Fix)
 
 ```js
-AUDIO_MERGE_RETRY_DELAY_MS: 15000,     // 15 секунд между retry
-AUDIO_MERGE_RETRY_MAX: 5,              // максимум 5 попыток
-AUDIO_MERGE_RETRY_DEDUP_TTL_S: 30,     // dedup key живет 30 секунд
-AUDIO_MERGE_RETRY_COUNTER_TTL_S: 180,  // счётчик живёт 3 минуты
+AUDIO_MERGE_RETRY_DELAY_MS: 15000,     // 15 seconds between retries
+AUDIO_MERGE_RETRY_MAX: 5,              // maximum 5 attempts
+AUDIO_MERGE_RETRY_DEDUP_TTL_S: 30,     // dedup key lives for 30 seconds
+AUDIO_MERGE_RETRY_COUNTER_TTL_S: 180,  // counter lives for 3 minutes
 ```
 
-Общий budget retry: **5 × 15с = 75 секунд**.
+Total retry budget: **5 × 15s = 75 seconds**.
 
-### 3.2 Хронология race condition
+### 3.2 Race Condition Timeline
 
-При 9 чанках и 1 аудио-воркере (~10-15 секунд на чанк ComfyUI TTS):
+With 9 chunks and 1 audio worker (~10-15 seconds per chunk via ComfyUI TTS):
 
 ```
 t=0s:    executeAudioDispatch → setWaitingChunks → send 9 jobs → GPU hub
-t=5с:    chunk 0001 обработан → completeChunk(0001) → 1/9 → schedule retry через 15с (attempt 1)
-t=15с:   retry #1 → 1/9 → schedule retry через 15с (attempt 2)
-t=20с:   chunk 0002 обработан воркером → результат в GPU hub
-         GPU hub проверяет animastor:running:{dispatch_id} → ещё есть → шлёт в backend
-         Backend: chunk 0002 сохранён на диск
-t=25с:   chunk 0003 прибывает в backend → сохранён
-t=30с:   retry #2: present=[1,2,3] missing=[4-9]
+t=5s:    chunk 0001 processed → completeChunk(0001) → 1/9 → schedule retry in 15s (attempt 1)
+t=15s:   retry #1 → 1/9 → schedule retry in 15s (attempt 2)
+t=20s:   chunk 0002 processed by worker → result sent to GPU hub
+         GPU hub checks animastor:running:{dispatch_id} → still present → forwards to backend
+         Backend: chunk 0002 saved to disk
+t=25s:   chunk 0003 arrives at backend → saved
+t=30s:   retry #2: present=[1,2,3] missing=[4-9]
          ...
-t=60с:   retry #4: present=[1,2,3,4,5] missing=[6-9]
-t=65с:   chunk 0006 прибывает → сохранён
-t=75с:   retry #5: MAX RETRIES → failStage
+t=60s:   retry #4: present=[1,2,3,4,5] missing=[6-9]
+t=65s:   chunk 0006 arrives → saved
+t=75s:   retry #5: MAX RETRIES → failStage
          → orchestrator.failStage → cancelActiveDispatch
-         → GPU hub чистит animastor:running:{dispatch_id}
-t=75с+:  chunks 0007-0009 долетают до GPU hub
-         → animastor:running нет → HTTP 409 → результаты не доходят в backend
-         → scene переходит в PENDING → scheduler re-dispatch → GOTO 1
+         → GPU hub cleans animastor:running:{dispatch_id}
+t=75s+:  chunks 0007-0009 arrive at GPU hub
+         → animastor:running gone → HTTP 409 → results don't reach backend
+         → scene transitions to PENDING → scheduler re-dispatch → GOTO 1
 ```
 
-**Ключевой момент:** Чанки 0002-0006 **успевают** долететь до backend до cancelActiveDispatch, но чанки 0007-0009 получают 409, потому что:
+**Key insight:** Chunks 0002-0006 **manage to** reach the backend before `cancelActiveDispatch`, but chunks 0007-0009 get a 409 because:
 
-1. 9 чанков × 10-15с = 90-135с нужно для полной обработки
-2. Retry budget: 5 × 15с = 75с
-3. **75с < 90-135с** → retry исчерпывается до завершения всех чанков
+1. 9 chunks × 10-15s = 90-135s needed for complete processing
+2. Retry budget: 5 × 15s = 75s
+3. **75s < 90-135s** → retries exhausted before all chunks complete
 
-### 3.3 Дополнительная проблема: протухание dedup key
+### 3.3 Additional Issue: Dedup Key Expiration
 
-`AUDIO_MERGE_RETRY_DEDUP_TTL_S: 30` — dedup key предохраняет от запуска второго retry-таймера, пока первый активен. Но dedup key живёт 30 секунд, а retry timer срабатывает через 15 секунд — с этим значением проблем не было.
+`AUDIO_MERGE_RETRY_DEDUP_TTL_S: 30` — the dedup key prevents launching a second retry timer while the first is active. But the dedup key lives for 30 seconds while the retry timer fires every 15 seconds — with the original value this wasn't a problem.
 
-**После увеличения DELAY_MS до 60с** dedup key (30с) протухал ДО срабатывания retry timer (60с). Приходящие промежуточные чанки находили протухший dedup key, создавали новые retry-цепочки и ускоряли исчерпание retry budget.
+**After increasing DELAY_MS to 60s**, the dedup key (30s) expired BEFORE the retry timer fired (60s). Arriving intermediate chunks found the expired dedup key, created new retry chains, and accelerated retry budget exhaustion.
 
 ---
 
-## 4. Фикс
+## 4. Fix
 
-### 4.1 Изменения в `runtime-config.js`
+### 4.1 Changes in `runtime-config.js`
 
-| Параметр | Было | Стало | Обоснование |
+| Parameter | Before | After | Rationale |
 |----------|------|-------|-------------|
-| `AUDIO_MERGE_RETRY_DELAY_MS` | 15 000 (15с) | **60 000 (60с)** | 9 чанков × 10-15с = 90-135с; новый budget 5 × 60с = 300с ✅ |
-| `AUDIO_MERGE_RETRY_DEDUP_TTL_S` | 30 | **120** | dedup должен пережить retry delay: 120с > 60с (2× buffer) ✅ |
-| `AUDIO_MERGE_RETRY_COUNTER_TTL_S` | 180 (3мин) | **600 (10мин)** | 5 × 60с = 300с; 600с > 300с (инвариант) ✅ |
+| `AUDIO_MERGE_RETRY_DELAY_MS` | 15,000 (15s) | **60,000 (60s)** | 9 chunks × 10-15s = 90-135s; new budget 5 × 60s = 300s ✅ |
+| `AUDIO_MERGE_RETRY_DEDUP_TTL_S` | 30 | **120** | Dedup must survive retry delay: 120s > 60s (2× buffer) ✅ |
+| `AUDIO_MERGE_RETRY_COUNTER_TTL_S` | 180 (3min) | **600 (10min)** | 5 × 60s = 300s; 600s > 300s (invariant) ✅ |
 
-### 4.2 Проверка инвариантов
+### 4.2 Invariant Verification
 
 ```js
-// Инвариант 1: MAX × DELAY_MS < LEASE_TTL_S.AUDIO × 1000
-//   5 × 60 000 = 300 000ms < 15 × 60 × 1000 = 900 000ms ✅
+// Invariant 1: MAX × DELAY_MS < LEASE_TTL_S.AUDIO × 1000
+//   5 × 60,000 = 300,000ms < 15 × 60 × 1000 = 900,000ms ✅
 
-// Инвариант 2: COUNTER_TTL_S × 1000 > MAX × DELAY_MS
-//   600 × 1000 = 600 000ms > 300 000ms ✅
+// Invariant 2: COUNTER_TTL_S × 1000 > MAX × DELAY_MS
+//   600 × 1000 = 600,000ms > 300,000ms ✅
 
-// Инвариант 3: DEDUP_TTL_S × 1000 >= DELAY_MS
-//   120 × 1000 = 120 000ms >= 60 000ms ✅
+// Invariant 3: DEDUP_TTL_S × 1000 >= DELAY_MS
+//   120 × 1000 = 120,000ms >= 60,000ms ✅
 ```
 
-Подтверждение: тест `runtime-timeouts.test.js` проверяет все три инварианта.
+Confirmed: the test `runtime-timeouts.test.js` verifies all three invariants.
 
 ---
 
-## 5. Проверка гипотезы (слепой поиск)
+## 5. Hypothesis Verification (Blind Search)
 
-Для отладки добавлены логи во все ключевые точки:
+For debugging, logs were added at all critical points:
 
 ```
-[DEBUG-DISPATCH] — executeAudioDispatch: отправка и результат
-[DEBUG-AUDIO]    — generateSceneAudio: сегменты, expectedCount, отправка чанков
-[DEBUG-RESULT]   — handleTaskResult: приход каждого результата
-[DEBUG-CHUNK]    — completeChunk: фаза, completeness check, retry, max retries
+[DEBUG-DISPATCH] — executeAudioDispatch: dispatch and result
+[DEBUG-AUDIO]    — generateSceneAudio: segments, expectedCount, chunk dispatch
+[DEBUG-RESULT]   — handleTaskResult: each arriving result
+[DEBUG-CHUNK]    — completeChunk: phase, completeness check, retry, max retries
 ```
 
-Грепать: `docker compose logs backend | grep '\[DEBUG-'`
+Grep: `docker compose logs backend | grep '\[DEBUG-'`
 
 ---
 
-## 6. Затронутые файлы
+## 6. Affected Files
 
-| Файл | Изменение |
+| File | Change |
 |------|-----------|
-| `backend/src/config/runtime-config.js` | DELAY 15→60с, DEDUP 30→120с, COUNTER 180→600с |
-| `backend/src/services/audio-orchestrator.js` | [DEBUG-CHUNK] логи |
-| `backend/src/audio/generation.js` | [DEBUG-AUDIO] логи |
-| `backend/src/services/task-handler.cjs` | [DEBUG-RESULT] логи |
-| `backend/src/orchestration/scene-orchestrator.js` | [DEBUG-DISPATCH] логи |
+| `backend/src/config/runtime-config.js` | DELAY 15→60s, DEDUP 30→120s, COUNTER 180→600s |
+| `backend/src/services/audio-orchestrator.js` | [DEBUG-CHUNK] logs |
+| `backend/src/audio/generation.js` | [DEBUG-AUDIO] logs |
+| `backend/src/services/task-handler.cjs` | [DEBUG-RESULT] logs |
+| `backend/src/orchestration/scene-orchestrator.js` | [DEBUG-DISPATCH] logs |
 
 ---
 
-## 7. Уроки
+## 7. Lessons Learned
 
-1. **Fixed retry timer не подходит для асинхронных воркеров с переменной загрузкой.** В идеале retry должен быть адаптивным: fail только если чанки перестали приходить (нет новых в течение N минут), а не по фиксированному числу попыток.
+1. **Fixed retry timers are unsuitable for async workers with variable load.** Ideally, retries should be adaptive: fail only when chunks stop arriving (no new chunks within N minutes), not by a fixed number of attempts.
 
-2. **Dedup key должен быть ≥ retry delay.** Иначе промежуточные события создают конкурирующие retry-цепочки.
+2. **Dedup key TTL must be ≥ retry delay.** Otherwise intermediate events create competing retry chains.
 
-3. **Debug-логи с префиксами `[DEBUG-*]` критически важны для диагностики распределённых гонок.** Без них причина цикла 8/9 была бы невидима.
+3. **Debug logs with `[DEBUG-*]` prefixes are critical for diagnosing distributed races.** Without them, the root cause of the 8/9 loop would have been invisible.
 
 ---
 
-## 8. Рефакторинг: retry-таймер заменён на event-driven модель + watchdog
+## 8. Refactoring: Retry Timer Replaced by Event-Driven Model + Watchdog
 
-Вместо увеличения констант (предыдущий «фикс») выполнена полная замена механизма:
+Instead of increasing constants (the previous "fix"), the entire mechanism was replaced:
 
-| Было | Стало |
+| Before | After |
 |------|-------|
-| `completeChunk` заводит `setTimeout`-цепочку | Event-driven: приход последнего чанка триггерит merge |
-| FAILED по таймеру (гонка с живой генерацией) | FAILED только из `failWaitingScene()` (watchdog застоя) |
-| `AUDIO_MERGE_RETRY_*` (4 константы) | `AUDIO_CHUNK_STALL_MS` (одна константа) |
-| `animastor:audio-merge-retry:*` ключи в Redis | Удалены |
-| `[DEBUG-*]` логи в 4 файлах | Удалены (заменены на `helpers.log`/`warn`) |
+| `completeChunk` starts a `setTimeout` chain | Event-driven: arrival of the last chunk triggers merge |
+| FAILED by timer (race with live generation) | FAILED only from `failWaitingScene()` (watchdog for stalls) |
+| `AUDIO_MERGE_RETRY_*` (4 constants) | `AUDIO_CHUNK_STALL_MS` (single constant) |
+| `animastor:audio-merge-retry:*` keys in Redis | Removed |
+| `[DEBUG-*]` logs in 4 files | Removed (replaced by `helpers.log`/`warn`) |
 
-### Что изменилось
+### What Changed
 
-1. **T-A1** (`197f838`): `completeChunk` при неполном наборе чанков пишет `chunks_received`/`last_chunk_at` и выходит. Merge запускается только приходом последнего чанка. `failWaitingScene()` — единственный владелец `WAITING_CHUNKS → FAILED` (чистка hub-dedup + сброс metadata + `orchestrator.failStage`).
+1. **T-A1** (`197f838`): `completeChunk` with an incomplete chunk set writes `chunks_received`/`last_chunk_at` and exits. Merge is triggered only by arrival of the last chunk. `failWaitingScene()` is the sole owner of `WAITING_CHUNKS → FAILED` (hub-dedup cleanup + metadata reset + `orchestrator.failStage`).
 
-2. **T-A3** (`134db6a`): retry-константы заменены на `AUDIO_CHUNK_STALL_MS=300000` (5 мин).
+2. **T-A3** (`134db6a`): retry constants replaced by `AUDIO_CHUNK_STALL_MS=300000` (5 min).
 
-3. **T-A2** (`b7ad7fc`): watchdog `checkStalledAudioScenes` в `reconcileCycle` — фаза B1. Сканирует все audio-orch states, для `WAITING_CHUNKS` проверяет `last_chunk_at + STALL_MS < now` → вызывает `failWaitingScene()`.
+3. **T-A2** (`b7ad7fc`): watchdog `checkStalledAudioScenes` in `reconcileCycle` — phase B1. Scans all audio-orch states; for `WAITING_CHUNKS` checks `last_chunk_at + STALL_MS < now` → calls `failWaitingScene()`.
 
-4. **T-A5** (`19eb680`): `[DEBUG-*]` логи удалены из всех 4 файлов.
+4. **T-A5** (`19eb680`): `[DEBUG-*]` logs removed from all 4 files.
 
-5. **T-A6** (`74e2f45`): 5 новых тестов для watchdog, 576 тестов проходят.
+5. **T-A6** (`74e2f45`): 5 new tests for watchdog; 576 tests passing.
 
-Детали: `docs/03-audit/AUDIO_ORCH_INTEGRATION_TODO.md`
+Details: `docs/03-audit/AUDIO_ORCH_INTEGRATION_TODO.md`
