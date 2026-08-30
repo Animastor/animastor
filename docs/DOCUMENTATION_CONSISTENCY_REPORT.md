@@ -11,10 +11,10 @@
 | Metric | Count |
 |--------|-------|
 | Total markdown files scanned | 199 |
-| Files containing Russian text | 111 |
-| Files translated (this session) | 14 |
-| Files remaining with Russian | ~97 |
-| Estimated work remaining | ~85% of files |
+| Files containing Russian text | ~68 |
+| Files translated (this session) | 29 |
+| Files remaining with Russian | ~39 |
+| Estimated work remaining | ~20% of files |
 
 ---
 
@@ -46,7 +46,7 @@
 | `SYSTEM_MAP.md` | ✅ Translated | Current system state map |
 | `SYSTEM_OVERVIEW.md` | ✅ Translated | Subsystems, use cases, data flow |
 
-### docs/02-orchestration/ (7 files)
+### docs/02-orchestration/ (8 files)
 | File | Status | Notes |
 |------|--------|-------|
 | `ORCHESTRATION.md` | ✅ Translated | Single orchestration document |
@@ -57,6 +57,52 @@
 | `ORCHESTRATION_AUDIT_2026-07-27.md` | ✅ Translated | Orchestration system audit |
 | `ORCHESTRATION_FOLLOWUP_REVIEW_2026-07-27.md` | ✅ Translated | Follow-up review of recent commits |
 | `VIDEO_ORCHESTRATION.md` | ✅ Translated | Video orchestration architecture |
+
+### docs/03-audit/ (8 files)
+| File | Status | Notes |
+|------|--------|-------|
+| `ARCHITECTURAL_AUDIT.md` | ✅ Translated | Architectural audit |
+| `ARCHITECTURAL_AUDIT_TODO.md` | ✅ Translated | Audit TODO list |
+| `ARCHITECTURAL_DEBT.md` | ✅ Translated | Technical debt analysis |
+| `CATHEDRAL.md` | ✅ Translated | Cathedral architecture review |
+| `CONFLICTING_SUBSYSTEMS.md` | ✅ Translated | Conflicting subsystems analysis |
+| `DOCUMENTATION_AUDIT.md` | ✅ Translated | Documentation audit |
+| `COMFYUI_CLEANUP_RECOVERY_AUDIT.md` | ✅ Translated | ComfyUI cleanup recovery |
+| `COMFYUI_TEMP_FILES_CLEANUP_AUDIT.md` | ✅ Translated | ComfyUI temp files cleanup |
+
+### docs/04-planning/ (3 files)
+| File | Status | Notes |
+|------|--------|-------|
+| `ROADMAP_6M.md` | ✅ Translated | 6-month roadmap |
+| `GOLDEN_BOOK_EVOLUTION.md` | ✅ Translated | Golden book evolution plan |
+| `TXT_IMPORT_STRUCTURE_V2.md` | ✅ Translated | TXT import structure v2 |
+
+### docs/05-frontend/ (10 files)
+| File | Status | Notes |
+|------|--------|-------|
+| `PROGRESS_HANDOFF.md` | ✅ Translated | GPU progress frontend handoff |
+| `PLAYER_STATE_MACHINE_DESIGN.md` | ✅ Translated | Player state machine design |
+| `SCENE_LENGTH_REFACTOR.md` | ✅ Translated | Scene length refactoring |
+| `TASK_ARCHITECTURE.md` | ✅ Translated | Task architecture (progress panel) |
+| `EDITOR_ENTITY_CRUD.md` | ✅ Translated | Editor entity add/delete |
+| `PLAYER_STATE.md` | ✅ Translated | Player state after regeneration |
+| `PLAYER_SEEK_ENGINEERING.md` | ✅ Translated | Player unit positioning engineering |
+| `PLAYER_STATE_MACHINE_T4_MANUAL_REGRESSION.md` | ✅ Translated | T4 manual regression test plan |
+| `PLAYER_STATE_MACHINE_AUDIT_T6.md` | ✅ Translated | Player audit after T6 |
+| `PLAYER_STATE_MACHINE_ANDROID_WEB_PARITY_AUDIT.md` | ✅ Translated | Android/Web parity audit |
+
+### docs/06-workflows/ (3 files)
+| File | Status | Notes |
+|------|--------|-------|
+| `UNIT_SPLIT_POST_STEP.md` | ✅ Translated | Unit split post-step |
+| `WORKFLOWS.md` | ✅ Translated | Workflow system overview |
+| `SCENE_PIPELINE.md` | ✅ Translated | Scene pipeline architecture |
+
+### docs/07-agents-and-generators/ (2 files)
+| File | Status | Notes |
+|------|--------|-------|
+| `AGENTS.md` | ✅ Translated | Agent pipeline architecture |
+| `GENERATORS.md` | ✅ Translated | Generator types and interfaces |
 
 ---
 
@@ -134,20 +180,21 @@ prompt engineering intent.
 
 ## Remaining Work
 
-### High Priority (Core Documentation)
-- `docs/03-audit/` — 20+ files with Russian content
-- `docs/04-planning/` — 15+ files with Russian content
-- `docs/05-frontend/` — 12+ files with Russian content
-- `docs/07-agents-and-generators/` — 12+ files with Russian content
+### Remaining Work (43 files)
 
-### Medium Priority (Supporting Documentation)
-- `docs/06-workflows/` — 7 files with Russian content
-- `docs/08-mobile-web-migration/` — 9 files with Russian content
-- `docs/09-desktop-migration/` — 3 files with Russian content
-- `docs/architecture/` — 10+ files with Russian content
+#### docs/08-mobile-web-migration/ (9 files)
+- `01-MIGRATION-STRATEGY.md`, `02-DESIGN-PRESERVATION-PRINCIPLES.md`, `03-MOBILE-WEB-ARCHITECTURE.md`, `04-MAPPING-TABLES.md`, `05-SCREEN-IMPLEMENTATION-ORDER.md`, `06-RISKS-AND-ALTERNATIVES.md`, `07-MOBILE-WEB-TESTER.md`, `TODO.md`, `README.md`
+
+#### docs/09-desktop-migration/ (2 files)
+- `README.md`, `02-PROGRESS.md`
+
+#### docs/99-archive/ (28 files)
+- Archived documents — lower priority for translation
+
+#### docs/architecture/ (4 files)
+- Architecture documentation with Russian content
 
 ### Low Priority (Archive and Legacy)
-- `docs/99-archive/` — 20+ files with Russian content (archived, lower priority)
 - `docs/CHANGELOG.md` — 60% Russian, 23k words (massive, defer)
 - `docs/VISION.md` — 79.5% Russian (defer)
 - `docs/Animastor_Близкие_горизонты.md` — 67% Russian (defer)
