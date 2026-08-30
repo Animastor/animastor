@@ -1,11 +1,11 @@
-# Карта писателей состояния (Д.0)
+# State Writers Map (D.0)
 
-> Инвентаризация всех мест, которые пишут состояние сцены/ассетов. Опора для M5
-> (свести к одному арбитру — Orchestrator) и M3 (диск как факт, не решение).
-> Составлено по коду на 2026-06-26 (ветка `feat/orchestrator-facade`).
-> Уточняет `docs-claude/03_Orchestrator.md §5` точными строками.
+> Inventory of all locations that write scene/asset state. Basis for M5
+> (consolidate to a single arbiter — Orchestrator) and M3 (disk as fact, not decision).
+> Compiled from code as of 2026-06-26 (branch `feat/orchestrator-facade`).
+> Refines `docs-claude/03_Orchestrator.md §5` with exact line numbers.
 
-## Что считаем «состоянием»
+## What We Consider "State"
 
 1. **Per-asset** (КАНОН с v2.1.0): `setAssetState` / `setAssetStates` →
    Redis hash `animastor:asset-state:<scene>` (поля audio/image/video).
@@ -19,7 +19,7 @@
    - `'failed'` — через `failStage` (T3);
    - `'placeholder'` — через `ensurePlaceholderAudio` (прямой PG write, особый кейс).
 
-## 1. Per-asset writers (`setAssetState` / `setAssetStates`)
+## 1. Per-asset Writers (`setAssetState` / `setAssetStates`)
 
 | # | Файл:строка | Что пишет | Триггер | Куда уедет (цель) |
 |---|---|---|---|---|
@@ -36,7 +36,7 @@
 коммит a092f44). Цель Д.1 закрыта на уровне квот (release идемпотентен). Цель Д.2 — убрать
 побочную запись P3 из `shouldScheduleAssets`.
 
-## 2. Linear-state writers (проекция — пишется параллельно per-asset)
+## 2. Linear-state Writers (projection — written in parallel with per-asset)
 
 | # | Файл:строка | Триггер |
 |---|---|---|
@@ -52,7 +52,7 @@
 (`deriveLinearState`), а не писаться напрямую. Вывод проекции — отдельная задача после
 перевода плеера (вне Д.0–Д.3).
 
-## 3. Disk-derived chunk-status writers (M3-поверхность)
+## 3. Disk-derived Chunk-status Writers (M3 surface)
 
 | # | Файл:строка | Что пишет | Решение по |
 |---|---|---|---|
@@ -65,7 +65,7 @@
 **факт** «файл существует для buildId X» в `reconcile`, а решение принимает Orchestrator
 по версии.
 
-## Сводка для M5/M3
+## Summary for M5/M3
 
 - **Свести к фасаду (M5):** P2→`completeStage`, P3→`markDirty` (Д.2), P4/P5/P6→`reconcile`.
   P1 уже идёт через `beginStage`-путь, P8 уже за фасадом, P7 — особый кейс (placeholder).

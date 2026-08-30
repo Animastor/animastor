@@ -1,13 +1,13 @@
 # Orchestrator Architecture — Unified State Machine
 
-> **Цель:** Единый фасад `orchestrator.js`, владеющий всеми lifecycle-состояниями
-> генерации: per-asset states (READY/PENDING/GENERATING/DIRTY/FAILED) и
+> **Goal:** Single `orchestrator.js` facade owning all generation lifecycle states:
+> per-asset states (READY/PENDING/GENERATING/DIRTY/FAILED) and
 > audio-orch states (PLACEHOLDER_READY/GENERATING/WAITING_CHUNKS/MERGING/DONE/FAILED).
-> Никакой модуль не пишет состояние напрямую — только через фасад.
+> No module writes state directly — only through the facade.
 
 ---
 
-## 1. Проблема: два независимых state machine
+## 1. Problem: Two Independent State Machines
 
 ### Asset State Machine (старая, `state.js`)
 ```
@@ -53,7 +53,7 @@ FAILED ──→ WAITING_CHUNKS (completeChunk, late chunk recovery)
 
 ---
 
-## 2. Решение: единый фасад orchestrator.js
+## 2. Solution: Single orchestrator.js Facade
 
 `orchestrator.js` становится **единственным модулем**, который пишет оба state machine.
 Все вызовы `state.setAssetState()` и `audioOrch.*()` проходят через фасад.
@@ -132,7 +132,7 @@ audio-orch.phase ∈ {WAITING_CHUNKS, MERGING}   ⇒   asset.audio == GENERATING
 
 ---
 
-## 3. Call flows
+## 3. Call Flows
 
 ### 3.1 Штатная генерация аудио
 
@@ -234,7 +234,7 @@ Scheduler tick
 
 ---
 
-## 4. Команды фасада — полный API
+## 4. Facade Commands — Complete API
 
 | Команда | asset state | audio-orch | Вызывается из |
 |---|---|---|---|
@@ -249,7 +249,7 @@ Scheduler tick
 
 ---
 
-## 5. Модули, которые НЕ пишут состояние напрямую
+## 5. Modules That Do NOT Write State Directly
 
 После рефакторинга следующие модули НЕ вызывают `state.setAssetState()` или `audioOrch.*()` напрямую — только через фасад:
 
@@ -263,14 +263,14 @@ Scheduler tick
 
 ---
 
-## 6. Исключения: только чтение
+## 6. Exceptions: Read-only
 
 `state.getAssetState()` и `audioOrch.getState()` остаются прямыми — это read-only операции.
 Любой модуль может читать оба state machine, но **писать** — только через фасад.
 
 ---
 
-## 7. Redis key layout
+## 7. Redis Key Layout
 
 ```
 # Asset states (per-scene, per-asset)
@@ -295,7 +295,7 @@ animastor:dispatch-lease:{bookId}:{chapterId}:{sceneId}:audio
 
 ---
 
-## 8. Валидация и тестирование
+## 8. Validation and Testing
 
 ### Тестируемые инварианты
 

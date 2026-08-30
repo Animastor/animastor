@@ -1,17 +1,17 @@
-# TODO: стабилизация системы оркестрации
+# TODO: Orchestration System Stabilization
 
-> **Дата:** 19 июля 2026
-> **Основание:** `docs/03-audit/ORCHESTRATION_SYSTEM_AUDIT.md`
-> **Опирается на:** `docs/02-orchestration/ORCHESTRATOR_ARCHITECTURE_WITH_AUDIO.md`,
+> **Date:** July 19, 2026
+> **Basis:** `docs/03-audit/ORCHESTRATION_SYSTEM_AUDIT.md`
+> **Based on:** `docs/02-orchestration/ORCHESTRATOR_ARCHITECTURE_WITH_AUDIO.md`,
 > `docs/03-audit/CAPACITY_AND_COMPLEXITY.md`
-> **Цель:** не усложнять систему, а сделать стабильной.
-> **Принцип:** сначала удалить лишнее, потом полировать. Никаких новых подсистем.
+> **Goal:** Don't complicate the system, make it stable.
+> **Principle:** Remove excess first, then polish. No new subsystems.
 
 ---
 
-## Ограничения (жёсткие)
+## Constraints (hard)
 
-В рамках этого TODO НЕ делать:
+Within this TODO, do NOT:
 
 - Kafka, RabbitMQ, BullMQ, другой брокер.
 - Workflow engine и второй state-machine поверх asset FSM.
@@ -30,7 +30,7 @@
 
 ---
 
-## Канонический инвариант (проверять на каждом этапе)
+## Canonical Invariant (verify at each step)
 
 ```
 audio-orch.phase == DONE   ⇔   asset.audio == READY
@@ -44,7 +44,7 @@ audio-orch.phase ∈ {WAITING_CHUNKS, MERGING, GENERATING}
 
 ---
 
-## ✅ Этап S1 — ЗАВЕРШЁН (2026-07-19)
+## ✅ Phase S1 — COMPLETED (2026-07-19)
 
 **Плановый результат:** −580 строк.
 **Фактический результат:** **−1674 строк** (11997 → 10323 в `backend/src`).
@@ -65,7 +65,7 @@ C4/C5 нельзя было удалять (они живые). Результа
 
 ---
 
-## Этап S1 — Удалить dead-code resilience модули (−580 строк)
+## Phase S1 — Remove Dead-code Resilience Modules (−580 lines)
 
 **Приоритет:** P1
 **Цель:** убрать модули, не входящие в инварианты фасада из
@@ -149,7 +149,7 @@ reconciliation-engine.js и комментарий в runtime-loop.js.
 
 ---
 
-## Этап S2 — Упростить restore/debug state writes (40 строк)
+## Phase S2 — Simplify Restore/debug State Writes (40 lines)
 
 **Приоритет:** P2
 **Цель:** выполнить инвариант из `ORCHESTRATOR_ARCHITECTURE_WITH_AUDIO.md` §5 —
@@ -220,7 +220,7 @@ reconciliation-engine.js и комментарий в runtime-loop.js.
 
 ---
 
-## Этап S3 — Production-readiness полировка  ✅ ЗАВЕРШЁН (commit pending)
+## Phase S3 — Production-readiness Polish  ✅ COMPLETED (commit pending)
 
 **Плановый эффект:** +50 строк readiness.
 **Фактический эффект:** ~90 строк (graceful shutdown + /health + GPU_TIMEOUT env).
@@ -285,7 +285,7 @@ k8s-кластер с readiness probes станет реальностью.
 
 ---
 
-## Этап S4 — Фикс тест-моков и полировка регрессий  ✅ ЗАВЕРШЁН
+## Phase S4 — Fix Test Mocks and Regression Polish  ✅ COMPLETED
 
 **Приоритет:** P3
 **Цель:** убрать предупреждения `audioOrch.initPlaceholderReady is not a function`,
@@ -325,7 +325,7 @@ k8s-кластер с readiness probes станет реальностью.
 
 ---
 
-## Глобальный Definition of Done
+## Global Definition of Done
 
 Каждый этап считается завершённым только если:
 
@@ -341,7 +341,7 @@ k8s-кластер с readiness probes станет реальностью.
 
 ---
 
-## Порядок выполнения
+## Execution Order
 
 | Этап | Зависимости | Приоритет | Эффект |
 |---|---|---|---|
@@ -355,7 +355,7 @@ S1 можно делать параллельно с S4 (они не перес�
 
 ---
 
-## Критерий финальной готовности системы
+## Final System Readiness Criteria
 
 Система считается стабильной, когда одновременно:
 
@@ -378,7 +378,7 @@ S1 можно делать параллельно с S4 (они не перес�
 
 ---
 
-## Ссылки
+## References
 
 - `docs/03-audit/ORCHESTRATION_SYSTEM_AUDIT.md` — аудит, на котором основан этот TODO.
 - `docs/02-orchestration/ORCHESTRATOR_ARCHITECTURE_WITH_AUDIO.md` — целевой фасад и
