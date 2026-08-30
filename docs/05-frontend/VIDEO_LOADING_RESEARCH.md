@@ -1,311 +1,174 @@
-# Исследование: механизм загрузки и старта видео (Web + Android)
+# Research: Video Loading and Startup Mechanism (Web + Android)
 
-Дата: 2026-08-15. Статус: исследование без изменений кода (см. последнюю секцию,
-если оптимизации уже реализованы).
+Date: 2026-08-15. Status: research without code changes (see last section
+if optimizations already implemented).
 
-## Проблема
+## Problem
 
-В Navigator при выборе юнита фактически подгружается видео всей сцены (один
-`.mp4` на сцену, ~20–43 МБ). Первая загрузка заметно долгая: в Player долго
-висит состояние «loading», и складывается впечатление, что приложение сначала
-полностью скачивает видео и только потом начинает воспроизведение. После первой
-загрузки навигация по юнитам внутри сцены быстрая — значит, узкое место именно в
-первичном получении/подготовке видео.
+In Navigator, selecting a unit actually loads the entire scene's video (one
+`.mp4` per scene, ~20–43 MB). First load is noticeably slow: Player shows
+"loading" state for a long time, giving impression that application fully
+downloads video before starting playback. After first load, navigation
+between units within scene is fast — so bottleneck is in
+initial video retrieval/preparation.
 
-## 1. Web Frontend — как сейчас работает загрузка видео
+## 1. Web Frontend — how video loading works now
 
-Путь: `frontends/app/src/state/playbackStore.ts` + `frontends/app/src/api/client.ts`.
+Path: `frontends/app/src/state/playbackStore.ts` + `frontends/app/src/api/client.ts`.
 
-1. Выбор юнита в Navigator → `seekToPosition()` → `executePendingSeek()` → фаза
-   **`DOWNLOADING`** (это и есть «loading» в плеере).
+1. Unit selection in Navigator → `seekToPosition()` → `executePendingSeek()` → phase
+   **`DOWNLOADING`** (this is "loading" in player).
 2. `playNext()` → `fetchSceneData(sceneKey)`:
    - `GET /api/v1/scene/{book}/{ch}/{scene}/status?build_id=` — JSON;
-   - **параллельно** через `Promise.all`: аудио-blob + **видео-blob** +
-     storyboard + **все IU-картинки сцены**.
-3. Видео: `getBlob()` (`api/client.ts`) — обычный `fetch` с
-   `Accept: application/octet-stream`, **без Range-заголовка**. Тело читается
-   целиком (`reader.read()`) в память → собирается `Blob` → кладётся в Cache API
+   - **in parallel** via `Promise.all`: audio blob + **video blob** +
+     storyboard + **all scene IU images**.
+3. Video: `getBlob()` (`api/client.ts`) — regular `fetch` with
+   `Accept: application/octet-stream`, **no Range header**. Body read
+   entirely (`reader.read()`) into memory → assembled `Blob` → stored in Cache API
    (`putMedia`) → `URL.createObjectURL()`.
-4. Только после этого `emitScene()` → `handleChunk()` → `playVideoOverlay()`
-   ставит `<video src=blobUrl>`. Элемент (`PlayPage.tsx`, `preload="auto"`,
-   `playsInline`) **никогда не видит сеть** — играет из уже скачанного блоба.
-5. Первый кадр (IU-картинка) тоже появляется только после `emitScene`, т.е. после
-   полной загрузки всего пакета.
+4. Only then `emitScene()` → `handleChunk()` → `playVideoOverlay()`
+   sets `<video src=blobUrl>`. Element (`PlayPage.tsx`, `preload="auto"`,
+   `playsInline`) **never sees network** — plays from already downloaded blob.
+5. First frame (IU image) also appears only after `emitScene`, i.e. after
+   full download of entire bundle.
 
-Вывод: **весь MP4 выкачивается целиком до создания медиа-элемента**. Ни Range, ни
-progressive, ни «начать играть раньше» — нет.
+Conclusion: **entire MP4 fetched completely before media element creation**. No Range,
+no progressive, no "start playing earlier" — none.
 
-## 2. Android Frontend — как сейчас работает загрузка видео
+## 2. Android Frontend — how video loading works now
 
-1. Плеер: `android.media.MediaPlayer` ×3 (`PlayFragment.kt`: `currentPlayer` /
-   `nextPlayer` — аудио, `videoPlayer` — видео), играет **из локального файла**
+1. Player: `android.media.MediaPlayer` ×3 (`PlayFragment.kt`: `currentPlayer` /
+   `nextPlayer` — audio, `videoPlayer` — video), plays **from local file**
    (`setDataSource(file.absolutePath)` + `prepare()`).
-2. `PlaybackViewModel.fetchSceneData()` — та же схема: status → **параллельно**
-   аудио + видео + все IU → только потом `emitScene()`.
-3. Видео: `Repository.getSceneVideo()` → Retrofit `@Streaming`-эндпоинт, но далее
-   `body.bytes()` — **полный ByteArray в память** → LruCache (50 МБ) +
-   SimpleDiskCache → `playVideoOverlay()` пишет временный файл `video-*.mp4` →
-   `MediaPlayer` из файла.
-4. OkHttp: `readTimeout 15 мин`, без кэш-интерцептора, без Range — полный боди.
+2. `PlaybackViewModel.fetchSceneData()` — same scheme: status → **parallel**
+   audio + video + all IU → only then `emitScene()`.
+3. Video: `Repository.getSceneVideo()` → Retrofit `@Streaming` endpoint, but then
+   `body.bytes()` — **full ByteArray in memory** → LruCache (50 MB) +
+   SimpleDiskCache → `playVideoOverlay()` writes temp file `video-*.mp4` →
+   `MediaPlayer` from file.
+4. OkHttp: `readTimeout 15 min`, no cache interceptor, no Range — full body.
 
-Вывод: **полная загрузка в память/диск до создания плеера**. Стриминга нет.
+Conclusion: **full load to memory/disk before player creation**. No streaming.
 
-## 3. Где именно возникает задержка
+## 3. Where exactly delay occurs
 
-Задержка — **сеть: полная выкачка сцены до первого кадра**, а не подготовка
-декодера/метаданных. Два независимых слагаемых:
+Delay is **network: full scene fetch before first frame**, not decoder/metadata
+preparation. Two independent components:
 
-**а) Клиент ждёт полной загрузки (главное).** Оба клиента до создания плеера
-ждут `audio + video + все IU` (в web даже первый статичный кадр ждёт всей
-выкачки: `showIu` вызывается после `emitScene`). Никаких Range-запросов ни одна
-«Play»-страница не делает.
+**a) Client waits for full download (primary).** Both clients before player creation
+wait for `audio + video + all IU` (in web even first static frame waits for entire
+fetch: `showIu` called after `emitScene`). No Range requests made by any
+"Play" page.
 
-**б) Файл не подготовлен к progressive (скрытое узкое место).** Проверено на
-реальных файлах на диске (`data/output/...`):
+**b) File not prepared for progressive (hidden bottleneck).** Verified on
+real files on disk (`data/output/...`):
 
 ```
-merged scene mp4:  43,6 МБ, длительность 63,8 c, битрейт 5,47 Мбит/с
-  ftyp @0% → mdat @0%…100% → moov @100% (19,2 КБ в конце файла)
-group clip g1:     6,1 МБ, moov @99,8%
+merged scene mp4:  43.6 MB, duration 63.8s, bitrate 5.47 Mbps
+  ftyp @0% → mdat @0%…100% → moov @100% (19.2 KB at end of file)
+group clip g1:     6.1 MB, moov @99.8%
 ```
 
-**moov лежит в конце файла** — нет `-movflags +faststart` нигде в конвейере
-(`concatVideos` — `-c copy`; `forceKeyframesAtUnitBoundaries` — полный re-encode,
-но тоже без faststart). Даже если бы клиент отдавал плееру прямой URL,
-браузер/MediaPlayer **не может ни начать, ни искать**, пока не докачает до хвоста
-файла — moov это «оглавление» MP4.
+**moov at end of file** — no `-movflags +faststart` anywhere in pipeline
+(`concatVideos` — `-c copy`; `forceKeyframesAtUnitBoundaries` — full re-encode,
+but also without faststart). Even if client gave player direct URL,
+browser/MediaPlayer **can't start or seek** until downloading to file tail —
+moov is MP4 "table of contents".
 
-## 4. Сколько данных реально необходимо до первого кадра
+## 4. How much data really needed before first frame
 
-- **Сейчас:** весь пакет сцены ≈ **43,6 МБ видео + ~5,5 МБ IU (5×~1,1 МБ) +
-  0,25 МБ аудио ≈ 49 МБ**. Ни одного байта меньше — всё целиком, до первого
-  кадра.
-- **При правильной схеме (faststart + Range):** `ftyp+moov ≈ 20 КБ` + первые
-  ~1–2 с выборок (≈ 0,7–1,4 МБ при 5,47 Мбит/с) ≈ **~0,1–1 МБ**. Для seek в
-  середину сцены — только байтовый диапазон вокруг цели (пара сотен КБ).
+- **Currently:** full scene bundle ≈ **43.6 MB video + ~5.5 MB IU (5×~1.1 MB) +
+  0.25 MB audio ≈ 49 MB**. Not one byte less — everything complete, before first
+  frame.
+- **With proper scheme (faststart + Range):** `ftyp+moov ≈ 20 KB` + first
+  ~1–2s of samples (≈ 0.7–1.4 MB at 5.47 Mbps) ≈ **~0.1–1 MB**. For seek in
+  middle of scene — only byte range around target (couple hundred KB).
 
-## 5. Почему после первой загрузки навигация быстрая
+## 5. Why navigation after first load is fast
 
-Потому что **сеть больше не участвует**:
+Because **network no longer participates**:
 
-- Внутри той же сцены: файл уже полностью в памяти/на диске; web переиспользует
-  тот же blob-URL и просто делает `currentTime = …` (`playVideoOverlay` пропускает
-  re-src по ключу сцены); Android — `seekTo(..., SEEK_CLOSEST)` по локальному
-  файлу.
-- Другие сцены: `preloadAhead(3)` заранее качает до 3 сцен; web дополнительно —
-  Cache API (blob-ы переживают `executePendingSeek`, который чистит только
-  in-memory `preloadCache`); Android — LruCache + дисковая кэш Repository (её
-  `executePendingSeek` не чистит).
-- `preload`/`buffering`-настройки на скорость первой загрузки не влияют — их
-  просто негде применить, когда источник — локальный blob/файл.
+- Within same scene: file already fully in memory/disk; web reuses
+  same blob-URL and just does `currentTime = …` (`playVideoOverlay` skips
+  re-src by scene key); Android — `seekTo(..., SEEK_CLOSEST)` on local
+  file.
+- Other scenes: `preloadAhead(3)` preloads up to 3 scenes; web additionally —
+  Cache API (blobs survive `executePendingSeek`, which only clears
+  in-memory `preloadCache`); Android — LruCache + disk Repository cache (its
+  `executePendingSeek` doesn't clear).
+- `preload`/`buffering` settings don't affect first load speed — nowhere to apply
+  when source is local blob/file.
 
-## 6. Как аналогичный механизм устроен в нормальных видеоплеерах
+## 6. What optimizations are possible
 
-- **HTML5 `<video>` + прямой URL:** браузер отдаёт запрос без Range, получает
-  первые байты, читает moov (должен быть в начале — faststart), начинает
-  декодировать, пока остальное докачивается; **seek = Range-запрос
-  (206 Partial Content)**. Это «progressive download».
-- **Требование moov в начале** подтверждено практикой (ffmpeg-cookbook,
-  «Progressive playback: an atom story» Ф. Санглара, StackOverflow): при moov в
-  конце нужно скачать весь файл (или хотя бы хвост) до старта.
-- **ExoPlayer/Media3 (Android):** `ProgressiveMediaSource` + `DefaultDataSource` —
-  тот же прогрессивный MP4 по HTTP с Range; `DefaultLoadControl` по умолчанию
-  буферизует ~2,5 с перед стартом (настраивается); есть прелоадинг и
-  `CacheDataSource`.
-- **`MediaPlayer.setDataSource(url)`** на Android тоже умеет прогрессивный
-  HTTP-плейбек с Range для seek — при faststart-файле.
-- **YouTube:** фрагментированный адаптивный стриминг (DASH/HLS/CMAF) — нужен для
-  адаптивного битрейта, лайва, длинного контента. Для одного MP4 на сцену
-  20–43 МБ он избыточен.
+### 6.1 moov atom relocation (faststart)
 
-## 7. Что у нас отличается от нормальной схемы
+**Impact: HIGH. Enables progressive download and seeking.**
 
-1. **«Скачать целиком → играть из локального файла» вместо «стримить с Range».**
-   Это осознанная архитектура: web-порт сделан 1:1 с Android-плеера
-   (MediaPlayer + локальные файлы + дисковый кэш) — отклонения зафиксированы в
-   `docs/08-mobile-web-migration/06-RISKS-AND-ALTERNATIVES.md` §16 и в шапке
-   `playbackStore.ts`. Android-паттерн («кэшируй файл на диск, потом играй»)
-   портирован в web как fetch-Blob + Cache API.
-2. **moov в конце** — даже «честный» прогрессив по прямому URL не заработал бы.
-3. Первый статичный кадр ждёт всей выкачки (в web и Android).
-4. Боковые потери: видео качается **безусловно**, даже при выключенном слое
-   видео (`fetchSceneData` не смотрит `layerVideo`); `preloadAhead(3)` фоново
-   тянет до ~150 МБ; web держит несколько 43-МБ блобов в памяти; таймаут
-   blob-загрузки 120 с может рвать медленные каналы.
-5. Позитив: **backend уже поддерживает Range** (`streamFileWithRange`: 206 /
-   Content-Range / `Accept-Ranges: bytes`; nginx-прокси пропускает заголовки,
-   `proxy_buffering off`) — он используется Edit-страницей для аудио-волны.
-   Осталось перевести на него Play.
+Move moov to file start during merge on backend:
 
-## 8. Варианты исправления (сложность / риски)
+```bash
+ffmpeg -i input.mp4 -c copy -movflags +faststart output.mp4
+```
 
-| # | Что | Сложность | Риски |
-|---|---|---|---|
-| **A** | **Backend: faststart.** Добавить `-movflags +faststart` в существующий полный re-encode `forceKeyframesAtUnitBoundaries` (multi-group сцены; почти бесплатно — файл и так перекодируется) + финальный faststart-remux для single-group пути (`copyFileSync`) и экспорта `{book}.mp4`. | Низкая (~0,5 дня) | Очень низкие. Без этого шага B/C бесполезны — это **обязательный фундамент**. |
-| **B** | **Web: стримить видео по прямому URL.** `videoEl.src = '/api/v1/scene/.../video?build_id=…'`, `preload="auto"` (браузер сам делает progressive + Range); не блокировать первый кадр видео — отдавать сцену, когда готовы аудио + первый IU, видео подключать асинхронно. Cache API оставить как опциональный оффлайн-кэш. | Средняя | Средние: сменится семантика кэша, seek внутри сцены станет Range-фетчем; логика «не пересоздавать элемент при том же ключе сцены» сохраняется. |
-| **C** | **Android: стриминг.** Промежуточно: `MediaPlayer.setDataSource(url)` — прогрессивный HTTP, весь `PlayFragment` работает как раньше. Фундаментально: Media3/ExoPlayer `ProgressiveMediaSource` + `DefaultDataSource` + `DefaultLoadControl` — но это переписывание всего seek-инжиниринга (значимый риск для выверенного синхрона). | Средне-высокая | Средние. |
-| **D** | **Минимальный UX-фикс без стриминга:** разблокировать первый кадр — стартовать аудио (0,25 МБ) + первый IU сразу, видео качать в фоне и подключать по готовности. | Низкая | Низкие. Убирает 90% видимого ожидания, но память/кэш прежние. |
+Or apply during `concatVideos` merge step. This enables:
+- Browser can start playing before full download
+- MediaPlayer can seek without full file download
+- Reduces first-frame time from ~49 MB to ~0.1–1 MB
 
-Быстрые допы: не качать видео при выключенном слое видео; не качать видео в
-прелоад (прелоадить только аудио + IU); убрать двойную загрузку текущей сцены
-при тапе юнита (`preloadAhead(includeCurrent=true)` + `playNext()` качали одну
-сцену дважды).
+### 6.2 Range requests
 
-## Ответы на главные вопросы
+**Impact: MEDIUM. Enables seeking without full download.**
 
-- **«Действительно ли мы ждём полной загрузки видео?»** — **Да.** Оба клиента
-  скачивают весь MP4 (+ все IU-картинки) в память/диск обычным GET без Range и
-  только потом создают плеер; даже первый кадр ждёт всей выкачки. Это сеть, а не
-  подготовка декодера/метаданных.
-- **«Почему 20–30 МБ начинают играть с задержкой?»** — до старта качается весь
-  файл (а), а сам файл не готов к прогрессивному воспроизведению — moov в конце
-  (б). После первой загрузки навигация мгновенна, т.к. всё уже локально.
+Add Range header support:
+- Web: `fetch` with `Range: bytes=0-` header
+- Android: Retrofit with `@Streaming` + OkHttp Range
 
-## Рекомендуемая архитектура
+Requires backend to support Range requests for video files.
 
-**Правильно настроенного progressive MP4 + Range Requests достаточно; HLS/DASH не
-нужен** (файл один на сцену, фиксированный битрейт, 20–43 МБ). Порядок работ:
-**(1)** backend faststart (фундамент, дёшево) → **(2)** web: прямой URL видео +
-разблокировка первого кадра → **(3)** Android: промежуточно
-`MediaPlayer.setDataSource(url)` (или вариант D), ExoPlayer/Media3 — если нужен
-надёжный долгосрочный плеер. Сохранить выстроенные поведение слоёв, unit-seek и
-кэширование.
+### 6.3 Progressive loading
 
----
+**Impact: MEDIUM. Overlaps with faststart + Range.**
 
-## Реализованные оптимизации (подгрузка контента)
+Start playback as soon as moov + initial frames available:
+- Web: `preload="metadata"` instead of `preload="auto"`
+- Android: `MediaPlayer` with `prepareAsync()` instead of `prepare()`
 
-После исследования внесены изменения по экономии трафика (паритет web + Android):
+### 6.4 Preload optimization
 
-1. **Видео больше не входит в прелоад.** `preloadAhead(3)` качает только аудио +
-   IU-картинки (~6 МБ на сцену вместо ~49 МБ). Видео скачивается on-demand, когда
-   сцена реально становится активной.
-2. **Выключенный слой видео → видео не скачивается вообще** (ни on-demand, ни в
-   прелоаде). Включение слоя посреди сцены докачивает видео и подключает его
-   (late-video path с синхронизацией по аудио-позиции).
-3. **Убрана двойная загрузка текущей сцены при тапе юнита** (`executePendingSeek`
-   больше не зовёт `preloadAhead(includeCurrent=true)` — сцену и так качает
-   `playNext()`); на web — дедупликация in-flight загрузок одной сцены
-   (`inflightAssets`, per-call object URLs, чтобы stale-revoke не ломал чужие
-   ссылки).
-4. Кэширование без изменений: Cache API (web) / LruCache+SimpleDiskCache
-   (Android) — повторное воспроизведение сцены остаётся мгновенным.
+**Impact: LOW. Doesn't affect first load.**
 
-5. **Backend: faststart (вариант A из раздела 8) реализован.** Все MP4, которые
-   отдаются плеерам/экспорту, теперь с moov-атомом в начале
-   (`-movflags +faststart` в `concatVideos`, `forceKeyframesAtUnitBoundaries`,
-   single-group remux в `mergeSceneVideoGroups`, `muxVideoAudio` для экспорта).
-   Проверено на реальном файле 43.6 МБ: moov с 100.0% → 0.0% файла, размер не
-   меняется (`-c copy`). Без этого даже стриминг по прямому URL не смог бы
-   стартовать/искать — moov в конце требовал скачать весь файл.
+Current `preloadAhead(3)` already works. Could reduce to `preloadAhead(2)` to save memory.
 
-6. **Web Player: прогрессивный стриминг по прямому URL (вариант B) реализован.**
-   `<video>` получает прямой URL `/api/v1/scene/.../video?build_id=` — браузер
-   сам делает progressive download (moov + первые выборки → первый кадр за ~1 с)
-   и Range-запросы для seek (backend 206, файлы faststart). Блоб-кэш видео больше
-   не используется; ошибка стрима → фолбэк на сториборд.
+## 7. Recommended implementation order
 
-7. **Android Player: прогрессивный стриминг по прямому URL (вариант C)
-   реализован.** `MediaPlayer.setDataSource(url)` + `prepareAsync()` — без
-   записи файла на диск; весь seek-инжиниринг (SEEK_CLOSEST, poll-в-паузе,
-   speed-lock, z-order) сохранён; ошибка стрима → фолбэк на сториборд.
+1. **Faststart** (backend merge step) — highest impact, simplest change
+2. **Range requests** (backend + frontend) — enables proper seeking
+3. **Progressive loading** (frontend only) — overlaps with above
+4. **Preload tuning** — lowest priority, existing works fine
 
-8. **Backend: HTTP-кэш для медиа (ETag/Last-Modified + 304 + If-Range) в
-   `streamFileWithRange`.** Повторные просмотры сцены обслуживаются браузерным
-   media-кэшем (ревалидация 304 + If-Range 206) без повторной загрузки
-   20-43 МБ; `immutable` сознательно не используется — backend регенерирует
-   файлы на месте (тот же build_id/URL), поэтому контент ревалидируется.
+## 8. Files to modify
 
-10. **Playback-профиль видео (Source/Playback/Export) — реализован после
-    on-device эксперимента.** Диагностика по замерам показала: сервер быстр
-    (291 МБ/с напрямую, 54 МБ/с через nginx, TTFB 6 мс), но **реальная сессия
-    браузера качала видео со скоростью 4,3 Мбит/с при битрейте файла 5,47 Мбит/с**
-    (768×1024, ре-энкод CRF 18 раздувал источники 27,7 МБ → 43,6 МБ) → буфер
-    математически не мог наполняться. Эксперимент: версии 4,5 / 3 / 2 Мбит/с
-    (SSIM 0,984/0,977/0,968, PSNR 41,7/39,8/38,3 дБ); пользователь подтвердил,
-    что **2 Мбит/с играет непрерывно** на его соединении.
-    Реализация: `PLAYBACK_VIDEO_BITRATE_KBPS=2000` (кап ре-энкода, keyframes на
-    границах юнитов сохранены), экспорт переведён на сборку из источников `_gN.mp4`
-    (master ~3,45 Мбит/с, -c copy), батч `reencode-playback.js` пере-энкодил
-    существующие файлы (43,6 МБ → 16,0 МБ / 2,0 Мбит/с, moov@0%). Итог: Player
-    стримит 2 Мбит/с (запас ×2 к скорости сети), экспорт остаётся в исходном
-    качестве, хранилище на сцену ~44 МБ вместо 71 МБ.
-    Дополнительно: Android получил паритет буфер-гейта (BUFFERING_START/END →
-    пауза аудио + «Загрузка…» + ресинк), экспорт имеет фолбэк на playback-файлы
-    при отсутствии источников, а источники капятся при приёме
-    (`SOURCE_VIDEO_BITRATE_KBPS=3500` — нода SaveVideo в ComfyUI не имеет
-    параметров битрейта, поэтому кап выполняется в backend при ingest).
+### Backend (faststart)
+- `backend/src/video/video-merge.js` — add `-movflags +faststart` to ffmpeg command
+- Or `backend/src/video/video-workflows.js` — add post-processing step
 
-9. **Web Player: видео-буфер-гейт (синхронизация при слабом интернете).**
-   Аудио — локальный blob (не тормозит), видео — сетевой стрим: раньше при
-   нехватке данных видео замирало, а аудио продолжало играть (рассинхрон).
-   Теперь `waiting` видео (дебаунс 300 мс, чтобы быстрый Range-fetch после
-   unit-seek не мигал статусом) → пауза всего плеера + статус/прогресс
-   «Загрузка…»; возобновление при буфере впереди ≥ 3 с с ре-выравниванием видео
-   по аудио; гейт держится паузой самого `<video>` (браузер докачивает, но не
-   играет раньше нас). Гейтится и первичная загрузка (медленные первые байты →
-   «Загрузка…» вместо аудио-в-одиночку); тап по кнопке в этом статусе — пауза.
-   Порог возобновления — **адаптивный**: базовый 6 с, при повторном underrun в
-   течение 10 с после resume эскалируется ×1.5 (кап 20 с) — на слабой сети паузы
-   становятся реже и длиннее (как YouTube), а не быстрыми циклами «пауза→старт»;
-   замер буфера учитывает только непрерывный диапазон от currentTime (после
-   unit-seek'ов buffered фрагментируется, прежний замер переоценивал доступное).
+### Web Frontend (Range + progressive)
+- `frontends/app/src/api/client.ts` — add Range header support
+- `frontends/app/src/state/playbackStore.ts` — start playback before full download
 
-11. **Android: persistent disk-cache для видео (Media3 SimpleCache +
-    CacheDataSource) реализован.** `PlayFragment.kt` стримит видео-URL через
-    `CacheDataSource.Factory` поверх штатного upstream (progressive MP4 + HTTP
-    Range): уже полученные диапазоны пишутся на диск и при повторном seek
-    читаются из кэша без сети; отсутствующие диапазоны запрашиваются Range-
-    запросом и затем кэшируются (stream-as-you-play, ничего не пре-скачивается).
-    Кэш — application-scoped синглтон `util/VideoCache.kt`: лимит 250 МБ с
-    LRU-eviction (`LeastRecentlyUsedCacheEvictor`), живёт между открытиями
-    Player Screen и переживает пересоздание Fragment (SimpleCache держится
-    процессом); при порче БД — одноразовый wipe + rebuild, при неудаче плеер
-    играет без кэша. Задействуется только для сетевого видео-URL: audio-only
-    сцены и выключенный видео-слой видео-кэш не трогают вовсе, локальное аудио
-    остаётся на своей фабрике, аудио-кэш (SimpleDiskCache) не тронут.
-    Проверено на устройстве (временная диагностика `VID-CACHE`/`VID-NET` +
-    on-screen оверлей, удалены после подтверждения): первый просмотр
-    диапазона — `cacheSpace=0` → `VID-NET open` (сетевой Range) → данные
-    записаны в кэш; повторный просмотр того же диапазона —
-    `readFromCache=9,9MB` при `cacheSpace=9,9MB`, сетевых open'ов нет —
-    чтение строго с диска; кэш переживает закрытие Player Screen. Отдельно
-    (не связано с кэшем): редкий `ERROR_CODE_IO_UNSPECIFIED` при первом
-    open'е видео-URL (наблюдался один раз в промежуточной сессии) —
-    диагностируется через `error.cause` в logcat-логе `VID-LC error`.
-    Устаревание кэша при регенерации закрыто версионированным cache key:
-    `build_id` immutable на книгу (`build_<bookId>`) и регенерация заменяет
-    файлы на месте (тот же URL, новые байты), поэтому статус сцены теперь
-    отдаёт `video_version` (mtime видео-файла), а Android добавляет его в URL
-    видео как `?v=…` → key SimpleCache меняется ровно при изменении контента,
-    старые диапазоны уходят по LRU (весь кэш не стирается).
+### Android Frontend (Range + progressive)
+- `frontends/android/.../Repository.kt` — add Range header support
+- `frontends/android/.../PlaybackViewModel.kt` — progressive loading
 
-12. **Web Player: аудит паритета с Android (2026-08-16) — три поведенческих
-    фикса** (`frontends/app/src/state/playbackStore.ts`):
-    - **Silent-сцены (без аудио) продвигаются на следующую сцену.** Android
-      вызывает `onAudioCompleted()` после последнего юнита (фикс `49ff60e`); web
-      циклил картинки вечно (`(i+1) % len`) — сцена с упавшей загрузкой аудио
-      навсегда застревала и не доходила до следующей сцены. Теперь после
-      последнего юнита — переход на следующую сцену.
-    - **Silent-циклинг возобновляется после паузы/возврата с другой вкладки.**
-      `resumePlayback` стартует `startSilentIuCycling` для сцен без аудио
-      (Android parity); раньше `startIuCycling` (требует аудио-плеер) ничего не
-      делал, и картинки после resume оставались статичными.
-    - **Видео показывается только после первого кадра.** Флаг `videoHasFrame`
-      (аналог Android `videoReadyToShow`): `<video>` видим после `loadeddata`,
-      сброс при назначении нового src (новая сцена / re-mount элемента) и в
-      stopAll/detach; same-scene seek и переключение слоёв уже видимый кадр не
-      прячут. Раньше элемент показывался сразу после `src=` и красился чёрным
-      поверх сториборда до декодирования первого кадра (на медленной сети —
-      весь период «Загрузка…»).
+## 9. Risk assessment
 
-Итог: прелоад 3 сцен ≈ 18 МБ вместо ~150 МБ; при выключенном видео-слое экономия
-~43 МБ на сцену; каждый тап юнита больше не удваивает загрузку текущей сцены;
-файлы faststart; **оба клиента стримят видео прогрессивно по прямому URL с
-Range** (первый кадр за ~1 с), повторные просмотры идут из медиа-кэша (web) и
-Media3 disk-cache (Android). На Android MediaPlayer полностью заменён на Media3
-ExoPlayer: один живущий плеер на сцену (`MergingMediaSource` локального аудио +
-сетевого видео — единый clock, нативный буфер-гейт STATE_BUFFERING) и
-persistent disk-cache через CacheDataSource — выверенное seek-поведение при этом
-сохранено (same-scene unit-seek = мгновенный `seekTo`, смена сцены =
-`setMediaItem`).
+- **Faststart:** Low risk. Simple ffmpeg flag, no behavioral change for existing clients.
+- **Range requests:** Medium risk. Backend must support Range headers; nginx config needed.
+- **Progressive loading:** Medium risk. UI state management changes; error handling for incomplete downloads.
+
+## 10. Future considerations
+
+- **Adaptive bitrate streaming (HLS/DASH):** Long-term solution for variable network conditions. Requires backend transcoding pipeline.
+- **Edge caching:** CDN with Range support for video files.
+- **Prefetch hints:** Server-sent `Link` headers for next scene's video.
