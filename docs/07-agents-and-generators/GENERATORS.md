@@ -1,16 +1,16 @@
 # Generators: Animastor
 
-## Общее описание
+## Overview
 
-В проекте Animastor термин "генератор" как формальная абстракция (базовый класс Generator, интерфейс IGenerator, фабрика генераторов) **не обнаружен**. Генерация реализована через **сервисы** (`audio/`, `image/`, `video/`), которые используют **workflow builders** для создания ComfyUI-совместимых JSON и отправляют их в **GPU Hub** через **gpu-dispatcher**.
+In the Animastor project, the term "generator" as a formal abstraction (base class Generator, interface IGenerator, generator factory) **was not found**. Generation is implemented through **services** (`audio/`, `image/`, `video/`) that use **workflow builders** to create ComfyUI-compatible JSON and send them to **GPU Hub** via **gpu-dispatcher**.
 
-## Типы генерации
+## Generation Types
 
 ### Audio Generator (`backend/src/audio/audio-service.js`)
 
-**Способ подключения:** Модуль подключается через `require('./audio')` в backend.cjs. Экспортирует `generateSceneAudio()`, `mergeAllAudio()`, `isSceneAudioReady()`, `trimPaddedSceneAudio()`, `generateSilentAudio()`.
+**Connection:** Module connected via `require('./audio')` in backend.cjs. Exports `generateSceneAudio()`, `mergeAllAudio()`, `isSceneAudioReady()`, `trimPaddedSceneAudio()`, `generateSilentAudio()`.
 
-**Интерфейс:**
+**Interface:**
 ```js
 async generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
 async mergeSceneAudioChunks(redis, bookId, chapterId, sceneId, buildId, expectedCount)
@@ -20,111 +20,111 @@ async trimPaddedSceneAudio(audioPath)
 async generateSilentAudio(audioPath, durationSec)
 ```
 
-**Особенности реализации:**
-- Разбивка текста сцены на narration/dialogue сегменты
-- Для narration: `tts-qwen-narrator` workflow
-- Для dialogue: `tts-qwen-dialogue` workflow (два голоса)
-- Использует `ffmpeg` для мержа аудиочанков
-- Silent trimming после генерации
-- Padded text trimming (удаление дублированного аудио для коротких текстов)
-- Placeholder audio (тишина) если реальный TTS ещё не готов
+**Implementation details:**
+- Splits scene text into narration/dialogue segments
+- For narration: `tts-qwen-narrator` workflow
+- For dialogue: `tts-qwen-dialogue` workflow (two voices)
+- Uses `ffmpeg` for audio chunk merging
+- Silent trimming after generation
+- Padded text trimming (removing duplicated audio for short texts)
+- Placeholder audio (silence) if real TTS not yet ready
 
 ---
 
 ### Image Generator (`backend/src/image/image-service.js`)
 
-**Интерфейс:**
+**Interface:**
 ```js
 async generateSceneIUImages(redis, sceneData, loadedBook, buildId, bookId)
 async buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload)
 async resolveCanonicalSceneImage(outputDir, buildId, bookId, chapterId, sceneId)
 ```
 
-**Особенности реализации:**
-- Промпты строятся из: внешность персонажа + локация + IU description
-- **`buildImagePrompt()`** — сборщик финального промпта из нескольких источников:
+**Implementation details:**
+- Prompts built from: character appearance + location + IU description
+- **`buildImagePrompt()`** — assembles final prompt from multiple sources:
   `resolveVisualStyle()`, `resolveLocationFromPrompt()`, `inferCharactersFromPrompt()`
-- **`resolveVisualStyle()`** — цепочка: IU→scene→root style (с фильтром типографики)→bible style
-- **`resolveLocationFromPrompt()`** — если у сцены нет `location.id`, сопоставляет
-  текст direct prompt с `bible.locations` через Cyr→Lat транслитерацию + prefix matching
-- **`inferCharactersFromPrompt()`** — **первичный механизм** определения участников
-  кадра (с июля 2026; `unit.participants` удалён). Сканирует `visual.prompt` на
-  `character_id` и inject-ит паспорта из `characters.json`.
-- Поддержка `epoch`, `season`, `atmosphere` из `scene.location.environment`
-- `locations.json` содержит глобальный шаблон `environment` (time/season/lighting/weather/
-  mood/atmosphere) — fallback для сцен. `scene.location.environment` перекрывает его по-полю
-  (паттерн паспортов персонажей); мёрж выполняется в `buildImagePrompt()` и видео-билдере
+- **`resolveVisualStyle()`** — chain: IU→scene→root style (with typography filter)→bible style
+- **`resolveLocationFromPrompt()`** — if scene has no `location.id`, matches
+  prompt text with `bible.locations` via Cyr→Lat transliteration + prefix matching
+- **`inferCharactersFromPrompt()`** — **primary mechanism** for determining frame
+  participants (since July 2026; `unit.participants` removed). Scans `visual.prompt` for
+  `character_id` and injects passports from `characters.json`.
+- Support for `epoch`, `season`, `atmosphere` from `scene.location.environment`
+- `locations.json` contains global `environment` template (time/season/lighting/weather/
+  mood/atmosphere) — fallback for scenes. `scene.location.environment` overrides it per-field
+  (character passport pattern); merge performed in `buildImagePrompt()` and video builder
 - **Scene-level passport overrides** (`scene.passport[charId]`): `resolvePassport()`
-  берёт перекрытие сцены (appearance, clothes) с наивысшим приоритетом над глобальным паспортом персонажа;
-  неперекрытые поля — из `characters.json`. Аналогично видео-билдер читает
-  `scene.passport[id].video_tokens` с приоритетом над глобальным. Изменение `scene.passport`
-  помечает сцену на перегенерацию image+video (`prompt-dependency-registry.js`,
+  takes scene override (appearance, clothes) with highest priority over global character passport;
+  uncovered fields from `characters.json`. Similarly video builder reads
+  `scene.passport[id].video_tokens` with priority over global. Changing `scene.passport`
+  marks scene for image+video regeneration (`prompt-dependency-registry.js`,
   `SCENE_FIELDS`).
-- **Глобальный паспорт** (`characters.json` → `passport`): два поля — `appearance`
-  (физическая внешность, БЕЗ одежды) и `clothes` (одежда/аксессуары) + `video_tokens`.
-  Разделение внешности и одежды делает АГЕНТ (`ai/rules/characters.md` — отдельные поля,
-  оба на английском); программа (`lazy-book/create.js`) только проверяет результат и
-  заполняет безопасные дефолты, без regex-эвристик. Итоговая строка персонажа:
-  `"id: appearance, clothes"` — без дублей.
-- **Video tokens — двухэтапная агентная схема**: `passport.video_tokens` — массив 1–4
-  коротких, максимально заметных визуальных признаков (галстук, очки, лысина, красная
-  куртка...), за которые видеомодель цепляется на reference image.
-  - Этап 1 — агент (`ai/rules/characters.md`) выбирает признаки при создании паспорта
-    (мягкая инструкция, поле опциональное); программа только санитайзит список (trim,
-    ≤4) и фолбэчится на regex-фрагмент (`fragmentAppearanceForVideo`).
-  - Этап 2 — `passport_reconciliation` получает участников каждой сцены с текущими
-    токенами и паспортами, сравнивает токены между участниками сцены и при коллизии
-    пере-выбирает признаки (только из паспорта); результат пишется в
-    `scene.passport[charId].video_tokens` (только при отличии от текущих) и подхватывается
-    видео-билдером с приоритетом над глобальным. Уникальность проверяется только для
-    сцен с ≥2 участниками.
-  - `video-workflows` склеивает массив запятыми (принимает и legacy-строку) и страхуется
-    от точных дублей токенов внутри сцены (второй участник уходит на глобальный токен).
-- Кэширование: если изображение уже существует — пропускается
-- Использует `img-qwen-image` workflow
-- Параллельная отправка нескольких IU через GPU Hub
+- **Global passport** (`characters.json` → `passport`): two fields — `appearance`
+  (physical appearance, WITHOUT clothing) and `clothes` (clothing/accessories) + `video_tokens`.
+  Appearance and clothing separation done by AGENT (`ai/rules/characters.md` — separate fields,
+  both in English); program (`lazy-book/create.js`) only validates result and
+  fills safe defaults, no regex heuristics. Final character string:
+  `"id: appearance, clothes"` — no duplicates.
+- **Video tokens — two-stage agent scheme**: `passport.video_tokens` — array of 1–4
+  short, most noticeable visual features (tie, glasses, baldness, red
+  jacket...) that video model latches onto in reference image.
+  - Stage 1 — agent (`ai/rules/characters.md`) selects features when creating passport
+    (soft instruction, field optional); program only sanitizes list (trim,
+    ≤4) and falls back to regex fragment (`fragmentAppearanceForVideo`).
+  - Stage 2 — `passport_reconciliation` receives each scene's participants with current
+    tokens and passports, compares tokens between scene participants and on collision
+    re-selects features (only from passport); result written to
+    `scene.passport[charId].video_tokens` (only when different from current) and picked up
+    by video builder with priority over global. Uniqueness checked only for
+    scenes with ≥2 participants.
+  - `video-workflows` joins array with commas (accepts legacy string) and guards
+    against exact token duplicates within scene (second participant falls to global token).
+- Caching: if image already exists — skipped
+- Uses `img-qwen-image` workflow
+- Parallel IU submission via GPU Hub
 
 ---
 
 ### Video Generator (`backend/src/video/video-service.js`)
 
-**Интерфейс:**
+**Interface:**
 ```js
 async generateVideoAnimation(sceneData, loadedBook, buildId, workflows)
 async validateVideoFile(videoPath)
 async updateSceneVideoStatus(redis, bookId, chapterId, sceneId, status)
 ```
 
-**Особенности реализации:**
-- Группировка IU: максимум 4 изображения на группу (LTX limitation)
-- Выбор workflow: `video-ltx-1p`, `2p`, `3p`, `4p` по количеству IU в группе
-- FPS: 24, выравнивание кадров: 8n+1 (LTX requirement; шаг и необходимость trim/keyframe-форсинга задаются видео-профилем — см. AUDIO_VIDEO_SYNC.md)
-- Видео-промпт включает: персонажи, timecode, окружение (из book.bible)
-- Возвращает `jobSpecs` для отправки в GPU Hub
+**Implementation details:**
+- IU grouping: maximum 4 images per group (LTX limitation)
+- Workflow selection: `video-ltx-1p`, `2p`, `3p`, `4p` by IU count in group
+- FPS: 24, frame alignment: 8n+1 (LTX requirement; alignment step and trim/keyframe-forcing requirement set by video profile — see AUDIO_VIDEO_SYNC.md)
+- Video prompt includes: characters, timecode, environment (from book.bible)
+- Returns `jobSpecs` for GPU Hub submission
 
 ---
 
 ### AI Text Generator (`backend/src/services/ai-service.js`)
 
-**Интерфейс:**
+**Interface:**
 ```js
-async callAI(model, messages, options)       // общий вызов API
-async parseJsonResponse(text)                // парсинг JSON из ответа
-async refineDraft(chapterText)               // полный AI-анализ с примерами
+async callAI(model, messages, options)       // general API call
+async parseJsonResponse(text)                // JSON parsing from response
+async refineDraft(chapterText)               // full AI analysis with examples
 ```
 
-**Особенности реализации:**
+**Implementation details:**
 - Timeout: 60s (default) / 180s (refineDraft) / 180s (agent-service)
 - Retries: 3 (backoff: 1s, 2s, 4s)
-- Поддержка OpenRouter и Nvidia API (через AI_API_BASE_URL)
-- `refineDraft()` загружает примеры из `ai/examples/` и включает в промпт
-- Не абстрагирован: модель задаётся строкой, нет фабрики провайдеров
+- Supports OpenRouter and Nvidia API (via AI_API_BASE_URL)
+- `refineDraft()` loads examples from `ai/examples/` and includes in prompt
+- Not abstracted: model set by string, no provider factory
 
 ---
 
 ### Placeholder Audio Generator (`backend/src/services/placeholder-audio.js`)
 
-**Интерфейс:**
+**Interface:**
 ```js
 async ensurePlaceholderAudio(buildId, bookId, chapterId, sceneId)
 async ensureAllPlaceholderAudio(buildId, bookId, scenes)
@@ -133,46 +133,46 @@ async replacePlaceholderWithRealAudio(bookId, chapterId, sceneId, buildId, realA
 async recoverMissingPlaceholders(buildId, bookId)
 ```
 
-**Формат результатов:**
-- MP3-файлы тишины (длительность соответствует сцене — по IU или тексту)
-- Регистрация в PostgreSQL scene_assets со статусом 'placeholder'
-- Замена на real audio при завершении TTS (через `replacePlaceholderWithRealAudio`)
+**Result format:**
+- MP3 silence files (duration matching scene — by IU or text)
+- Registration in PostgreSQL scene_assets with status 'placeholder'
+- Replacement with real audio on TTS completion (via `replacePlaceholderWithRealAudio`)
 
 ---
 
-## Общий слой абстракции генераторов
+## Common Generator Abstraction Layer
 
-**Формального абстрактного слоя не обнаружено.** Каждый генератор:
-- Имеет собственный интерфейс (разные имена функций, разные параметры)
-- Использует разные workflow (audio/image/video)
-- По-разному обрабатывает результаты (audio → MP3 merge, Image → PNG cache, Video → group merge)
+**No formal abstraction layer found.** Each generator:
+- Has its own interface (different function names, different parameters)
+- Uses different workflows (audio/image/video)
+- Processes results differently (audio → MP3 merge, Image → PNG cache, Video → group merge)
 
-Тем не менее, все генераторы следуют общему паттерну:
-1. Получить данные сцены
-2. Построить workflow (через workflow builder)
-3. Вызвать `gpu.send()` / `gpu.sendVideo()` / `gpu.sendUnified()`
-4. Обработать callback через task-handler
-5. Сохранить результат на диск + зарегистрировать в asset registry (PostgreSQL)
+However, all generators follow a common pattern:
+1. Get scene data
+2. Build workflow (via workflow builder)
+3. Call `gpu.send()` / `gpu.sendVideo()` / `gpu.sendUnified()`
+4. Process callback via task-handler
+5. Save result to disk + register in asset registry (PostgreSQL)
 
-### Можно ли заменить любой генератор без изменения остальной системы?
+### Can any generator be replaced without changing the rest of the system?
 
-**Нет, замена любого генератора без изменения остальной системы невозможна.** Причины:
+**No, replacing any generator without changing the rest of the system is impossible.** Reasons:
 
-1. **Уникальные интерфейсы:** Каждый генератор имеет свой набор параметров и возвращаемых значений. Нет общего контракта.
+1. **Unique interfaces:** Each generator has its own parameter set and return values. No common contract.
 
-2. **Жёсткая связь с type system:** Orchestrator, dispatch-engine, scene-state имеют хардкодные ссылки на `'audio'`, `'image'`, `'video'`.
+2. **Hard coupling with type system:** Orchestrator, dispatch-engine, scene-state have hardcoded references to `'audio'`, `'image'`, `'video'`.
 
-3. **Специфичные workflow builders:** Каждый тип генерации использует свой набор workflow с разными Node ID.
+3. **Specific workflow builders:** Each generation type uses its own workflow set with different Node IDs.
 
-4. **Разная обработка результатов:** Audio → merge чанков + padded text trim, Image → кэширование PNG + IU completion check, Video → групповой merge + mux с audio.
+4. **Different result processing:** Audio → chunk merge + padded text trim, Image → PNG caching + IU completion check, Video → group merge + mux with audio.
 
-5. **Жёсткая привязка к слоям:** Layer config явно перечисляет `audio`, `image`, `video` как ключи.
+5. **Hard layer binding:** Layer config explicitly lists `audio`, `image`, `video` as keys.
 
-6. **Dispatch engine захардкожен:** Quota, lease TTL, circuit breaker thresholds — всё под эти три типа.
+6. **Dispatch engine hardcoded:** Quota, lease TTL, circuit breaker thresholds — all tuned for these three types.
 
-**Для замены потребуется:**
-- Рефакторинг orchestrator для работы через абстрактный интерфейс генератора
-- Создание registry генераторов
-- Добавление нового типа в dispatch-engine, layer-config, scene-state (AssetState)
-- Новый workflow builder + шаблоны
-- Обновление GPU Hub и worker для поддержки нового job_type
+**Replacement would require:**
+- Refactoring orchestrator to work through abstract generator interface
+- Creating generator registry
+- Adding new type to dispatch-engine, layer-config, scene-state (AssetState)
+- New workflow builder + templates
+- Updating GPU Hub and worker to support new job_type

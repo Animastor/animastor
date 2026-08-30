@@ -1,310 +1,309 @@
 # Agents: Animastor
 
-## Общее описание
+## Overview
 
-Агентная система Animastor — это **последовательный AI-пайплайн** (шаг 0 + 5 шагов), который анализирует исходный текст книги и прогрессивно обогащает его в структурированные сцены с персонажами, локациями и визуальными описаниями.
+The Animastor agent system is a **sequential AI pipeline** (step 0 + 5 steps) that analyzes source book text and progressively enriches it into structured scenes with characters, locations, and visual descriptions.
 
-Система использует **OpenRouter API** (конфигурируется через `AI_API_BASE_URL`).
-Модель по умолчанию: `qwen3-32b`. Единый ключ: `OPENROUTER_API_KEY`.
+The system uses **OpenRouter API** (configurable via `AI_API_BASE_URL`).
+Default model: `qwen3-32b`. Single key: `OPENROUTER_API_KEY`.
 
-## Архитектура агента
+## Agent Architecture
 
-Агент разбит на подмодули в `backend/src/services/agent/`, без разделения на отдельные микроагенты. Шаги выполняются последовательно в рамках одного `agent_session`.
+The agent is divided into submodules in `backend/src/services/agent/`, without separation into individual micro-agents. Steps execute sequentially within a single `agent_session`.
 
-### Файловая структура
+### File Structure
 
-| Файл | Роль |
+| File | Role |
 |------|------|
-| `backend/src/services/agent/pipeline-steps.js` | 6 шагов пайплайна (шаг 0 + 5) |
-| `backend/src/services/agent/pipeline-runner.js` | Запуск пайплайна с валидацией coverage/duration |
-| `backend/src/services/agent/bootstrap.js` | Первое окно (`bootstrapWithAgent`) |
-| `backend/src/services/agent/coreference.js` | Заглушка (удалён из пайплайна) |
-| `backend/src/services/agent/ai-caller.js` | Вызов AI с ретраями и парсингом JSON |
-| `backend/src/services/agent/text-utils.js` | Текстовые утилиты |
-| `backend/src/services/agent/visual-utils.js` | Утилиты визуалов |
-| `backend/src/services/agent-service.js` | Barrel-экспорт + window-generation |
-| `backend/src/services/agent-prompts.js` | Все system prompt'ы |
+| `backend/src/services/agent/pipeline-steps.js` | 6 pipeline steps (step 0 + 5) |
+| `backend/src/services/agent/pipeline-runner.js` | Pipeline execution with coverage/duration validation |
+| `backend/src/services/agent/bootstrap.js` | First window (`bootstrapWithAgent`) |
+| `backend/src/services/agent/coreference.js` | Stub (removed from pipeline) |
+| `backend/src/services/agent/ai-caller.js` | AI calls with retries and JSON parsing |
+| `backend/src/services/agent/text-utils.js` | Text utilities |
+| `backend/src/services/agent/visual-utils.js` | Visual utilities |
+| `backend/src/services/agent-service.js` | Barrel export + window generation |
+| `backend/src/services/agent-prompts.js` | All system prompts |
 
-### Структура пайплайна
+### Pipeline Structure
 
 ```
 bootstrapWithAgent():
-  Шаг 0: stepAnalyzeStructure() — отдельно, до runPipeline()
+  Step 0: stepAnalyzeStructure() — separately, before runPipeline()
   runPipeline():
-    Шаг 1: stepExtractCharacters()  — персонажи (без голосов)
-    Шаг 1b: stepGenerateVoices()    — голоса персонажей (выделенный шаг)
-    Шаг 2: stepExtractLocations()   — локации
-    Шаг 3: stepCreateScenes()       — сцены (до 3, из буфера 1500 символов)
+    Step 1: stepExtractCharacters()  — characters (without voices)
+    Step 1b: stepGenerateVoices()    — character voices (dedicated step)
+    Step 2: stepExtractLocations()   — locations
+    Step 3: stepCreateScenes()       — scenes (up to 3, from 1500 char buffer)
                                       + title, location.id, environment-override
-                                      (глобальный шаблон локации vs сцена)
-    Шаг 4: stepCreateUnits()        — IU (визуальные единицы), per-scene
-    Шаг 5: stepCreateVisuals()      — промпты (image + video), per-scene
-                                      (вход юнитов несёт estimated_duration_sec)
+                                      (global location template vs scene)
+    Step 4: stepCreateUnits()        — IUs (visual units), per-scene
+    Step 5: stepCreateVisuals()      — prompts (image + video), per-scene
+                                      (unit input carries estimated_duration_sec)
     ── Post-processing (window-level) ──
-    Шаг 6a: stepReconcilePassports   — сверка image.prompt с паспортами
-    Шаг 6b: stepReconcileVideoActions — фикс video.action (temporal only + тайминг)
-    Шаг 7a: stepPolishStoryboard     — полировка image.prompt (continuity)
-    Шаг 7b: stepPolishVideoActions   — полировка video.action (сюжет+ряд+тайминг)
+    Step 6a: stepReconcilePassports   — verify image.prompt against passports
+    Step 6b: stepReconcileVideoActions — fix video.action (temporal only + timing)
+    Step 7a: stepPolishStoryboard     — polish image.prompt (continuity)
+    Step 7b: stepPolishVideoActions   — polish video.action (plot + sequence + timing)
 ```
 
-**Важно:** `runPipeline()` состоит из 5 шагов + voice generation + 4 post-processing шага.
+**Important:** `runPipeline()` consists of 5 steps + voice generation + 4 post-processing steps.
 
-**Удалено из пайплайна:**
-- `stepResolveCoreferences` — coreference-резолюция удалена из пайплайна (июль 2026)
-- `stepEnrichScenes` — отдельный шаг обогащения удалён; title/location.id/environment-override генерирует `stepCreateScenes` (июль 2026)
-- `unit.participants` — LLM больше не генерирует participants для IU
-- `character_anchors` — позиции пишутся напрямую в visual.prompt
+**Removed from pipeline:**
+- `stepResolveCoreferences` — coreference resolution removed from pipeline (July 2026)
+- `stepEnrichScenes` — separate enrichment step removed; title/location.id/environment-override generated by `stepCreateScenes` (July 2026)
+- `unit.participants` — LLM no longer generates participants for IUs
+- `character_anchors` — positions written directly into visual.prompt
 
-## Шаги пайплайна
+## Pipeline Steps
 
-### Шаг 0: Analyze Structure
+### Step 0: Analyze Structure
 
-**Назначение:** Извлечение метаданных книги — автор, название, части, главы.
+**Purpose:** Extract book metadata — author, title, parts, chapters.
 
-**Зона ответственности:** Первичный анализ структуры текста (первые 80 строк).
+**Responsibility:** Primary text structure analysis (first 80 lines).
 
-**Инструменты:** `aiService.callAI()` с system prompt `SYSTEM_PROMPTS.structure`.
+**Tools:** `aiService.callAI()` with system prompt `SYSTEM_PROMPTS.structure`.
 
-**Формат входа:** Первые 80 строк исходного текста (string).
-**Формат выхода:** `{ author, title, has_prologue, has_epilogue, parts: [{ name, order }], chapters: [{ type, number, title, header_line }] }`
+**Input format:** First 80 lines of source text (string).
+**Output format:** `{ author, title, has_prologue, has_epilogue, parts: [{ name, order }], chapters: [{ type, number, title, header_line }] }`
 
-**Хранение в БД:** `agent_steps` с `step_type: 'analyze_structure'`
+**DB storage:** `agent_steps` with `step_type: 'analyze_structure'`
 
-### Шаг 1: Extract Characters
+### Step 1: Extract Characters
 
-**Назначение:** Извлечение всех именованных персонажей с описаниями, внешностью и чертами характера.
+**Purpose:** Extract all named characters with descriptions, appearance, and traits.
 
-**Зона ответственности:** Распознавание и характеристика персонажей. Голоса НЕ являются частью этого шага — они генерируются отдельным выделенным шагом `stepGenerateVoices()`.
+**Responsibility:** Character recognition and characterization. Voices are NOT part of this step — they are generated by a dedicated `stepGenerateVoices()` step.
 
-**Инструменты:** `aiService.callAI()` с system prompt `SYSTEM_PROMPTS.characters` (требует appearance на английском для LTX).
+**Tools:** `aiService.callAI()` with system prompt `SYSTEM_PROMPTS.characters` (requires appearance in English for LTX).
 
-**Формат выхода:** `{ characters: [{ id, name, description, appearance, traits }] }`
+**Output format:** `{ characters: [{ id, name, description, appearance, traits }] }`
 
-### Шаг 2: Extract Locations
+### Step 2: Extract Locations
 
-**Назначение:** Извлечение локаций с учётом известных персонажей.
+**Purpose:** Extract locations with known characters.
 
-**Формат выхода:** `{ locations: [{ id, name, type, description }] }`
+**Output format:** `{ locations: [{ id, name, type, description }] }`
 
-### Шаг 3: Create Scenes
+### Step 3: Create Scenes
 
-**Назначение:** Разбиение текста на логические сцены с участниками, локацией, окружением, временем. Также отвечает за title, location.id и environment-override (проверка сцены против глобального шаблона локации).
+**Purpose:** Split text into logical scenes with participants, location, environment, time. Also handles title, location.id, and environment-override (checking scene against global location template).
 
-**Ограничения:** До 3 сцен за один вызов (`MAX_SCENES_PER_CHUNK=3` — **жёсткий верхний предел, не целевое количество**).
-Текст для разбиения берётся из буфера `MAX_WINDOW_CHARS=1500` символов.
-Буфер ограничивает токены, но не является границей прогресса по книге.
+**Limits:** Up to 3 scenes per call (`MAX_SCENES_PER_CHUNK=3` — **hard upper limit, not target count**).
+Text for splitting comes from `MAX_WINDOW_CHARS=1500` character buffer.
+Buffer limits tokens but is not a book progress boundary.
 
-LLM отвечает только за смысловое разбиение полученного буфера на сцены.
-Агент может вернуть 1-3 сцены и не обязан использовать весь буфер;
-неиспользованный хвост будет передан в следующем окне после программного
-пересчёта `currentOffset`.
+LLM is only responsible for semantic splitting of received buffer into scenes.
+Agent may return 1-3 scenes and is not required to use entire buffer;
+unused tail is passed in next window after programmatic
+recalculation of `currentOffset`.
 
-### Приоритеты промпта (по убыванию важности)
+### Prompt priorities (descending importance)
 
-1. **Логическая целостность** — сцена = одно место, одно время, один эпизод.
-   Не дробить сцену только ради увеличения количества.
-2. **Группировка диалогов** — несколько реплик в одном разговоре = одна сцена.
-3. **~20 сек (~65 слов)** — целевая длительность (мягкий ориентир).
-4. **~30 сек (~95 слов)** — soft ceiling; один repair retry.
-5. **~5 сек (~15 слов)** — технический минимум (видео-артефакты).
-6. **Полные предложения** — каждая сцена начинается/заканчивается на полном предложении.
-7. **Verbatim prefix coverage** — сцены = дословный непрерывный префикс буфера.
+1. **Logical integrity** — scene = one location, one time, one episode.
+   Don't split a scene just to increase count.
+2. **Dialogue grouping** — multiple lines in one conversation = one scene.
+3. **~20s (~65 words)** — target duration (soft guideline).
+4. **~30s (~95 words)** — soft ceiling; one repair retry.
+5. **~5s (~15 words)** — technical minimum (video artifacts).
+6. **Complete sentences** — each scene starts/ends on complete sentence.
+7. **Verbatim prefix coverage** — scenes = verbatim continuous prefix of buffer.
 
-**Константы длительности:** `SCENE_TARGET_SEC=20`, `SCENE_MAX_SEC=30`,
-`SCENE_MIN_SEC=5`. Оценка: `estimateSpeechDurationSec(text)` — 0.3 сек/слово,
-минимум 2 сек.
+**Duration constants:** `SCENE_TARGET_SEC=20`, `SCENE_MAX_SEC=30`,
+`SCENE_MIN_SEC=5`. Estimation: `estimateSpeechDurationSec(text)` — 0.3 sec/word,
+minimum 2 sec.
 
-### Валидация после AI
+### Post-AI validation
 
-1. **Coverage (жёстко)** — `computeSceneCoverage()` проверяет непрерывный префикс.
-   Если нет → repair retry с gap-fix, затем `buildFallbackScenes()`.
-2. **Duration (мягко)** — сцены >30 сек логируются (`scene_duration_over_max`),
-   но не блокируют импорт.
-3. **Min-duration (логирование)** — сцены <5 сек логируются без retry.
-4. **Retry** — один повтор: gap-fix или duration-split.
+1. **Coverage (strict)** — `computeSceneCoverage()` checks continuous prefix.
+   If fails → repair retry with gap-fix, then `buildFallbackScenes()`.
+2. **Duration (soft)** — scenes >30s logged (`scene_duration_over_max`),
+   but don't block import.
+3. **Min-duration (logging)** — scenes <5s logged without retry.
+4. **Retry** — one retry: gap-fix or duration-split.
 
-### Детерминированный fallback
+### Deterministic fallback
 
-`buildFallbackScenes()` нарезает текст по границам предложений
-(`splitIntoSentences()`) в группы ~20 сек (≈65 слов), не превышая ~30 сек.
-Если предложений нет — резерв `splitTextEvenlyByParagraphs()`.
+`buildFallbackScenes()` cuts text at sentence boundaries
+(`splitIntoSentences()`) into ~20s groups (~65 words), not exceeding ~30s.
+If no sentences — fallback `splitTextEvenlyByParagraphs()`.
 
-### Environment-override (в шаге 3)
+### Environment-override (in step 3)
 
-Отдельного шага обогащения **нет** — обогащение перенесено в `stepCreateScenes()`.
-Агент разбивки получает глобальные шаблоны локаций (`locations.json` → `environment`,
-показываются в Known Locations как "default environment: ...") и для каждой сцены:
-- проверяет, соответствует ли сцена глобальному шаблону локации;
-- если условий (атмосфера, погода, освещение, время суток, время года) не менял —
-  опускает поля, система подставит фоллбэк при сборке промпта;
-- если отличия есть — пишет `location.environment` только для отличающихся полей.
+No separate enrichment step — enrichment moved to `stepCreateScenes()`.
+Split agent receives global location templates (`locations.json` → `environment`,
+shown in Known Locations as "default environment: ...") and for each scene:
+- checks if scene matches global location template;
+- if conditions (atmosphere, weather, lighting, time of day, season) unchanged —
+  omits fields, system fills fallback at prompt assembly;
+- if differences exist — writes `location.environment` only for differing fields.
 
-### Формат выхода
+### Output format
 
 `{ scenes: [{ title, text, type, participants, location, environment }] }`
 
-Перед выполнением задачи в промпт загружаются reference examples из
-`backend/ai/examples/` через `formatExamplesForPrompt()`.
+Before task execution, reference examples from
+`backend/ai/examples/` are loaded into prompt via `formatExamplesForPrompt()`.
 
-**Валидация после AI:**
-1. **Coverage (жёстко)** — `computeSceneCoverage()` проверяет непрерывный префикс.
-   При неудаче → repair retry → fallback `buildFallbackScenes()`.
-2. **Duration (мягко)** — `estimateSpeechDurationSec()` (0.3 сек/слово).
-   Сцены >30 сек логируются, но не блокируют импорт.
-3. **Min-duration (логирование)** — сцены <5 сек логируются без retry.
-4. **Retry** — один повтор: gap-fix или duration-split.
+**Post-AI validation:**
+1. **Coverage (strict)** — `computeSceneCoverage()` checks continuous prefix.
+   On failure → repair retry → fallback `buildFallbackScenes()`.
+2. **Duration (soft)** — `estimateSpeechDurationSec()` (0.3 sec/word).
+   Scenes >30s logged but don't block import.
+3. **Min-duration (logging)** — scenes <5s logged without retry.
+4. **Retry** — one retry: gap-fix or duration-split.
 
-**Детерминированный fallback:** `buildFallbackScenes()` нарезает текст
-по границам предложений (`splitIntoSentences`) в группы ~20 сек.
+**Deterministic fallback:** `buildFallbackScenes()` cuts text
+at sentence boundaries (`splitIntoSentences`) into ~20s groups.
 
-**Environment-override (в шаге 3):** `stepCreateScenes()` сравнивает каждую сцену
-с глобальным шаблоном локации (правило «только переопределения»): если поле
-совпадает с шаблоном (`locations.json` → `environment`, показывается в Known
-Locations как "default environment: ...") — агент его опускает, система
-подставит фоллбэк при сборке промпта. Отличающиеся поля пишутся в
+**Environment-override (in step 3):** `stepCreateScenes()` compares each scene
+with global location template (override-only rule): if field
+matches template (`locations.json` → `environment`, shown in Known
+Locations as "default environment: ...") — agent omits it, system
+fills fallback at prompt assembly. Differing fields written to
 `location.environment`.
 
-**Формат выхода (сцен):** `{ scenes: [{ title, text, type, participants, location, environment }] }`
+**Output format (scenes):** `{ scenes: [{ title, text, type, participants, location, environment }] }`
 
-### Шаг 4: Create Units (IU)
+### Step 4: Create Units (IU)
 
-**Назначение:** Декомпозиция каждой сцены на визуальные единицы (кадры). Правило: одна визуальная единица = один кадр (НЕ фрагментация по длине текста).
+**Purpose:** Decompose each scene into visual units (frames). Rule: one visual unit = one frame (NOT text-length fragmentation).
 
-**Формат выхода:** `{ units: [{ text, type }] }`
+**Output format:** `{ units: [{ text, type }] }`
 
-### Шаг 5: Create Visuals
+### Step 5: Create Visuals
 
-**Назначение:** Добавление визуальных промптов (тип съёмки, текст промпта, video action) к каждому IU.
+**Purpose:** Add visual prompts (shot type, prompt text, video action) to each IU.
 
-**Важные изменения (июль 2026):**
-- **`unit.participants` удалён** — LLM больше не генерирует participants для IU.
-  Участники определяются через `inferCharactersFromPrompt()` — сканирование
-  `visual.prompt` на наличие `character_id`.
-- **`character_anchors` удалён** — позиции персонажей пишутся напрямую в
-  `visual.prompt`, без отдельного поля.
+**Important changes (July 2026):**
+- **`unit.participants` removed** — LLM no longer generates participants for IUs.
+  Participants determined via `inferCharactersFromPrompt()` — scanning
+  `visual.prompt` for `character_id`.
+- **`character_anchors` removed** — character positions written directly into
+  `visual.prompt`, no separate field.
 
-**Формат выхода:** `{ units: [{ text, type, image: { shot, prompt }, video: { action } }] }`
+**Output format:** `{ units: [{ text, type, image: { shot, prompt }, video: { action } }] }`
 
-**Разделение ответственности:**
-- `image.prompt` — статическая композиция (кто где, как расположены)
-- `video.action` — динамическое изменение (жесты, движения, camera motion)
+**Responsibility split:**
+- `image.prompt` — static composition (who where, how arranged)
+- `video.action` — dynamic change (gestures, movements, camera motion)
 
-**Тайминг (2026-08-06):** каждая строка юнита во входе шага несёт
-`estimated_duration_sec` — длительность модуля (речевая эвристика
-`estimateSpeechDurationSec`, ~0.3с/слово, мин 2с; та же, что у юнит-сплиттера
-и видеочанкинга). Агент мягко согласует `video.action` с доступным временем:
-короткий модуль (~2–4с) — один быстрый жест, длинный (~10–20с) — полное
-поведение (жест, пауза, небольшое продолжение). Финальный темп доводит
-`stepPolishVideoActions`; формат строки синхронизирован с
+**Timing (2026-08-06):** each unit line in step input carries
+`estimated_duration_sec` — module duration (speech heuristic
+`estimateSpeechDurationSec`, ~0.3s/word, min 2s; same as unit-splitter
+and video chunking). Agent gently aligns `video.action` with available time:
+short module (~2–4s) — one quick gesture, long (~10–20s) — full
+behavior (gesture, pause, slight continuation). Final pacing done by
+`stepPolishVideoActions`; line format synchronized with
 `scripts/dryrun-visuals-iu.js`.
 
-### Шаг 6a: Reconcile Passports
+### Step 6a: Reconcile Passports
 
-**Назначение:** Удаление семантических дубликатов из `image.prompt`,
-конфликтующих с автоматически инжектируемыми паспортами персонажей.
-Не трогает `video.action`.
+**Purpose:** Remove semantic duplicates from `image.prompt` that conflict with auto-injected character passports.
+Does not touch `video.action`.
 
-### Шаг 6b: Reconcile Video Actions
+### Step 6b: Reconcile Video Actions
 
-**Назначение:** Исправление `video.action` — удаление static composition
-(которая должна быть только в `image.prompt`), оставление только temporal/dynamic
-описаний (жесты, движение, camera motion, delivery cues). Для пустых `video.action`
-действие генерируется с нуля; секция «Timing» промпта учитывает
-`estimated_duration_sec` модуля при подборе темпа (без посекундной хореографии).
+**Purpose:** Fix `video.action` — remove static composition
+(should only be in `image.prompt`), keep only temporal/dynamic
+descriptions (gestures, movement, camera motion, delivery cues). For empty `video.action`
+action generated from scratch; "Timing" prompt section accounts for
+`estimated_duration_sec` of module when choosing pacing (no per-second choreography).
 
-### Шаг 7a: Polish Storyboard
+### Step 7a: Polish Storyboard
 
-**Назначение:** Согласование визуального ряда сториборда — правило 180°,
-прогрессия крупности планов, непрерывность позиционирования персонажей.
-Меняет только `image.prompt` и `image.shot`. Не трогает `video.action`.
+**Purpose:** Align visual storyboard sequence — 180° rule,
+shot size progression, character positioning continuity.
+Only changes `image.prompt` and `image.shot`. Does not touch `video.action`.
 
-### Шаг 7b: Polish Video Actions
+### Step 7b: Polish Video Actions
 
-**Назначение:** Согласование последовательности `video.action`:
-- Непрерывность жестов между смежными юнитами
-- Соответствие сюжету (проверка по scene text)
-- Эмоциональная дуга (gradual escalation)
-- Кросс-сценные переходы
-- Timing realism (2026-08-06) — действие правдоподобно заполняет длительность
-  модуля (`estimated_duration_sec` в каждой JSON-строке юнита): короткий модуль —
-  один жест, длинный — естественная последовательность (жест → продолжает говорить →
-  смена позы → ещё один жест); длительности соседних модулей учитываются совместно
-  (временная непрерывность). Явный запрет посекундной хореографии
-  («2 секунды машет рукой») — время это ориентир темпа, а не формат вывода.
+**Purpose:** Align `video.action` sequence:
+- Gesture continuity between adjacent units
+- Plot consistency (verified against scene text)
+- Emotional arc (gradual escalation)
+- Cross-scene transitions
+- Timing realism (2026-08-06) — action believably fills module duration
+  (`estimated_duration_sec` in each JSON unit line): short module —
+  one gesture, long — natural sequence (gesture → continues speaking →
+  posture change → another gesture); adjacent module durations accounted
+  jointly (temporal continuity). Explicit prohibition of per-second choreography
+  ("2 seconds waving hand") — time is pacing guide, not output format.
 
-Итоговый поток:
+Final flow:
 ```
 stepCreateVisuals
-  → stepReconcilePassports (image.prompt только)
-  → stepReconcileVideoActions (video.action только)
-  → stepPolishStoryboard (image.prompt только)
-  → stepPolishVideoActions (video.action только)
+  → stepReconcilePassports (image.prompt only)
+  → stepReconcileVideoActions (video.action only)
+  → stepPolishStoryboard (image.prompt only)
+  → stepPolishVideoActions (video.action only)
 ```
 
-## Оконная обработка
+## Window Processing
 
-- **Первое окно:** `bootstrapWithAgent()` — шаг 0 (structure) + шаги 1-5 (pipeline)
-- **Последующие окна:** `bootstrapNextWindow()` — шаги 1-5 (шаг 0 пропускается)
-- **currentOffset** — абсолютная позиция в `sourceText`, единственный источник
-  истины для следующего буфера
-- **plannedEndOffset** — конец взятого текстового буфера; это не граница прогресса
-- **coveredEndOffset / lastSceneEndOffset / next_offset** — фактический конец
-  обработанного текста, вычисленный из последней созданной сцены
-- **progressMethod** — способ определения следующей позиции (`coverage`,
+- **First window:** `bootstrapWithAgent()` — step 0 (structure) + steps 1-5 (pipeline)
+- **Subsequent windows:** `bootstrapNextWindow()` — steps 1-5 (step 0 skipped)
+- **currentOffset** — absolute position in `sourceText`, single source of
+  truth for next buffer
+- **plannedEndOffset** — end of taken text buffer; not a progress boundary
+- **coveredEndOffset / lastSceneEndOffset / next_offset** — actual end of
+  processed text, calculated from last created scene
+- **progressMethod** — method of determining next position (`coverage`,
   `coverage:full_scene_text`, `coverage:last_scene_tail`)
 
-Алгоритм продвижения:
-1. `getWindowText()` берёт буфер от `currentOffset`.
-2. `stepCreateScenes()` создаёт максимум 3 сцены из начала буфера.
-3. `resolveSceneProgress()` сверяет `scene.text` с исходным буфером и вычисляет
+Advancement algorithm:
+1. `getWindowText()` takes buffer from `currentOffset`.
+2. `stepCreateScenes()` creates up to 3 scenes from buffer start.
+3. `resolveSceneProgress()` checks `scene.text` against source buffer and calculates
    `nextOffset`.
-4. `agent_sessions.window_data.currentOffset` обновляется в `nextOffset`.
-5. Следующий вызов начинается с этой позиции, даже если предыдущий буфер был
-   длиннее фактически созданных сцен.
+4. `agent_sessions.window_data.currentOffset` updated to `nextOffset`.
+5. Next call starts from this position, even if previous buffer was
+   longer than actually created scenes.
 
-## Используемые инструменты
+## Tools Used
 
-- `aiService.callAI(messages, options)` — HTTP-вызов OpenRouter API
-- `aiService.parseJsonResponse(text)` — парсинг JSON из ответа модели
-- `book.loadBook(bookId)` / `book.saveBookBundle()` — чтение/запись книги
-- `storage.postgres.query()` — запись в agent_sessions, agent_steps, agent_conversations, agent_messages
-- `lazyBook.createFromAnalysis()` / `lazyBook.appendToBook()` — создание/дополнение структуры книги
+- `aiService.callAI(messages, options)` — HTTP call to OpenRouter API
+- `aiService.parseJsonResponse(text)` — JSON parsing from model response
+- `book.loadBook(bookId)` / `book.saveBookBundle()` — book read/write
+- `storage.postgres.query()` — write to agent_sessions, agent_steps, agent_conversations, agent_messages
+- `lazyBook.createFromAnalysis()` / `lazyBook.appendToBook()` — book structure creation/extension
 
-## Хранение в PostgreSQL
+## PostgreSQL Storage
 
-| Таблица | Ключевые колонки |
+| Table | Key Columns |
 |---------|-----------------|
 | `agent_sessions` | session_id (PK), book_id, source_type, status (running/completed/failed/paused), progress_msg, knowledge_base (JSONB), window_data (JSONB) |
 | `agent_steps` | step_id (PK), session_id (FK), step_type (analyze_structure, analyze_characters, analyze_locations, create_scenes, create_units, create_visual_prompts), step_index, scene_index, status, result (JSONB), error |
 | `agent_conversations` | conversation_id (PK), session_id (FK), step_id (FK — nullable), attempt, model |
 | `agent_messages` | message_id (PK), conversation_id (FK), role (system/user/assistant), content |
 
-## База знаний (Knowledge Base)
+## Knowledge Base
 
-Файлы в `backend/ai/`:
-- `rules/` — 8 markdown-файлов (import_rules, json_schema, general, edit_mode, validation, json_rules, extraction_rules, naming)
-- `skills/` — 8 markdown-файлов (camera_language, composition, continuity, directing, entity_extraction, lighting, prompt_engineering, storyboard)
-- `examples/` — все `.json` файлы в папке (загружаются динамически, без привязки к именам)
+Files in `backend/ai/`:
+- `rules/` — 8 markdown files (import_rules, json_schema, general, edit_mode, validation, json_rules, extraction_rules, naming)
+- `skills/` — 8 markdown files (camera_language, composition, continuity, directing, entity_extraction, lighting, prompt_engineering, storyboard)
+- `examples/` — all `.json` files in folder (loaded dynamically, no name binding)
 
-**Использование в промптах:**
-- База знаний загружается через `knowledge-base.js` и `ai-loader.js` (с TTL-кэшем 1 мин)
-- `formatExamplesForPrompt()` в `agent-service.js` загружает **все** файлы из
-  `backend/ai/examples/`, динамически определяет структуру каждого и включает
-  краткое описание в system prompt шага **Create Scenes** (через плейсхолдер
-  `%REFERENCE_EXAMPLES%`). Нет жёстких привязок к именам файлов.
-- `ai-loader.js` загружает все файлы из
-  `ai/examples/` если в MODE_MAPPING не указан конкретный список.
-- `refineDraft()` в `ai-service.js` загружает полные примеры из `ai/examples/`
-  и включает их в промпты финальной доработки
+**Usage in prompts:**
+- Knowledge base loaded via `knowledge-base.js` and `ai-loader.js` (with 1 min TTL cache)
+- `formatExamplesForPrompt()` in `agent-service.js` loads **all** files from
+  `backend/ai/examples/`, dynamically determines structure of each and includes
+  brief description in system prompt of **Create Scenes** step (via placeholder
+  `%REFERENCE_EXAMPLES%`). No hard file name bindings.
+- `ai-loader.js` loads all files from
+  `ai/examples/` if MODE_MAPPING doesn't specify particular list.
+- `refineDraft()` in `ai-service.js` loads full examples from `ai/examples/`
+  and includes them in final refinement prompts
 
-## Ограничения
+## Limitations
 
-- Модель конфигурируется через `AI_API_BASE_URL` и `OPENROUTER_MODEL`
-  (по умолчанию: `qwen3-32b` через OpenRouter).
-- Нет fallback на другую модель при отказе текущей.
-- Нет параллельного выполнения шагов.
-- Размер буфера: 1500 символов (`MAX_WINDOW_CHARS`),
-  до 3 сцен (`MAX_SCENES_PER_CHUNK`).
-- timeout AI-вызова: 180s, maxTokens: 2048 (кроме scenes: 6144).
-- Количество повторных попыток: 3 (`STEP_RETRIES`).
-- Прогресс-сообщения на русском языке (не интернационализированы).
+- Model configurable via `AI_API_BASE_URL` and `OPENROUTER_MODEL`
+  (default: `qwen3-32b` via OpenRouter).
+- No fallback to other model on current model failure.
+- No parallel step execution.
+- Buffer size: 1500 characters (`MAX_WINDOW_CHARS`),
+  up to 3 scenes (`MAX_SCENES_PER_CHUNK`).
+- AI call timeout: 180s, maxTokens: 2048 (except scenes: 6144).
+- Retry count: 3 (`STEP_RETRIES`).
+- Progress messages in Russian (not internationalized).
