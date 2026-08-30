@@ -719,10 +719,10 @@ describe('progress: formatting', () => {
         // 5 seconds total, 500 MB — far below the throttle thresholds after the first line
         assert.ok(lines.length >= 1 && lines.length <= 3, `throttled to few lines, got ${lines.length}: ${JSON.stringify(lines)}`);
         assert.ok(lines[0].includes('Downloading big.safetensors'), lines[0]);
-        assert.ok(lines[lines.length - 1].startsWith('Downloaded big.safetensors'), 'final line always emitted');
+        assert.ok(lines[lines.length - 1].startsWith('[✓] Downloaded big.safetensors'), 'final line always emitted once');
     });
 
-    it('G4: TTY renders one in-place line (\\r) and a newline only at completion', () => {
+    it('G4: TTY renders one in-place line (\\r), percent changes redraw, completion collapses to one [✓] line', () => {
         const writes = [];
         const rep = progress.createProgressReporter({
             isTTY: true,
@@ -735,8 +735,10 @@ describe('progress: formatting', () => {
         rep.endFile({ status: 'downloaded', bytes: 1000 });
         const joined = writes.join('');
         assert.ok(joined.includes('\r'), 'in-place line updates');
-        assert.ok(joined.includes('(50%)'), `percent shown: ${joined}`);
-        assert.strictEqual(writes[writes.length - 1], '\n', 'exactly one trailing newline at completion');
+        assert.ok(joined.includes('50%'), `percent shown: ${joined}`);
+        const finalWrite = writes[writes.length - 1];
+        assert.ok(finalWrite.startsWith('[✓] Downloaded f.bin'), `one final [✓] line at completion: ${finalWrite}`);
+        assert.ok(finalWrite.endsWith('\n'), 'final line is a permanent line');
         assert.ok(!writes.slice(0, -1).some((w) => w.includes('\n')), 'no intermediate newlines');
     });
 

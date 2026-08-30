@@ -644,13 +644,17 @@ async function runInstallation(args) {
             const missingIds = (modelsStep.missing || []).map((x) => x.id);
             const hasHfToken = !!(process.env.HF_TOKEN || process.env.HUGGINGFACE_HUB_TOKEN);
             const specs = manifests.flatMap((m) => planModelDownloads(m, missingIds, { hasHfToken }));
-            // User-visible download progress: file, bytes, %, speed, ETA, and a
-            // repo-level aggregate. Inert until a download feeds it chunks.
+            // User-visible download progress: ONE in-place status line (file,
+            // bytes, %, speed, ETA, repo aggregate) on a TTY; throttled plain
+            // lines otherwise. `term` is the shared terminal renderer so the
+            // progress line and installer status share one stream and never
+            // overwrite each other. Inert until a download feeds it chunks.
             const progress = createProgressReporter({
                 isTTY: options.progressIsTTY !== undefined ? !!options.progressIsTTY
-                    : (typeof process !== 'undefined' && process.stderr ? !!process.stderr.isTTY : false),
+                    : (typeof process !== 'undefined' && process.stdout ? !!process.stdout.isTTY : false),
                 log,
                 now: io.now,
+                term: options.term || null,
             });
             for (const spec of specs) {
                 const dep = findModelDep(manifests, spec.id);

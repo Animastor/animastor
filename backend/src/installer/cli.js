@@ -33,6 +33,7 @@ const readline = require('readline');
 
 const { createRealIo, createDryRunIo } = require('./engine/io');
 const { createLogger } = require('./engine/logger');
+const { createTermRenderer } = require('./engine/term');
 const { probeEnvironment, renderDetection } = require('./engine/probe');
 const { runInstallation, loadResumableState, renderResumeSummary } = require('./engine/engine');
 const prereq = require('./engine/prereq');
@@ -247,6 +248,18 @@ async function cmdPlan(flags) {
     console.log(plan.plan_text);
 }
 
+/**
+ * The shared terminal renderer for an install run: ONE stream for installer
+ * status (logger sink) and the download progress line, so log lines erase
+ * and redraw around the live progress instead of overwriting it.
+ */
+function createScreen() {
+    return createTermRenderer({
+        isTTY: !!process.stdout.isTTY,
+        write: (s) => { process.stdout.write(s); },
+    });
+}
+
 async function cmdInstall(flags) {
     if (flags.profiles.length === 0) {
         console.error('error: --profile is required');
@@ -265,7 +278,8 @@ async function cmdInstall(flags) {
     // mode the guarded io is used ONLY inside the engine, where every
     // mutating operation would throw a "dry-run violation".
     const realIo = createRealIo();
-    const logger = createLogger({ io: realIo });
+    const screen = createScreen();
+    const logger = createLogger({ io: realIo, sink: (line) => screen.print(line) });
     const loadedManifests = flags.profiles.map((p) => manifest.loadManifest(p));
     const mode = flags.mode || 'managed';
 
@@ -390,7 +404,7 @@ async function cmdInstall(flags) {
             manifests: loadedManifests, mode, io,
             roots: { comfyuiRoot: root, workerDir, statePath, repoRoot, hubUrl },
             decisions, secretProvider: makeSecretProvider(secrets),
-            logger, crypto, env, dryRun, options: installOptions(flags),
+            logger, crypto, env, dryRun, options: { ...installOptions(flags), term: screen },
         });
         printResult(result);
     } else {
@@ -409,7 +423,7 @@ async function cmdInstall(flags) {
         const result = await runInstallation({
             manifests: loadedManifests, mode, io,
             roots: { comfyuiRoot: root, workerDir, statePath, repoRoot, hubUrl },
-            decisions, logger, crypto, env, dryRun, options: installOptions(flags),
+            decisions, logger, crypto, env, dryRun, options: { ...installOptions(flags), term: screen },
         });
         printResult(result);
     }
@@ -479,7 +493,8 @@ async function cmdResume(flags) {
     }
 
     const mode = st.mode || flags.mode || 'managed';
-    const logger = createLogger({ io });
+    const screen = createScreen();
+    const logger = createLogger({ io, sink: (line) => screen.print(line) });
     const env = probeEnvironment(io, {
         root, workerDir, crypto,
         workerType: loadedManifests.length === 1 ? (loadedManifests[0].worker_bundle || {}).worker_type : null,
@@ -498,7 +513,7 @@ async function cmdResume(flags) {
         decisions,
         secretProvider: null, // secrets are never persisted; enter them via a fresh `install` if truly required
         logger, crypto, env, initialState: st,
-        options: installOptions(flags),
+        options: { ...installOptions(flags), term: screen },
     });
     printResult(result);
 }
