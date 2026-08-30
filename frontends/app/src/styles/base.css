@@ -1611,6 +1611,183 @@ button { font: inherit; color: inherit; }
   100% { transform: translateX(100%) scaleX(0.4); }
 }
 
+/* ── Parallel AI Analysis progress panel (Milestone #2) ────────────────
+   Per-task rows + an "Overall" row. Lives INSIDE the VBook section on the
+   Generate page when analysis_mode === 'parallel'. Hidden in sequential
+   mode (the component returns null). Reuses the project's
+   .gen-row__bar indeterminate animation and color tokens. */
+.analysis-panel {
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--outline-2, var(--outline));
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.analysis-panel__title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 0.5rem;
+}
+.analysis-panel__rows { display: flex; flex-direction: column; gap: 0.375rem; }
+.analysis-panel__divider {
+  height: 1px;
+  background: var(--outline-2, var(--outline));
+  margin: 0.5rem 0;
+}
+
+.analysis-row { display: flex; flex-direction: column; gap: 0.125rem; min-width: 0; }
+.analysis-row__line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;            /* allow flex children to shrink */
+}
+.analysis-row__icon {
+  flex-shrink: 0;
+  width: 1.125rem;
+  display: inline-flex;
+  justify-content: center;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.analysis-row__icon--waiting   { color: var(--text-2); }
+.analysis-row__icon--running   { color: var(--accent); animation: analysis-pulse 1.4s ease-in-out infinite; }
+.analysis-row__icon--done      { color: var(--success); }
+.analysis-row__icon--failed    { color: var(--error); }
+.analysis-row__icon--cancelled { color: var(--error); opacity: 0.7; }
+@keyframes analysis-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+.analysis-row__name {
+  flex: 1 1 auto;
+  min-width: 0;            /* required for ellipsis */
+  font-size: 0.8125rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.analysis-row__status {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--text-2);
+}
+.analysis-row__status--running   { color: var(--accent); }
+.analysis-row__status--completed { color: var(--success); }
+.analysis-row__status--failed    { color: var(--error); }
+.analysis-row__status--cancelled { color: var(--error); opacity: 0.7; }
+.analysis-row__pct {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  min-width: 2.5rem;
+  text-align: right;
+}
+.analysis-row__timer {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  min-width: 3.25rem;
+  text-align: right;
+}
+.analysis-row__bar {
+  height: 3px;
+  border-radius: 1.5px;
+  background: var(--surface-dim);
+  overflow: hidden;
+}
+.analysis-row__bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+.analysis-row__bar-fill--completed { background: var(--success); }
+.analysis-row__bar-fill--failed    { background: var(--error); }
+.analysis-row__bar-fill--cancelled { background: var(--error); opacity: 0.5; }
+.analysis-row__bar-ind {
+  height: 100%;
+  width: 100%;
+  background: var(--accent);
+  animation: gen-indeterminate 1.2s infinite cubic-bezier(0.4, 0, 0.2, 1);
+  transform-origin: left;
+}
+.analysis-row__error {
+  margin: 0.125rem 0 0;
+  font-size: 0.75rem;
+  color: var(--error);
+  word-break: break-word;
+}
+
+.analysis-overall {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+}
+.analysis-overall__line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.analysis-overall__label {
+  flex: 1 1 auto;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.analysis-overall__pct {
+  flex-shrink: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 2.75rem;
+  text-align: right;
+  color: var(--text);
+}
+.analysis-overall__pct--completed { color: var(--success); }
+.analysis-overall__pct--failed    { color: var(--error); }
+.analysis-overall__timer {
+  flex-shrink: 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  min-width: 3.5rem;
+  text-align: right;
+}
+.analysis-overall__bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-dim);
+  overflow: hidden;
+}
+.analysis-overall__bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+.analysis-overall__bar-fill--completed { background: var(--success); }
+.analysis-overall__bar-fill--failed    { background: var(--error); }
+.analysis-overall__total {
+  margin: 0.125rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-2);
+}
+
+/* Mobile (≤ 480px): tighten timer + pct widths so the row never overflows. */
+@media (max-width: 480px) {
+  .analysis-row__pct    { min-width: 2rem; font-size: 0.6875rem; }
+  .analysis-row__timer  { min-width: 2.75rem; font-size: 0.6875rem; }
+  .analysis-row__status { font-size: 0.6875rem; }
+  .analysis-overall__pct   { min-width: 2.25rem; font-size: 0.75rem; }
+  .analysis-overall__timer { min-width: 3rem; font-size: 0.75rem; }
+}
+
 /* Section action buttons (Generate 48dp flex + Stop 96dp min, outlined) */
 .gen-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
 .gen-btn {
