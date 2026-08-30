@@ -241,6 +241,191 @@ export const vbookProgress = signal<VBookProgress>({
 
 export const isRegenerating = signal(false);
 
+// ── Parallel AI Analysis per-task progress (Milestone #2) ──
+// One row per AI analysis task (characters / locations / voices).
+// The orchestrator emits { type:'analysis', task, status, ... } events
+// over the existing SSE channel; this signal mirrors the orchestrator's
+// view of the world so the UI can render one row per task with its
+// own timer + status. resetAnalysisProgress() wipes the signal — called
+// on cancel / new generation / book close.
+//
+// Wire contract is intentionally minimal: each row records its status
+// and startedAt / finishedAt timestamps (epoch ms). duration_ms from
+// the orchestrator is the final authoritative value when a task ends
+// (the orchestrator computes it on the backend clock).
+export type AnalysisStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface AnalysisTaskRow {
+  id: 'characters' | 'locations' | 'voices';
+  status: AnalysisStatus;
+  /** Epoch ms — set when status first transitions to 'running'. */
+  startedAt: number | null;
+  /** Epoch ms — set when status transitions to a terminal state. */
+  finishedAt: number | null;
+  /** Wall-clock ms the task spent in 'running' state. Authoritative value
+   *  from the orchestrator (`task.duration_ms`) when finished. */
+  durationMs: number | null;
+  /** Set only when status === 'failed'. */
+  error: string | null;
+}
+
+export interface AnalysisProgress {
+  /** Total tasks the orchestrator has scheduled (3 today: characters, locations, voices). */
+  totalTasks: number;
+  /** Tasks that have transitioned to 'completed'. */
+  completedTasks: number;
+  /** Tasks that have transitioned to 'failed' (failure isolation — siblings still run). */
+  failedTasks: number;
+  /** Tasks that have transitioned to 'cancelled'. */
+  cancelledTasks: number;
+  /** Epoch ms — when the analysis phase started (first task → running).
+   *  Null until then. Used by the overall timer in the UI. */
+  phaseStartedAt: number | null;
+  /** Epoch ms — when the analysis phase finished (all tasks terminal).
+   *  Null until then. Used to freeze the overall timer. */
+  phaseFinishedAt: number | null;
+  /** Total elapsed wall-clock ms for the analysis phase. Authoritative
+   *  when phaseFinishedAt is set; live `Date.now() - phaseStartedAt`
+   *  while running. */
+  phaseDurationMs: number | null;
+  /** Per-task rows, keyed by id. Inserted in PENDING on first sighting
+   *  of an event for that task id; updated on each transition. */
+  tasks: Record<'characters' | 'locations' | 'voices', AnalysisTaskRow>;
+  /** Set when an event reports analysis_mode === 'parallel' (truth from
+   *  backend). Sequential mode never populates this signal — callers
+   *  fall back to the legacy single-row VBook UI. */
+  active: boolean;
+}
+
+const EMPTY_ANALYSIS_TASK: AnalysisTaskRow = {
+  id: 'characters', status: 'pending', startedAt: null, finishedAt: null, durationMs: null, error: null,
+};
+
+function makeEmptyTaskRow(id: 'characters' | 'locations' | 'voices'): AnalysisTaskRow {
+  return { ...EMPTY_ANALYSIS_TASK, id };
+}
+
+const INITIAL_ANALYSIS_PROGRESS: AnalysisProgress = {
+  totalTasks: 3,
+  completedTasks: 0,
+  failedTasks: 0,
+  cancelledTasks: 0,
+  phaseStartedAt: null,
+  phaseFinishedAt: null,
+  phaseDurationMs: null,
+  tasks: {
+    characters: makeEmptyTaskRow('characters'),
+    locations:  makeEmptyTaskRow('locations'),
+    voices:     makeEmptyTaskRow('voices'),
+  },
+  active: false,
+};
+
+export const vbookAnalysisProgress = signal<AnalysisProgress>(INITIAL_ANALYSIS_PROGRESS);
+
+/** Reset to a fresh empty state. Idempotent. */
+export function resetAnalysisProgress(): void {
+  vbookAnalysisProgress.value = {
+    ...INITIAL_ANALYSIS_PROGRESS,
+    tasks: {
+      characters: makeEmptyTaskRow('characters'),
+      locations:  makeEmptyTaskRow('locations'),
+      voices:     makeEmptyTaskRow('voices'),
+    },
+  };
+}
+
+// ── Pure helpers (exported for unit tests) ───────────────────────
+// `applyAnalysisEvent(progress, event)` is a pure function: same input
+// produces the same output. The SSE handler wraps it once the event
+// has been JSON-parsed. This separation keeps the progress state
+// machine testable without mocking the SSE transport.
+
+const ANALYSIS_TASK_IDS = ['characters', 'locations', 'voices'] as const;
+type AnalysisTaskId = typeof ANALYSIS_TASK_IDS[number];
+
+function isAnalysisTaskId(v: unknown): v is AnalysisTaskId {
+  return typeof v === 'string' && (ANALYSIS_TASK_IDS as readonly string[]).includes(v);
+}
+
+function transition(prev: AnalysisTaskRow, ev: ProgressEvent): AnalysisTaskRow {
+  const next: AnalysisTaskRow = { ...prev };
+  if (typeof ev.status === 'string') {
+    next.status = (['pending', 'running', 'completed', 'failed', 'cancelled'] as const)
+      .includes(ev.status as AnalysisStatus) ? (ev.status as AnalysisStatus) : prev.status;
+  }
+  if (next.status === 'running' && prev.startedAt == null) {
+    next.startedAt = Date.now();
+  }
+  if (next.status !== 'running' && next.startedAt != null && prev.status === 'running') {
+    next.finishedAt = Date.now();
+  }
+  if (typeof ev.duration_ms === 'number' && Number.isFinite(ev.duration_ms)) {
+    next.durationMs = ev.duration_ms;
+    if (next.startedAt != null) next.finishedAt = next.startedAt + ev.duration_ms;
+  }
+  if (typeof ev.error === 'string' && ev.error.length > 0 && next.status === 'failed') {
+    next.error = ev.error;
+  }
+  return next;
+}
+
+export function applyAnalysisEvent(prev: AnalysisProgress, ev: ProgressEvent): AnalysisProgress {
+  if (!isAnalysisTaskId(ev.task)) return prev;
+  const id = ev.task;
+  const prevRow = prev.tasks[id];
+  const nextRow = transition(prevRow, ev);
+
+  // Recompute totals from the per-row statuses — never trust the
+  // orchestrator's counters blindly because a late event with a stale
+  // counter could roll the numbers backwards. The single source of
+  // truth is the row statuses.
+  const tasks = { ...prev.tasks, [id]: nextRow };
+  let completed = 0, failed = 0, cancelled = 0;
+  let phaseStartedAt = prev.phaseStartedAt;
+  let phaseFinishedAt = prev.phaseFinishedAt;
+  for (const t of Object.values(tasks)) {
+    if (t.status === 'completed') completed++;
+    else if (t.status === 'failed') failed++;
+    else if (t.status === 'cancelled') cancelled++;
+  }
+  if (phaseStartedAt == null && Object.values(tasks).some((t) => t.startedAt != null)) {
+    phaseStartedAt = Math.min(...Object.values(tasks).map((t) => t.startedAt ?? Infinity));
+    if (!Number.isFinite(phaseStartedAt)) phaseStartedAt = null;
+  }
+  const allTerminal = Object.values(tasks).every((t) =>
+    t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled'
+  );
+  if (allTerminal && phaseStartedAt != null && phaseFinishedAt == null) {
+    phaseFinishedAt = Date.now();
+  }
+  const phaseDurationMs = phaseStartedAt != null
+    ? (phaseFinishedAt ?? Date.now()) - phaseStartedAt
+    : null;
+
+  return {
+    ...prev,
+    completedTasks: completed,
+    failedTasks: failed,
+    cancelledTasks: cancelled,
+    phaseStartedAt,
+    phaseFinishedAt,
+    phaseDurationMs,
+    tasks,
+    active: true,
+  };
+}
+
+/** Aggregate health flag for the overall row. */
+export function analysisOverallPercent(p: AnalysisProgress): number {
+  if (p.totalTasks === 0) return 0;
+  const completed = p.completedTasks;
+  const failed = p.failedTasks;
+  // Failed tasks count as "done" for progress (the row stops moving) but
+  // not as success — the UI surfaces the failure separately.
+  return Math.round(((completed + failed) / p.totalTasks) * 100);
+}
+
 // ── Layer config (GenerateFragment toggle chips) ──
 export const vbookEnabled = signal(true);
 export const audioEnabled = signal(true);
@@ -744,6 +929,21 @@ function handleProgressEvent(data: string): void {
   let ev: ProgressEvent;
   try { ev = JSON.parse(data); } catch { return; }
   if (ev.type === 'vbook') {
+    // Parallel-mode heartbeat (Milestone #2): orchestrator publishes one
+    // { stage: 'analysis_parallel', analysis_completed, ... } event between
+    // waves. We forward it to vbookAnalysisProgress so the per-task rows
+    // can render an "Analysis: N/M" progress line. The existing vbook
+    // signal is unaffected — sequential mode never emits this heartbeat.
+    if (ev.stage === 'analysis_parallel') {
+      const cur = vbookAnalysisProgress.value;
+      vbookAnalysisProgress.value = {
+        ...cur,
+        totalTasks: Math.max(cur.totalTasks, ev.analysis_total ?? cur.totalTasks),
+        completedTasks: Math.max(cur.completedTasks, ev.analysis_completed ?? cur.completedTasks),
+        failedTasks: Math.max(cur.failedTasks, ev.analysis_failed ?? cur.failedTasks),
+        active: true,
+      };
+    }
     const stage: VBookStage = ev.stage === 'creating_units' || ev.stage === 'creating_visuals'
       ? 'CREATING_SCENES' : 'ANALYZING';
     const windowTotal = Math.max(1, ev.window_total_scenes ?? ev.window_size ?? 1);
@@ -760,6 +960,11 @@ function handleProgressEvent(data: string): void {
       message: ev.message?.trim() ? ev.message : null,
       stepType: ev.stage ?? null,
     };
+  } else if (ev.type === 'analysis') {
+    // Parallel AI Analysis per-task event (Milestone #2). Add new branch
+    // BEFORE the existing vbook/generation_complete/import_complete switch
+    // so unknown task ids don't fall through silently.
+    vbookAnalysisProgress.value = applyAnalysisEvent(vbookAnalysisProgress.value, ev);
   } else if (ev.type === 'generation_complete') {
     // A completion event belongs to one generation scope — the progress-panel
     // poll remains authoritative and finalises only after all workers are done.

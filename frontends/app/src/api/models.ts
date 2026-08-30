@@ -659,6 +659,11 @@ export interface CancelWorkerRequest {
 }
 
 // SSE /book/{id}/progress-stream — ProgressEvent (ProgressStream.kt)
+// Parallel / Subagent AI Analysis (Milestone #2) — adds the 'analysis'
+// event shape emitted by backend parallel-analysis-orchestrator.js. The
+// 'analysis' type is ADDITIVE: existing 'vbook' / 'generation_complete' /
+// 'import_complete' types are unchanged. snake_case fields are preserved
+// as the server emits them; the handler reads the few it needs.
 export interface ProgressEvent {
   type?: string;
   layer?: string;
@@ -674,6 +679,21 @@ export interface ProgressEvent {
   window_total_scenes?: number | null;
   window_start_scene?: number | null;
   message?: string | null;
+  // Parallel analysis fields (type == "analysis"). Mirrors the orchestrator's
+  // fireAnalysis() payload — see backend/src/services/agent/parallel-analysis-orchestrator.js.
+  task?: string | null;             // 'characters' | 'locations' | 'voices'
+  status?: string | null;           // 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  completed_tasks?: number | null;  // tasks done so far (incl. failed)
+  failed_tasks?: number | null;
+  total_tasks?: number | null;
+  duration_ms?: number | null;
+  error?: string | null;
+  // analysis_parallel heartbeat (type == "vbook", stage == "analysis_parallel")
+  // { analysis_completed, analysis_failed, analysis_total, analysis_mode }
+  analysis_completed?: number | null;
+  analysis_failed?: number | null;
+  analysis_total?: number | null;
+  analysis_mode?: string | null;
 }
 
 // ─────────────────────────────────────────────────────
