@@ -1,52 +1,47 @@
-# Эволюционное пахтание кода по эталонным визуальным книгам
+# Code Evolutionary Patching via Reference Visual Books
 
-> Рабочее название концепции: **«Эволюционное пахтание»**\
-> Английское техническое имя: **Golden Book Evolution / Visual Book
-> Evolution Loop**
+> Working concept name: **"Evolutionary Patching"**
+> English technical name: **Golden Book Evolution / Visual Book Evolution Loop**
 
-## 1. Идея
+## 1. Idea
 
-После выхода супер-бета прототип визуальной книги уже способен
-самостоятельно создавать сырые книги, но качество отдельных компонентов
-требует ручной доводки.
+After the super-beta release, the visual book prototype can already
+independently create raw books, but individual component quality
+requires manual refinement.
 
-Вместо того чтобы пытаться заранее написать идеальную архитектуру, можно
-превратить каждую качественно доведённую человеком книгу в **эталон
-(Golden Book)** и использовать её как образец для дальнейшего
-автоматического улучшения системы.
+Instead of trying to pre-write perfect architecture, each
+human-refined book can be turned into a **reference (Golden Book)**
+and used as a template for further automatic system improvement.
 
-Основной принцип:
+Core principle:
 
-> **Сырая книга → человеческая доводка → эталонная книга →
-> автоматическое сравнение → изменение системы → новая сырая книга →
-> новое сравнение.**
+> **Raw book → human refinement → reference book →
+> automatic comparison → system change → new raw book →
+> new comparison.**
 
-Таким образом, разработка постепенно превращается из ручного
-программирования в **эволюционный цикл поиска более качественного
-поведения системы**.
+Thus, development gradually transforms from manual programming
+into an **evolutionary cycle of finding higher-quality system behavior**.
 
-------------------------------------------------------------------------
+---
 
-## 2. Два типа книг
+## 2. Two Types of Books
 
-### Raw Book --- сырая книга
+### Raw Book — unrefined book
 
-Книга, созданная текущей версией Animastor без или почти без ручного
-вмешательства.
+Book created by current Animastor version with no or minimal human intervention.
 
-Она показывает, что система умеет делать **самостоятельно прямо
-сейчас**.
+It shows what the system can do **independently right now**.
 
-### Golden Book --- эталонная книга
+### Golden Book — reference book
 
-Та же книга после ручной доводки человеком до желаемого качества.
+The same book after human refinement to desired quality.
 
-Golden Book является не просто готовым результатом, а **образцом
-качества и поведения**, с которым должна сближаться система.
+Golden Book is not just a finished result, but a **quality and behavior
+template** the system should converge toward.
 
-Важно сохранять обе версии:
+Important to preserve both versions:
 
-``` text
+```
 raw_book/
     ↓
 human editing
@@ -54,52 +49,51 @@ human editing
 golden_book/
 ```
 
-Пара `Raw → Golden` особенно ценна, потому что показывает не только
-правильный результат, но и **разницу между текущим поведением системы и
-желаемым поведением**.
+The `Raw → Golden` pair is especially valuable because it shows not only
+the correct result, but the **gap between current system behavior and
+desired behavior**.
 
-------------------------------------------------------------------------
+---
 
-## 3. Зачем нужны эталонные книги
+## 3. Why Reference Books Are Needed
 
-Одна эталонная книга показывает отдельный пример качества.
+One reference book shows a single quality example.
 
-Множество эталонных книг постепенно формирует **пространство требований
-к системе**.
+Many reference books gradually form the **system requirement space**.
 
-Например:
+For example:
 
--   качество сценарной сегментации;
--   длина и ритм сцен;
--   консистентность персонажей;
--   правильное определение участников сцены;
--   качество визуальных промптов;
--   композиция кадров;
--   качество видео;
--   движение камеры;
--   качество TTS;
--   синхронизация аудио и видео;
--   типографика;
--   корректность regeneration;
--   отсутствие артефактов;
--   корректная работа fallback;
--   стоимость генерации;
--   скорость обработки;
--   стабильность pipeline.
+- scenario segmentation quality;
+- scene length and rhythm;
+- character consistency;
+- correct scene participant identification;
+- visual prompt quality;
+- frame composition;
+- video quality;
+- camera movement;
+- TTS quality;
+- audio/video synchronization;
+- typography;
+- regeneration correctness;
+- artifact absence;
+- correct fallback behavior;
+- generation cost;
+- processing speed;
+- pipeline stability.
 
-При этом эталон не обязан быть идеальным во всех отношениях. Он является
-**лучшим доступным на данный момент образцом**.
+The reference doesn't have to be perfect in all aspects. It is the
+**best available template at this moment**.
 
-------------------------------------------------------------------------
+---
 
-## 4. Эволюционный цикл
+## 4. Evolutionary Cycle
 
-Каждое поколение системы проходит примерно следующий цикл:
+Each system generation goes through roughly this cycle:
 
-``` text
+```
                     ┌─────────────────────┐
                     │  Golden Books       │
-                    │  эталонные книги    │
+                    │  reference books    │
                     └──────────┬──────────┘
                                │
                                ▼
@@ -147,57 +141,57 @@ golden_book/
                          └──────► next generation
 ```
 
-------------------------------------------------------------------------
+---
 
-## 5. Роль нескольких AI-агентов
+## 5. Role of Multiple AI Agents
 
-Необязательно использовать одного агента.
+Not necessary to use a single agent.
 
-Несколько агентов могут параллельно искать разные решения одной и той же
-проблемы.
+Multiple agents can search for different solutions to the same
+problem in parallel.
 
-Например:
+For example:
 
--   Agent A --- архитектура;
--   Agent B --- prompts;
--   Agent C --- character consistency;
--   Agent D --- scene segmentation;
--   Agent E --- video pipeline;
--   Agent F --- regeneration;
--   Agent G --- performance/cost;
--   Agent H --- поиск новых архитектурных решений.
+- Agent A — architecture;
+- Agent B — prompts;
+- Agent C — character consistency;
+- Agent D — scene segmentation;
+- Agent E — video pipeline;
+- Agent F — regeneration;
+- Agent G — performance/cost;
+- Agent H — discovering new architectural solutions.
 
-Каждый агент создаёт гипотезу изменения.
+Each agent creates a change hypothesis.
 
-После этого система автоматически прогоняет кандидат через benchmark и
-оценивает результат.
+Then the system automatically runs the candidate through benchmark and
+evaluates the result.
 
-Таким образом:
+Thus:
 
-> **Агент не решает, хорош ли его код. Benchmark решает, стал ли
-> результат лучше.**
+> **The agent doesn't decide if its code is good. The benchmark decides
+> whether the result improved.**
 
-------------------------------------------------------------------------
+---
 
-## 6. Главный объект оптимизации --- не код
+## 6. Main Optimization Object — Not Code
 
-Это принципиальный момент.
+This is a key point.
 
-Цель системы не:
+System goal is NOT:
 
-> «написать красивый код».
+> "write beautiful code."
 
-Цель:
+The goal is:
 
-> **получить более качественную визуальную книгу.**
+> **produce higher-quality visual books.**
 
-Поэтому внутренний код может становиться всё более сложным,
-экспериментальным и даже частично непонятным человеку, если при этом
-наблюдается устойчивое улучшение объективно измеряемого результата.
+Therefore internal code can become increasingly complex,
+experimental, and even partially incomprehensible to humans, as long as
+objectively measurable results show sustained improvement.
 
-Можно представить:
+Consider:
 
-``` text
+```
 Generation 0    Quality 71
 Generation 1    Quality 74
 Generation 2    Quality 77
@@ -208,81 +202,80 @@ Generation 5    Quality 83
 Generation 97   Quality 94
 ```
 
-Человеку не обязательно понимать каждую внутреннюю деталь поколения №97.
+Humans don't need to understand every internal detail of generation #97.
 
-Ему важно понимать:
+They need to understand:
 
--   что изменилось;
--   почему evaluator считает результат лучше;
--   насколько стабильно улучшение;
--   не ухудшились ли другие характеристики.
+- what changed;
+- why the evaluator considers the result better;
+- how stable the improvement is;
+- whether other characteristics degraded.
 
-------------------------------------------------------------------------
+---
 
-## 7. Защита от переобучения на эталонные книги
+## 7. Overfitting Protection on Reference Books
 
-Нельзя просто оптимизировать систему на фиксированном наборе из 100
-книг.
+Cannot simply optimize the system on a fixed set of 100 books.
 
-Иначе система может начать подстраиваться именно под эти книги и их
-особенности.
+Otherwise the system may start optimizing specifically for those books
+and their characteristics.
 
-Поэтому набор следует разделять:
+Therefore the set should be split:
 
-``` text
+```
 Training / Development Set
-≈ 70 книг
+≈ 70 books
 
 Validation Set
-≈ 20 книг
+≈ 20 books
 
 Hidden Test Set
-≈ 10 книг
+≈ 10 books
 ```
 
-Условные пропорции могут изменяться.
+Proportional numbers may vary.
 
-Главный критерий:
+Key criterion:
 
-> Система должна уметь делать не только 100 известных эталонных книг, но
-> и **101-ю неизвестную книгу**.
+> System must be able to produce not just 100 known reference books, but
+> also the **101st unknown book**.
 
-Поэтому новые книги должны периодически добавляться в benchmark.
+Therefore new books should periodically be added to the benchmark.
 
-------------------------------------------------------------------------
+---
 
-## 8. Golden Book как результат человеческого обучения системы
+## 8. Golden Book as Result of Human System Training
 
-На раннем этапе человек является главным редактором качества.
+At early stage, human is the main quality editor.
 
-Например:
+For example:
 
-``` text
+```
 Raw Book #001
     ↓
-30 ручных исправлений
+30 manual corrections
     ↓
 Golden Book #001
 
 Raw Book #002
     ↓
-17 ручных исправлений
+17 manual corrections
     ↓
 Golden Book #002
 
 Raw Book #003
     ↓
-8 ручных исправлений
+8 manual corrections
     ↓
 Golden Book #003
 ```
 
-Если система действительно развивается, количество необходимых ручных
-исправлений должно постепенно уменьшаться.
+If the system is truly developing, the number of required manual
+corrections should gradually decrease.
 
-Это создаёт естественный показатель зрелости:
+This creates a natural maturity indicator:
 
-``` text
+```
 Human correction effort
 
 30%
@@ -298,24 +291,23 @@ Human correction effort
 <1%
 ```
 
-В идеале человек постепенно переходит от непосредственного исправления
-книги к:
+Ideally, human gradually shifts from directly correcting books to:
 
-1.  проверке результата;
-2.  принятию/отклонению;
-3.  формулировке новых критериев качества;
-4.  добавлению новых эталонов.
+1. verifying results;
+2. accepting/rejecting;
+3. formulating new quality criteria;
+4. adding new references.
 
-------------------------------------------------------------------------
+---
 
 ## 9. Quality Delta
 
-Особенно ценна не только Golden Book, но и **разница между Raw и
-Golden**.
+Especially valuable is not just the Golden Book, but the **gap between
+Raw and Golden**.
 
-Для каждой книги можно хранить:
+For each book, can store:
 
-``` text
+```
 Raw Book
 Golden Book
 Quality Score Raw
@@ -326,9 +318,9 @@ Detected Failure Modes
 Accepted Improvements
 ```
 
-Например:
+For example:
 
-``` text
+```
 Character consistency     82 → 96   +14
 Scene coherence           76 → 91   +15
 Typography                88 → 97   +9
@@ -337,45 +329,45 @@ Audio synchronization     93 → 98   +5
 Regeneration correctness  61 → 95   +34
 ```
 
-Такие дельты позволяют агентам искать повторяющиеся причины ошибок.
+Such deltas allow agents to find recurring failure causes.
 
-Если одна и та же проблема возникает в 30 книгах, это уже не случайный
-дефект, а **системный дефект архитектуры**.
+If the same problem appears in 30 books, it's no longer a random
+defect but a **systemic architectural defect**.
 
-------------------------------------------------------------------------
+---
 
-## 10. Эволюция не только кода
+## 10. Not Only Code Evolves
 
-В процессе могут изменяться:
+In the process, can change:
 
--   Python/TypeScript/другой программный код;
--   архитектура pipeline;
--   prompts;
--   agent skills;
--   модели;
--   параметры моделей;
--   правила orchestration;
--   схемы данных;
--   fallback-механизмы;
--   evaluator;
--   критерии качества;
--   способы regeneration;
--   способы выбора моделей;
--   порядок выполнения этапов.
+- Python/TypeScript/other code;
+- pipeline architecture;
+- prompts;
+- agent skills;
+- models;
+- model parameters;
+- orchestration rules;
+- data schemas;
+- fallback mechanisms;
+- evaluator;
+- quality criteria;
+- regeneration approaches;
+- model selection approaches;
+- step execution order.
 
-То есть объект эволюции --- это не репозиторий в узком смысле.
+So the evolution object is not the repository in the narrow sense.
 
-Это:
+It is:
 
-> **вся система производства визуальной книги.**
+> **the entire visual book production system.**
 
-------------------------------------------------------------------------
+---
 
-## 11. Замкнутый цикл
+## 11. Closed Loop
 
-В зрелой версии процесс может работать практически автономно:
+In mature version, process can work nearly autonomously:
 
-``` text
+```
 Golden Dataset
       ↓
 Generate
@@ -397,19 +389,19 @@ Select Best Candidate
 Repeat
 ```
 
-Несколько агентов могут работать круглосуточно, создавая и проверяя
-новые поколения системы.
+Multiple agents can work around the clock, creating and testing
+new system generations.
 
-Человек при этом контролирует направление и качество, но не обязан
-вручную разбирать каждую строку кода.
+Human controls direction and quality but doesn't need to
+manually examine every line of code.
 
-------------------------------------------------------------------------
+---
 
-## 12. Переход от программирования к управлению качеством
+## 12. Transition from Programming to Quality Management
 
-В традиционной модели:
+Traditional model:
 
-``` text
+```
 Human
   ↓
 Architecture
@@ -421,9 +413,9 @@ Application
 Result
 ```
 
-В эволюционной модели:
+Evolutionary model:
 
-``` text
+```
 Human
   ↓
 Quality Definition
@@ -440,259 +432,237 @@ Result
   ↺
 ```
 
-Человек постепенно перестаёт быть непосредственным автором каждой части
-системы.
+Human gradually stops being the direct author of each system component.
 
-Он становится:
+They become:
 
-> **архитектором пространства качества.**
+> **architect of the quality space.**
 
-------------------------------------------------------------------------
+---
 
-## 13. Конечная цель --- «чёрный ящик»
+## 13. End Goal — "Black Box"
 
-В предельном варианте внутренняя система может стать настолько сложной,
-что человеку уже не требуется понимать её внутреннее устройство.
+In the limiting case, the internal system can become so complex
+that humans no longer need to understand its internal workings.
 
-Это аналогично нейронной сети с огромным количеством параметров.
+This is analogous to a neural network with enormous parameter count.
 
-Пользователю не нужно знать:
+Users don't need to know:
 
-> «Почему внутри модели именно эти параметры дают такой результат?»
+> "Why do exactly these parameters inside the model produce this result?"
 
-Он оценивает:
+They evaluate:
 
-> «Результат хороший или плохой?»
+> "Is the result good or bad?"
 
-Так же и с визуальной книгой:
+Same with visual books:
 
 > **Input → AI Production System → Visual Book**
 
-Внутри могут находиться сотни агентов, моделей, правил,
-fallback-механизмов и эволюционирующих компонентов.
+Inside may be hundreds of agents, models, rules,
+fallback mechanisms, and evolving components.
 
-Если система стабильно производит высокое качество на новых данных, её
-внутреннее устройство становится вторичным.
+If the system consistently produces high quality on new data,
+its internal workings become secondary.
 
-------------------------------------------------------------------------
+---
 
-## 14. Конечный пользовательский интерфейс
+## 14. End-User Interface
 
-Конечная форма Animastor должна стремиться не к увеличению количества
-кнопок, а к уменьшению необходимости знать внутреннюю механику.
+Final Animastor form should aim not at increasing button count,
+but at reducing the need to understand internal mechanics.
 
-Пользователь говорит:
+User says:
 
-> «Сделай визуальную книгу из этого романа.»
+> "Make a visual book from this novel."
 
-Система:
+System:
 
-> «Хорошо. Я предлагаю три визуальных направления.»
+> "OK. I propose three visual directions."
 
-Пользователь:
+User:
 
-> «Вот это. Используй эти референсы.»
+> "This one. Use these references."
 
-Система:
+System:
 
-> «Принято. Начинаю производство.»
+> "Accepted. Starting production."
 
-После этого сложнейшая внутренняя система работает самостоятельно.
+After this, the most complex internal system works autonomously.
 
-Таким образом, конечный интерфейс может стать **голосовым или
-разговорным интерфейсом**, похожим на взаимодействие с искусственным
-интеллектом космического корабля:
+Thus, the final interface may become a **voice or conversational
+interface**, similar to interacting with a spaceship AI:
 
-> человек говорит о результате;\
-> система сама выбирает способ его достижения.
+> human talks about the result;
+> system chooses the way to achieve it.
 
-------------------------------------------------------------------------
+---
 
-## 15. Ключевой философский принцип
+## 15. Key Philosophical Principle
 
-Главная идея проекта:
+Main project idea:
 
-> **Не пытаться заранее написать идеальный код. Создать систему, которая
-> умеет постоянно становиться лучше.**
+> **Don't try to pre-write perfect code. Create a system that
+> can continuously improve itself.**
 
-И ещё короче:
+And shorter:
 
-> **Код --- гипотеза. Книга --- результат. Benchmark --- судья.**
+> **Code is a hypothesis. Book is the result. Benchmark is the judge.**
 
-------------------------------------------------------------------------
+---
 
-## 16. Практический первый этап для Animastor
+## 16. Practical First Step for Animastor
 
-На текущем этапе не требуется строить полноценную систему эволюционного
-программирования.
+At current stage, no need to build full evolutionary programming system.
 
-Достаточно начать собирать историю:
+Enough to start collecting history:
 
-``` text
+```
 Raw Book
     +
 Human-edited Golden Book
     +
-описание внесённых исправлений
+description of corrections made
     +
-оценка качества
+quality assessment
 ```
 
-Каждая следующая книга увеличивает ценность корпуса.
+Each subsequent book increases corpus value.
 
-Когда накопится достаточное количество Golden Books, можно построить
-первый экспериментальный evolutionary loop:
+When enough Golden Books accumulate, can build first
+experimental evolutionary loop:
 
-1.  взять текущую версию Animastor;
-2.  прогнать её на наборе книг;
-3.  собрать raw outputs;
-4.  сравнить с Golden Books;
-5.  автоматически найти quality gaps;
-6.  поручить нескольким AI-агентам предложить исправления;
-7.  собрать несколько candidate versions;
-8.  прогнать все версии через benchmark;
-9.  оставить лучшую;
-10. повторить цикл.
+1. take current Animastor version;
+2. run it on book set;
+3. collect raw outputs;
+4. compare with Golden Books;
+5. automatically find quality gaps;
+6. have multiple AI agents propose fixes;
+7. collect several candidate versions;
+8. run all versions through benchmark;
+9. keep the best;
+10. repeat cycle.
 
-Это может стать отдельным экспериментальным режимом разработки:
+This could become a separate experimental development mode:
 
 **Experimental Evolution Mode.**
 
-------------------------------------------------------------------------
+---
 
-## 17. Рабочая терминология
+## 17. Working Terminology
 
-Для документации рекомендуется использовать следующие термины:
+For documentation, recommended terms:
 
-  -----------------------------------------------------------------------
-  Термин                              Значение
-  ----------------------------------- -----------------------------------
-  **Raw Book**                        книга, полученная текущей системой
-                                      без ручной доводки
+| Term | Meaning |
+|---|---|
+| **Raw Book** | book produced by current system without manual refinement |
+| **Golden Book** | book refined by human to reference quality |
+| **Golden Dataset** | set of reference books |
+| **Quality Delta** | gap between Raw and Golden |
+| **Evaluator** | quality assessment system |
+| **Quality Gap** | detected divergence from reference |
+| **Candidate** | experimental system version |
+| **Generation** | system version after an change cycle |
+| **Evolution Loop** | generation → evaluation → change → re-generation cycle |
+| **Evolutionary Patching** | automatic iterative system refinement by agents |
+| **Golden Book Evolution** | overall approach name |
 
-  **Golden Book**                     книга, доведённая человеком до
-                                      эталонного качества
+---
 
-  **Golden Dataset**                  набор эталонных книг
+## 18. Honest Critique of the Concept
 
-  **Quality Delta**                   разница между Raw и Golden
+This section written intentionally: concept is interesting, but at current
+stage is more vision than plan. Below — what's wrong with it, no sugarcoating.
 
-  **Evaluator**                       система оценки качества
+### 18.1. Main Bottleneck — Evaluator, Not Agents
 
-  **Quality Gap**                     обнаруженное расхождение с эталоном
+Entire scheme hinges on "Benchmark decides." But automatically measuring
+visual book quality is very hard: what is "good frame composition,"
+"character consistency," or "artifact absence" in numbers? Either it's
+an expensive LLM judge (unstable, with its own systematic errors), or
+heuristics that miss the main issues.
 
-  **Candidate**                       экспериментальная версия системы
+If evaluator is poor, evolution optimizes not quality but the score —
+classic Goodhart's Law. Building evaluator is not easier than building
+the generation system itself. Until it's concretely defined,
+"evolutionary cycle" is a beautiful diagram with an empty center.
 
-  **Generation**                      поколение системы после очередного
-                                      цикла изменений
+### 18.2. Benchmark Cost Not Accounted
 
-  **Evolution Loop**                  цикл генерации → оценки → изменения
-                                      → повторной генерации
+Running ~100 books through full pipeline (video on GPU, TTS, audio
+sync) for each candidate — hours of GPU time and tokens.
+If agents generate dozens of candidates per generation, budget
+multiplies instantly. Document names "generation cost" as metric
+but doesn't estimate evolution process cost itself. In practice: full
+benchmark — once per N generations, light smoke run — on each candidate.
 
-  **Evolutionary Patching /           автоматическая итеративная
-  Пахтание**                          доработка системы агентами
+### 18.3. LLM Nondeterminism Turns Delta into Noise
 
-  **Golden Book Evolution**           общее название подхода
-  -----------------------------------------------------------------------
+Raw books are non-reproducible: same system version with different
+seeds produces different results. Quality Delta between one Raw and one
+Golden may be coincidence, not signal. Without multi-run statistics
+(or at least "raw #1 vs raw #2" pairs to estimate noise), evolution
+will "fix" non-existent defects.
 
-------------------------------------------------------------------------
+### 18.4. "Black Box" Conflicts with Maintainability
 
-## 18. Честная критика концепции
+Section 13 promises code can become "incomprehensible to humans." But
+project is small, and `ROADMAP_6M.md` explicitly prioritizes reliability
+and maintainability. Project history (see `DONT_DO.md`) is a list of
+what already broke the system; agents freely changing code is a direct
+risk of repeating those mistakes. Evolution without human understanding
+accumulates unmaintainable debt faster than it can be recognized.
 
-Этот раздел написан сознательно: концепция интересная, но на текущем
-этапе — скорее видение, чем план. Ниже — что с ней не так, без прикрас.
+### 18.5. Error of "Human Not Needed in Loop"
 
-### 18.1. Главное узкое место — evaluator, а не агенты
+Even in "mature" version, human cannot disappear from the loop: who
+accepts Golden Books? Who formulates new quality criteria? Who
+decides evaluator stopped reflecting real user desires?
+Document partially acknowledges this (section 8), but "agents work
+around the clock, human only monitors" — more optimistic than reality.
+At best, human shifts from code author to criteria author — same
+intellectual work, different form.
 
-Вся схема держится на фразе «Benchmark решает». Но качество визуальной
-книги автоматически измерять очень сложно: что такое «хорошая
-композиция кадра», «консистентность персонажа» или «отсутствие
-артефактов» в цифрах? Либо это дорогой LLM-судья (нестабильный, со
-своими системными ошибками), либо эвристики, которые не ловят главное.
+### 18.6. What's Genuinely Valuable in the Idea
 
-Если evaluator плохой, эволюция будет оптимизировать не качество, а
-оценку — это классический закон Гудхарта. Построить evaluator не
-проще, чем построить саму систему генерации. Пока он не определён
-конкретно, «эволюционный цикл» — это красивая схема с пустым центром.
+To make critique honest, must name strengths:
 
-### 18.2. Стоимость бенчмарков не учтена
+- **Raw → Golden pairs are real data.** Even without any evolution,
+  they provide a corpus of "what the system does wrong" suitable for
+  manual analysis and developer training.
+- **Quality Delta and "30 books with same problem = systemic defect"** —
+  correct diagnostic logic.
+- **Training / Validation / Hidden split** — correct overfitting
+  protection from classical ML.
+- **"Code is hypothesis, book is result" principle** — healthy priority
+  criterion even without automation.
 
-Прогнать ~100 книг через полный пайплайн (видео на GPU, TTS, аудио-
-синхронизация) на каждый кандидат — это часы GPU-времени и токенов.
-Если агенты генерируют десятки кандидатов в поколение, бюджет
-умножается мгновенно. В документе «стоимость генерации» названа метрикой,
-но не оценена стоимость самого процесса эволюции. На практике: полный
-бенчмарк — раз в N поколений, лёгкий smoke-прогон — на каждом кандидате.
+### 18.7. Critique Summary
 
-### 18.3. Недетерминизм LLM превращает дельту в шум
+Concept is raw and at current stage fanciful: its main components
+(evaluator, statistics, budget, controlled agent code editing)
+are not worked out, and "black box" conflicts with small project needs.
+Don't dive in immediately.
 
-Raw-книги невоспроизводимы: одна и та же версия системы с разными
-сидами даст разные результаты. Quality Delta между одной Raw и одной
-Golden может быть случайностью, а не сигналом. Без прогонов в несколько
-повторов и статистики (или хотя бы пар «raw №1 vs raw №2» для оценки
-шума) эволюция будет «улучшать» несуществующие дефекты.
+But it's valuable as **direction**: already today, without building anything,
+can start collecting Raw + Golden pairs with correction descriptions (section 16).
+If someday a reliable evaluator and reasonable budget appear —
+first evolutionary cycle can be assembled from this data. For now —
+it's a vision, not a roadmap, and this status is honestly documented.
 
-### 18.4. «Чёрный ящик» конфликтует с поддерживаемостью
+---
 
-Раздел 13 обещает, что код может стать «непонятным человеку». Но
-проект маленький, и `ROADMAP_6M.md` прямо ставит приоритетом надёжность
-и простоту сопровождения. История проекта (см. `DONT_DO.md`) — это
-список того, что уже ломало систему; агенты, свободно меняющие код, —
-прямой риск повторения этих грабель. Эволюция без человеческого
-понимания накапливает неподдерживаемый долг быстрее, чем её успевают
-осознать.
+# Short Definition
 
-### 18.5. Ошибка «человек не нужен в цикле»
+**Evolutionary Patching** is an Animastor development approach where
+raw visual books created by the system are compared with reference
+Golden Books refined by humans to desired quality. AI agents analyze
+divergences, independently change code, prompts, and architecture,
+after which new system versions pass benchmark again. Best versions
+are saved, and cycle repeats.
 
-Даже в «зрелой» версии человек не может исчезнуть из контура: кто
-принимает Golden Books? Кто формулирует новые критерии качества? Кто
-решает, что evaluator перестал отражать реальные желания пользователей?
-Документ это частично признаёт (раздел 8), но подача «агенты работают
-круглосуточно, человек только контролирует» — оптимистичнее реальности.
-В лучшем случае человек превращается из автора кода в автора
-критериев — а это та же интеллектуальная работа, только другой формы.
-
-### 18.6. Что в идее действительно ценно
-
-Чтобы критика была честной, надо назвать и сильные стороны:
-
-- **Пары Raw → Golden — это реальные данные.** Даже без всякой эволюции
-  они дают корпус «что система делает не так», пригодный для ручного
-  анализа и обучения людей-разработчиков.
-- **Quality Delta и «30 книг с одной проблемой = системный дефект»** —
-  верная диагностическая логика.
-- **Разделение Training / Validation / Hidden** — правильная защита от
-  переобучения, взятая из классического ML.
-- **Принцип «код — гипотеза, книга — результат»** — здоровый критерий
-  приоритетов даже без автоматизации.
-
-### 18.7. Итог критики
-
-Концепция сырая и на текущем этапе фантазийная: её главные компоненты
-(evaluator, статистика, бюджет, контролируемая агентная правка кода)
-не проработаны, а «чёрный ящик» конфликтует с потребностями маленького
-проекта. Нырять в неё сразу не стоит.
-
-Но она ценна как **направление**: уже сегодня, ничего не строя, можно
-начать копить пары Raw + Golden с описанием исправлений (раздел 16).
-Если когда-нибудь появится надёжный evaluator и разумный бюджет —
-первый эволюционный цикл можно будет собрать из этих данных. Пока —
-это видение, а не дорожная карта, и в этом статусе оно честно зафиксировано.
-
-------------------------------------------------------------------------
-
-# Короткое определение
-
-**Эволюционное пахтание** --- это подход к разработке Animastor, при
-котором сырые визуальные книги, созданные системой, сравниваются с
-эталонными Golden Books, доведёнными человеком до желаемого качества.
-AI-агенты анализируют расхождения, самостоятельно изменяют код, prompts
-и архитектуру, после чего новые версии системы снова проходят benchmark.
-Лучшие версии сохраняются, а цикл повторяется.
-
-Конечная цель --- создать самоулучшающуюся production-систему, в которой
-человек задаёт стандарт качества и оценивает результат, а внутренняя
-реализация постепенно превращается в сложный эволюционирующий «чёрный
-ящик».
+End goal — create a self-improving production system where human
+sets quality standard and evaluates results, while internal
+implementation gradually becomes a complex evolving "black box."
 
 > **Raw → Human → Golden → Evaluate → Evolve → Raw → ...**
