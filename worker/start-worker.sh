@@ -11,6 +11,25 @@ echo "===================================="
 export DEBIAN_FRONTEND=noninteractive
 
 # ======================================================
+# 0. RUN AS THE INSTALLATION OWNER
+# ======================================================
+# The worker must never run as root: the .env credential is chmod 600 and
+# owned by the installing user, and worker state/logs must stay owned by
+# that user too. If launched as root, re-exec as the script's owner.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Owner of the installation directory — the script file itself may have been
+# copied by root or another account, the install root is always owned by
+# the user the installer ran for.
+SCRIPT_OWNER="$(stat -c %U "$SCRIPT_DIR" 2>/dev/null || echo root)"
+
+if [ "$(id -u)" = "0" ] && [ "$SCRIPT_OWNER" != "root" ]; then
+  OWNER_HOME="$(getent passwd "$SCRIPT_OWNER" | cut -d: -f6)"
+  echo "Re-executing as $SCRIPT_OWNER (worker must not run as root) ..."
+  exec env HOME="$OWNER_HOME" runuser -u "$SCRIPT_OWNER" -- "$SCRIPT_DIR/start-worker.sh" "$@"
+fi
+
+# ======================================================
 # 0. WORKER TYPE
 # ======================================================
 
@@ -27,7 +46,9 @@ echo "Worker type: $WORKER_TYPE"
 # 1. PATHS
 # ======================================================
 
-BASE_DIR=~/animastor
+# Anchor to the directory this script lives in (…/animastor) rather than
+# $HOME, so the correct worker/.env is loaded no matter who launches it.
+BASE_DIR="$SCRIPT_DIR"
 
 mkdir -p $BASE_DIR/logs
 mkdir -p $BASE_DIR/worker
@@ -101,7 +122,9 @@ COMFY_PORT="${COMFY_PORT:-}"
 
 if [ -z "$COMFY_PORT" ]; then
 
-COMFY_PID=$(pgrep -f "main.py" | head -1)
+# Only match ComfyUI processes owned by the same user running this script,
+# so a second user's instance (e.g. another tenant on port 8188) is ignored.
+COMFY_PID=$(pgrep -u "$(id -u)" -f "main.py" | head -1)
 
 if [ -n "$COMFY_PID" ]; then
   CMDLINE=$(tr '\0' ' ' < /proc/$COMFY_PID/cmdline)
@@ -124,7 +147,7 @@ echo "ComfyUI port: $COMFY_PORT"
 
 NOTEBOOK_PATH=""
 
-COMFY_PID=$(pgrep -f "main.py" | head -1)
+COMFY_PID=$(pgrep -u "$(id -u)" -f "main.py" | head -1)
 
 if [ -n "$COMFY_PID" ]; then
   CMDLINE=$(tr '\0' ' ' < /proc/$COMFY_PID/cmdline)
@@ -194,9 +217,9 @@ fi
 # 9. STOP OLD WORKERS (FIX)
 # ======================================================
 
-if pgrep -f "node worker.cjs" >/dev/null; then
+if pgrep -u "$(id -u)" -f "node worker.cjs" >/dev/null; then
   echo "Stopping old workers..."
-  pkill -f "node worker.cjs"
+  pkill -u "$(id -u)" -f "node worker.cjs"
   sleep 2
 fi
 

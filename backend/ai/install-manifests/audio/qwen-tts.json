@@ -150,11 +150,23 @@
       "repo": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
       "target_dir": "models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
       "expected_files": [
+        ".gitattributes",
+        "README.md",
+        "config.json",
+        "configuration.json",
+        "generation_config.json",
+        "merges.txt",
         "model.safetensors",
-        "speech_tokenizer/model.safetensors"
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "speech_tokenizer/config.json",
+        "speech_tokenizer/configuration.json",
+        "speech_tokenizer/model.safetensors",
+        "speech_tokenizer/preprocessor_config.json"
       ],
-      "size": "3.57 GiB + 650.69 MiB (speech_tokenizer)",
-      "size_bytes_approx": 4515556229,
+      "size": "full ModelScope snapshot (14 files, 4.21 GiB)",
+      "size_bytes_approx": 4520164607,
       "checksum": {
         "algo": "sha256",
         "value": null
@@ -191,11 +203,23 @@
       "repo": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
       "target_dir": "models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-Base",
       "expected_files": [
+        ".gitattributes",
+        "README.md",
+        "config.json",
+        "configuration.json",
+        "generation_config.json",
+        "merges.txt",
         "model.safetensors",
-        "speech_tokenizer/model.safetensors"
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "speech_tokenizer/config.json",
+        "speech_tokenizer/configuration.json",
+        "speech_tokenizer/model.safetensors",
+        "speech_tokenizer/preprocessor_config.json"
       ],
-      "size": "3.59 GiB + 650.69 MiB (speech_tokenizer)",
-      "size_bytes_approx": 4537031065,
+      "size": "full ModelScope snapshot (14 files, 4.23 GiB)",
+      "size_bytes_approx": 4544230475,
       "checksum": {
         "algo": "sha256",
         "value": null

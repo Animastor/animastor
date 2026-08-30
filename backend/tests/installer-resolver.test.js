@@ -70,12 +70,17 @@ function imageCompatibleEnv() {
 }
 
 function audioModelFiles() {
-    return [
-        { path: 'models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/model.safetensors', size_bytes: 3833258312 },
-        { path: 'models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/speech_tokenizer/model.safetensors', size_bytes: 682297917 },
-        { path: 'models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-Base/model.safetensors', size_bytes: 3854733148 },
-        { path: 'models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-Base/speech_tokenizer/model.safetensors', size_bytes: 682297917 },
-    ];
+    // Derive from the real manifest so the fixture stays in sync with
+    // expected_files (which must cover the full ModelScope snapshot —
+    // config.json/tokenizer files included — not just the weights).
+    const files = [];
+    for (const dep of AUDIO().dependencies) {
+        if (dep.kind !== 'model_repo') continue;
+        for (const f of dep.expected_files) {
+            files.push({ path: `models/TTS/${dep.repo}/${f}`, size_bytes: 0 });
+        }
+    }
+    return files;
 }
 
 function videoCompatibleEnv() {

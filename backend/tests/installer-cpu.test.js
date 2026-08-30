@@ -53,6 +53,45 @@ const state = require('../src/installer/engine/state');
 // Mock factories
 // ---------------------------------------------------------------------------
 
+/**
+ * Build a mock ModelScope repo listing (top level + one level per
+ * subdirectory) from the real manifest's expected_files, so the mock stays
+ * in sync with the manifest (full snapshot: config.json, tokenizer files,
+ * speech_tokenizer/* — not just the weights).
+ */
+function mockModelScopeListings(repoId) {
+    const dep = require('../src/installer/install-manifest').loadManifest('audio/qwen-tts')
+        .dependencies.find((d) => d.kind === 'model_repo' && d.repo === repoId);
+    const expected = dep ? dep.expected_files : ['model.safetensors'];
+    const byRoot = { '': [] };
+    for (const p of expected) {
+        const parts = p.split('/');
+        if (parts.length === 1) {
+            byRoot[''].push({ Name: p, Path: p, Type: 'blob', Size: 0, Sha256: '' });
+            continue;
+        }
+        const dir = parts.slice(0, -1).join('/');
+        if (!byRoot[dir]) {
+            byRoot[dir] = [];
+            byRoot[''].push({ Name: parts[0], Path: dir, Type: 'tree', Size: 0 });
+        }
+        byRoot[dir].push({ Name: parts[parts.length - 1], Path: p, Type: 'blob', Size: 0, Sha256: '' });
+    }
+    return byRoot;
+}
+
+function modelScopeHttpMocks() {
+    const mocks = {};
+    for (const repoId of ['Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign', 'Qwen/Qwen3-TTS-12Hz-1.7B-Base']) {
+        const listings = mockModelScopeListings(repoId);
+        for (const [root, files] of Object.entries(listings)) {
+            const url = `https://modelscope.cn/api/v1/models/${repoId}/repo/files?Revision=master${root ? `&Root=${root}` : ''}`;
+            mocks[url] = { status: 200, json: () => ({ Code: 200, Data: { Files: files } }) };
+        }
+    }
+    return mocks;
+}
+
 function createMockIo(overrides = {}) {
     const fs = createMemoryFs(overrides.files || {});
     if (overrides.preDirs) {
@@ -662,32 +701,8 @@ function createRealManifestEngineIo(overrides = {}) {
         },
         httpResults: {
             // ModelScope listing — real API shape: Data.Files, tree recursion via Root=
-            'https://modelscope.cn/api/v1/models/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/repo/files?Revision=master': {
-                status: 200,
-                json: () => ({ Code: 200, Data: { Files: [
-                    { Name: 'model.safetensors', Path: 'model.safetensors', Type: 'blob', Size: 0, Sha256: '' },
-                    { Name: 'speech_tokenizer', Path: 'speech_tokenizer', Type: 'tree', Size: 0 },
-                ] } }),
-            },
-            'https://modelscope.cn/api/v1/models/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/repo/files?Revision=master&Root=speech_tokenizer': {
-                status: 200,
-                json: () => ({ Code: 200, Data: { Files: [
-                    { Name: 'model.safetensors', Path: 'speech_tokenizer/model.safetensors', Type: 'blob', Size: 0, Sha256: '' },
-                ] } }),
-            },
-            'https://modelscope.cn/api/v1/models/Qwen/Qwen3-TTS-12Hz-1.7B-Base/repo/files?Revision=master': {
-                status: 200,
-                json: () => ({ Code: 200, Data: { Files: [
-                    { Name: 'model.safetensors', Path: 'model.safetensors', Type: 'blob', Size: 0, Sha256: '' },
-                    { Name: 'speech_tokenizer', Path: 'speech_tokenizer', Type: 'tree', Size: 0 },
-                ] } }),
-            },
-            'https://modelscope.cn/api/v1/models/Qwen/Qwen3-TTS-12Hz-1.7B-Base/repo/files?Revision=master&Root=speech_tokenizer': {
-                status: 200,
-                json: () => ({ Code: 200, Data: { Files: [
-                    { Name: 'model.safetensors', Path: 'speech_tokenizer/model.safetensors', Type: 'blob', Size: 0, Sha256: '' },
-                ] } }),
-            },
+            // (generated from the real manifest's expected_files — full snapshot)
+            ...modelScopeHttpMocks(),
             'https://animastor.in/api/v1/worker/verify': { status: 200, json: () => ({ verified: true, worker_id: 'w-cpu-test', worker_type: 'audio' }) },
             'http://127.0.0.1:8188/system_stats': { status: 200, json: () => ({ system: {} }) },
             'http://127.0.0.1:8188/object_info': {
@@ -1464,32 +1479,7 @@ collectAsync('24. engine: adopt partial root + COMFY_PORT + worker start (end-to
                     SaveAudioMP3: {},
                 }),
             },
-            'https://modelscope.cn/api/v1/models/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/repo/files?Revision=master': {
-                status: 200,
-                json: () => ({ Code: 200, Data: { Files: [
-                    { Name: 'model.safetensors', Path: 'model.safetensors', Type: 'blob', Size: 0, Sha256: '' },
-                    { Name: 'speech_tokenizer', Path: 'speech_tokenizer', Type: 'tree', Size: 0 },
-                ] } }),
-            },
-            'https://modelscope.cn/api/v1/models/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/repo/files?Revision=master&Root=speech_tokenizer': {
-                status: 200,
-                json: () => ({ Code: 200, Data: { Files: [
-                    { Name: 'model.safetensors', Path: 'speech_tokenizer/model.safetensors', Type: 'blob', Size: 0, Sha256: '' },
-                ] } }),
-            },
-            'https://modelscope.cn/api/v1/models/Qwen/Qwen3-TTS-12Hz-1.7B-Base/repo/files?Revision=master': {
-                status: 200,
-                json: () => ({ Code: 200, Data: { Files: [
-                    { Name: 'model.safetensors', Path: 'model.safetensors', Type: 'blob', Size: 0, Sha256: '' },
-                    { Name: 'speech_tokenizer', Path: 'speech_tokenizer', Type: 'tree', Size: 0 },
-                ] } }),
-            },
-            'https://modelscope.cn/api/v1/models/Qwen/Qwen3-TTS-12Hz-1.7B-Base/repo/files?Revision=master&Root=speech_tokenizer': {
-                status: 200,
-                json: () => ({ Code: 200, Data: { Files: [
-                    { Name: 'model.safetensors', Path: 'speech_tokenizer/model.safetensors', Type: 'blob', Size: 0, Sha256: '' },
-                ] } }),
-            },
+            ...modelScopeHttpMocks(),
         },
     });
     const log = createMockLogger();
