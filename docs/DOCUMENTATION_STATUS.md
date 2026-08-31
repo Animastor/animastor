@@ -38,6 +38,8 @@
 
 **Canonical reference for:** system purpose, subsystems, architecture, data flow, project structure.
 
+> **LLM guidance:** `ARCHITECTURE.md` is the most detailed technical reference (backend layers, routes, services, storage). `SYSTEM_OVERVIEW.md` gives the big picture. `SYSTEM_MAP.md` documents code-vs-doc discrepancies. `DATA_FLOW.md` traces specific scenarios. `PROJECT_STRUCTURE.md` maps files to modules.
+
 | File | Status | Notes |
 |------|--------|-------|
 | `SYSTEM_OVERVIEW.md` | **Current** | Subsystems, use cases, data flow — highest-level overview |
@@ -53,6 +55,8 @@
 ## docs/02-orchestration/ — Orchestration
 
 **Canonical reference for:** orchestration lifecycle, state machines, dispatch, audio/video merge.
+
+> **LLM guidance:** `ORCHESTRATION.md` explicitly supersedes all older orchestration documents. For any orchestration question, start here. `VIDEO_ORCHESTRATION.md` and `AUDIO_VIDEO_SYNC.md` are supplementary deep-dives.
 
 | File | Status | Notes |
 |------|--------|-------|
@@ -164,6 +168,8 @@
 
 **Canonical reference for:** AI pipeline, generator types, prompt engineering.
 
+> **LLM guidance:** `AGENTS.md` covers the AI analysis pipeline (steps 0–7b, parallel analysis, window processing). `GENERATORS.md` covers audio/image/video generation services and prompt assembly. These two documents are complementary — one handles text analysis, the other handles asset generation.
+
 | File | Status | Notes |
 |------|--------|-------|
 | `AGENTS.md` | **Current** | Agent pipeline architecture — steps, parallel analysis, window processing |
@@ -262,27 +268,112 @@ Contains 25 files across subdirectories:
 
 ---
 
-## Key Relationships (for LLM reference)
+## Canonical References by Area
 
-When documenting or understanding a subsystem, use these as the primary source:
+> **Rule for LLMs:** When a question falls into a specific area, read the **Canonical** document first. Only consult **Supporting** documents if the canonical document does not cover the specific detail.
 
-| Area | Primary Document(s) | Secondary/Supporting |
-|------|--------------------|--------------------|
-| System overview | `docs/01-overview/SYSTEM_OVERVIEW.md` | `README.md`, `ARCHITECTURE.md` (root) |
-| Architecture | `docs/01-overview/ARCHITECTURE.md` | `SYSTEM_MAP.md` (as-is with discrepancies) |
-| Data flow | `docs/01-overview/DATA_FLOW.md` | `SYSTEM_OVERVIEW.md` |
-| Orchestration | `docs/02-orchestration/ORCHESTRATION.md` | `VIDEO_ORCHESTRATION.md`, `AUDIO_VIDEO_SYNC.md` |
-| Agent pipeline | `docs/07-agents-and-generators/AGENTS.md` | `AGENTS.md` section on parallel analysis |
-| Generators | `docs/07-agents-and-generators/GENERATORS.md` | `WORKFLOWS.md` |
-| Workflows | `docs/06-workflows/WORKFLOWS.md` | `WORKFLOW_ARCHITECTURE.md` |
-| Connectors | `docs/06-workflows/CONNECTORS.md` | `CONNECTOR_ARCHITECTURE.md` |
-| Frontend | `docs/05-frontend/PLAYER_STATE.md` | `TASK_ARCHITECTURE.md` |
-| Android/Web parity | `ANDROID_WEB_PARITY.md` (root) | — |
-| Technical debt | `docs/03-audit/ARCHITECTURAL_DEBT.md` | `CATHEDRAL.md` |
-| Mobile web | `docs/08-mobile-web-migration/README.md` | `01-MIGRATION-STRATEGY.md` through `07-MOBILE-WEB-TESTER.md` |
-| Desktop | `docs/09-desktop-migration/README.md` | `01-MIGRATION-PLAN.md`, `02-PROGRESS.md` |
-| Private worker installer | `docs/04-planning/private-worker-installer-architecture.md` | Other `private-worker-*` files |
-| GPU instance (ComfyUI) | `MEMORY.md` (root) | — |
+### 1. System Overview and Architecture
+
+Five documents describe the overall system. They have different scopes and levels of detail:
+
+| Document | Scope | Canonical for |
+|----------|-------|---------------|
+| **`docs/01-overview/ARCHITECTURE.md`** | Backend layers, all components, dependencies | ✅ **Architecture details** — API routes, orchestration layers, services, storage, GPU infrastructure, dependency graph |
+| **`docs/01-overview/SYSTEM_OVERVIEW.md`** | All subsystems at higher level | ✅ **System overview** — purpose, use cases, subsystem summaries, data flow diagram, key components table |
+| **`docs/01-overview/SYSTEM_MAP.md`** | As-is map with code discrepancies | ✅ **Code-vs-doc discrepancies** — §7 documents where docs diverge from code |
+| **`docs/01-overview/DATA_FLOW.md`** | 11 specific scenarios | ✅ **Data flow** — step-by-step traces for import, bootstrap, generation, playback, shutdown, recovery |
+| **`docs/01-overview/PROJECT_STRUCTURE.md`** | File tree with descriptions | ✅ **File locations** — where each module lives and what it does |
+| `ARCHITECTURE.md` (root) | Domain map + repo layout | Supporting — high-level domain map, repository layout, key facts |
+| `README.md` (root) | Project overview | Supporting — architecture at a glance table, quick start |
+
+> **Overlap note:** `SYSTEM_OVERVIEW.md` and `docs/01-overview/ARCHITECTURE.md` both describe the orchestration layer, agent pipeline, storage, and services. When both cover the same component, `ARCHITECTURE.md` is more detailed (includes API signatures, dependencies, inputs/outputs). `SYSTEM_OVERVIEW.md` is better for understanding the overall picture.
+
+### 2. Orchestration
+
+| Document | Canonical for |
+|----------|---------------|
+| **`docs/02-orchestration/ORCHESTRATION.md`** | ✅ **All orchestration** — facade, dispatch engine, audio/video orchestrators, state machines, call flows, configuration. Explicitly supersedes all older orchestration docs. |
+| `docs/02-orchestration/VIDEO_ORCHESTRATION.md` | Supporting — video pipeline specifics |
+| `docs/02-orchestration/AUDIO_VIDEO_SYNC.md` | Supporting — audio/video synchronization |
+| `docs/02-orchestration/ORCHESTRATION_TODO.md` | Supporting — TODO status |
+| `docs/01-overview/ARCHITECTURE.md` §3 | Supporting — orchestration layer overview (less detail than ORCHESTRATION.md) |
+| `docs/01-overview/SYSTEM_OVERVIEW.md` §Orchestration | Supporting — five-component summary |
+
+### 3. Agent Pipeline and Generators
+
+| Document | Canonical for |
+|----------|---------------|
+| **`docs/07-agents-and-generators/AGENTS.md`** | ✅ **Agent pipeline** — all steps (0–7b), parallel analysis, window processing, knowledge base, limitations |
+| **`docs/07-agents-and-generators/GENERATORS.md`** | ✅ **Generators** — audio/image/video services, prompt assembly, IU processing, passport system |
+| `docs/07-agents-and-generators/IMAGINATION_UNIT.md` | Supporting — IU design details |
+| `docs/07-agents-and-generators/DIALOGUE_TTS_PIPELINE.md` | Supporting — dialogue TTS specifics |
+| `docs/07-agents-and-generators/LANGUAGE_ARCHITECTURE.md` | Supporting — language detection/processing |
+| `docs/07-agents-and-generators/AI_PROFILE_AUTO_SELECTION.md` | Supporting — profile selection logic |
+| `docs/07-agents-and-generators/AGENT_PROMPT_PROFILES.md` | Supporting — prompt profiles |
+| `docs/01-overview/SYSTEM_OVERVIEW.md` §Agent Service | Supporting — high-level summary |
+| `docs/01-overview/ARCHITECTURE.md` §4.5 | Supporting — pipeline steps and key changes |
+
+### 4. Workflows and Connectors
+
+| Document | Canonical for |
+|----------|---------------|
+| **`docs/06-workflows/WORKFLOWS.md`** | ✅ **Workflow system** — loader, builders, execution mechanism, lifecycle, node ID maps |
+| **`docs/06-workflows/CONNECTORS.md`** | ✅ **Connector system** — overview and usage |
+| **`docs/06-workflows/WORKFLOW_ARCHITECTURE.md`** | ✅ **Workflow architecture** — design decisions and layer structure |
+| **`docs/06-workflows/CONNECTOR_ARCHITECTURE.md`** | ✅ **Connector architecture** — design details |
+| `docs/06-workflows/SCENE_PIPELINE.md` | Supporting — scene pipeline architecture |
+| `docs/01-overview/SYSTEM_OVERVIEW.md` §Workflow Loader | Supporting — one-paragraph summary |
+
+### 5. Frontend (Player, Editor, Progress)
+
+| Document | Canonical for |
+|----------|---------------|
+| **`docs/05-frontend/PLAYER_STATE.md`** | ✅ **Player state contract** — state machine, transitions, Android/web behavior |
+| **`docs/05-frontend/TASK_ARCHITECTURE.md`** | ✅ **Task/progress architecture** — SSE progress panel, worker display |
+| **`docs/05-frontend/EDITOR_ENTITY_CRUD.md`** | ✅ **Editor CRUD** — entity add/delete operations |
+| `ANDROID_WEB_PARITY.md` (root) | ✅ **Android ↔ Web parity** — the only document covering this area |
+
+### 6. Auth, Workers, Admin
+
+| Document | Canonical for |
+|----------|---------------|
+| **`docs/01-overview/ARCHITECTURE.md` §2.7–2.9, §4.24–4.28** | ✅ **Auth, worker auth, admin, workspace AI provider** — API signatures, middleware, credential model |
+| **`docs/01-overview/SYSTEM_OVERVIEW.md` §Auth/Worker Auth/Admin/Workspace AI** | ✅ **Auth subsystem overview** — higher-level summaries of each |
+| `ARCHITECTURE.md` (root) §Domains | Supporting — domain map, auth flow, cross-subdomain sessions |
+
+### 7. Storage
+
+| Document | Canonical for |
+|----------|---------------|
+| **`docs/01-overview/ARCHITECTURE.md` §6** | ✅ **Storage details** — PG tables, Redis key structures, filesystem format, repositories |
+| **`docs/01-overview/SYSTEM_MAP.md` §4** | ✅ **Storage architecture** — responsibility model (PG=facts, Redis=derived, Files=artifacts) |
+| `docs/01-overview/SYSTEM_OVERVIEW.md` §Storage | Supporting — high-level summary |
+
+### 8. Technical Debt and Architecture Improvement
+
+| Document | Canonical for |
+|----------|---------------|
+| **`docs/03-audit/ARCHITECTURAL_DEBT.md`** | ✅ **Technical debt** — living tracker with fix statuses |
+| **`docs/03-audit/CATHEDRAL.md`** | ✅ **Architecture improvement principles** — the "Cathedral" process |
+| `docs/03-audit/CONFLICTING_SUBSYSTEMS.md` | Historical — analysis of 4 decision centers (recommendations implemented) |
+| `docs/03-audit/ARCHITECTURAL_AUDIT.md` | Historical — original audit (Jun 2026), all findings closed |
+| `docs/03-audit/DOCUMENTATION_AUDIT.md` | Historical — doc-vs-code audit, contradictions fixed |
+
+### 9. Migrations
+
+| Document | Canonical for |
+|----------|---------------|
+| **`docs/08-mobile-web-migration/README.md`** | ✅ **Android → Mobile Web migration** — status, section index |
+| **`docs/09-desktop-migration/README.md`** | ✅ **Mobile Web → Desktop migration** — status, section index |
+
+### 10. Private Worker Installer
+
+| Document | Canonical for |
+|----------|---------------|
+| **`docs/04-planning/private-worker-installer-architecture.md`** | ✅ **Installer architecture** — the primary design document |
+| `docs/04-planning/private-worker-setup-contract-api.md` | Supporting — API contract spec |
+| Other `private-worker-installer-*.md` | Supporting — specific aspects (dependency research, manifest resolver, phase 15, frontend integration, E2E acceptance) |
+| `docs/04-planning/INSTALLER_ARCHITECTURE.md` | Supporting — installer architecture (may overlap with `private-worker-installer-architecture.md`) |
 
 ---
 
