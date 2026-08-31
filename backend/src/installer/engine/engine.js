@@ -933,11 +933,20 @@ async function runInstallation(args) {
                     log,
                     platformAdapter,
                 })));
-                result.results.management_tools = r;
-                for (const f of r.files) {
-                    state.addOwnedComponent(st, 'services', { id: 'management-tools', path: f });
+                // log.step wraps the callback result in { ok, value, error } —
+                // the tools result itself is r.value (an unwrapped r.files here
+                // was a latent bug: tools were never installed by real runs).
+                if (r.ok && r.value) {
+                    result.results.management_tools = r.value;
+                    for (const f of r.value.files) {
+                        state.addOwnedComponent(st, 'services', { id: 'management-tools', path: f });
+                    }
+                    state.setArtifact(st, 'management-tools', 'installed', { dir: r.value.toolsDir });
+                } else {
+                    const reason = r.error && r.error.message ? r.error.message : 'unknown failure';
+                    result.warnings.push(`management tools could not be installed: ${reason}`);
+                    state.setArtifact(st, 'management-tools', 'failed', { reason });
                 }
-                state.setArtifact(st, 'management-tools', 'installed', { dir: r.toolsDir });
                 save();
             } catch (err) {
                 result.warnings.push(`management tools could not be installed: ${err.message}`);

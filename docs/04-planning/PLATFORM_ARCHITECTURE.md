@@ -239,4 +239,64 @@ use the same `io` primitives. Tests never shell out to real OS commands.
 | cli.js | ✅ Platform boot, path config, banner, notices |
 | Bootstrap (bash + PowerShell) | ✅ Node auto-provision, SHA-256 gates |
 | Hub platform routing | ✅ `.ps1` for windows, `.sh` for linux, 400 for unknown |
-| Test suite | ✅ 252 installer + 33 platform = 285 pass, 0 fail |
+| Test suite | ✅ 269 installer (incl. 33 platform, 17 docker) + 60 hub = pass, 0 fail |
+| Docker artifacts (`docker/worker/`) | ✅ Dockerfile + entrypoint.sh + docker-run.md |
+| Docker E2E on VPS (CPU) | ✅ PASSED 2026-08-31 — see §12 |
+
+---
+
+## 12. Docker E2E — VPS Validation (2026-08-31) {#12-docker-e2e}
+
+**Machine:** single Ubuntu 22.04 VPS, 2 vCPU, 3.8 GiB RAM, no GPU. The full
+production stack ran alongside (postgres, redis, backend, gpu-hub, nginx).
+
+**Chain proven (real components end to end):**
+
+```
+bootstrap endpoints (GET /installer/bundle + /installer/sha256, TLS)
+  → installer inside container (auto-detects deployment: docker)
+    → profile audio/qwen-tts managed install (ComfyUI fork @c4cfee7,
+      venv torch 2.10.0+cpu, custom node, worker bundle, .env, tools)
+      → worker registration via REAL backend API (POST /api/v1/workers,
+        credential entered at the hidden interactive prompt)
+      → worker Online: hub beacon TTL heartbeat from inside the container
+      → REAL generation: task via hub POST /task → worker → ComfyUI
+        (Qwen3-TTS-1.7B bf16 on CPU, 370 s) → SaveAudioMP3
+        → worker → hub /task/result → Redis result key (valid 211 KB mp3)
+```
+
+**Lifecycle / recovery matrix (all passed):**
+
+| Scenario | Result |
+|----------|--------|
+| worker process killed → `tools/reboot-worker.sh` | ✅ healthy, heartbeat resumed |
+| ComfyUI killed → `tools/reboot-comfyui.sh` | ✅ API ready on :8188 |
+| `docker restart` | ✅ entrypoint resume → worker Online (no prompts) |
+| container removed + recreated (same volume) | ✅ venv/models/.env/token intact, worker reconnects |
+| hub+backend outage (45 s) | ✅ worker survives outage, beacon resumes |
+| management tools in container | ✅ status / monitor / reboot-worker / reboot-comfyui |
+
+**Bugs found and fixed during E2E:**
+- `engine.js`: management-tools install read `r.files` from the `log.step`
+  wrapper (`{ok, value}`) — tools were never installed by real runs. Fixed to
+  use `r.value` (latent bug on the native path too).
+
+**Container-specific notes (documented in `docker/worker/`):**
+- The pytorch CPU index cannot satisfy pip build dependencies — the image sets
+  `PIP_EXTRA_INDEX_URL=https://pypi.org/simple` (resolution order unchanged).
+- `build-essential` + `libsndfile1-dev` are needed by the qwen3-tts custom node.
+- Nested bind mounts: pre-create the mountpoint on the host or dockerd creates
+  it as root and the installer's ownership gate refuses.
+- Hub result key ends with the task STAGE (`animastor:result:{build}:…:{stage}`).
+
+**productionReady stays `false`** — honest reasons: CPU path validated, GPU
+path (`--gpus all` + NVIDIA Container Toolkit) prepared but not executed on
+real hardware; single-node only; no orchestrator (compose/swarm) semantics;
+one profile. The adapter contract itself passed its first real integration.
+
+**RunPod requirements shortlist (next stage, out of scope here):**
+Docker availability on the pod; NVIDIA runtime + Container Toolkit on the
+host; persistent volume semantics (pods may be ephemeral — the whole
+`/data/animastor` layout must survive replacement); network (outbound HTTPS
+to the hub is enough — no inbound ports); no special permissions beyond the
+docker socket/runtime; no published ports required.
