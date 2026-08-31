@@ -512,6 +512,24 @@
         android:textColor="?attr/colorSecondary"
         android:textSize="11sp"
         android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/updateNotice"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Update-retry notice (reload recovery layer): shown while a failed
+         reload is retrying with backoff — content already on screen stays. -->
+    <TextView
+        android:id="@+id/updateNotice"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="4dp"
+        android:textColor="?attr/colorSecondary"
+        android:textSize="11sp"
+        android:visibility="gone"
+        android:maxLines="2"
+        android:ellipsize="end"
         app:layout_constraintBottom_toTopOf="@id/errorText"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />

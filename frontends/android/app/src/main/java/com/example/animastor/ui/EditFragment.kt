@@ -42,6 +42,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
     private var bookData: BookData? = null
     private var chapters: List<Chapter> = emptyList()
+    /** In-flight external-reload cycle (invalidation → retry/recovery). */
+    private var externalReloadJob: Job? = null
     private var currentChIndex = 0
     private var currentScIndex = 0
     private val fieldValues = mutableMapOf<String, String>()
@@ -357,13 +359,35 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
      * LOCAL events are ignored on purpose: the editor already re-fetches right
      * after its own saves (saveToBackend / reloadEntityTable), and dropping
      * the dirty buffer there would clobber values the user is still typing.
+     *
+     * Reload failure handling (reload recovery layer): the fetch goes through
+     * [GenerateViewModel.resilientReloader] — bounded backoff 1s→2s→5s→10s with
+     * a connectivity-restore fast path. Content already on screen is NEVER
+     * replaced by an error state: a transient failure shows the unobtrusive
+     * retry notice while attempts run; when attempts exhaust (including the
+     * event-driven final attempt after connectivity returns), the notice is
+     * hidden and the stale-but-usable editor stays until the next invalidation
+     * or position change restarts the cycle.
      */
     private fun onExternalBookChange() {
         val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
-        lifecycleScope.launch {
-            val fresh = runCatching { viewModel.repository.getBook(bookId) }.getOrNull()
-                ?: return@launch
-            // Ignore a book switch that happened while the fetch was in flight.
+        // Cancel-replace: a burst of invalidation events must not stack
+        // parallel reload cycles racing over bookData.
+        externalReloadJob?.cancel()
+        externalReloadJob = lifecycleScope.launch {
+            val result = viewModel.resilientReloader.reload(
+                onRetry = { _, _ -> setUpdateNotice(true) }
+            ) { viewModel.repository.getBook(bookId) }
+            val fresh = when (result) {
+                is ResilientReloader.Result.Success -> {
+                    setUpdateNotice(false)
+                    result.value
+                }
+                // Keep stale content; the notice goes away either way.
+                is ResilientReloader.Result.PermanentFailure -> { setUpdateNotice(false); return@launch }
+                is ResilientReloader.Result.TransientFailure -> { setUpdateNotice(false); return@launch }
+            }
+            // Ignore a book switch that happened while the reload was in flight.
             if (viewModel.bookId != bookId) return@launch
             bookData = fresh
             chapters = fresh.chapters ?: emptyList()
@@ -383,6 +407,15 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             updatePositionLabel()
             rebuildContent(binding?.propertyTabs?.selectedTabPosition ?: 0)
             loadTimelineData()
+        }
+    }
+
+    /** Unobtrusive "retrying automatically…" notice — never an error wall;
+     *  content already on screen stays visible and usable underneath. */
+    private fun setUpdateNotice(show: Boolean) {
+        binding?.updateNotice?.apply {
+            if (show) text = getString(R.string.edit_update_retrying)
+            visibility = if (show) View.VISIBLE else View.GONE
         }
     }
 
@@ -417,6 +450,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val b = binding ?: return
         positionLabel()?.text = getString(R.string.navigate_no_position)
         b.errorText.visibility = View.GONE
+        b.updateNotice.visibility = View.GONE
         b.emptyState.visibility = View.VISIBLE
         b.contentFrame.removeAllViews()
         b.entityAddButton.visibility = View.GONE
@@ -443,24 +477,35 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         binding?.emptyState?.visibility = View.GONE
         setSaveLoading(busy = true, isSaving = false)
         lifecycleScope.launch {
-            try {
-                val bd = viewModel.repository.getBook(viewModel.bookId)
-                val chs = bd.chapters ?: emptyList()
-                val firstCh = chs.firstOrNull()
-                val firstSc = firstCh?.scenes?.firstOrNull()
-                setSaveLoading(busy = false)
-                if (firstCh != null && firstSc != null) {
-                    SharedPositionManager.navigateTo(
-                        chapterId = firstCh.chapter_id,
-                        sceneId = firstSc.scene_id,
-                        unitId = firstSc.units?.firstOrNull()?.id,
-                        chunkId = null,
-                        unitIndex = 0
-                    )
+            val bookId = viewModel.bookId
+            val result = viewModel.resilientReloader.reload(
+                onRetry = { _, _ -> setUpdateNotice(true) }
+            ) { viewModel.repository.getBook(bookId) }
+            setUpdateNotice(false)
+            val bd = when (result) {
+                is ResilientReloader.Result.Success -> result.value
+                is ResilientReloader.Result.PermanentFailure,
+                is ResilientReloader.Result.TransientFailure -> {
+                    setSaveLoading(busy = false)
+                    if (bookData == null) {
+                        saveButtonSetError(getString(R.string.edit_load_failed))
+                    }
+                    return@launch
                 }
-            } catch (_: Exception) {
-                setSaveLoading(busy = false)
-                saveButtonSetError(getString(R.string.edit_load_failed))
+            }
+            if (viewModel.bookId != bookId) return@launch
+            val chs = bd.chapters ?: emptyList()
+            val firstCh = chs.firstOrNull()
+            val firstSc = firstCh?.scenes?.firstOrNull()
+            setSaveLoading(busy = false)
+            if (firstCh != null && firstSc != null) {
+                SharedPositionManager.navigateTo(
+                    chapterId = firstCh.chapter_id,
+                    sceneId = firstSc.scene_id,
+                    unitId = firstSc.units?.firstOrNull()?.id,
+                    chunkId = null,
+                    unitIndex = 0
+                )
             }
         }
     }
@@ -479,14 +524,33 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         binding?.emptyState?.visibility = View.GONE
         setSaveLoading(busy = true, isSaving = false)
         lifecycleScope.launch {
-            try {
-                bookData = viewModel.repository.getBook(viewModel.bookId)
-                chapters = bookData?.chapters ?: emptyList()
-                viewModel.snapshotCurrentBook()
-            } catch (_: Exception) {
-                setSaveLoading(busy = false)
-                saveButtonSetError(getString(R.string.edit_load_failed))
-                return@launch
+            val bookId = viewModel.bookId
+            // Reload recovery layer: bounded backoff + connectivity fast path.
+            // Transient failures must not replace an already-loaded editor with
+            // an error wall — the notice shows while attempts run; the hard
+            // error is reserved for the initial load (nothing on screen yet).
+            val result = viewModel.resilientReloader.reload(
+                onRetry = { _, _ -> setUpdateNotice(true) }
+            ) { viewModel.repository.getBook(bookId) }
+            when (result) {
+                is ResilientReloader.Result.Success -> {
+                    setUpdateNotice(false)
+                    if (viewModel.bookId != bookId) return@launch
+                    bookData = result.value
+                    chapters = bookData?.chapters ?: emptyList()
+                    viewModel.snapshotCurrentBook()
+                }
+                is ResilientReloader.Result.PermanentFailure,
+                is ResilientReloader.Result.TransientFailure -> {
+                    setUpdateNotice(false)
+                    setSaveLoading(busy = false)
+                    // "Data really unavailable" vs "network blip": the hard
+                    // error only fires when there is nothing on screen yet.
+                    if (bookData == null) {
+                        saveButtonSetError(getString(R.string.edit_load_failed))
+                    }
+                    return@launch
+                }
             }
 
             val nc = chapters.indexOfFirst { it.chapter_id == pos.chapterId }.coerceAtLeast(0)

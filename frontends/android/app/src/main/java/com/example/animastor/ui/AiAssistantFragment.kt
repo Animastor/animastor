@@ -221,7 +221,14 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         val bookId = generateViewModel.bookId.takeIf { it.isNotBlank() } ?: return
         bookDataLoadAttempted = true
         lifecycleScope.launch {
-            bookData = runCatching { generateViewModel.repository.getBook(bookId) }.getOrNull()
+            // Reload recovery layer: bounded backoff + connectivity fast path.
+            // On final failure the previous snapshot (if any) stays.
+            val result = generateViewModel.resilientReloader.reload {
+                generateViewModel.repository.getBook(bookId)
+            }
+            if (result is com.example.animastor.repository.ResilientReloader.Result.Success) {
+                bookData = result.value
+            }
             updateContextBar(SharedPositionManager.current.value)
         }
     }

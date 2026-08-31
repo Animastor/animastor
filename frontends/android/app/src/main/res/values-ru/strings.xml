@@ -205,6 +205,7 @@
     <string name="edit_saving">Сохранение…</string>
     <string name="edit_loading">Загрузка…</string>
     <string name="edit_load_failed">Не удалось загрузить данные книги</string>
+    <string name="edit_update_retrying">Не удалось обновить данные — повторяем автоматически…</string>
     <string name="edit_pacing">Темп</string>
     <string name="edit_mood">Настроение</string>
     <string name="edit_prompt">Промпт</string>

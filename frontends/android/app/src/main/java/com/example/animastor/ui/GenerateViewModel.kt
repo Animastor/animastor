@@ -9,10 +9,12 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.CreationExtras
 import com.example.animastor.network.ProgressStream
+import com.example.animastor.network.ConnectivityObserver
 import com.example.animastor.network.RetrofitClient
 import com.example.animastor.repository.AssetsStateResponse
 import com.example.animastor.repository.BookSessionStore
 import com.example.animastor.repository.DiffSummary
+import com.example.animastor.repository.ResilientReloader
 import com.example.animastor.repository.ResourceInvalidations
 import com.example.animastor.repository.SharedPrefsKeyValueStore
 import java.util.concurrent.ConcurrentHashMap
@@ -219,6 +221,16 @@ class GenerateViewModel(
                 getApplication<Application>().getSharedPreferences("animastor", 0)
             )
         )
+    }
+
+    /**
+     * Reload retry/recovery layer on top of ResourceInvalidations
+     * (invalidation → reload → network failure → retry/recovery → reload).
+     * Shared by Edit/Navigate/Generate/Assistant reload paths. Bounded
+     * backoff 1s→2s→5s→10s + a connectivity-restore fast path; no polling.
+     */
+    val resilientReloader: ResilientReloader by lazy {
+        ResilientReloader(ConnectivityObserver(getApplication()))
     }
 
     @Volatile private var _firstWindowDone = false

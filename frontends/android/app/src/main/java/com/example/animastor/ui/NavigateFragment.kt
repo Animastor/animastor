@@ -19,6 +19,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.animastor.R
 import com.example.animastor.databinding.FragmentNavigateBinding
 import com.example.animastor.repository.BookData
+import com.example.animastor.repository.ResilientReloader
 import com.example.animastor.repository.ResourceInvalidations
 import com.example.animastor.repository.unitIndex
 
@@ -285,17 +286,24 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
         binding?.emptyState?.visibility = View.GONE
         binding?.loadingIndicator?.visibility = View.VISIBLE
         lifecycleScope.launch {
+            // Reload recovery layer: bounded backoff + connectivity fast path.
+            // The tree keeps its current data when the reload finally fails.
+            val result = viewModel.resilientReloader.reload {
+                viewModel.repository.getBook(bookId)
+            }
             try {
-                bookData = viewModel.repository.getBook(bookId)
-                rebuildStructure()
-                updatePositionBar(SharedPositionManager.current.value)
-                binding?.loadingIndicator?.visibility = View.GONE
-            } catch (e: Exception) {
+                if (result is ResilientReloader.Result.Success) {
+                    bookData = result.value
+                }
+                if (bookData != null) {
+                    rebuildStructure()
+                    updatePositionBar(SharedPositionManager.current.value)
+                }
+            } finally {
                 binding?.loadingIndicator?.visibility = View.GONE
                 if (bookData == null) {
                     binding?.emptyState?.visibility = View.VISIBLE
                 }
-            } finally {
                 isLoading = false
             }
         }

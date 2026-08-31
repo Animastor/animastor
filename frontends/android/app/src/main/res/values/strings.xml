@@ -109,6 +109,7 @@
     <string name="edit_saving">Saving…</string>
     <string name="edit_loading">Loading…</string>
     <string name="edit_load_failed">Failed to load book data</string>
+    <string name="edit_update_retrying">Couldn\u2019t refresh data — retrying automatically…</string>
     <string name="edit_pacing">Pacing</string>
     <string name="edit_mood">Mood</string>
     <string name="edit_prompt">Prompt</string>

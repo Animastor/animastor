@@ -26,6 +26,7 @@ import com.example.animastor.databinding.ItemWorkerProgressBinding
 import com.example.animastor.databinding.ViewAnalysisPanelBinding
 import com.example.animastor.network.RetrofitClient
 import com.example.animastor.repository.BookData
+import com.example.animastor.repository.ResilientReloader
 import com.example.animastor.repository.ResourceInvalidations
 import com.google.android.material.chip.Chip
 import com.google.android.material.color.MaterialColors
@@ -1199,12 +1200,15 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
     private fun loadBook() {
         val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
         lifecycleScope.launch {
-            try {
-                bookData = viewModel.repository.getBook(bookId)
+            // Reload recovery layer: bounded backoff + connectivity fast path;
+            // stale bookData is kept when the reload finally fails.
+            val result = viewModel.resilientReloader.reload {
+                viewModel.repository.getBook(bookId)
+            }
+            if (result is ResilientReloader.Result.Success) {
+                bookData = result.value
                 updatePositionBar(SharedPositionManager.current.value)
                 updateVBookButtonText()
-            } catch (_: Exception) {
-                // Keep stale bookData on error
             }
         }
     }
