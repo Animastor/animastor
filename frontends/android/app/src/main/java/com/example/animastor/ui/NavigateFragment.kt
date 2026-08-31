@@ -238,15 +238,20 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
     private fun observeGenerationCompletion() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.playbackPrepared.collect { prep ->
-                    // Reload book structure when new content is available.
-                    // The isLoading guard prevents redundant fetches:
-                    //   - Replay emission (replay=1) arrives while loadBook() from
-                    //     onViewCreated is still running → isLoading=true → skip
-                    //   - First real emission with no prior replay → isLoading=false → fetch
-                    //   - Subsequent generation completions → isLoading=false → fetch
-                    if (viewModel.bookId.isNotBlank() && viewModel.bookId == prep.bookId) {
-                        loadBook()
+                // Both collectors live in their own launch: SharedFlow.collect
+                // returns Nothing, so a bare collect would make any code after
+                // it in this block unreachable (and the second collector dead).
+                launch {
+                    viewModel.playbackPrepared.collect { prep ->
+                        // Reload book structure when new content is available.
+                        // The isLoading guard prevents redundant fetches:
+                        //   - Replay emission (replay=1) arrives while loadBook() from
+                        //     onViewCreated is still running → isLoading=true → skip
+                        //   - First real emission with no prior replay → isLoading=false → fetch
+                        //   - Subsequent generation completions → isLoading=false → fetch
+                        if (viewModel.bookId.isNotBlank() && viewModel.bookId == prep.bookId) {
+                            loadBook()
+                        }
                     }
                 }
                 // ── Invalidation pipeline (view layer) ──────────────────
