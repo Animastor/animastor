@@ -69,15 +69,15 @@ Key established facts:
 ```
                  BACKEND / VPS
 ┌─────────────────────────────────────────────────────────────┐
-│ backend/ai/profiles/**.json      (prompt-assembly: секции,  │
-│                                   defaults, video-метаданные)│
+│ backend/ai/profiles/**.json      (prompt-assembly: sections,  │
+│                                   defaults, video-metadata) │
 │ backend/ai/skills/**.md          (LLM-prompting rules)      │
 │ backend/ai/connectors/conn-*.json(entity→nodeId bindings)   │
 │ backend/ai/workflows/*.json      (ComfyUI API-format JSON)  │
 │                                                             │
-│ startup: workflow-loader.js:25-76 грузит workflows,         │
-│          connector-loader.js:553-593 валидирует коннекторы  │
-│ dispatch: сервис патчит workflow через connector            │
+│ startup: workflow-loader.js:25-76 loads workflows,            │
+│          connector-loader.js:553-593 validates connectors     │
+│ dispatch: service patches workflow via connector              │
 │          (connector-loader.setValue, connector-loader.js:401)│
 │          gpu-dispatcher.sendUnified → POST {HUB_URL}/task   │
 │          (gpu-dispatcher.js:101-182)                        │
@@ -97,7 +97,7 @@ Key established facts:
                            ▼
                         ComfyUI
                     custom_nodes + models + torch/CUDA
-                    output → /history + файлы → base64 → hub → backend
+                    output → /history + files → base64 → hub → backend
 ```
 
 Boundary confirmed:
@@ -134,7 +134,7 @@ Boundary confirmed:
 All three profiles: `backend/ai/profiles/{audio,image,video}/*.json`.
 Loaded recursively (`ai-loader.js:84-113, 213-219`), 60s cache.
 
-| Поле | audio/qwen-tts | image/qwen-image | video/ltx-2.3 |
+| Field | audio/qwen-tts | image/qwen-image | video/ltx-2.3 |
 |---|---|---|---|
 | `profile` | `qwen-tts` | `qwen-image` | `ltx-2.3` |
 | `type` | `audio` | `image` | `video` |
@@ -323,15 +323,15 @@ is not sole consumer of workflow structure.
 ## 5. Profile → Connector → Workflow Mapping
 
 ```
-audio/qwen-tts ─┬─ conn-tts-narration ──→ tts-qwen-narrator.json   (62 строки, 3 ноды)
-                └─ conn-tts-dialogue ───→ tts-qwen-dialogue.json   (246 строк, 12 нод)
+audio/qwen-tts ─┬─ conn-tts-narration ──→ tts-qwen-narrator.json   (62 lines, 3 nodes)
+                └─ conn-tts-dialogue ───→ tts-qwen-dialogue.json   (246 lines, 12 nodes)
 
-image/qwen-image ── conn-image-generation → img-qwen-image.json    (153 строки, 11 нод)
+image/qwen-image ── conn-image-generation → img-qwen-image.json    (153 lines, 11 nodes)
 
-video/ltx-2.3 ─┬─ conn-video-1p ─→ video-ltx-1p.json  (639 строк, 43 ноды, 1×LTXVAddGuide)
-               ├─ conn-video-2p ─→ video-ltx-2p.json  (668 строк, 44 ноды, 2×LTXVAddGuide)
-               ├─ conn-video-3p ─→ video-ltx-3p.json  (698 строк, 45 нод, 3×LTXVAddGuide)
-               └─ conn-video-4p ─→ video-ltx-4p.json  (728 строк, 46 нод, 4×LTXVAddGuide)
+video/ltx-2.3 ─┬─ conn-video-1p ─→ video-ltx-1p.json  (639 lines, 43 nodes, 1×LTXVAddGuide)
+               ├─ conn-video-2p ─→ video-ltx-2p.json  (668 lines, 44 nodes, 2×LTXVAddGuide)
+               ├─ conn-video-3p ─→ video-ltx-3p.json  (698 lines, 45 nodes, 3×LTXVAddGuide)
+               └─ conn-video-4p ─→ video-ltx-4p.json  (728 lines, 46 nodes, 4×LTXVAddGuide)
 
 legacy (NOT production, excluded by loader via old_ prefix, workflow-loader.js:29):
   old_img-qwen-image.json  — differs in CLIP quant (Q4_K_M vs Q8_0) — footgun
@@ -380,59 +380,59 @@ verification** (`/object_info` on instance).
 
 **img-qwen-image (profile image/qwen-image):**
 
-| class_type | Ноды | Пакет | Источник | Версия/ревизия |
+| class_type | Nodes | Package | Source | Version/revision |
 |---|---|---|---|---|
-| `UnetLoaderGGUF` | 10 | `ComfyUI-GGUF` | `https://github.com/city96/ComfyUI-GGUF` (атрибуция по имени пакета; URL в репо не зафиксирован — NEEDS VERIFICATION) | commit `6ea2651` (image-аудит) |
-| `CLIPLoaderGGUF` | 11 | `ComfyUI-GGUF` | то же | то же |
-| `VAELoader`, `CLIPTextEncode`, `EmptySD3LatentImage`, `KSampler`, `VAEDecode`, `SaveImage`, `LoraLoaderModelOnly`, `ModelSamplingAuraFlow` | 12, 108, 109, 110, 120, 130, 1008, 1010, 1011 | **ComfyUI core** | — | в составе ComfyUI |
+| `UnetLoaderGGUF` | 10 | `ComfyUI-GGUF` | `https://github.com/city96/ComfyUI-GGUF` (attribution by package name; URL in repo not pinned — NEEDS VERIFICATION) | commit `6ea2651` (image audit) |
+| `CLIPLoaderGGUF` | 11 | `ComfyUI-GGUF` | same | same |
+| `VAELoader`, `CLIPTextEncode`, `EmptySD3LatentImage`, `KSampler`, `VAEDecode`, `SaveImage`, `LoraLoaderModelOnly`, `ModelSamplingAuraFlow` | 12, 108, 109, 110, 120, 130, 1008, 1010, 1011 | **ComfyUI core** | — | bundled with ComfyUI |
 
-**video-ltx-{1,2,3,4}p (profile video/ltx-2.3)** — единый набор на все 4
-workflow (различается только количество `LTXVAddGuide`):
+**video-ltx-{1,2,3,4}p (profile video/ltx-2.3)** — identical set across all 4
+workflows (differing only in `LTXVAddGuide` count):
 
-| class_type | Ноды (1p) | Пакет | Основание |
+| class_type | Nodes (1p) | Package | Justification |
 |---|---|---|---|
-| `UnetLoaderGGUF` | 141 | `ComfyUI-GGUF` | GGUF-лоадер; установлен на video-инстансе |
-| `DualCLIPLoaderGGUF` | 227 | `ComfyUI-GGUF` | то же |
-| `VAELoaderKJ` | 222, 226 | `comfyui-kjnodes` (KJNodes) | подтверждено `worker/new/SYSTEM.md:45` («VAELoaderKJ и др.») + AudioVAE-патч (§8 SYSTEM.md) |
-| `LoraLoaderModelOnly`, `VAELoader`, `CLIPTextEncode`, `KSamplerSelect`, `RandomNoise`, `SamplerCustomAdvanced`, `CFGGuider`, `VAEDecodeTiled`, `EmptyImage`, `LoadImage`, `GetImageSize` | 188, 191, 110/121, 135, 115, 172, 128, 205, 111, 149/179/187/216, 105 | **ComfyUI core** | стандартные ноды core |
-| `LTXVConditioning`, `EmptyLTXVLatentVideo`, `LTXVPreprocess`, `LTXVCropGuides`, `LTXVAddGuide`, `LTXVChunkFeedForward` | 107, 108, 152/180/186/213, 203, 214, 211 | **вероятно ComfyUI core (comfy_extras/nodes_ltxv*)** | см. обоснование ниже |
-| `LTXVConcatAVLatent`, `LTXVSeparateAVLatent`, `LTXVEmptyLatentAudio`, `LTXVAudioVAEDecode` | 109, 116, 171, 204 | **вероятно ComfyUI core (LTX-2 AV support v0.27.0)** | см. обоснование ниже |
-| `LTX2SamplingPreviewOverride` | 190 | **UNKNOWN — NEEDS VERIFICATION** | кандидаты: core v0.27.0 / kjnodes |
-| `ManualSigmas` | 164 | **UNKNOWN — NEEDS VERIFICATION** | кандидаты: core / kjnodes / rgthree |
-| `ResizeImageMaskNode` | 206, 209, 210, 215 | **UNKNOWN — NEEDS VERIFICATION** | кандидаты: core / kjnodes / easy-use |
-| `PrimitiveInt`, `PrimitiveFloat` | 112 (+2-й PrimitiveInt), 129 | **UNKNOWN — NEEDS VERIFICATION** | кандидаты: core v0.27.0 / rgthree |
-| `SaveVideo`, `CreateVideo` | 75, 122 | **UNKNOWN: core v0.27.0 или comfyui-videohelpersuite** | VHS установлен; SYSTEM.md:46 приписывает VHS `VHS_VideoCombine`, но workflow использует `SaveVideo`/`CreateVideo` |
+| `UnetLoaderGGUF` | 141 | `ComfyUI-GGUF` | GGUF loader; installed on video instance |
+| `DualCLIPLoaderGGUF` | 227 | `ComfyUI-GGUF` | same |
+| `VAELoaderKJ` | 222, 226 | `comfyui-kjnodes` (KJNodes) | confirmed by `worker/new/SYSTEM.md:45` ("VAELoaderKJ etc.") + AudioVAE patch (§8 SYSTEM.md) |
+| `LoraLoaderModelOnly`, `VAELoader`, `CLIPTextEncode`, `KSamplerSelect`, `RandomNoise`, `SamplerCustomAdvanced`, `CFGGuider`, `VAEDecodeTiled`, `EmptyImage`, `LoadImage`, `GetImageSize` | 188, 191, 110/121, 135, 115, 172, 128, 205, 111, 149/179/187/216, 105 | **ComfyUI core** | standard core nodes |
+| `LTXVConditioning`, `EmptyLTXVLatentVideo`, `LTXVPreprocess`, `LTXVCropGuides`, `LTXVAddGuide`, `LTXVChunkFeedForward` | 107, 108, 152/180/186/213, 203, 214, 211 | **likely ComfyUI core (comfy_extras/nodes_ltxv*)** | see rationale below |
+| `LTXVConcatAVLatent`, `LTXVSeparateAVLatent`, `LTXVEmptyLatentAudio`, `LTXVAudioVAEDecode` | 109, 116, 171, 204 | **likely ComfyUI core (LTX-2 AV support v0.27.0)** | see rationale below |
+| `LTX2SamplingPreviewOverride` | 190 | **UNKNOWN — NEEDS VERIFICATION** | candidates: core v0.27.0 / kjnodes |
+| `ManualSigmas` | 164 | **UNKNOWN — NEEDS VERIFICATION** | candidates: core / kjnodes / rgthree |
+| `ResizeImageMaskNode` | 206, 209, 210, 215 | **UNKNOWN — NEEDS VERIFICATION** | candidates: core / kjnodes / easy-use |
+| `PrimitiveInt`, `PrimitiveFloat` | 112 (+2nd PrimitiveInt), 129 | **UNKNOWN — NEEDS VERIFICATION** | candidates: core v0.27.0 / rgthree |
+| `SaveVideo`, `CreateVideo` | 75, 122 | **UNKNOWN: core v0.27.0 or comfyui-videohelpersuite** | VHS installed; SYSTEM.md:46 attributes VHS `VHS_VideoCombine`, but workflow uses `SaveVideo`/`CreateVideo` |
 
-Обоснование «вероятно core» для LTXV*: на верифицированном video-инстансе
-(E2E-генерация подтверждена, `worker/new/SYSTEM.md:3`,
-`worker/new/MEMORY.md:5-8`) custom node set из 9 пакетов
-(`SYSTEM.md:39-53`, видео-аудит `[6]`) **не содержит** пакета
-ComfyUI-LTXVideo; при этом «все классы воркфлоу есть» в backend
-(`MEMORY.md:16`), а traceback ошибки ссылается на модуль `nodes_lt.py`
-(`MEMORY.md:59`) внутри работающего ComfyUI. Методом исключения LTXV-ноды
-предоставляются самим ComfyUI v0.27.0. **Точная атрибуция всех
-UNKNOWN-строк требует проверки `/object_info` на референсном инстансе —
-это единственный надёжный способ.**
+Rationale for "likely core" for LTXV*: on the verified video instance
+(E2E generation confirmed, `worker/new/SYSTEM.md:3`,
+`worker/new/MEMORY.md:5-8`) the custom node set of 9 packages
+(`SYSTEM.md:39-53`, video audit `[6]`) **does not contain** the
+ComfyUI-LTXVideo package; yet "all workflow classes are present" in backend
+(`MEMORY.md:16`), and the error traceback references module `nodes_lt.py`
+(`MEMORY.md:59`) inside a running ComfyUI. By elimination, LTXV nodes
+are provided by ComfyUI v0.27.0 itself. **Precise attribution of all
+UNKNOWN entries requires checking `/object_info` on the reference instance —
+this is the only reliable method.**
 
-### 6.2 Сводка required custom nodes по профилям
+### 6.2 Required custom nodes summary by profile
 
-| Profile | REQUIRED (выведено из workflow) | Версии из аудитов |
+| Profile | REQUIRED (derived from workflow) | Versions from audits |
 |---|---|---|
-| audio/qwen-tts | `ComfyUI-Qwen3-TTS` | commit `2ee1131`, каталог `qwen3-tts` |
+| audio/qwen-tts | `ComfyUI-Qwen3-TTS` | commit `2ee1131`, directory `qwen3-tts` |
 | image/qwen-image | `ComfyUI-GGUF` | commit `6ea2651` |
-| video/ltx-2.3 | `ComfyUI-GGUF` (+ python-библиотека `gguf`), `comfyui-kjnodes` (**с AudioVAE-патчем**), `comfyui-videohelpersuite` (если SaveVideo/CreateVideo из VHS — NEEDS VERIFICATION) | GGUF/kjnodes/VHS — plain dirs без `.git` (SYSTEM.md:53) |
+| video/ltx-2.3 | `ComfyUI-GGUF` (+ python library `gguf`), `comfyui-kjnodes` (**with AudioVAE patch**), `comfyui-videohelpersuite` (if SaveVideo/CreateVideo from VHS — NEEDS VERIFICATION) | GGUF/kjnodes/VHS — plain dirs without `.git` (SYSTEM.md:53) |
 
-**Критично для video:** 6 из 9 установленных на референсе пакетов —
-обычные каталоги без `.git`, их нельзя пере-клонировать одной командой
-(`SYSTEM.md:53`; `LINUX_INSTALLER_RECONNAISSANCE.md:164-168`). Для
-installer'а это означает необходимость `source: bundle` либо поиска
-upstream-репозиториев и фиксацию commit'ов.
+**Critical for video:** 6 of 9 packages installed on the reference are
+plain directories without `.git` — they cannot be re-cloned with a single command
+(`SYSTEM.md:53`; `LINUX_INSTALLER_RECONNAISSANCE.md:164-168`). For
+the installer this means either `source: bundle` or finding
+upstream repositories and pinning commits.
 
-**Обязательный патч (video):** `comfyui-kjnodes` — исправление вызова
-AudioVAE (`VAELoaderKJ` вызывал `AudioVAE(sd, metadata)`, в v0.27.0
-сигнатура только `metadata`) — `SYSTEM.md:104`,
-`LINUX_INSTALLER_RECONNAISSANCE.md:208-211, 602`. Патч не декларативен
-(проза в SYSTEM.md) — для installer'а нужен `patches[]` в manifest'е.
+**Mandatory patch (video):** `comfyui-kjnodes` — AudioVAE call fix
+(`VAELoaderKJ` called `AudioVAE(sd, metadata)`, but in v0.27.0
+the signature is `metadata` only) — `SYSTEM.md:104`,
+`LINUX_INSTALLER_RECONNAISSANCE.md:208-211, 602`. The patch is not declarative
+(prose in SYSTEM.md) — the installer needs `patches[]` in the manifest.
 
 ---
 
@@ -440,262 +440,266 @@ AudioVAE (`VAELoaderKJ` вызывал `AudioVAE(sd, metadata)`, в v0.27.0
 
 ### 7.1 Audio / qwen-tts
 
-| Workflow | Model Ref (поле ноды) | Filename / Repo | Target Directory | Source | Revision |
+| Workflow | Model Ref (node field) | Filename / Repo | Target Directory | Source | Revision |
 |---|---|---|---|---|---|
-| tts-qwen-narrator (node 78), tts-qwen-dialogue (node 78) | `Qwen3TTSLoader.model_repo` | repo `Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign` | `models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/` (+ `speech_tokenizer/`) | **ModelScope** (`download_source: "ModelScope"`, `auto_download: true`) | не зафиксирована |
-| tts-qwen-dialogue (node 79) | `Qwen3TTSLoader.model_repo` | repo `Qwen/Qwen3-TTS-12Hz-1.7B-Base` | `models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-Base/` (+ `speech_tokenizer/`) | **ModelScope**, `auto_download: true` | не зафиксирована |
+| tts-qwen-narrator (node 78), tts-qwen-dialogue (node 78) | `Qwen3TTSLoader.model_repo` | repo `Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign` | `models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/` (+ `speech_tokenizer/`) | **ModelScope** (`download_source: "ModelScope"`, `auto_download: true`) | not pinned |
+| tts-qwen-dialogue (node 79) | `Qwen3TTSLoader.model_repo` | repo `Qwen/Qwen3-TTS-12Hz-1.7B-Base` | `models/TTS/Qwen/Qwen3-TTS-12Hz-1.7B-Base/` (+ `speech_tokenizer/`) | **ModelScope**, `auto_download: true` | not pinned |
 
-Размеры по audio-аудиту (`[5]`): VoiceDesign 3.57 GiB + tokenizer
-650.69 MiB; Base 3.59 GiB + tokenizer 650.69 MiB. Итого ≈ 8.5 GB.
+Sizes from audio audit (`[5]`): VoiceDesign 3.57 GiB + tokenizer
+650.69 MiB; Base 3.59 GiB + tokenizer 650.69 MiB. Total ≈ 8.5 GB.
 
-Особенность: TTS-модели **не являются файлами в обычном смысле** —
-`Qwen3TTSLoader` сам скачивает репо при первом запуске
-(`LINUX_INSTALLER_RECONNAISSANCE.md:144-148, 212-215`). Installer может
-либо предзагрузить их (детерминизм + offline), либо положиться на
-`auto_download` (см. §13, вопрос 3).
+Special note: TTS models **are not files in the traditional sense** —
+`Qwen3TTSLoader` downloads the repo itself on first run
+(`LINUX_INSTALLER_RECONNAISSANCE.md:144-148, 212-215`). The installer can
+either preload them (determinism + offline) or rely on
+`auto_download` (see §13, question 3).
 
 ### 7.2 Image / qwen-image
 
-| Workflow | Node / поле | Filename | Target Directory | Размер (аудит) | Source |
+| Workflow | Node / field | Filename | Target Directory | Size (audit) | Source |
 |---|---|---|---|---:|---|
-| img-qwen-image | 10 `UnetLoaderGGUF.unet_name` | `qwen-image-2512-Q4_K_M.gguf` | `models/unet/` | 12.34 GiB | UNKNOWN — NEEDS RESEARCH (GGUF-квант Qwen-Image 2512, HF) |
+| img-qwen-image | 10 `UnetLoaderGGUF.unet_name` | `qwen-image-2512-Q4_K_M.gguf` | `models/unet/` | 12.34 GiB | UNKNOWN — NEEDS RESEARCH (GGUF quant Qwen-Image 2512, HF) |
 | img-qwen-image | 11 `CLIPLoaderGGUF.clip_name` (type `qwen_image`) | `Qwen2.5-VL-7B-Instruct-Q8_0.gguf` | `models/clip/` | 7.54 GiB | UNKNOWN — NEEDS RESEARCH (GGUF Q8_0, HF) |
 | img-qwen-image | 12 `VAELoader.vae_name` | `qwen_image_vae.safetensors` | `models/vae/` | 242.05 MiB (sha256[:12] `a70580f0213e`) | UNKNOWN — NEEDS RESEARCH (HF) |
 | img-qwen-image | 1010 `LoraLoaderModelOnly.lora_name` | `Wuli-Qwen-Image-2512-Turbo-LoRA-4steps-V3.0.safetensors` | `models/loras/` | 1.10 GiB | UNKNOWN — NEEDS RESEARCH (community LoRA, HF/Civitai) |
 
-Итого ≈ 21.2 GB.
+Total ≈ 21.2 GB.
 
-Footgun: legacy `old_img-qwen-image.json` ссылается на
-`Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf` (другой квант). В manifest должен
-попасть только Q8_0 (active workflow)
+Footgun: legacy `old_img-qwen-image.json` references
+`Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf` (different quant). Only Q8_0 should
+appear in the manifest (active workflow)
 (`LINUX_INSTALLER_RECONNAISSANCE.md:126-129`).
+| img-qwen-image | 12 `VAELoader.vae_name` | `qwen_image_vae.safetensors` | `models/vae/` | 242.05 MiB (sha256[:12] `a70580f0213e`) | UNKNOWN — NEEDS RESEARCH (HF) |
+| img-qwen-image | 1010 `LoraLoaderModelOnly.lora_name` | `Wuli-Qwen-Image-2512-Turbo-LoRA-4steps-V3.0.safetensors` | `models/loras/` | 1.10 GiB | UNKNOWN — NEEDS RESEARCH (community LoRA, HF/Civitai) |
+
+
 
 ### 7.3 Video / ltx-2.3
 
-Одинаковый набор во всех четырёх `video-ltx-*p`:
+Identical set across all four `video-ltx-*p`:
 
-| Node / поле | Filename | Target Directory | Размер (аудит) | Source |
+| Node / field | Filename | Target Directory | Size (audit) | Source |
 |---|---|---|---:|---|
 | 141 `UnetLoaderGGUF.unet_name` | `LTX-2.3-distilled-Q4_K_M.gguf` | `models/unet/` | 16.54 GiB | UNKNOWN — NEEDS RESEARCH (HF) |
-| 227 `DualCLIPLoaderGGUF.clip_name1` | `gemma-3-12b-it-qat-UD-Q4_K_XL.gguf` | `models/text_encoders/` | 6.92 GiB | UNKNOWN — NEEDS RESEARCH (HF; UD-квант Gemma-3-12B; возможен gated-доступ) |
+| 227 `DualCLIPLoaderGGUF.clip_name1` | `gemma-3-12b-it-qat-UD-Q4_K_XL.gguf` | `models/text_encoders/` | 6.92 GiB | UNKNOWN — NEEDS RESEARCH (HF; UD quant Gemma-3-12B; possible gated access) |
 | 227 `DualCLIPLoaderGGUF.clip_name2` | `ltx-2.3_text_projection_bf16.safetensors` | `models/text_encoders/` | 2.15 GiB | UNKNOWN — NEEDS RESEARCH (HF) |
 | 188 `LoraLoaderModelOnly.lora_name` | `ltx-2-19b-ic-lora-detailer.safetensors` | `models/loras/` | 2.44 GiB | UNKNOWN — NEEDS RESEARCH (HF) |
 | 222 `VAELoaderKJ.vae_name` | `ltx-2.3-22b-dev_video_vae.safetensors` | `models/vae/` | 1.35 GiB | UNKNOWN — NEEDS RESEARCH (HF) |
 | 226 `VAELoaderKJ.vae_name` | `ltx-2.3-22b-dev_audio_vae.safetensors` | `models/vae/` | 347.95 MiB | UNKNOWN — NEEDS RESEARCH (HF) |
 | 191 `VAELoader.vae_name` | `taeltx2_3.safetensors` | `models/vae/` | 22.44 MiB | UNKNOWN — NEEDS RESEARCH (HF) |
 
-Итого ≈ 29.8 GB.
+Total ≈ 29.8 GB.
 
-**НЕ входят в required** (присутствуют в аудите/доках, но не
-referenced ни одной нодой production workflows):
+**NOT in required** (present in audits/docs but not referenced by any
+production workflow node):
 
-| Файл | Где упоминается | Статус |
+| File | Where mentioned | Status |
 |---|---|---|
-| `latent_upscale_models/ltx-2.3-spatial-upscaler-x2-1.0.safetensors` (949.62 MiB) | video-аудит `[5]`; `EXPERIMENTAL_BETA_WORKER_SETUP.md:46`; `SYSTEM.md:66` | **UNUSED по workflow** — в production workflows нет latent-upscale нод. В manifest не включать (или optional — решение §14) |
-| `gemma-3-12b-it-qat-q4_0-unquantized_readout_proj/model/model.safetensors` | video-аудит `[7]` — ссылки из локальных UI-workflow | UI-артефакт, не required |
-| `ltx-av-step-1751000_vocoder_24K.safetensors` | video-аудит `[7]` — ссылки из локальных UI-workflow | UI-артефакт, не required |
+| `latent_upscale_models/ltx-2.3-spatial-upscaler-x2-1.0.safetensors` (949.62 MiB) | video audit `[5]`; `EXPERIMENTAL_BETA_WORKER_SETUP.md:46`; `SYSTEM.md:66` | **UNUSED by workflow** — no latent-upscale nodes in production workflows. Exclude from manifest (or optional — decision §14) |
+| `gemma-3-12b-it-qat-q4_0-unquantized_readout_proj/model/model.safetensors` | video audit `[7]` — references from local UI workflows | UI artifact, not required |
+| `ltx-av-step-1751000_vocoder_24K.safetensors` | video audit `[7]` — references from local UI workflows | UI artifact, not required |
 
 ---
 
 ## 8. Download Sources
 
-Ничего не скачивалось. Ниже — только установленные источники.
+Nothing was downloaded. Below are only identified sources.
 
-### 8.1 Подтверждённые в коде/доках репо
+### 8.1 Confirmed in code/docs repos
 
-| Что | Источник | Основание |
+| What | Source | Justification |
 |---|---|---|
-| ComfyUI (video) | GitHub `https://github.com/Comfy-Org/ComfyUI.git`, tag `v0.27.0` (commit `bb131be9e83d2f773c90f1d6f1e4b248a498c8c5`) | `worker/start-video.sh:19-25`; видео-аудит `[4]` (remote `comfyanonymous/ComfyUI`) |
-| ComfyUI (audio/image) | GitHub форк `https://github.com/rajsingh1-dev/ComfyUI.git`, commit `c4cfee7ad16cfeb082e12f43cf4751b4a67a4e11` | audio-аудит `[4]`, image-аудит «ComfyUI» |
-| `ComfyUI-Qwen3-TTS` | GitHub `https://github.com/wanaigc/ComfyUI-Qwen3-TTS`, commit `2ee1131` | audio-аудит `[6]` |
-| `ComfyUI-Manager` | GitHub `https://github.com/ltdrdata/ComfyUI-Manager`, commit `df1eaff8` (audio/image) / `bbafbb12` (video) | аудиты `[6]`, `SYSTEM.md:50` |
-| `ComfyUI-PromptRelay` | GitHub `kijai/ComfyUI-PromptRelay`, commit `ca5d4e3` | `SYSTEM.md:49`, видео-аудит `[6]` |
-| `rgthree-comfy` | GitHub `rgthree/rgthree-comfy`, commit `683836c` | `SYSTEM.md:51`, видео-аудит `[6]` |
-| TTS-модели `Qwen/Qwen3-TTS-12Hz-1.7B-{Base,VoiceDesign}` | **ModelScope** (workflow field `download_source`) | `tts-qwen-narrator.json:35-39`, `tts-qwen-dialogue.json:111-128` |
+| ComfyUI (video) | GitHub `https://github.com/Comfy-Org/ComfyUI.git`, tag `v0.27.0` (commit `bb131be9e83d2f773c90f1d6f1e4b248a498c8c5`) | `worker/start-video.sh:19-25`; video audit `[4]` (remote `comfyanonymous/ComfyUI`) |
+| ComfyUI (audio/image) | GitHub fork `https://github.com/rajsingh1-dev/ComfyUI.git`, commit `c4cfee7ad16cfeb082e12f43cf4751b4a67a4e11` | audio audit `[4]`, image audit "ComfyUI" |
+| `ComfyUI-Qwen3-TTS` | GitHub `https://github.com/wanaigc/ComfyUI-Qwen3-TTS`, commit `2ee1131` | audio audit `[6]` |
+| `ComfyUI-Manager` | GitHub `https://github.com/ltdrdata/ComfyUI-Manager`, commit `df1eaff8` (audio/image) / `bbafbb12` (video) | audits `[6]`, `SYSTEM.md:50` |
+| `ComfyUI-PromptRelay` | GitHub `kijai/ComfyUI-PromptRelay`, commit `ca5d4e3` | `SYSTEM.md:49`, video audit `[6]` |
+| `rgthree-comfy` | GitHub `rgthree/rgthree-comfy`, commit `683836c` | `SYSTEM.md:51`, video audit `[6]` |
+| TTS models `Qwen/Qwen3-TTS-12Hz-1.7B-{Base,VoiceDesign}` | **ModelScope** (workflow field `download_source`) | `tts-qwen-narrator.json:35-39`, `tts-qwen-dialogue.json:111-128` |
 | PyTorch cu124 | `https://download.pytorch.org/whl/cu124` | `worker/start-video.sh:61` |
 | Worker bundle | Animastor origin `GET {HUB_URL}/worker-source` | `gpu-hub.js:1050-1060`, `EXPERIMENTAL_BETA_WORKER_SETUP.md:65-73` |
 
-### 8.2 Не подтверждённые (UNKNOWN — NEEDS RESEARCH)
+### 8.2 Unconfirmed (UNKNOWN — NEEDS RESEARCH)
 
-Для всех gguf/safetensors-файлов image/video (§7.2, §7.3) **в репозитории
-нет ни URL, ни HF-репо, ни ревизий** — только имена файлов в workflow JSON
-и фактические размеры в аудитах. Конкретные upstream-репозитории (HF
-кванты Qwen-Image/Gemma/LTX, LoRA Wuli, VAE) должен установить отдельный
-download-research с фиксацией: repo, file path, revision/commit, sha256,
-license/gated-статус. Рекомендация предыдущей разведки — зеркалить всё в
-организационный HF-аккаунт `animastor` после проверки лицензий
-(`LINUX_INSTALLER_RECONNAISSANCE.md:460-476`). **В этом исследовании
-URL не выдумываются.**
+For all gguf/safetensors files in image/video (§7.2, §7.3) **the repository
+contains no URLs, HF repos, or revisions** — only filenames in workflow JSON
+and actual sizes in audits. Specific upstream repos (HF
+quants Qwen-Image/Gemma/LTX, LoRA Wuli, VAE) must be identified by a separate
+download-research documenting: repo, file path, revision/commit, sha256,
+license/gated status. Prior reconnaissance recommendation is to mirror everything into
+the organizational HF account `animastor` after license verification
+(`LINUX_INSTALLER_RECONNAISSANCE.md:460-476`). **In this research,
+URLs are not fabricated.**
 
-### 8.3 Gated-доступ (предварительно)
+### 8.3 Gated access (preliminary)
 
-Потенциально gated: Gemma-3-12B варианты, части Qwen3-TTS
-(`LINUX_INSTALLER_RECONNAISSANCE.md:455, 605`). Точный статус — только
-при download-research. Installer должен поддерживать опциональный
-`HF_TOKEN` (никогда не логировать).
+Potentially gated: Gemma-3-12B variants, some Qwen3-TTS
+(`LINUX_INSTALLER_RECONNAISSANCE.md:455, 605`). Exact status — only
+via download-research. The installer must support optional
+`HF_TOKEN` (never log it).
 
 ---
 
 ## 9. Runtime Requirements
 
-### 9.1 По профилям (фактические данные аудитов + скриптов)
+### 9.1 By profile (actual audit + script data)
 
-| Параметр | audio/qwen-tts | image/qwen-image | video/ltx-2.3 |
+| Parameter | audio/qwen-tts | image/qwen-image | video/ltx-2.3 |
 |---|---|---|---|
-| ComfyUI | форк `rajsingh1-dev/ComfyUI` @ `c4cfee7` (аудит) | форк `rajsingh1-dev/ComfyUI` @ `c4cfee7` (аудит) | **официальный** `Comfy-Org/ComfyUI` tag `v0.27.0` @ `bb131be9` (`start-video.sh:19`) |
-| Python | 3.10.12 (аудит) | 3.10.12 (аудит) | 3.10.12 (`SYSTEM.md:17`, аудит) |
-| PyTorch | **2.10.0+cu128** (аудит) | **2.10.0+cu128** (аудит) | **2.6.0+cu124** (`start-video.sh:61`, `SYSTEM.md:22`) |
-| cuDNN | 91002 (аудит) | 91002 (аудит) | 9.1.0.70 / 90100 (`SYSTEM.md:24`) |
-| CUDA tier | 12.8 (torch build) | 12.8 (torch build) | 12.4 (torch build; драйвер 550.127.08 сообщает 12.4) |
-| Драйвер NVIDIA (референс) | 550.127.08 | 550.127.08 | 550.127.08 |
-| Мин. VRAM | не задокументирован | не задокументирован | не задокументирован; референс L40S 46 GB; draft 24 GB в `private-worker-installer-architecture.md:333` не подтверждён |
-| Node.js | 20+ (`worker.cjs:4` «Node 20+ with global fetch»; `start-worker.sh:80-87` ставит 18 — расхождение) | то же | то же |
-| Прочее | — | — | frontend-package 1.45.20, comfy-kitchen 0.2.16 (`SYSTEM.md:20-21`); purge cu13-стека; удаление stale `comfyui.db`; pip lock `comfy-v0.27.0.lock.txt` |
+| ComfyUI | fork `rajsingh1-dev/ComfyUI` @ `c4cfee7` (audit) | fork `rajsingh1-dev/ComfyUI` @ `c4cfee7` (audit) | **official** `Comfy-Org/ComfyUI` tag `v0.27.0` @ `bb131be9` (`start-video.sh:19`) |
+| Python | 3.10.12 (audit) | 3.10.12 (audit) | 3.10.12 (`SYSTEM.md:17`, audit) |
+| PyTorch | **2.10.0+cu128** (audit) | **2.10.0+cu128** (audit) | **2.6.0+cu124** (`start-video.sh:61`, `SYSTEM.md:22`) |
+| cuDNN | 91002 (audit) | 91002 (audit) | 9.1.0.70 / 90100 (`SYSTEM.md:24`) |
+| CUDA tier | 12.8 (torch build) | 12.8 (torch build) | 12.4 (torch build; driver 550.127.08 reports 12.4) |
+| NVIDIA driver (reference) | 550.127.08 | 550.127.08 | 550.127.08 |
+| Min. VRAM | not documented | not documented | not documented; reference L40S 46 GB; draft 24 GB in `private-worker-installer-architecture.md:333` not confirmed |
+| Node.js | 20+ (`worker.cjs:4` "Node 20+ with global fetch"; `start-worker.sh:80-87` installs 18 — discrepancy) | same | same |
+| Other | — | — | frontend-package 1.45.20, comfy-kitchen 0.2.16 (`SYSTEM.md:20-21`); purge cu13 stack; remove stale `comfyui.db`; pip lock `comfy-v0.27.0.lock.txt` |
 
-### 9.2 Одна общая policy или разные?
+### 9.2 One shared policy or different?
 
-**Сейчас — разные, и это не задокументированное решение, а исторический
-дрейф:**
+**Currently — different, and this is not a documented decision but historical
+drift:**
 
-- video: официальный ComfyUI v0.27.0 + torch 2.6.0+cu124 (полностью
-  скриптовано, `start-video.sh`);
-- audio/image: форк ComfyUI + torch 2.10.0+cu128 (install-скрипта для
-  этих профилей в репо **нет**; есть только `fix-nodes-audio.sh` /
-  `fix-nodes-image.sh`, ставящие pip-зависимости нод после запуска).
+- video: official ComfyUI v0.27.0 + torch 2.6.0+cu124 (fully
+  scripted, `start-video.sh`);
+- audio/image: ComfyUI fork + torch 2.10.0+cu128 (no install script for
+  these profiles in the repo**; only `fix-nodes-audio.sh` /
+  `fix-nodes-image.sh` which install pip dependencies after launch).
 
-Это же расхождение явно flagged в
-`private-worker-installer-architecture.md:596-598` («в аудитах разные:
-v0.27.0 vs форк c4cfee7a — требуется решение»).
+This same discrepancy is explicitly flagged in
+`private-worker-installer-architecture.md:596-598` ("audits show different:
+v0.27.0 vs fork c4cfee7a — decision needed").
 
-Варианты (решение — §14):
+Options (decision — §14):
 
-1. Общая policy: все три профиля на официальном ComfyUI v0.27.0 +
-   cu124. Риск: audio/image никогда не проверялись на v0.27.0 — нужен
-   golden run обоих профилей.
-2. Per-profile policy: manifest несёт ComfyUI pin и torch tier на профиль.
-   Дороже, но отражает фактическое положение.
+1. Shared policy: all three profiles on official ComfyUI v0.27.0 +
+   cu124. Risk: audio/image were never tested on v0.27.0 — a golden run
+   of both profiles is needed.
+2. Per-profile policy: manifest carries ComfyUI pin and torch tier per profile.
+   More expensive, but reflects the actual state.
 
 ---
 
 ## 10. Runtime Audit Comparison
 
-Метод: required = выведено из production workflows (§6, §7); installed =
-из аудитов (`docs/runtime-audits/{audio-qwen,image-qwen,video-ltx-2.3}/`).
-Аудиты — reference only (`docs/runtime-audits/README.md:11-17`).
+Method: required = derived from production workflows (§6, §7); installed =
+from audits (`docs/runtime-audits/{audio-qwen,image-qwen,video-ltx-2.3}/`).
+Audits — reference only (`docs/runtime-audits/README.md:11-17`).
 
-### 10.1 audio-qwen (аудит 2026-08-25)
+### 10.1 audio-qwen (audit 2026-08-25)
 
-| Зависимость | Required (workflow) | В аудите | Статус |
+| Dependency | Required (workflow) | In audit | Status |
 |---|---|---|---|
-| `ComfyUI-Qwen3-TTS` (все Qwen3TTS* + SaveAudioMP3) | да | да, commit `2ee1131` | **found in audit** |
-| `comfyui-manager` | нет | да, `df1eaff8` | **present but unused** (utility; вопрос о включении — §13) |
-| `Qwen3-TTS-12Hz-1.7B-VoiceDesign` (+speech_tokenizer) | да | да (3.57 GiB + 650.69 MiB) | **found in audit** |
-| `Qwen3-TTS-12Hz-1.7B-Base` (+speech_tokenizer) | да | да (3.59 GiB + 650.69 MiB) | **found in audit** |
-| ComfyUI-форк `c4cfee7` + torch 2.10.0+cu128 | runtime baseline | да | **cannot determine** — нет install-скрипта/манифеста для audio; неясно, форк ли required или подойдёт официальный |
+| `ComfyUI-Qwen3-TTS` (all Qwen3TTS* + SaveAudioMP3) | yes | yes, commit `2ee1131` | **found in audit** |
+| `comfyui-manager` | no | yes, `df1eaff8` | **present but unused** (utility; question of inclusion — §13) |
+| `Qwen3-TTS-12Hz-1.7B-VoiceDesign` (+speech_tokenizer) | yes | yes (3.57 GiB + 650.69 MiB) | **found in audit** |
+| `Qwen3-TTS-12Hz-1.7B-Base` (+speech_tokenizer) | yes | yes (3.59 GiB + 650.69 MiB) | **found in audit** |
+| ComfyUI fork `c4cfee7` + torch 2.10.0+cu128 | runtime baseline | yes | **cannot determine** — no install script/manifest for audio; unclear whether the fork is required or the official version would suffice |
 
 MISSING: ∅.
 
-### 10.2 image-qwen (аудит 2026-08-26)
+### 10.2 image-qwen (audit 2026-08-26)
 
-| Зависимость | Required | В аудите | Статус |
+| Dependency | Required | In audit | Status |
 |---|---|---|---|
-| `ComfyUI-GGUF` | да | да, commit `6ea2651` | **found in audit** |
-| `qwen-image-2512-Q4_K_M.gguf` | да | да, 12.34 GiB, `models/unet/` | **found in audit** |
-| `Qwen2.5-VL-7B-Instruct-Q8_0.gguf` | да | да, 7.54 GiB, `models/clip/` | **found in audit** |
-| `qwen_image_vae.safetensors` | да | да, 242.05 MiB, sha256[:12] `a70580f0213e` | **found in audit** |
-| `Wuli-Qwen-Image-2512-Turbo-LoRA-4steps-V3.0.safetensors` | да | да, 1.10 GiB, `models/loras/` | **found in audit** |
-| `ComfyUI-Florence2`, `ComfyUI-KJNodes`, `ComfyUI-RMBG`, `ComfyUI-segment-anything-2`, `qwen3-tts`, `comfyui-manager` | нет | да | **present but unused** (не referenced в `img-qwen-image`) |
-| Локальные workflow-файлы (`user/default/workflows/`) | нет | да (6 файлов) | **present but unused** — явно помечены как UI test artifacts в самом аудите |
-| ComfyUI-форк `c4cfee7` + torch 2.10.0+cu128 | runtime baseline | да | **cannot determine** (как и для audio) |
+| `ComfyUI-GGUF` | yes | yes, commit `6ea2651` | **found in audit** |
+| `qwen-image-2512-Q4_K_M.gguf` | yes | yes, 12.34 GiB, `models/unet/` | **found in audit** |
+| `Qwen2.5-VL-7B-Instruct-Q8_0.gguf` | yes | yes, 7.54 GiB, `models/clip/` | **found in audit** |
+| `qwen_image_vae.safetensors` | yes | yes, 242.05 MiB, sha256[:12] `a70580f0213e` | **found in audit** |
+| `Wuli-Qwen-Image-2512-Turbo-LoRA-4steps-V3.0.safetensors` | yes | yes, 1.10 GiB, `models/loras/` | **found in audit** |
+| `ComfyUI-Florence2`, `ComfyUI-KJNodes`, `ComfyUI-RMBG`, `ComfyUI-segment-anything-2`, `qwen3-tts`, `comfyui-manager` | no | yes | **present but unused** (not referenced in `img-qwen-image`) |
+| Local workflow files (`user/default/workflows/`) | no | yes (6 files) | **present but unused** — explicitly marked as UI test artifacts in the audit itself |
+| ComfyUI fork `c4cfee7` + torch 2.10.0+cu128 | runtime baseline | yes | **cannot determine** (same as for audio) |
 
 MISSING: ∅.
 
-### 10.3 video-ltx-2.3 (аудит 2026-08-26) — разбор особенно внимательно
+### 10.3 video-ltx-2.3 (audit 2026-08-26) — detailed breakdown
 
-| Зависимость | Required | В аудите | Статус |
+| Dependency | Required | In audit | Status |
 |---|---|---|---|
-| `ComfyUI-GGUF` (+ `gguf` lib) | да | да (оба — plain dirs) | **found in audit** |
-| `comfyui-kjnodes` (VAELoaderKJ; **патчен**) | да | да (патч не виден в аудите — фиксируется только по SYSTEM.md) | **found in audit**; состояние патча = **cannot determine** по аудиту |
-| `comfyui-videohelpersuite` | вероятно (SaveVideo/CreateVideo — NEEDS VERIFICATION) | да | **found in audit** (required-статус до верификации условный) |
-| LTXV* / LTX2* / ManualSigmas / ResizeImageMaskNode / Primitive* | да (class'ы workflow) | поставщик не идентифицирован в аудите | **cannot determine** — вероятно core v0.27.0 (§6.1); требует `/object_info` |
-| `LTX-2.3-distilled-Q4_K_M.gguf` | да | да, 16.54 GiB, `models/unet/` | **found in audit** |
-| `gemma-3-12b-it-qat-UD-Q4_K_XL.gguf` | да | да, 6.92 GiB, `models/text_encoders/` | **found in audit** |
-| `ltx-2.3_text_projection_bf16.safetensors` | да | да, 2.15 GiB, `models/text_encoders/` | **found in audit** |
-| `ltx-2-19b-ic-lora-detailer.safetensors` | да | да, 2.44 GiB, `models/loras/` | **found in audit** |
-| `ltx-2.3-22b-dev_video_vae.safetensors` | да | да, 1.35 GiB, `models/vae/` | **found in audit** |
-| `ltx-2.3-22b-dev_audio_vae.safetensors` | да | да, 347.95 MiB, `models/vae/` | **found in audit** |
-| `taeltx2_3.safetensors` | да | да, 22.44 MiB, `models/vae/` | **found in audit** |
-| `ltx-2.3-spatial-upscaler-x2-1.0.safetensors` | **нет** (нет upscale-нод в workflow) | да, 949.62 MiB | **present but unused** (упоминается в WORKER_SETUP-доке — противоречие зафиксировано, §14) |
-| `comfyui-easy-use`, `ComfyUI-MelBandRoFormer`, `ComfyUI-PromptRelay`, `rgthree-comfy`, `ComfyUI-Manager` | нет (class'ы не referenced в production workflow) | да | **present but unused** по workflow-критерию. ⚠ Противоречие: `EXPERIMENTAL_BETA_WORKER_SETUP.md:56-58` утверждает, что video «дополнительно требует comfyui-easy-use, rgthree-comfy». Workflow-скан это не подтверждает → требуется решение (возможно, дока устарела или ноды нужны для локальных UI-workflow оператора) |
-| 14 локальных workflow-файлов + их model refs (gemma unquantized, ltx-av vocoder) | нет | да | **present but unused** — UI-артефакты (аудит `[7]`, `[11]` сами это отмечают) |
-| ComfyUI v0.27.0 + torch 2.6.0+cu124 | да (runtime baseline) | да | **found in audit** |
+| `ComfyUI-GGUF` (+ `gguf` lib) | yes | yes (both — plain dirs) | **found in audit** |
+| `comfyui-kjnodes` (VAELoaderKJ; **patched**) | yes | yes (patch not visible in audit — only recorded via SYSTEM.md) | **found in audit**; patch status = **cannot determine** from audit |
+| `comfyui-videohelpersuite` | likely (SaveVideo/CreateVideo — NEEDS VERIFICATION) | yes | **found in audit** (required status conditional until verification) |
+| LTXV* / LTX2* / ManualSigmas / ResizeImageMaskNode / Primitive* | yes (workflow classes) | provider not identified in audit | **cannot determine** — likely core v0.27.0 (§6.1); requires `/object_info` |
+| `LTX-2.3-distilled-Q4_K_M.gguf` | yes | yes, 16.54 GiB, `models/unet/` | **found in audit** |
+| `gemma-3-12b-it-qat-UD-Q4_K_XL.gguf` | yes | yes, 6.92 GiB, `models/text_encoders/` | **found in audit** |
+| `ltx-2.3_text_projection_bf16.safetensors` | yes | yes, 2.15 GiB, `models/text_encoders/` | **found in audit** |
+| `ltx-2-19b-ic-lora-detailer.safetensors` | yes | yes, 2.44 GiB, `models/loras/` | **found in audit** |
+| `ltx-2.3-22b-dev_video_vae.safetensors` | yes | yes, 1.35 GiB, `models/vae/` | **found in audit** |
+| `ltx-2.3-22b-dev_audio_vae.safetensors` | yes | yes, 347.95 MiB, `models/vae/` | **found in audit** |
+| `taeltx2_3.safetensors` | yes | yes, 22.44 MiB, `models/vae/` | **found in audit** |
+| `ltx-2.3-spatial-upscaler-x2-1.0.safetensors` | **no** (no upscale nodes in workflow) | yes, 949.62 MiB | **present but unused** (mentioned in WORKER_SETUP doc — discrepancy recorded, §14) |
+| `comfyui-easy-use`, `ComfyUI-MelBandRoFormer`, `ComfyUI-PromptRelay`, `rgthree-comfy`, `ComfyUI-Manager` | no (classes not referenced in production workflow) | yes | **present but unused** per workflow criteria. ⚠ Discrepancy: `EXPERIMENTAL_BETA_WORKER_SETUP.md:56-58` claims video "also requires comfyui-easy-use, rgthree-comfy". Workflow scan does not confirm → decision needed (possibly the doc is outdated or nodes needed for local UI workflows) |
+| 14 local workflow files + their model refs (gemma unquantized, ltx-av vocoder) | no | yes | **present but unused** — UI artifacts (audits `[7]`, `[11]` note this themselves) |
+| ComfyUI v0.27.0 + torch 2.6.0+cu124 | yes (runtime baseline) | yes | **found in audit** |
 
 MISSING: ∅.
 
-### 10.4 Итог сравнения
+### 10.4 Comparison summary
 
-- Во всех трёх профилях всё workflow-derived required **найдено** в
-  аудитах — аудиты сняты с рабочих инстансов, расхождений «required, но
-  отсутствует» нет.
-- Аудиты содержат существенный объём UNUSED (операторские custom nodes,
-  UI-workflow, upscaler) — подтверждён принцип «audit ≠ source of truth».
-- Три класса проблем, не решаемых аудитом: (а) поставщик части video
-  class_type (core vs пакет); (б) состояние kjnodes-патча; (в) required
-  ли ComfyUI-форк для audio/image или это историческая случайность.
+- In all three profiles, all workflow-derived required dependencies are **found** in
+  the audits — audits were captured from working instances, no "required but
+  missing" discrepancies.
+- Audits contain significant UNUSED volume (operator custom nodes,
+  UI-workflows, upscaler) — confirming the principle "audit ≠ source of truth".
+- Three classes of problems not solvable by audits: (a) provider of some video
+  class_type (core vs package); (b) kjnodes patch status; (c) whether
+  ComfyUI fork is required for audio/image or if this is historical accident.
 
 ---
 
 ## 11. Installer Boundary
 
-Статусы: `INSTALL` = INSTALLER MUST INSTALL · `KNOW` = INSTALLER MUST KNOW
+Statuses: `INSTALL` = INSTALLER MUST INSTALL · `KNOW` = INSTALLER MUST KNOW
 ABOUT · `BACKEND` = BACKEND ONLY · `WORKER` = WORKER ONLY · `REF` =
 REFERENCE ONLY · `UNKNOWN` = NEEDS DECISION.
 
 ```
 PROFILE (audio/qwen-tts | image/qwen-image | video/ltx-2.3)
    │   backend/ai/profiles/**.json ........................ BACKEND
-   │   (id профиля = ключ установки для installer'а) ...... KNOW
+   │   (profile id = install key for installer) ........... KNOW
    │
    ├── CONNECTOR (conn-*.json) ............................ BACKEND
-   │      │  не устанавливается; не пересекает границу VPS→GPU
-   │      │  workflowHash/class expectations ............... KNOW (опц., drift-check)
+   │      │  not installed; does not cross VPS→GPU boundary
+   │      │  workflowHash/class expectations ............... KNOW (optional, drift-check)
    │      │
    │      └── WORKFLOW (backend/ai/workflows/*.json) ...... BACKEND
-   │              │  доставляется в runtime как task.params;
-   │              │  установка на диск воркера НЕ требуется
-   │              │  (опц. offline/debug копия) ............ REF
+   │              │  delivered at runtime as task.params;
+   │              │  no installation on worker disk required
+   │              │  (optional offline/debug copy) ......... REF
    │              │
    │              ├── CUSTOM NODES ........................ INSTALL
    │              │     audio: ComfyUI-Qwen3-TTS
    │              │     image: ComfyUI-GGUF
    │              │     video: ComfyUI-GGUF(+gguf), kjnodes(+AudioVAE patch),
    │              │            VHS (NEEDS VERIFICATION),
-   │              │            прочие class_type — UNKNOWN (§6.1)
+   │              │            other class_type — UNKNOWN (§6.1)
    │              │
    │              └── MODELS .............................. INSTALL
-   │                    audio: 2×ModelScope repo (или KNOW —
-   │                           если полагаемся на auto_download) ... UNKNOWN
-   │                    image: 4 файла (~21 GB)
-   │                    video: 7 файлов (~30 GB)
+   │                    audio: 2×ModelScope repo (or KNOW —
+   │                           if relying on auto_download) ... UNKNOWN
+   │                    image: 4 files (~21 GB)
+   │                    video: 7 files (~30 GB)
    │
    └── RUNTIME REQUIREMENTS
           ComfyUI (pin per profile) ...................... INSTALL
           Python 3.10 + pip lock ......................... INSTALL
-          PyTorch + CUDA tier (cu124/cu128 — решение) .... INSTALL
+          PyTorch + CUDA tier (cu124/cu128 — decision) ... INSTALL
           Node.js 20+ .................................... INSTALL
           NVIDIA driver / CUDA userland .................. WORKER
-            (installer v1 только проверяет, не ставит —
+            (installer v1 only verifies, does not install —
              private-worker-installer-architecture.md §13)
           worker bundle (worker.cjs, cleanup, journal,
             package.json, .env) .......................... INSTALL
           worker mode (private/share/system) ............. BACKEND
-            (определяется hub'ом из токена — PW-4;
-             installer НЕ спрашивает режим)
+            (determined by hub from token — PW-4;
+             installer does NOT ask for mode)
           Runtime audits ................................. REF
           Skills / rules / examples (backend/ai) ......... BACKEND
 ```
 
-Граница, проверенная по коду (совпадает с предложенной в задании):
+Boundary verified by code (matches the one proposed in the task):
 
 ```
                  BACKEND / VPS
@@ -703,8 +707,8 @@ PROFILE (audio/qwen-tts | image/qwen-image | video/ltx-2.3)
 │ Profile    (prompt-assembly metadata)   │
 │    ↓ (connector.profile.{type}Profile)  │
 │ Connector  (entity→node bindings)       │
-│    ↓ (setValue: патч workflow JSON)     │
-│ Production Workflow (полный JSON)       │
+│    ↓ (setValue: patches workflow JSON)     │
+│ Production Workflow (complete JSON)        │
 └──────────────────┬──────────────────────┘
                    │ task.params / workflow (HTTP → Redis → HTTP)
                    ▼
@@ -718,133 +722,131 @@ PROFILE (audio/qwen-tts | image/qwen-image | video/ltx-2.3)
 
 ## 12. Proposed Manifest Inputs
 
-Что уже может войти в manifest draft'ы (без выдуманных URL/ревизий):
+What can already go into manifest drafts (without fabricated URLs/revisions):
 
-### 12.1 Общее для всех профилей
+### 12.1 Common across all profiles
 
 - `worker` bundle: `worker/worker/{worker.cjs, worker-cleanup.cjs,
   worker-cleanup-journal.cjs, package.json, .env.example}`; min version
-  v2.0.0 (`worker.cjs:2`); источник — origin `GET /gpu/worker-source`
-  или repo.
+  v2.0.0 (`worker.cjs:2`); source — origin `GET /gpu/worker-source`
+  or repo.
 - required env: `HUB_URL`, `ANIMASTOR_WORKER_TOKEN` (fail-closed),
   `WORKER_TYPE`, `WORKER_ID`; optional: `COMFY_PORT`, `COMFY_INPUT_DIR`,
   `WORKER_JOURNAL_DIR`, `NOTEBOOK_PATH` (`worker/worker/.env.example`).
-- Node.js ≥ 20 (по коду worker'а; расхождение с 18 в start-worker.sh —
+- Node.js ≥ 20 (per worker code; discrepancy with 18 in start-worker.sh —
   §13).
-- verification: `scripts/animastor-runtime-audit.sh` как post-install
-  diff-инструмент (`private-worker-installer-architecture.md` §5.7).
+- verification: `scripts/animastor-runtime-audit.sh` as post-install
+  diff tool (`private-worker-installer-architecture.md` §5.7).
 
 ### 12.2 Per-profile
 
-| Поле | audio/qwen-tts | image/qwen-image | video/ltx-2.3 |
+| Field | audio/qwen-tts | image/qwen-image | video/ltx-2.3 |
 |---|---|---|---|
 | workflows (provenance) | tts-qwen-narrator, tts-qwen-dialogue | img-qwen-image | video-ltx-1p…4p |
 | custom_nodes | ComfyUI-Qwen3-TTS @ 2ee1131 | ComfyUI-GGUF @ 6ea2651 | ComfyUI-GGUF (+gguf), comfyui-kjnodes (+patch AudioVAE), [VHS — NEEDS VERIFICATION] |
-| models | 2 model_repo записи (ModelScope; type=model_repo) | 4 файла: unet/clip/vae/loras | 7 файлов: unet/text_encoders×2/loras/vae×3 |
-| disk budget (по аудитам) | ≈ 8.5 GB + ComfyUI | ≈ 21.2 GB + ComfyUI | ≈ 29.8 GB + ComfyUI (~32 GB с upscaler'ом, если решим включить) |
-| comfyui pin | UNKNOWN (форк c4cfee7 — решение) | UNKNOWN (форк c4cfee7 — решение) | v0.27.0 @ bb131be9 |
-| torch pin | UNKNOWN (2.10.0+cu128 в аудите — решение) | UNKNOWN (2.10.0+cu128 — решение) | 2.6.0+cu124, index cu124 |
-| особые операции | — | — | purge cu13; stale comfyui.db cleanup; kjnodes patch; pip lock |
-| hardware | VRAM min UNKNOWN | VRAM min UNKNOWN | VRAM min UNKNOWN (референс 46 GB) |
+| models | 2 model_repo entries (ModelScope; type=model_repo) | 4 files: unet/clip/vae/loras | 7 files: unet/text_encoders×2/loras/vae×3 |
+| disk budget (from audits) | ≈ 8.5 GB + ComfyUI | ≈ 21.2 GB + ComfyUI | ≈ 29.8 GB + ComfyUI (~32 GB with upscaler, if included) |
+| comfyui pin | UNKNOWN (fork c4cfee7 — decision) | UNKNOWN (fork c4cfee7 — decision) | v0.27.0 @ bb131be9 |
+| torch pin | UNKNOWN (2.10.0+cu128 in audit — decision) | UNKNOWN (2.10.0+cu128 — decision) | 2.6.0+cu124, index cu124 |
+| special operations | — | — | purge cu13; stale comfyui.db cleanup; kjnodes patch; pip lock |
+| hardware | VRAM min UNKNOWN | VRAM min UNKNOWN | VRAM min UNKNOWN (reference 46 GB) |
 
-### 12.3 Чего manifest'у нельзя брать из аудитов без пометки
+### 12.3 What the manifest cannot take from audits without annotation
 
-- upscaler-модель (video) — не referenced workflow;
-- easy-use/MelBandRoFormer/PromptRelay/rgthree/Manager (video) и
-  Florence2/KJNodes/RMBG/SAM2/qwen3-tts (image) — не referenced workflow;
-- локальные UI-workflow и их model refs;
-- torch 2.10.0+cu128 для audio/image — пока не принято решение о единой
-  runtime policy.
+- upscaler model (video) — not referenced in workflow;
+- easy-use/MelBandRoFormer/PromptRelay/rgthree/Manager (video) and
+  Florence2/KJNodes/RMBG/SAM2/qwen3-tts (image) — not referenced in workflow;
+- local UI-workflows and their model refs;
+- torch 2.10.0+cu128 for audio/image — unified runtime policy not yet decided.
 
 ---
 
 ## 13. Open Questions
 
-1. **ComfyUI pin для audio/image** (самый крупный): форк
-   `rajsingh1-dev/ComfyUI@c4cfee7` — required, или профили работают на
-   официальном v0.27.0? Нужен golden run audio+image на v0.27.0 либо
-   решение перенести форк в manifest. (§9.2)
-2. **Torch/CUDA tier**: cu124 (video) vs cu128 (audio/image) — единый
-   tier или per-profile?
-3. **TTS-модели**: installer предзагружает ModelScope-репо (детерминизм,
-   offline) или полагается на `Qwen3TTSLoader.auto_download`? Если
-   предзагружает — нужен механик `modelscope download` и target layout
-   `models/TTS/Qwen/...` (включая `speech_tokenizer/`).
-4. **Поставщик class_type**: `SaveVideo`, `CreateVideo`,
+1. **ComfyUI pin for audio/image** (largest): fork
+   `rajsingh1-dev/ComfyUI@c4cfee7` — required, or do profiles work on
+   official v0.27.0? A golden run of audio+image on v0.27.0 is needed, or
+   a decision to include the fork in the manifest. (§9.2)
+2. **Torch/CUDA tier**: cu124 (video) vs cu128 (audio/image) — unified
+   tier or per-profile?
+3. **TTS models**: installer preloads ModelScope repo (determinism,
+   offline) or relies on `Qwen3TTSLoader.auto_download`? If
+   preloading — need `modelscope download` mechanics and target layout
+   `models/TTS/Qwen/...` (including `speech_tokenizer/`).
+4. **class_type provider**: `SaveVideo`, `CreateVideo`,
    `LTX2SamplingPreviewOverride`, `ManualSigmas`, `ResizeImageMaskNode`,
-   `PrimitiveInt`, `PrimitiveFloat`, а также точная принадлежность
-   LTXV*/AV-нод (core vs пакет) — проверить `/object_info` на
-   референсном video-инстансе. От ответа зависит список custom_nodes
-   video-манифеста.
-5. **SaveAudioMP3** — подтвердить принадлежность пакету
-   ComfyUI-Qwen3-TTS (`/object_info` на audio-инстансе).
-6. **Upstream'ы plain-dir нод** (GGUF, gguf, kjnodes, VHS и др.): найти
-   git-репозитории и commit'ы либо готовить bundle-архивы
+   `PrimitiveInt`, `PrimitiveFloat`, and exact attribution of
+   LTXV*/AV nodes (core vs package) — verify via `/object_info` on
+   the reference video instance. The answer determines the custom_nodes
+   list in the video manifest.
+5. **SaveAudioMP3** — confirm attribution to
+   ComfyUI-Qwen3-TTS package (`/object_info` on audio instance).
+6. **Upstreams for plain-dir nodes** (GGUF, gguf, kjnodes, VHS etc.): find
+   git repositories and commits or prepare bundle archives
    (`LINUX_INSTALLER_RECONNAISSANCE.md:164-168`).
-7. **Download-research моделей**: все 11 файлов image/video — repo,
+7. **Model download-research**: all 11 image/video files — repo,
    revision, sha256, license/gated (§8.2).
-8. **ComfyUI-Manager**: включать ли в manifest как optional utility
-   (присутствует во всех аудитах, но workflow не требуется)?
-9. **Противоречие документов**: `EXPERIMENTAL_BETA_WORKER_SETUP.md:56-58`
-   требует easy-use/rgthree для video; workflow-скан — нет. Что истина?
-10. **Upscaler-модель** (`ltx-2.3-spatial-upscaler-x2-1.0.safetensors`):
-    исключить из manifest или оставить optional «на вырост»?
+8. **ComfyUI-Manager**: include in manifest as optional utility
+   (present in all audits, but not required by workflow)?
+9. **Documentation discrepancy**: `EXPERIMENTAL_BETA_WORKER_SETUP.md:56-58`
+   requires easy-use/rgthree for video; workflow scan does not. Which is correct?
+10. **Upscaler model** (`ltx-2.3-spatial-upscaler-x2-1.0.safetensors`):
+    exclude from manifest or keep optional "for future use"?
 11. **Node.js**: 18 (start-worker.sh) vs 20 (worker.cjs header) —
-    унифицировать требование.
-12. **Минимальный VRAM** по профилям — не задокументирован нигде; нужны
-    измерения или консервативный draft.
+    unify the requirement.
+12. **Minimum VRAM** per profile — not documented anywhere; measurements
+    or a conservative draft are needed.
 
 ---
 
 ## 14. Findings / Decisions Needed
 
-### Установлено точно (с доказательствами в коде)
+### Established with certainty (evidence in code)
 
-1. **Источник истины для install manifest — production workflows**
-   (`backend/ai/workflows/*.json`), связанные с профилями через
-   `profile.{type}Profile` в connector'ах. Profile-файлы несут только
-   prompt-assembly metadata; поле `workflow` в них декоративное (кодом
-   не читается).
-2. **Connector = backend-side execution metadata.** Не устанавливается,
-   не пересекает границу VPS→GPU, runtime-зависимостей не добавляет.
-   Installer'у достаточно *знать* о них (workflowHash) для опционального
+1. **Source of truth for install manifest — production workflows**
+   (`backend/ai/workflows/*.json`), linked to profiles via
+   `profile.{type}Profile` in connectors. Profile files carry only
+   prompt-assembly metadata; the `workflow` field in them is decorative (not read by code).
+2. **Connector = backend-side execution metadata.** Not installed,
+   does not cross VPS→GPU boundary, adds no runtime dependencies.
+   The installer only needs to *know* about them (workflowHash) for optional
    drift-check.
-3. **Workflow JSON на GPU-бокс не устанавливается** — доставляется в
-   runtime через `task.params` (hub → worker → ComfyUI `/prompt`).
-4. **7 production workflows**, полный список class_type и model/file
-   refs извлечён (§5–§7); legacy `old_*` исключены.
-5. **Model inventory**: audio 2 repo (ModelScope, auto_download),
-   image 4 файла ≈21 GB, video 7 файлов ≈30 GB; target-каталоги
-   подтверждены аудитами; размеры зафиксированы.
+3. **Workflow JSON is not installed on GPU box** — delivered at
+   runtime via `task.params` (hub → worker → ComfyUI `/prompt`).
+4. **7 production workflows**, full class_type and model/file
+   ref list extracted (§5–§7); legacy `old_*` excluded.
+5. **Model inventory**: audio 2 repos (ModelScope, auto_download),
+   image 4 files ≈21 GB, video 7 files ≈30 GB; target directories
+   confirmed by audits; sizes documented.
 6. **Required custom nodes**: audio — ComfyUI-Qwen3-TTS; image —
-   ComfyUI-GGUF; video — ComfyUI-GGUF(+gguf) + kjnodes (с обязательным
-   AudioVAE-патчем) + вероятно VHS.
-7. **Во всех аудитах required присутствует (MISSING = ∅)**; найдено
-   много UNUSED, что подтверждает: audit — reference, не source of truth.
-8. **Worker bundle и env-контракт** полностью описаны и стабильны
+   ComfyUI-GGUF; video — ComfyUI-GGUF(+gguf) + kjnodes (with mandatory
+   AudioVAE patch) + likely VHS.
+7. **All required dependencies found in all audits (MISSING = ∅)**; significant
+   UNUSED discovered, confirming: audit = reference, not source of truth.
+8. **Worker bundle and env contract** fully described and stable
    (v2.0.0, fail-closed PW-4).
 
-### Роль connector'ов — подтверждённая формулировка
+### Connector role — confirmed formulation
 
-Connector — это **механизм заполнения workflow значениями сущностей на
-VPS**: декларативные bindings (entity → nodeId.field), валидируемые
-против workflow при старте backend'а. В install footprint connector не
-входит никак; единственная его «тень» на GPU-боксе — уже подставленные
-значения внутри присланного workflow JSON.
+A connector is **a mechanism for filling workflow values with entity data on
+the VPS**: declarative bindings (entity → nodeId.field), validated
+against the workflow at backend startup. The connector does not enter
+the install footprint in any way; its only "shadow" on the GPU box is the
+already-substituted values inside the delivered workflow JSON.
 
-### Решения, которые нужно принять до manifest draft'ов
+### Decisions needed before manifest drafts
 
-| # | Решение | Влияние |
+| # | Decision | Impact |
 |---|---|---|
-| D1 | Единая ComfyUI/torch policy (v0.27.0+cu124 для всех?) или per-profile | структура manifest'а: один общий runtime-блок или три |
-| D2 | TTS-модели: предзагрузка vs auto_download | тип записей audio-моделей в manifest |
-| D3 | Верификация UNKNOWN class_type через /object_info | окончательный custom_nodes list video |
-| D4 | Upstream'ы/bundles для plain-dir нод | механика установки video-нод |
-| D5 | Download-research 11 файлов моделей (repo/sha256/gated) | заполнение `source`/`checksum` полей |
-| D6 | Upscaler и «документально требуемые» easy-use/rgthree: вкл/выкл | объём video-манифеста |
-| D7 | ComfyUI-Manager: optional utility или нет | объём всех манифестов |
+| D1 | Unified ComfyUI/torch policy (v0.27.0+cu124 for all?) or per-profile | manifest structure: one shared runtime block or three |
+| D2 | TTS models: preload vs auto_download | audio model entry type in manifest |
+| D3 | UNKNOWN class_type verification via /object_info | final video custom_nodes list |
+| D4 | Upstreams/bundles for plain-dir nodes | video node installation mechanics |
+| D5 | Download-research for 11 model files (repo/sha256/gated) | populating `source`/`checksum` fields |
+| D6 | Upscaler and "documented" easy-use/rgthree: include/exclude | video manifest size |
+| D7 | ComfyUI-Manager: optional utility or not | all manifest sizes |
 
-После этого исследования **к реализации Installer не переходим** —
-следующий шаг по architecture draft'у (§17): manifest draft'ы
-(рекомендуемый пилот — `image/qwen-image` как наименьший footprint) на
-основе §12 настоящего документа.
+After this research, **we do NOT proceed to Installer implementation** —
+the next step per the architecture draft (§17): manifest drafts
+(recommended pilot — `image/qwen-image` as smallest footprint) based
+on §12 of this document.
