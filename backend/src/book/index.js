@@ -20,13 +20,11 @@
 // Legacy single-file format is still readable for migration:
 //   /data/books/<bookId>.json
 //
-// ── behavior.json — Character Behavior contract (schema v2) ──────────────
+// ── behavior.json — Character Behavior contract (schema v2.1) ────────────
 // Map: character_id → behavior object. The object is SCHEMA-TOLERANT:
 // unknown keys (including future fields) are preserved on every load/save
-// round-trip. Known fields:
+// round-trip. Fields:
 //
-//   instruction : string?                  — free-text overall manner
-//                                            (pass-1 legacy field, kept)
 //   baseline    : string?                  — how the character behaves NORMALLY
 //   quirks      : string[]?                — recurring habits (one entry each)
 //   reactions   : [{trigger, reaction}]?   — trigger → reaction patterns
@@ -35,12 +33,12 @@
 //                                             character does)
 //
 // Deliberately deferred (do NOT add in the editor pass): frequency/intensity,
-// extraction from book text, runtime interpretation, state machines.
+// priority, extraction from book text, runtime interpretation, state machines.
 // Editors (web + Android) edit quirks/reactions as line-based text: one entry
 // per line, reactions use "trigger → reaction" (also "->"). An untouched card
 // never rewrites the stored array, so future per-reaction keys added by other
 // tools survive; the editor replaces the array only when its text changed.
-// POST /behaviors seeds {instruction}; structured fields are edited via
+// POST /behaviors seeds {baseline}; all other fields are edited via
 // PATCH /behaviors/{characterId} (fields merged via setDeep, passthrough).
 
 const fs = require('fs');

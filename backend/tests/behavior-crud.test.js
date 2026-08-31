@@ -1,11 +1,13 @@
 // ======================================================
-// BEHAVIOR CRUD ROUTES — manual Behavior editor (pass 1)
+// BEHAVIOR CRUD ROUTES — manual Behavior editor (schema v2.1)
 // ======================================================
 // Verifies the endpoints the Editors use for the Behaviors tab:
 //   1. behavior.json mirrors voices.json: a map keyed by the EXISTING
 //      character_id (no id transliteration — the key is a character id).
+//      Fields: baseline (string), quirks (string[]), reactions
+//      ([{trigger, reaction}]) — the pass-1 `instruction` field is gone.
 //   2. POST /behaviors requires character_id (400), an existing character
-//      (404) and no behavior yet for that character (409).
+//      (404) and no behavior yet for that character (409); seeds {baseline}.
 //   3. PATCH /behaviors/{characterId} merges fields via setDeep — unknown
 //      keys pass through so a future schema extension survives round-trips.
 //   4. DELETE removes the whole entry; deleting the CHARACTER removes the
@@ -154,97 +156,46 @@ describe('BEHAVIOR CRUD ROUTES — manual Behavior editor', () => {
     it('POST creates behavior.json keyed by the existing character_id', () => {
         const res = invoke(BEH_POST, { bookId }, {
             character_id: 'hero',
-            instruction: 'Calm, restrained gestures, speaks slowly.',
+            baseline: 'Calm, restrained gestures, speaks slowly.',
         });
         expect(res.statusCode).to.equal(200);
         expect(res.body).to.include({ saved: true, character_id: 'hero' });
 
         const behaviors = readBehaviorsFile();
-        expect(behaviors.hero).to.deep.equal({ instruction: 'Calm, restrained gestures, speaks slowly.' });
+        expect(behaviors.hero).to.deep.equal({ baseline: 'Calm, restrained gestures, speaks slowly.' });
         // Sidekick untouched — no phantom entries.
         expect(Object.keys(behaviors)).to.deep.equal(['hero']);
     });
 
+    it('POST without baseline seeds an empty behavior object', () => {
+        const res = invoke(BEH_POST, { bookId }, { character_id: 'hero' });
+        expect(res.statusCode).to.equal(200);
+        expect(readBehaviorsFile().hero).to.deep.equal({});
+    });
+
     it('POST without character_id is rejected (400)', () => {
-        const res = invoke(BEH_POST, { bookId }, { instruction: 'no owner' });
+        const res = invoke(BEH_POST, { bookId }, { baseline: 'no owner' });
         expect(res.statusCode).to.equal(400);
     });
 
     it('POST for an unknown character is rejected (404)', () => {
-        const res = invoke(BEH_POST, { bookId }, { character_id: 'ghost', instruction: 'x' });
+        const res = invoke(BEH_POST, { bookId }, { character_id: 'ghost', baseline: 'x' });
         expect(res.statusCode).to.equal(404);
     });
 
     it('POST a second behavior for the same character is rejected (409)', () => {
-        expect(invoke(BEH_POST, { bookId }, { character_id: 'hero', instruction: 'a' }).statusCode).to.equal(200);
-        const res = invoke(BEH_POST, { bookId }, { character_id: 'hero', instruction: 'b' });
+        expect(invoke(BEH_POST, { bookId }, { character_id: 'hero', baseline: 'a' }).statusCode).to.equal(200);
+        const res = invoke(BEH_POST, { bookId }, { character_id: 'hero', baseline: 'b' });
         expect(res.statusCode).to.equal(409);
         // The original entry is intact.
-        expect(readBehaviorsFile().hero.instruction).to.equal('a');
+        expect(readBehaviorsFile().hero.baseline).to.equal('a');
     });
 
     // ======================================================
     // PATCH — edit (free-form fields, passthrough of unknown keys)
     // ======================================================
-    it('PATCH updates the instruction and keeps unknown keys (schema-tolerant storage)', () => {
-        invoke(BEH_POST, { bookId }, { character_id: 'hero', instruction: 'first draft' });
-        // A future schema writes an extra key straight into behavior.json.
-        const behaviors = readBehaviorsFile();
-        behaviors.hero.gestures = 'minimal';
-        fs.writeFileSync(path.join(bookDir, 'behavior.json'), JSON.stringify(behaviors, null, 2));
-
-        const res = invoke(BEH_PATCH, { bookId, characterId: 'hero' }, {
-            fields: { instruction: 'edited instruction' },
-        });
-        expect(res.statusCode).to.equal(200);
-
-        const after = readBehaviorsFile();
-        expect(after.hero.instruction).to.equal('edited instruction');
-        expect(after.hero.gestures).to.equal('minimal');
-    });
-
-    it('PATCH for a character without behavior is rejected (404)', () => {
-        const res = invoke(BEH_PATCH, { bookId, characterId: 'sidekick' }, { fields: { instruction: 'x' } });
-        expect(res.statusCode).to.equal(404);
-    });
-
-    // ======================================================
-    // DELETE — remove behavior / character
-    // ======================================================
-    it('DELETE removes the whole behavior entry; the file is unlinked when empty', () => {
-        invoke(BEH_POST, { bookId }, { character_id: 'hero', instruction: 'a' });
-        invoke(BEH_POST, { bookId }, { character_id: 'sidekick', instruction: 'b' });
-
-        const res = invoke(BEH_DEL, { bookId, characterId: 'hero' });
-        expect(res.statusCode).to.equal(200);
-        expect(loadedBehaviors().sidekick.instruction).to.equal('b');
-
-        invoke(BEH_DEL, { bookId, characterId: 'sidekick' });
-        expect(fs.existsSync(path.join(bookDir, 'behavior.json'))).to.equal(false);
-        expect(loadedBehaviors()).to.deep.equal({});
-    });
-
-    it('DELETE for a missing behavior is rejected (404)', () => {
-        const res = invoke(BEH_DEL, { bookId, characterId: 'hero' });
-        expect(res.statusCode).to.equal(404);
-    });
-
-    it('DELETE character removes the dangling behavior (dangling-data cleanup)', () => {
-        invoke(BEH_POST, { bookId }, { character_id: 'hero', instruction: 'a' });
-
-        const res = invoke(CHAR_DEL, { bookId, characterId: 'hero' });
-        expect(res.statusCode).to.equal(200);
-
-        const chars = JSON.parse(fs.readFileSync(path.join(bookDir, 'characters.json'), 'utf8'));
-        expect(chars.find(c => c.id === 'hero')).to.be.undefined;
-        expect(loadedBehaviors()).to.deep.equal({});
-    });
-
-    // ======================================================
-    // Schema v2 — structured fields + backward compatibility
-    // ======================================================
     it('PATCH accepts structured fields (baseline, quirks, reactions) and stores them verbatim', () => {
-        invoke(BEH_POST, { bookId }, { character_id: 'hero', instruction: 'seed' });
+        invoke(BEH_POST, { bookId }, { character_id: 'hero', baseline: 'seed' });
         const res = invoke(BEH_PATCH, { bookId, characterId: 'hero' }, {
             fields: {
                 baseline: 'Usually composed and measured.',
@@ -257,7 +208,6 @@ describe('BEHAVIOR CRUD ROUTES — manual Behavior editor', () => {
         });
         expect(res.statusCode).to.equal(200);
         expect(readBehaviorsFile().hero).to.deep.equal({
-            instruction: 'seed',
             baseline: 'Usually composed and measured.',
             quirks: ['adjusts his tie', 'taps the table'],
             reactions: [
@@ -267,23 +217,42 @@ describe('BEHAVIOR CRUD ROUTES — manual Behavior editor', () => {
         });
     });
 
-    it('legacy behavior.json with only instruction keeps loading and editing (backward compatibility)', () => {
-        // Pass-1 file, written by hand — no baseline/quirks/reactions keys.
+    it('PATCH updates baseline and keeps unknown keys (schema-tolerant storage)', () => {
+        invoke(BEH_POST, { bookId }, { character_id: 'hero', baseline: 'first draft' });
+        // A future schema writes an extra key straight into behavior.json.
+        const behaviors = readBehaviorsFile();
+        behaviors.hero.gestures = 'minimal';
+        fs.writeFileSync(path.join(bookDir, 'behavior.json'), JSON.stringify(behaviors, null, 2));
+
+        const res = invoke(BEH_PATCH, { bookId, characterId: 'hero' }, {
+            fields: { baseline: 'edited baseline' },
+        });
+        expect(res.statusCode).to.equal(200);
+
+        const after = readBehaviorsFile();
+        expect(after.hero.baseline).to.equal('edited baseline');
+        expect(after.hero.gestures).to.equal('minimal');
+    });
+
+    it('pass-1 instruction key survives as an inert passthrough key (no special handling)', () => {
+        // A pre-v2.1 file: the old `instruction` field is no longer part of the
+        // schema — it must not break anything, it just passes through untouched.
         fs.writeFileSync(path.join(bookDir, 'behavior.json'), JSON.stringify({
             hero: { instruction: 'Calm.' },
         }, null, 2));
 
-        const loaded = bookModule.loadBook(bookId).behaviors;
-        expect(loaded.hero).to.deep.equal({ instruction: 'Calm.' });
-
         const res = invoke(BEH_PATCH, { bookId, characterId: 'hero' }, { fields: { baseline: 'Calm and deliberate.' } });
         expect(res.statusCode).to.equal(200);
-        // instruction untouched, baseline added alongside — no migration needed.
         expect(readBehaviorsFile().hero).to.deep.equal({ instruction: 'Calm.', baseline: 'Calm and deliberate.' });
     });
 
+    it('PATCH for a character without behavior is rejected (404)', () => {
+        const res = invoke(BEH_PATCH, { bookId, characterId: 'sidekick' }, { fields: { baseline: 'x' } });
+        expect(res.statusCode).to.equal(404);
+    });
+
     it('PATCHing one field never rewrites sibling fields (future per-reaction keys survive untouched cards)', () => {
-        invoke(BEH_POST, { bookId }, { character_id: 'hero', instruction: 'seed' });
+        invoke(BEH_POST, { bookId }, { character_id: 'hero', baseline: 'seed' });
         const reactions = [{ trigger: 'x', reaction: 'y', intensity: 0.7 }];
         const behaviors = readBehaviorsFile();
         behaviors.hero.reactions = reactions;
@@ -294,12 +263,43 @@ describe('BEHAVIOR CRUD ROUTES — manual Behavior editor', () => {
     });
 
     // ======================================================
+    // DELETE — remove behavior / character
+    // ======================================================
+    it('DELETE removes the whole behavior entry; the file is unlinked when empty', () => {
+        invoke(BEH_POST, { bookId }, { character_id: 'hero', baseline: 'a' });
+        invoke(BEH_POST, { bookId }, { character_id: 'sidekick', baseline: 'b' });
+
+        const res = invoke(BEH_DEL, { bookId, characterId: 'hero' });
+        expect(res.statusCode).to.equal(200);
+        expect(loadedBehaviors().sidekick.baseline).to.equal('b');
+
+        invoke(BEH_DEL, { bookId, characterId: 'sidekick' });
+        expect(fs.existsSync(path.join(bookDir, 'behavior.json'))).to.equal(false);
+        expect(loadedBehaviors()).to.deep.equal({});
+    });
+
+    it('DELETE for a missing behavior is rejected (404)', () => {
+        const res = invoke(BEH_DEL, { bookId, characterId: 'hero' });
+        expect(res.statusCode).to.equal(404);
+    });
+
+    it('DELETE character removes the dangling behavior (dangling-data cleanup)', () => {
+        invoke(BEH_POST, { bookId }, { character_id: 'hero', baseline: 'a' });
+
+        const res = invoke(CHAR_DEL, { bookId, characterId: 'hero' });
+        expect(res.statusCode).to.equal(200);
+
+        const chars = JSON.parse(fs.readFileSync(path.join(bookDir, 'characters.json'), 'utf8'));
+        expect(chars.find(c => c.id === 'hero')).to.be.undefined;
+        expect(loadedBehaviors()).to.deep.equal({});
+    });
+
+    // ======================================================
     // Persistence roundtrip — vbook import parses behavior.json
     // ======================================================
     it('buildBookFromBundle parses behavior.json from a vbook bundle', () => {
         fs.writeFileSync(path.join(bookDir, 'behavior.json'), JSON.stringify({
             hero: {
-                instruction: 'Calm and deliberate.',
                 baseline: 'Composed.',
                 quirks: ['adjusts his tie'],
                 reactions: [{ trigger: 'is contradicted', reaction: 'smiles coldly' }],
@@ -313,7 +313,6 @@ describe('BEHAVIOR CRUD ROUTES — manual Behavior editor', () => {
 
         expect(built.behaviors).to.deep.equal({
             hero: {
-                instruction: 'Calm and deliberate.',
                 baseline: 'Composed.',
                 quirks: ['adjusts his tie'],
                 reactions: [{ trigger: 'is contradicted', reaction: 'smiles coldly' }],

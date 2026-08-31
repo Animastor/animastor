@@ -96,7 +96,7 @@ export const ENTITY_SCHEMAS: Record<EntityKind, EntitySchema> = {
     deleteTitleKey: 'entity_delete_behavior',
     deleteConfirmKey: 'entity_delete_behavior_confirm',
     fields: [
-      { key: 'instruction', labelKey: 'field_instruction', multiline: true },
+      { key: 'baseline', labelKey: 'field_baseline', multiline: true },
     ],
   },
 };
@@ -226,11 +226,11 @@ export function BehaviorAddDialog({ characters, busy, error, onSave, onClose }: 
   characters: { id: string; name: string }[];
   busy: boolean;
   error: string | null;
-  onSave: (values: { characterId: string; instruction: string }) => void;
+  onSave: (values: { characterId: string; baseline: string }) => void;
   onClose: () => void;
 }): JSX.Element {
   const [characterId, setCharacterId] = useState(characters[0]?.id ?? '');
-  const [instruction, setInstruction] = useState('');
+  const [baseline, setBaseline] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
 
   const handleSave = () => {
@@ -239,7 +239,7 @@ export function BehaviorAddDialog({ characters, busy, error, onSave, onClose }: 
       return;
     }
     setFormError(null);
-    onSave({ characterId, instruction: instruction.trim() });
+    onSave({ characterId, baseline: baseline.trim() });
   };
 
   return (
@@ -267,13 +267,13 @@ export function BehaviorAddDialog({ characters, busy, error, onSave, onClose }: 
           <span class="entity-form__hint">{t('behavior_character_hint')}</span>
         </div>
         <div class="edit-field">
-          <label class="edit-field__label" for="behavior-instruction">{t('field_instruction')}</label>
+          <label class="edit-field__label" for="behavior-baseline">{t('field_baseline')}</label>
           <textarea
-            id="behavior-instruction"
+            id="behavior-baseline"
             class="edit-field__input edit-field__input--area"
             rows={3}
-            value={instruction}
-            onInput={(e) => setInstruction((e.target as HTMLTextAreaElement).value)}
+            value={baseline}
+            onInput={(e) => setBaseline((e.target as HTMLTextAreaElement).value)}
           />
         </div>
         {(formError || error) && <div class="entity-form__error">{(formError ?? error) as string}</div>}

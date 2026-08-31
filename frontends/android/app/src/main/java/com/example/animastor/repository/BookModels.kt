@@ -178,18 +178,17 @@ data class VoiceEntry(
 
 /**
  * Per-character behavior (behavior.json) — keyed by character_id (same
- * pattern as voices). Schema v2 — the Character Behavior contract:
- *   instruction — free-text overall manner (pass-1 legacy field, kept)
+ * pattern as voices). Schema v2.1 — the Character Behavior contract:
  *   baseline    — how the character behaves normally
  *   quirks      — recurring habits, one entry each
  *   reactions   — trigger → reaction patterns ([BehaviorReaction])
  * The stored object is schema-tolerant: unknown future keys are preserved
  * server-side; this model reads/writes only the known fields (Gson ignores
  * extras, PATCH sends only edited fields). Deliberately deferred:
- * frequency/intensity, extraction from book text, runtime interpretation.
+ * frequency/intensity, priority, extraction from book text, runtime
+ * interpretation.
  */
 data class BehaviorEntry(
-    val instruction: String? = null,
     val baseline: String? = null,
     val quirks: List<String>? = null,
     val reactions: List<BehaviorReaction>? = null

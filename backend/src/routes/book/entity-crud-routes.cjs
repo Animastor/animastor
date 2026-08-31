@@ -278,7 +278,7 @@ module.exports = function (app, redis, deps) {
     // BEHAVIORS — add / delete (manual, keyed by character_id)
     //
     // behavior.json mirrors voices.json: a map keyed by the existing
-    // character_id ({"berlioz": {"instruction": "..."}}). A behavior belongs
+    // character_id ({"berlioz": {"baseline": "..."}}). A behavior belongs
     // to a character that must already exist — no id transliteration here,
     // the key is a character id, not a free-form entity id.
     // ======================================================
@@ -304,11 +304,12 @@ module.exports = function (app, redis, deps) {
                 return res.status(409).json({ error: `Behavior for character "${characterId}" already exists` });
             }
 
-            behaviors[characterId] = {
-                instruction: body.instruction && String(body.instruction).trim()
-                    ? String(body.instruction).trim()
-                    : '',
-            };
+            // Seed the entry with baseline (schema v2.1 has no instruction
+            // field); quirks/reactions and edits go through PATCH.
+            behaviors[characterId] = {};
+            if (body.baseline && String(body.baseline).trim()) {
+                behaviors[characterId].baseline = String(body.baseline).trim();
+            }
             oldBook.behaviors = behaviors;
 
             book.saveBookBundle(oldBook, null);

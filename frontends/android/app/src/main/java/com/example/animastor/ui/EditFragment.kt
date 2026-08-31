@@ -130,7 +130,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             R.string.entity_delete_behavior,
             R.string.entity_delete_behavior_confirm,
             listOf(
-                EntityField("instruction", R.string.field_instruction, multiline = true),
+                EntityField("baseline", R.string.field_baseline, multiline = true),
             )
         )
     }
@@ -658,7 +658,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             EntityKind.BEHAVIOR -> {
                 // Not reached via showAddEntityDialog (behavior add uses
                 // showAddBehaviorDialog); kept for schema completeness.
-                values["instruction"]?.takeIf { it.isNotBlank() }?.let { body["instruction"] = it }
+                values["baseline"]?.takeIf { it.isNotBlank() }?.let { body["baseline"] = it }
             }
         }
         return body
@@ -759,7 +759,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
     /** Behavior add dialog — a behavior belongs to an EXISTING character
      *  (behavior.json is keyed by character_id), so the dialog offers a
-     *  character spinner (characters without a behavior yet) + instruction
+     *  character spinner (characters without a behavior yet) + baseline
      *  field instead of the generic free-form id + name form. Same visual
      *  pattern (TextInputLayout, AppDialogs) as the entity add dialog. */
     private fun showAddBehaviorDialog() {
@@ -811,20 +811,20 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         tilChar.addView(sp)
         container.addView(tilChar)
 
-        // Instruction (single free-text Behavior field, pass 1).
-        val tilInstruction = TextInputLayout(ctx).apply {
-            hint = getString(R.string.field_instruction)
+        // Baseline (single free-text Behavior field — schema v2.1).
+        val tilBaseline = TextInputLayout(ctx).apply {
+            hint = getString(R.string.field_baseline)
             isHintEnabled = true
             boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
         }
-        val etInstruction = TextInputEditText(ctx).apply {
+        val etBaseline = TextInputEditText(ctx).apply {
             textSize = 14f
             minLines = 3
             gravity = android.view.Gravity.TOP or android.view.Gravity.START
             setPadding(12, 10, 12, 10)
         }
-        tilInstruction.addView(etInstruction)
-        container.addView(tilInstruction)
+        tilBaseline.addView(etBaseline)
+        container.addView(tilBaseline)
         container.addView(errorText)
 
         AppDialogs.action(
@@ -834,7 +834,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             cancelText = getString(R.string.dialog_cancel),
             actionText = getString(R.string.edit_save),
         ) { dlg ->
-            val instruction = etInstruction.text?.toString()?.trim() ?: ""
+            val baseline = etBaseline.text?.toString()?.trim() ?: ""
             if (selectedCharId.isBlank()) {
                 errorText.text = getString(R.string.behavior_character_required)
                 errorText.visibility = View.VISIBLE
@@ -845,7 +845,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             lifecycleScope.launch {
                 try {
                     val body = mutableMapOf<String, Any?>("character_id" to selectedCharId)
-                    if (instruction.isNotBlank()) body["instruction"] = instruction
+                    if (baseline.isNotBlank()) body["baseline"] = baseline
                     viewModel.repository.createBehavior(bookId, body)
                     reloadEntityTable()
                 } catch (e: Exception) {
@@ -1936,11 +1936,10 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     showDeleteConfirmDialog(EntityKind.BEHAVIOR, charId)
                 })
 
-                // Schema v2: instruction/baseline are plain text; quirks/reactions
+                // Schema v2.1: baseline is plain text; quirks/reactions
                 // round-trip through line-based text (behaviorQuirksToText /
                 // behaviorReactionsToText — same rules as the web editor).
                 listOf(
-                    Triple("behavior.$charId.instruction", entry.instruction ?: "", R.string.field_instruction),
                     Triple("behavior.$charId.baseline", entry.baseline ?: "", R.string.field_baseline),
                     Triple("behavior.$charId.quirks", behaviorQuirksToText(entry.quirks), R.string.field_quirks),
                     Triple("behavior.$charId.reactions", behaviorReactionsToText(entry.reactions), R.string.field_reactions),
@@ -2944,8 +2943,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 return
             }
 
-            // Behaviors tab (7) — dedicated PATCH per changed behavior
-            // (instruction), mirroring the web EditPage BEHAVIORS_TAB branch.
+            // Behaviors tab (7) — dedicated PATCH per changed behavior,
+            // mirroring the web EditPage BEHAVIORS_TAB branch.
             // behavior.* keys must not leak into the scene PATCH below.
             if (selectedTab == 7) {
                 setSaveLoading(true)
@@ -2986,7 +2985,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                             val changed = mutableMapOf<String, Any?>()
                             fields.forEach { (k, v) ->
                                 when (k) {
-                                    "instruction" -> if (v != (entry?.instruction ?: "")) changed[k] = v
                                     "baseline" -> if (v != (entry?.baseline ?: "")) changed[k] = v
                                     "quirks" -> if (v != behaviorQuirksToText(entry?.quirks)) {
                                         changed[k] = v.split('\n').map { it.trim() }.filter { it.isNotEmpty() }

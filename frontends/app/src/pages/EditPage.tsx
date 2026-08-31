@@ -1230,8 +1230,8 @@ export function EditPage(props: { path?: string }) {
       }
     }
 
-    // BEHAVIORS tab — PATCH /behaviors/{characterId} per CHANGED entry
-    // (instruction), mirroring the VOICES_TAB branch. Behavior does not affect
+    // BEHAVIORS tab — PATCH /behaviors/{characterId} per CHANGED entry,
+    // mirroring the VOICES_TAB branch. Behavior does not affect
     // generation yet, so the PATCH is a plain edit (no dirty propagation).
     if (tab === BEHAVIORS_TAB) {
       setSaveLoading(true, true);
@@ -1260,7 +1260,6 @@ export function EditPage(props: { path?: string }) {
           // text equals the rendered form of the stored data) never PATCHes —
           // so future per-reaction keys written by other tools survive.
           const orig: Record<string, unknown> = {
-            instruction: entry?.instruction ?? '',
             baseline: entry?.baseline ?? '',
             quirks: behaviorLinesToText(entry?.quirks),
             reactions: behaviorReactionsToText(entry?.reactions),
@@ -1553,7 +1552,7 @@ export function EditPage(props: { path?: string }) {
       .map((c) => ({ id: c.id as string, name: c.name ?? '' }));
   }, [bookData]);
 
-  const saveBehavior = useCallback(async (values: { characterId: string; instruction: string }) => {
+  const saveBehavior = useCallback(async (values: { characterId: string; baseline: string }) => {
     const bId = bookIdSignal.value;
     if (!bId) return;
     setEntityBusy(true);
@@ -1561,7 +1560,7 @@ export function EditPage(props: { path?: string }) {
     try {
       await postJson(`/book/${encodeURIComponent(bId)}/behaviors`, {
         character_id: values.characterId,
-        instruction: values.instruction,
+        baseline: values.baseline,
       });
       setBehaviorAddOpen(false);
       await refreshBook();
@@ -1950,8 +1949,8 @@ export function EditPage(props: { path?: string }) {
 
   // Behaviors tab — one card per behavior, keyed by character_id (behavior.json
   // mirrors voices.json); the card title shows the character's name when known.
-  // Structured fields (schema v2): instruction/baseline are plain text;
-  // quirks/reactions are edited as line-based text (behaviorLinesToText /
+  // Structured fields (schema v2.1): baseline is plain text; quirks/reactions
+  // are edited as line-based text (behaviorLinesToText /
   // behaviorReactionsToText round-trip rules).
   const buildBehaviorsFields = (): JSX.Element[] => {
     const behaviors = bookData?.behaviors ?? {};
@@ -1969,7 +1968,6 @@ export function EditPage(props: { path?: string }) {
             <EntityDeleteButton onClick={() => { setEntityError(null); setDeleteTarget({ kind: 'behavior', id: charId }); }} />
             <span class="edit-card__title">{title}</span>
           </div>
-          {inputCard(t('field_instruction'), entry?.instruction ?? '', (entry?.instruction?.length ?? 0) > 80, `behavior.${charId}.instruction`)}
           {inputCard(t('field_baseline'), entry?.baseline ?? '', (entry?.baseline?.length ?? 0) > 80, `behavior.${charId}.baseline`)}
           {inputCard(t('field_quirks'), behaviorLinesToText(entry?.quirks), true, `behavior.${charId}.quirks`)}
           {inputCard(t('field_reactions'), behaviorReactionsToText(entry?.reactions), true, `behavior.${charId}.reactions`)}
