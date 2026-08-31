@@ -175,7 +175,6 @@ TXT / VBook
               │ Save Asset   │ → Filesystem (MP3, PNG, MP4)
               │ Register     │ → Registry (PostgreSQL scene_assets)
               │ Update State │ → Per-Asset State → READY
-              │ Sync Linear  │ → Linear FSM (derived)
               └──────────────┘
 ```
 

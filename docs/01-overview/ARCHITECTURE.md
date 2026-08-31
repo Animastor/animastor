@@ -37,7 +37,7 @@
 
 **GPU Hub cleanup (July 2026):** Added `clearGpuHubQueues()` — centralized cleanup of stale tasks from Redis GPU hub (dedup keys, queues, running, result cache). Supports optional sceneFilter for targeted cleanup. Used in regenerate and cancel-generation.
 
-**See also:** `docs/02-orchestration/GPU_HUB_CLEANUP.md`
+**See also:** `docs/02-orchestration/ORCHESTRATION.md` §2.9 (Regeneration System)
 
 ### 2.3 AI Routes (`backend/src/routes/ai-routes.cjs`)
 **Responsibility:** AI assistant chat, book loading into AI context, chat session management.
@@ -553,11 +553,9 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 **Data paths:** `data/books/<bookId>/`, `data/output/<buildId>/`.
 
 ### 6.4 Asset Registry (`backend/src/storage/asset-registry.js`)
-**Responsibility:** Redis asset registry (used in production callbacks via `storage.registry.*`).
+**Responsibility:** Redis asset registry (legacy, used in production callbacks via `storage.registry.*`).
 
-**Important:** There is also `services/scene-asset-registry.js` (PostgreSQL-backed) with **the same function names**, but it is only called from tests and placeholder-audio — not from the production path. This is a known trap (see `02_Claude_Audit.md §C3`).
-
-> **UPD 2026-06-26:** Two registries with identical names — C3. `scene_assets.status='ready'` not written in production path — C2.
+**Note:** `services/scene-asset-registry.js` (PostgreSQL-backed) is the primary scene asset registry, used for `markReady` and dirty flag management. The Redis registry (`asset-registry.js`) handles chunk-level tracking in callbacks. C3 (duplicate registry names) was closed — both serve different purposes.
 
 ---
 
@@ -628,15 +626,15 @@ Module `backend/src/runtime/index.js` exports only actively used components:
 
 **Error handling:** failureTaxonomy, retryManager, retentionManager.
 
-**Debug (lazy loading, not core):** snapshotManager, circuitBreaker, priorityManager, fairness, retryBudget, policyEngine, workloadClassifier, costEstimator, decisionTrace, feedback, governanceMetrics, adaptationController, governanceStability, governanceHealth, executionSemantics.
+**LIVE governance (directly `require()`'d in dispatch-engine):** circuit-breaker, retry-budget-manager.
 
-**Experimental (debug):** policySimulator, sandbox, failureReplay, validator.
+**Removed from exports (files preserved on disk):** priority-manager, policy-engine, workload-classifier, cost-estimator, admission-control, decision-trace, feedback-engine, governance-*, adaptation-controller, execution-semantics, trace-compactor, invariant-engine, safe-mode, snapshot-manager, runtime-persistence, policy-simulator, governance-sandbox, failure-replay, governance-validator. fairness-engine removed entirely (S1, 2026-07-19).
 
 ---
 
 ## 10. Frontend (Android/Kotlin)
 
-### 10.1 MainActivity (`frontend/app/.../MainActivity.kt`)
+### 10.1 MainActivity (`frontends/android/.../MainActivity.kt`)
 **Responsibility:** Single-activity with bottom navigation. 5 fragments.
 
 ### 10.2 GenerateViewModel

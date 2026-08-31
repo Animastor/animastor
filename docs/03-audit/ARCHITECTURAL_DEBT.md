@@ -263,11 +263,10 @@ The following bugs were closed as part of sprint N.0–N.9. Details in `docs/TOD
 **What was done (Н.7, §5.1 — `f0b81de`):**
 - ✅ `executeAudioDispatch/ImageDispatch/VideoDispatch` → `setAssetState(..., AssetState.GENERATING)`
 
-**Remaining:**
-- ❌ `SceneState` constants retained for backward compat (read by player and debug endpoints)
-- ❌ `deriveLinearState` / `syncLinearState` retained to support legacy Redis keys
-
-Dependency on `SceneState` constants in routes and reconciliation — doesn't block but pollutes code. Can be removed later when player stops reading `scene-state` keys.
+**Remaining (T8 + dead code cleanup, July 2026):**
+- ✅ `SceneState` enum, `syncLinearState()`, `deriveLinearState()` — removed. Per-asset is the sole source of truth.
+- ✅ Keys `animastor:scene-state:*` no longer written.
+- ✅ All consumers migrated to per-asset `getAssetStates()`.
 
 ---
 
