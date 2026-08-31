@@ -687,6 +687,7 @@ interface BackendApi {
     suspend fun setupInstructions(
         @Query("profile_id") profileId: String,
         @Query("platform") platform: String,
+        @Query("deployment") deployment: String = "native",
         @Query("mode") mode: String
     ): SetupInstructions
 

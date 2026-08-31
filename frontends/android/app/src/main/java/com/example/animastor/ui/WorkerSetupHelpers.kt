@@ -1,5 +1,6 @@
 package com.example.animastor.ui
 
+import com.example.animastor.repository.DeploymentCapability
 import com.example.animastor.repository.SetupArtifactInfo
 import com.example.animastor.repository.SetupInstructions
 import com.example.animastor.repository.SetupMethod
@@ -21,6 +22,9 @@ object WorkerSetupHelpers {
     const val PLATFORM_LINUX = "linux"
     const val PLATFORM_WINDOWS = "windows"
     const val PLATFORM_DOCKER = "docker"
+
+    const val DEPLOYMENT_NATIVE = "native"
+    const val DEPLOYMENT_DOCKER = "docker"
 
     const val MODE_MANAGED = "managed"
     const val MODE_EXISTING = "existing"
@@ -130,6 +134,111 @@ object WorkerSetupHelpers {
         )
     }
 
+    // ── Deployment options (the capability model, rendered) ──────────────
+
+    /** One selectable "Platform · Deployment" choice in the wizard
+     *  (web parity: DeploymentOption in workerSetup.ts). */
+    data class DeploymentOption(
+        val key: String,
+        /** linux | windows */
+        val platform: String,
+        /** native | docker */
+        val deployment: String,
+        /** Platform × Deployment label, e.g. "Linux · Native". */
+        val label: String,
+        /** stable | preview | experimental */
+        val availability: String,
+        /** i18n key for the availability badge. */
+        val availabilityKey: String,
+        /** True only when the combination can serve the selected mode. */
+        val selectable: Boolean,
+        val stateKey: String,
+        val installerVersion: String?,
+        /** Backend notice for non-stable levels — informational. */
+        val notice: String?
+    )
+
+    /** Artifact availability of one OS platform for the given mode
+     *  (same rules as [platformSelectable]). */
+    private fun osSelectable(methods: List<SetupMethod>, platform: String, mode: String?): Boolean {
+        val m = methods.find { it.platform == platform } ?: return false
+        if (m.status == "planned") return false
+        if (m.installer.available) return true
+        return mode == MODE_EXISTING && m.worker_bundle.available
+    }
+
+    private fun artifactStateKey(
+        methods: List<SetupMethod>, platform: String, mode: String?
+    ): Pair<String, String?> {
+        val m = methods.find { it.platform == platform }
+        if (m == null || m.status == "planned") return "worker_setup_platform_soon" to null
+        if (m.installer.available) return "worker_setup_platform_ready" to m.installer.version
+        if (m.worker_bundle.available) {
+            return if (mode == MODE_EXISTING) "worker_setup_platform_existing_only" to null
+            else "worker_setup_platform_no_installer" to null
+        }
+        return "worker_setup_platform_unavailable" to m.installer.version
+    }
+
+    /**
+     * Map the backend capability model to wizard choices. The docker
+     * deployment deploys linux (its artifacts ARE the linux artifacts); it
+     * stays a managed-mode path. Unallowed combinations (windows+docker) are
+     * never rendered. If the backend response carries no capabilities, the
+     * honest fallback mirrors the legacy platform options — never a locally
+     * invented availability table.
+     */
+    fun deploymentOptions(
+        methods: List<SetupMethod>,
+        capabilities: List<DeploymentCapability>?,
+        mode: String? = null
+    ): List<DeploymentOption> {
+        val caps = if (!capabilities.isNullOrEmpty()) capabilities else listOf(
+            DeploymentCapability(PLATFORM_LINUX, DEPLOYMENT_NATIVE, "stable", true, null, null),
+            DeploymentCapability(PLATFORM_WINDOWS, DEPLOYMENT_NATIVE, "preview", true, null, null),
+            DeploymentCapability(PLATFORM_LINUX, DEPLOYMENT_DOCKER, "experimental", true, null, null)
+        )
+        val order = listOf("linux-native", "windows-native", "linux-docker")
+        return order.mapNotNull { key ->
+            val parts = key.split("-")
+            val platform = parts[0]
+            val deployment = parts[1]
+            val cap = caps.find { it.platform == platform && it.deployment == deployment }
+            if (cap == null || !cap.allowed || cap.availability == null) return@mapNotNull null
+            val artifactPlatform = PLATFORM_LINUX // docker deploys linux
+            val selectable = if (deployment == DEPLOYMENT_DOCKER) {
+                mode == MODE_MANAGED && osSelectable(methods, artifactPlatform, MODE_MANAGED)
+            } else {
+                osSelectable(methods, platform, mode)
+            }
+            val (stateKey, installerVersion) = artifactStateKey(
+                methods,
+                if (deployment == DEPLOYMENT_DOCKER) PLATFORM_LINUX else platform,
+                mode
+            )
+            DeploymentOption(
+                key = key,
+                platform = platform,
+                deployment = deployment,
+                label = when (key) {
+                    "linux-native" -> "Linux · Native"
+                    "windows-native" -> "Windows · Native"
+                    else -> "Linux · Docker"
+                },
+                availability = cap.availability,
+                availabilityKey = when (cap.availability) {
+                    "stable" -> "worker_setup_availability_stable"
+                    "preview" -> "worker_setup_availability_preview"
+                    else -> "worker_setup_availability_experimental"
+                },
+                selectable = selectable,
+                stateKey = stateKey,
+                installerVersion = installerVersion,
+                notice = cap.notice
+            )
+        }
+    }
+
     // ── Extended worker status model ─────────────────────────────────────
 
     /** Extended status model → i18n key (legacy statuses keep their keys;
@@ -162,8 +271,10 @@ object WorkerSetupHelpers {
         val profileId: String? = null,
         /** managed | existing */
         val mode: String? = null,
-        /** linux | windows | docker */
-        val platform: String? = null
+        /** linux | windows */
+        val platform: String? = null,
+        /** native | docker (chosen together with the platform — one capability) */
+        val deployment: String? = null
     )
 
     fun initialWizardState(): WizardState = WizardState()
@@ -172,7 +283,7 @@ object WorkerSetupHelpers {
         when (state.step) {
             WizardStep.PROFILE -> state.profileId != null
             WizardStep.MODE -> state.mode != null
-            WizardStep.PLATFORM -> state.platform != null && platformSelectable
+            WizardStep.PLATFORM -> state.platform != null && state.deployment != null && platformSelectable
             WizardStep.CREATE -> nameValid
             WizardStep.INSTALL -> false
         }
@@ -205,6 +316,11 @@ object WorkerSetupHelpers {
         "verify" -> "worker_setup_step_verify_title"
         "installer-unavailable" -> "worker_setup_step_installer_unavailable_title"
         "platform-planned" -> "worker_setup_step_planned_title"
+        "isolated-unavailable" -> "worker_setup_step_isolated_unavailable_title"
+        "docker-prerequisites" -> "worker_setup_step_docker_prereq_title"
+        "docker-build" -> "worker_setup_step_docker_build_title"
+        "docker-install" -> "worker_setup_step_docker_install_title"
+        "docker-runtime" -> "worker_setup_step_docker_runtime_title"
         else -> null
     }
 
@@ -220,6 +336,11 @@ object WorkerSetupHelpers {
         "verify" -> "worker_setup_step_verify_body"
         "installer-unavailable" -> "worker_setup_step_installer_unavailable_body"
         "platform-planned" -> "worker_setup_step_planned_body"
+        "isolated-unavailable" -> "worker_setup_step_isolated_unavailable_body"
+        "docker-prerequisites" -> "worker_setup_step_docker_prereq_body"
+        "docker-build" -> "worker_setup_step_docker_build_body"
+        "docker-install" -> "worker_setup_step_docker_install_body"
+        "docker-runtime" -> "worker_setup_step_docker_runtime_body"
         else -> null
     }
 

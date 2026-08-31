@@ -249,11 +249,18 @@ describe('Private worker setup contract API (Phase 3)', () => {
             expect(linux.uninstaller.status).to.equal('planned');
         });
 
-        it('Windows is planned — schema-ready for future available=true', async () => {
-            const { methods } = await (await fetch(`${base}/api/v1/private-worker/setup/methods`, { headers: { Cookie: alice.cookie } })).json();
-            const windows = methods.find((m) => m.platform === 'windows');
-            expect(windows.installer).to.deep.include({ available: false, status: 'planned' });
+        it('Windows mirrors hub artifacts; methods response carries the capability model', async () => {
+            const res = await fetch(`${base}/api/v1/private-worker/setup/methods`, { headers: { Cookie: alice.cookie } });
+            expect(res.status).to.equal(200);
+            const body = await res.json();
+            const windows = body.methods.find((m) => m.platform === 'windows');
+            expect(windows.installer).to.deep.include({ available: true, status: 'draft' });
             expect(windows.uninstaller).to.deep.include({ available: false, status: 'planned' });
+            // The single Platform × Deployment × Availability source of truth:
+            expect(body.capabilities.map((c) => `${c.platform}:${c.deployment}:${c.availability}`)).to.deep.equal([
+                'linux:native:stable', 'linux:docker:experimental', 'windows:native:preview', 'windows:docker:null',
+            ]);
+            expect(body.capabilities.find((c) => c.platform === 'windows' && c.deployment === 'docker').allowed).to.equal(false);
         });
 
         it('artifacts endpoint: linux ok, unsupported platform → 404', async () => {
@@ -341,11 +348,31 @@ describe('Private worker setup contract API (Phase 3)', () => {
             expect(JSON.stringify(body)).to.not.contain('cli.js install');
         });
 
-        it('existing mode yields prerequisites; windows yields planned flow', async () => {
-            const existing = await (await fetch(`${base}/api/v1/private-worker/setup/instructions?profile_id=image/qwen-image&mode=existing`, { headers: { Cookie: alice.cookie } })).json();
-            expect(existing.steps.map((s) => s.id)).to.contain('prerequisites');
+        it('windows native yields PowerShell bootstrap (Preview); docker yields container flow (Experimental)', async () => {
             const windows = await (await fetch(`${base}/api/v1/private-worker/setup/instructions?profile_id=image/qwen-image&platform=windows`, { headers: { Cookie: alice.cookie } })).json();
-            expect(windows.steps.map((s) => s.id)).to.contain('platform-planned');
+            expect(windows.platform).to.equal('windows');
+            expect(windows.deployment).to.equal('native');
+            expect(windows.availability).to.equal('preview');
+            expect(windows.steps.map((s) => s.id)).to.deep.equal(['download-bootstrap', 'run-bootstrap', 'verify']);
+            expect(windows.steps.find((s) => s.id === 'download-bootstrap').code).to.contain('Invoke-WebRequest');
+            expect(JSON.stringify(windows)).to.not.contain('curl -fsSL');
+
+            const dock = await (await fetch(`${base}/api/v1/private-worker/setup/instructions?profile_id=audio/qwen-tts&platform=linux&deployment=docker`, { headers: { Cookie: alice.cookie } })).json();
+            expect(dock.platform).to.equal('linux');
+            expect(dock.deployment).to.equal('docker');
+            expect(dock.availability).to.equal('experimental');
+            expect(dock.steps.map((s) => s.id)).to.include('docker-prerequisites');
+            expect(dock.steps.find((s) => s.id === 'docker-prerequisites').requirements.docker).to.contain('Docker must be available on the host');
+        });
+
+        it('legacy docker platform param maps to linux+docker; windows+docker → 400 unsupported_combination', async () => {
+            const legacy = await (await fetch(`${base}/api/v1/private-worker/setup/instructions?profile_id=audio/qwen-tts&platform=docker`, { headers: { Cookie: alice.cookie } })).json();
+            expect(legacy.platform).to.equal('linux');
+            expect(legacy.deployment).to.equal('docker');
+
+            const bad = await fetch(`${base}/api/v1/private-worker/setup/instructions?profile_id=image/qwen-image&platform=windows&deployment=docker`, { headers: { Cookie: alice.cookie } });
+            expect(bad.status).to.equal(400);
+            expect((await bad.json()).code).to.equal('unsupported_combination');
         });
 
         it('token appears only as a placeholder', async () => {
@@ -476,10 +503,19 @@ describe('Private worker setup contract API (Phase 3)', () => {
             expect(conflict.body.sharing.verdict).to.equal('REQUIRES_ISOLATION');
         });
 
-        it('windows → BLOCKED PLATFORM_NOT_SUPPORTED; invalid inputs → coded 4xx', async () => {
+        it('windows native plan → READY_WITH_WARNINGS (preview); windows+docker plan → BLOCKED; invalid inputs → coded 4xx', async () => {
             const win = await plan(alice.cookie, { profile_ids: ['image/qwen-image'], mode: 'managed', platform: 'windows' });
-            expect(win.body.result).to.equal('BLOCKED');
-            expect(win.body.blocks[0].code).to.equal('PLATFORM_NOT_SUPPORTED');
+            expect(win.body.result).to.equal('READY_WITH_WARNINGS');
+            expect(win.body.availability).to.equal('preview');
+            expect(win.body.blocks).to.deep.equal([]);
+
+            const winDocker = await plan(alice.cookie, { profile_ids: ['image/qwen-image'], mode: 'managed', platform: 'windows', deployment: 'docker' });
+            expect(winDocker.body.result).to.equal('BLOCKED');
+            expect(winDocker.body.blocks[0].code).to.equal('UNSUPPORTED_COMBINATION');
+
+            const dock = await plan(alice.cookie, { profile_ids: ['image/qwen-image'], mode: 'managed', deployment: 'docker' });
+            expect(dock.body.availability).to.equal('experimental');
+            expect(dock.body.warnings.join(' ')).to.contain('Experimental');
 
             const unknown = await plan(alice.cookie, { profile_ids: ['nope/x'], mode: 'managed' });
             expect(unknown.res.status).to.equal(400);

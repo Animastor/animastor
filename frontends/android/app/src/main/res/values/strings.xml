@@ -602,6 +602,11 @@
     <string name="worker_setup_platform_no_installer">Installer temporarily unavailable. Existing ComfyUI setup may still be available.</string>
     <string name="worker_setup_platform_soon">Coming soon</string>
     <string name="worker_setup_platform_unavailable">Temporarily unavailable</string>
+    <string name="worker_setup_availability_stable">Stable</string>
+    <string name="worker_setup_availability_preview">Preview</string>
+    <string name="worker_setup_availability_experimental">Experimental</string>
+    <string name="worker_setup_report_problem_hint">Something went wrong during installation?</string>
+    <string name="worker_setup_report_problem">Report an installation problem</string>
     <string name="worker_setup_create_title">Create the worker</string>
     <string name="worker_setup_create_body">The worker record is created in your workspace. Its Worker Key is shown once — the installer on the GPU machine will ask for it.</string>
     <string name="worker_setup_key_title">Worker Key (shown once)</string>
@@ -644,6 +649,16 @@
     <string name="worker_setup_step_installer_unavailable_body">The installer is temporarily unavailable in this deployment. The “Existing ComfyUI” flow may still be available: the worker runtime bundle is served.</string>
     <string name="worker_setup_step_planned_title">Not available yet</string>
     <string name="worker_setup_step_planned_body">This platform/flow is not published yet. Check back later.</string>
+    <string name="worker_setup_step_isolated_unavailable_title">Isolated mode is not available on Windows yet</string>
+    <string name="worker_setup_step_isolated_unavailable_body">The per-profile isolated flow currently ships with Linux instructions only. Use the managed or existing mode for the Windows (Preview) installer.</string>
+    <string name="worker_setup_step_docker_prereq_title">Docker — what the host needs</string>
+    <string name="worker_setup_step_docker_prereq_body">The worker runs inside a Docker container on your Linux host.</string>
+    <string name="worker_setup_step_docker_build_title">Build the worker image</string>
+    <string name="worker_setup_step_docker_build_body">Clone the Animastor repository and build the worker image from its canonical Dockerfile.</string>
+    <string name="worker_setup_step_docker_install_title">First run — install (interactive)</string>
+    <string name="worker_setup_step_docker_install_body">Run the install container once per profile. The installer asks for the Worker Key (hidden input) inside the container — paste the key saved above.</string>
+    <string name="worker_setup_step_docker_runtime_title">Runtime container</string>
+    <string name="worker_setup_step_docker_runtime_body">Start the persistent runtime container: it resumes automatically (ComfyUI + worker) and stays alive. For NVIDIA GPU hosts add --gpus all — the driver belongs to the host.</string>
     <!-- Extended worker status model (Setup Contract adapter) -->
     <string name="worker_status_connecting">Connecting</string>
     <string name="worker_status_error">Error</string>

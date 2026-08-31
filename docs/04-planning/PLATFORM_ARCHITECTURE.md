@@ -23,6 +23,8 @@
 9. [Path Handling](#9-paths)
 10. [Testing Strategy](#10-testing)
 11. [Current State](#11-current-state)
+12. [Docker E2E — VPS Validation (2026-08-31)](#12-docker-e2e)
+13. [Frontend Capability Exposure (2026-08-31)](#13-frontend-capability)
 
 ---
 
@@ -300,3 +302,34 @@ host; persistent volume semantics (pods may be ephemeral — the whole
 `/data/animastor` layout must survive replacement); network (outbound HTTPS
 to the hub is enough — no inbound ports); no special permissions beyond the
 docker socket/runtime; no published ports required.
+
+---
+
+## 13. Frontend Capability Exposure (2026-08-31) {#13-frontend-capability}
+
+The setup contract now exposes the Platform × Deployment matrix to BOTH
+frontends (Web + Android) as ONE capability model — no client-side
+availability tables, no per-component platform conditionals:
+
+- `GET /api/v1/private-worker/setup/methods` → `capabilities[]`:
+  `{ platform, deployment, availability, allowed, reason, notice }`
+  derived at runtime from the REAL adapter flags (`productionReady`,
+  `experimental`) — flipping an adapter flag is the only change needed to
+  move a combination experimental → preview → stable in every UI.
+- `GET /setup/instructions?profile_id=&platform=&deployment=&mode=` assembles
+  the per-combination flow server-side:
+  - `linux + native` (stable) → bash bootstrap (unchanged flow);
+  - `windows + native` (preview) → PowerShell bootstrap (`platform=windows`
+    is explicit in the bootstrap URL — no User-Agent sniffing dependency);
+  - `linux + docker` (experimental) → canonical container flow
+    (`docker build` + install/runtime `docker run`, profile/mode as env,
+    Worker Key entered interactively inside the container);
+  - `windows + docker` → 400 `unsupported_combination` (backend authority).
+- Legacy UI platform `docker` normalizes to `linux + docker` everywhere
+  (instructions, plan, artifacts) — old clients keep working.
+- Preview/Experimental notices are informational, never blocking; install
+  instructions render verbatim from the contract (no key material ever).
+- Availability levels: `linux+native = stable`, `windows+native = preview`,
+  `linux+docker = experimental` — Docker stays Experimental until the GPU
+  path passes hardware validation; Windows stays Preview until a dedicated
+  production validation pass.

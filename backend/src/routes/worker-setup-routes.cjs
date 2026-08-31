@@ -77,6 +77,8 @@ function statusForContractError(err) {
     switch (err.code) {
         case 'invalid_profile': return 400;
         case 'invalid_mode': return 400;
+        case 'invalid_deployment': return 400;
+        case 'unsupported_combination': return 400;
         case 'unsupported_platform': return 404;
         default: return 400;
     }
@@ -127,7 +129,13 @@ module.exports = function(app, redis, opts = {}) {
         if (!setupGuard(req, res)) return;
         try {
             const sums = await probe();
-            res.json(setupContract.getInstallationMethods({ registry, probe: sums }));
+            // capabilities = the single Platform × Deployment × Availability
+            // model (derived from the real installer adapters) — Web and
+            // Android render the SAME source of truth, never local tables.
+            res.json({
+                methods: setupContract.getInstallationMethods({ registry, probe: sums }).methods,
+                capabilities: setupContract.deploymentCapabilities(),
+            });
         } catch (err) {
             console.error('[WORKER-SETUP] methods failed:', err.message);
             res.status(500).json({ error: 'Failed to load installation methods' });
@@ -182,12 +190,13 @@ module.exports = function(app, redis, opts = {}) {
             ? q.profile_id.split(',').map((s) => s.trim()).filter(Boolean)
             : [];
         const platform = typeof q.platform === 'string' ? q.platform : 'linux';
+        const deployment = typeof q.deployment === 'string' ? q.deployment : 'native';
         const mode = typeof q.mode === 'string' ? q.mode : 'managed';
         try {
             const sums = await probe();
             const origin = `${req.protocol}://${req.get('host')}`;
             const instructions = setupContract.buildInstructions({
-                profileIds, platform, mode, origin, registry, probe: sums,
+                profileIds, platform, deployment, mode, origin, registry, probe: sums,
             });
             res.json(instructions);
         } catch (err) {
@@ -252,6 +261,7 @@ module.exports = function(app, redis, opts = {}) {
             : [];
         const mode = typeof body.mode === 'string' ? body.mode : null;
         const platform = body.platform === undefined ? 'linux' : body.platform;
+        const deployment = body.deployment === undefined ? 'native' : body.deployment;
         if (profileIds.length === 0) {
             return res.status(400).json({ error: 'profile_ids is required (non-empty array)', code: 'invalid_profile' });
         }
@@ -261,8 +271,11 @@ module.exports = function(app, redis, opts = {}) {
         if (typeof platform !== 'string') {
             return res.status(400).json({ error: 'platform must be a string', code: 'unsupported_platform' });
         }
+        if (typeof deployment !== 'string') {
+            return res.status(400).json({ error: 'deployment must be a string', code: 'invalid_deployment' });
+        }
         try {
-            const plan = setupContract.buildSetupPlan({ profileIds, mode, platform, registry });
+            const plan = setupContract.buildSetupPlan({ profileIds, mode, platform, deployment, registry });
             res.json(plan);
         } catch (err) {
             if (err.code) {

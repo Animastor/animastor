@@ -251,6 +251,21 @@ const dict = {
     worker_setup_step_installer_unavailable_body: 'Установщик сейчас не отдаётся этим деплоем. Может быть доступен сценарий «Существующий ComfyUI»: runtime-бандл воркера доступен.',
     worker_setup_step_planned_title: 'Пока недоступно',
     worker_setup_step_planned_body: 'Эта платформа/сценарий пока не опубликованы. Загляните позже.',
+    worker_setup_step_isolated_unavailable_title: 'Изолированный режим пока недоступен на Windows',
+    worker_setup_step_isolated_unavailable_body: 'Попрофильтный изолированный сценарий сейчас поставляется только с Linux-инструкциями. Для Windows (Preview) используйте режимы Managed или Existing.',
+    worker_setup_step_docker_prereq_title: 'Docker — что нужно хосту',
+    worker_setup_step_docker_prereq_body: 'Воркер работает в Docker-контейнере на вашем Linux-хосте.',
+    worker_setup_step_docker_build_title: 'Соберите образ воркера',
+    worker_setup_step_docker_build_body: 'Склонируйте репозиторий Animastor и соберите образ воркера из его канонического Dockerfile.',
+    worker_setup_step_docker_install_title: 'Первый запуск — установка (интерактивно)',
+    worker_setup_step_docker_install_body: 'Запустите install-контейнер один раз для каждого профиля. Установщик запросит ключ воркера (скрытый ввод) внутри контейнера — вставьте ключ, сохранённый выше.',
+    worker_setup_step_docker_runtime_title: 'Runtime-контейнер',
+    worker_setup_step_docker_runtime_body: 'Запустите постоянный контейнер: он автоматически продолжит установку (ComfyUI + воркер) и останется живым. Для NVIDIA-хостов добавьте --gpus all — драйвер принадлежит хосту.',
+    worker_setup_availability_stable: 'Stable',
+    worker_setup_availability_preview: 'Preview',
+    worker_setup_availability_experimental: 'Experimental',
+    worker_setup_report_problem_hint: 'Что-то пошло не так при установке?',
+    worker_setup_report_problem: 'Сообщить о проблеме установки',
     worker_status_connecting: 'Подключается',
     worker_status_error: 'Ошибка',
     worker_status_installing: 'Устанавливается',
@@ -873,6 +888,21 @@ const dict = {
     worker_setup_step_installer_unavailable_body: 'The installer is temporarily unavailable in this deployment. The "Existing ComfyUI" flow may still be available: the worker runtime bundle is served.',
     worker_setup_step_planned_title: 'Not available yet',
     worker_setup_step_planned_body: 'This platform/flow is not published yet. Check back later.',
+    worker_setup_step_isolated_unavailable_title: 'Isolated mode is not available on Windows yet',
+    worker_setup_step_isolated_unavailable_body: 'The per-profile isolated flow currently ships with Linux instructions only. Use the managed or existing mode for the Windows (Preview) installer.',
+    worker_setup_step_docker_prereq_title: 'Docker — what the host needs',
+    worker_setup_step_docker_prereq_body: 'The worker runs inside a Docker container on your Linux host.',
+    worker_setup_step_docker_build_title: 'Build the worker image',
+    worker_setup_step_docker_build_body: 'Clone the Animastor repository and build the worker image from its canonical Dockerfile.',
+    worker_setup_step_docker_install_title: 'First run — install (interactive)',
+    worker_setup_step_docker_install_body: 'Run the install container once per profile. The installer asks for the Worker Key (hidden input) inside the container — paste the key saved above.',
+    worker_setup_step_docker_runtime_title: 'Runtime container',
+    worker_setup_step_docker_runtime_body: 'Start the persistent runtime container: it resumes automatically (ComfyUI + worker) and stays alive. For NVIDIA GPU hosts add --gpus all — the driver belongs to the host.',
+    worker_setup_availability_stable: 'Stable',
+    worker_setup_availability_preview: 'Preview',
+    worker_setup_availability_experimental: 'Experimental',
+    worker_setup_report_problem_hint: 'Something went wrong during installation?',
+    worker_setup_report_problem: 'Report an installation problem',
     worker_status_connecting: 'Connecting',
     worker_status_error: 'Error',
     worker_status_installing: 'Installing',
@@ -1250,7 +1280,7 @@ const dict = {
   }
 } as const;
 
-export type StrKey = keyof typeof dict['en'];
+export type StrKey = keyof typeof dict['en'] & keyof typeof dict['ru'];
 
 export function currentLang(): Lang {
   return (document.documentElement.getAttribute('lang') as Lang) === 'ru' ? 'ru' : 'en';

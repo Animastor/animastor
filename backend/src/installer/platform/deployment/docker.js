@@ -9,9 +9,10 @@
  * (container paths, volume mapping, GPU runtime flags, connectivity,
  * lifecycle semantics) WITHOUT declaring docker production-supported.
  *
- * Status: experimental. Nothing in the setup contract or CLI advertises
- * docker yet; real validation happens on a VPS integration test before the
- * productionReady flag may flip.
+ * Status: experimental. The setup contract advertises it as Experimental
+ * (availability derived from these flags); the VPS E2E passed on CPU
+ * (2026-08-31) — the productionReady flag may flip only after the GPU path
+ * passes hardware validation.
  */
 
 const NAME = 'docker';

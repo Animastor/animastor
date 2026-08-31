@@ -53,7 +53,7 @@ data class SetupDependenciesSummary(
 
 /** Installation method: platform × lifecycle artifacts. */
 data class SetupMethod(
-    /** linux | windows | docker */
+    /** linux | windows | docker (docker = legacy UI dimension, a deployment of linux) */
     val platform: String? = null,
     val architectures: List<String> = emptyList(),
     /** available | unavailable | planned */
@@ -63,6 +63,24 @@ data class SetupMethod(
     val worker_bundle: SetupArtifactInfo = SetupArtifactInfo(),
     val supported_profiles: List<String> = emptyList(),
     val minimum_requirements: SetupMinimumRequirements? = null
+)
+
+/**
+ * The single backend capability model (GET /setup/methods → capabilities):
+ * every Platform × Deployment combination with its honest availability.
+ * Web and Android render the SAME source of truth — no local availability
+ * tables anywhere in the client.
+ */
+data class DeploymentCapability(
+    /** linux | windows */
+    val platform: String? = null,
+    /** native | docker */
+    val deployment: String? = null,
+    /** stable | preview | experimental (null when not allowed) */
+    val availability: String? = null,
+    val allowed: Boolean = false,
+    val reason: String? = null,
+    val notice: String? = null
 )
 
 data class SetupMinimumRequirements(
@@ -137,7 +155,14 @@ data class SetupWorkerKeyPolicy(
 
 /** GET /instructions response. */
 data class SetupInstructions(
+    /** linux | windows */
     val platform: String? = null,
+    /** native | docker (docker is a deployment of linux). */
+    val deployment: String? = null,
+    /** Honest availability of the selected combination (informational). */
+    val availability: String? = null,
+    /** Backend notice for non-stable combinations (rendered verbatim). */
+    val notice: String? = null,
     val mode: String? = null,
     val profile_ids: List<String> = emptyList(),
     val steps: List<SetupInstructionStep> = emptyList(),
@@ -198,7 +223,8 @@ data class SetupWorkerDetail(
 data class SetupPlanRequest(
     val profile_ids: List<String>,
     val mode: String,
-    val platform: String = "linux"
+    val platform: String = "linux",
+    val deployment: String = "native"
 )
 
 data class SetupPlanAction(
@@ -239,7 +265,11 @@ data class SetupPlanResponse(
 // ── Response envelopes ──────────────────────────────────────────────────
 
 data class SetupProfilesResponse(val profiles: List<SetupProfile> = emptyList())
-data class SetupMethodsResponse(val methods: List<SetupMethod> = emptyList())
+data class SetupMethodsResponse(
+    val methods: List<SetupMethod> = emptyList(),
+    /** The Platform × Deployment × Availability capability model. */
+    val capabilities: List<DeploymentCapability> = emptyList()
+)
 data class SetupWorkflowsResponse(val workflows: List<SetupWorkflow> = emptyList())
 data class SetupWorkerDetailResponse(val worker: SetupWorkerDetail? = null)
 

@@ -216,17 +216,68 @@ describe('Setup contract — projections (unit)', () => {
             expect(linux.worker_bundle.download_url).to.equal(null);
         });
 
-        it('Windows and Docker are schema-ready with status planned', () => {
+        it('Windows and Docker mirror the hub artifact availability (capability levels live in deploymentCapabilities)', () => {
             const { methods } = sc.getInstallationMethods({ probe: PROBE_OK });
             for (const platform of ['windows', 'docker']) {
                 const m = methods.find((x) => x.platform === platform);
-                expect(m.status).to.equal('planned');
-                expect(m.installer.available).to.equal(false);
-                expect(m.installer.status).to.equal('planned');
+                expect(m.status).to.equal('available');
+                expect(m.installer.available).to.equal(true);
+                expect(m.installer.status).to.equal('draft');
+                expect(m.installer.version).to.equal(sc.getInstallerVersion());
                 expect(m.uninstaller.available).to.equal(false);
                 expect(m.uninstaller.status).to.equal('planned');
-                expect(m.worker_bundle.available).to.equal(false);
+                expect(m.worker_bundle.available).to.equal(true);
             }
+            expect(methods.find((x) => x.platform === 'docker').deployment_of).to.equal('linux');
+            // hub down → everything degrades honestly, no fake availability
+            const down = sc.getInstallationMethods({ probe: null }).methods;
+            for (const platform of ['linux', 'windows', 'docker']) {
+                const m = down.find((x) => x.platform === platform);
+                expect(m.status).to.equal('unavailable');
+                expect(m.installer.available).to.equal(false);
+            }
+        });
+
+        it('deployment capabilities: the full Platform × Deployment matrix with honest availability', () => {
+            const caps = sc.deploymentCapabilities();
+            expect(caps.map((c) => `${c.platform}:${c.deployment}`)).to.deep.equal([
+                'linux:native', 'linux:docker', 'windows:native', 'windows:docker',
+            ]);
+            const byKey = Object.fromEntries(caps.map((c) => [`${c.platform}:${c.deployment}`, c]));
+            expect(byKey['linux:native']).to.include({ allowed: true, availability: 'stable', notice: null });
+            expect(byKey['windows:native']).to.include({ allowed: true, availability: 'preview' });
+            expect(byKey['windows:native'].notice).to.contain('Preview');
+            expect(byKey['linux:docker']).to.include({ allowed: true, availability: 'experimental' });
+            expect(byKey['linux:docker'].notice).to.contain('Experimental');
+            expect(byKey['windows:docker']).to.include({ allowed: false, availability: null, reason: 'unsupported_combination' });
+            for (const c of caps) if (c.allowed) expect(sc.AVAILABILITY_LEVELS).to.include(c.availability);
+        });
+
+        it('capability levels are derived from the real installer adapter flags (single source of truth)', () => {
+            const linux = require('../src/installer/platform/linux');
+            const windows = require('../src/installer/platform/windows');
+            const native = require('../src/installer/platform/deployment/native');
+            const docker = require('../src/installer/platform/deployment/docker');
+            expect(linux.productionReady && native.productionReady).to.equal(true);
+            expect(windows.productionReady).to.equal(false);   // → preview
+            expect(docker.productionReady).to.equal(false);    // → experimental
+            expect(docker.experimental).to.equal(true);
+            // flipping an adapter flag must move the capability level — the
+            // contract and the installer can never disagree
+            expect(sc.deploymentCapabilities().find((c) => c.platform === 'windows' && c.deployment === 'native').availability)
+                .to.equal(windows.productionReady ? 'stable' : 'preview');
+        });
+
+        it('resolveDeploymentTarget: legacy docker platform, coded rejections', () => {
+            const legacy = sc.resolveDeploymentTarget({ platform: 'docker' });
+            expect(legacy).to.include({ platform: 'linux', deployment: 'docker' });
+            expect(legacy.capability.availability).to.equal('experimental');
+            try { sc.resolveDeploymentTarget({ platform: 'windows', deployment: 'docker' }); expect.fail('should throw'); }
+            catch (e) { expect(e.code).to.equal('unsupported_combination'); }
+            try { sc.resolveDeploymentTarget({ platform: 'linux', deployment: 'k8s' }); expect.fail('should throw'); }
+            catch (e) { expect(e.code).to.equal('invalid_deployment'); }
+            try { sc.resolveDeploymentTarget({ platform: 'solaris' }); expect.fail('should throw'); }
+            catch (e) { expect(e.code).to.equal('unsupported_platform'); }
         });
 
         it('no shell/file-format details leak into methods metadata', () => {
@@ -567,12 +618,114 @@ describe('Setup contract — projections (unit)', () => {
             expect(download.code).to.contain('mode=existing');
         });
 
-        it('windows returns the planned flow without commands', () => {
+        it('windows native (Preview) → PowerShell bootstrap, never Linux commands', () => {
             const i = sc.buildInstructions({
-                profileIds: ['image/qwen-image'], platform: 'windows', mode: 'managed', probe: PROBE_OK,
+                profileIds: ['image/qwen-image'], platform: 'windows', mode: 'managed',
+                origin: 'https://app.animastor.in', probe: PROBE_OK,
             });
-            expect(i.steps.map((s) => s.id)).to.deep.equal(['platform-planned']);
-            expect(JSON.stringify(i)).to.not.contain('curl');
+            expect(i.platform).to.equal('windows');
+            expect(i.deployment).to.equal('native');
+            expect(i.availability).to.equal('preview');
+            expect(i.notice).to.contain('Preview');
+            expect(i.steps.map((s) => s.id)).to.deep.equal(['download-bootstrap', 'run-bootstrap', 'verify']);
+            const download = i.steps.find((s) => s.id === 'download-bootstrap');
+            expect(download.code).to.contain('Invoke-WebRequest');
+            expect(download.code).to.contain('platform=windows');
+            expect(download.code).to.contain('https://app.animastor.in/gpu/installer?profile=image%2Fqwen-image&mode=managed');
+            const run = i.steps.find((s) => s.id === 'run-bootstrap');
+            expect(run.code).to.contain('powershell -ExecutionPolicy Bypass -File');
+            const json = JSON.stringify(i);
+            expect(json).to.not.contain('curl ');
+            expect(json).to.not.contain('bash ');
+            // Worker Key never in the bootstrap URL or any command
+            expect(json).to.not.match(/wrk\./);
+            expect(json).to.not.contain('ANIMASTOR_WORKER_TOKEN=wrk');
+        });
+
+        it('linux native keeps the stable flow unchanged (curl + bash, explicit platform param)', () => {
+            const i = sc.buildInstructions({
+                profileIds: ['image/qwen-image'], platform: 'linux', deployment: 'native', mode: 'managed',
+                origin: 'https://app.animastor.in', probe: PROBE_OK,
+            });
+            expect(i.platform).to.equal('linux');
+            expect(i.deployment).to.equal('native');
+            expect(i.availability).to.equal('stable');
+            expect(i.notice).to.equal(null);
+            const download = i.steps.find((s) => s.id === 'download-bootstrap');
+            expect(download.code).to.contain('curl -fsSL -o animastor-installer.sh');
+            expect(download.code).to.contain('platform=linux');
+            expect(i.steps.find((s) => s.id === 'run-bootstrap').code).to.equal('bash animastor-installer.sh');
+            expect(i.verify_command).to.contain('status.sh');
+        });
+
+        it('docker deployment (Experimental) → container flow; profile/mode separate; key never in commands', () => {
+            const i = sc.buildInstructions({
+                profileIds: ['audio/qwen-tts'], platform: 'linux', deployment: 'docker', mode: 'managed',
+                origin: 'https://app.animastor.in', probe: PROBE_OK,
+            });
+            expect(i.platform).to.equal('linux');
+            expect(i.deployment).to.equal('docker');
+            expect(i.availability).to.equal('experimental');
+            expect(i.notice).to.contain('Experimental');
+            expect(i.steps.map((s) => s.id)).to.deep.equal([
+                'docker-prerequisites', 'docker-build', 'docker-install', 'docker-runtime', 'verify',
+            ]);
+            const prereq = i.steps.find((s) => s.id === 'docker-prerequisites');
+            expect(prereq.requirements.docker).to.contain('Docker must be available on the host');
+            expect(prereq.requirements.gpu).to.contain('NVIDIA Container Toolkit');
+            expect(prereq.requirements.gpu).to.contain('host');
+            const install = i.steps.find((s) => s.id === 'docker-install');
+            expect(install.code).to.contain('-e ANIMASTOR_PROFILE=audio/qwen-tts');
+            expect(install.code).to.contain('-e ANIMASTOR_MODE=managed');
+            expect(install.code).to.contain('animastor-worker install');
+            expect(install.body).to.match(/Worker Key/i);
+            const runtime = i.steps.find((s) => s.id === 'docker-runtime');
+            expect(runtime.code).to.contain('--restart unless-stopped');
+            expect(runtime.code).to.contain('--gpus all');
+            const json = JSON.stringify(i);
+            // GPU drivers belong to the host — never "install the driver in the container"
+            expect(prereq.requirements.gpu).to.contain('never install them inside the container');
+            expect(json).to.not.match(/wrk\./);
+            // the container fetches the bundle itself; no bash bootstrap here
+            expect(json).to.not.contain('bash animastor-installer.sh');
+            expect(i.installer.download_url).to.equal('https://app.animastor.in/gpu/installer/bundle');
+            expect(i.verify_command).to.equal(null);
+        });
+
+        it('legacy UI platform docker maps to linux + docker deployment', () => {
+            const i = sc.buildInstructions({
+                profileIds: ['audio/qwen-tts'], platform: 'docker', mode: 'managed',
+                origin: 'https://app.animastor.in', probe: PROBE_OK,
+            });
+            expect(i.platform).to.equal('linux');
+            expect(i.deployment).to.equal('docker');
+            expect(i.availability).to.equal('experimental');
+        });
+
+        it('windows + docker is rejected (backend authority, not frontend)', () => {
+            try {
+                sc.buildInstructions({
+                    profileIds: ['image/qwen-image'], platform: 'windows', deployment: 'docker',
+                    mode: 'managed', probe: PROBE_OK,
+                });
+                expect.fail('should throw');
+            } catch (e) { expect(e.code).to.equal('unsupported_combination'); }
+        });
+
+        it('windows + isolated → honest notice, no invented Windows commands', () => {
+            const i = sc.buildInstructions({
+                profileIds: ['image/qwen-image'], platform: 'windows', mode: 'isolated', probe: PROBE_OK,
+            });
+            expect(i.steps.map((s) => s.id)).to.deep.equal(['isolated-unavailable']);
+            expect(JSON.stringify(i)).to.not.contain('tar -xzf');
+        });
+
+        it('docker deployment without the hub installer → degraded honest flow', () => {
+            const i = sc.buildInstructions({
+                profileIds: ['image/qwen-image'], platform: 'linux', deployment: 'docker', mode: 'managed',
+            });
+            expect(i.steps.map((s) => s.id)).to.deep.equal(['installer-unavailable']);
+            expect(JSON.stringify(i)).to.not.contain('docker run');
         });
 
         it('installer artifact unavailable → degraded flow (no fake commands)', () => {
@@ -796,11 +949,34 @@ describe('Setup contract — projections (unit)', () => {
             } catch (e) { expect(e.code).to.equal('invalid_mode'); }
         });
 
-        it('windows platform → BLOCKED with PLATFORM_NOT_SUPPORTED', () => {
-            const plan = sc.buildSetupPlan({ profileIds: ['image/qwen-image'], mode: 'managed', platform: 'windows' });
+        it('windows native → allowed with Preview warning; docker → Experimental warning', () => {
+            const win = sc.buildSetupPlan({ profileIds: ['image/qwen-image'], mode: 'managed', platform: 'windows' });
+            expect(win.result).to.equal('READY_WITH_WARNINGS');
+            expect(win.platform).to.equal('windows');
+            expect(win.deployment).to.equal('native');
+            expect(win.availability).to.equal('preview');
+            expect(win.blocks).to.deep.equal([]);
+            expect(win.warnings.join(' ')).to.contain('Preview');
+
+            const dock = sc.buildSetupPlan({ profileIds: ['image/qwen-image'], mode: 'managed', platform: 'linux', deployment: 'docker' });
+            expect(dock.result).to.equal('READY_WITH_WARNINGS');
+            expect(dock.availability).to.equal('experimental');
+            expect(dock.blocks).to.deep.equal([]);
+            expect(dock.warnings.join(' ')).to.contain('Experimental');
+        });
+
+        it('windows + docker → BLOCKED with UNSUPPORTED_COMBINATION', () => {
+            const plan = sc.buildSetupPlan({ profileIds: ['image/qwen-image'], mode: 'managed', platform: 'windows', deployment: 'docker' });
             expect(plan.result).to.equal('BLOCKED');
-            expect(plan.blocks[0].code).to.equal('PLATFORM_NOT_SUPPORTED');
+            expect(plan.blocks[0].code).to.equal('UNSUPPORTED_COMBINATION');
             expect(plan.actions).to.deep.equal([]);
+        });
+
+        it('legacy platform docker in plan → linux + docker experimental', () => {
+            const plan = sc.buildSetupPlan({ profileIds: ['image/qwen-image'], mode: 'managed', platform: 'docker' });
+            expect(plan.platform).to.equal('linux');
+            expect(plan.deployment).to.equal('docker');
+            expect(plan.availability).to.equal('experimental');
         });
 
         it('unknown profile / invalid mode / invalid platform throw coded errors', () => {

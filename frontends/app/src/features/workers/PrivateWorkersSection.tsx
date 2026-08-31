@@ -24,12 +24,12 @@ import {
 } from './privateWorkers';
 import {
   type SetupProfile, type SetupMethod, type SetupWorkflow, type SetupInstructions,
-  type SetupWorkerDetail, type WizardState,
+  type SetupWorkerDetail, type WizardState, type DeploymentCapability,
   fetchSetupProfiles, fetchSetupMethods, fetchSetupWorkflows,
   fetchSetupInstructions, fetchSetupWorkerStatus,
   resolveArtifactUrl, installerDownloadUrl, installerVersion, installerSha256,
-  groupProfilesByType, platformOptions, pickMethod,
-  platformSelectable, linuxModeAvailability,
+  groupProfilesByType, deploymentOptions, pickMethod,
+  linuxModeAvailability,
   setupStatusKey, setupStatusClass, initialWizardState, canGoNext,
   nextStep, prevStep, stepTitleKey, stepBodyKey, formatDiskBudget,
 } from './workerSetup';
@@ -249,6 +249,9 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
   const [state, setState] = useState<WizardState>(initialWizardState);
   const [profiles, setProfiles] = useState<SetupProfile[] | null>(null);
   const [methods, setMethods] = useState<SetupMethod[] | null>(null);
+  // The single backend capability model (Platform × Deployment × Availability)
+  // — the SAME source of truth the Android client renders.
+  const [capabilities, setCapabilities] = useState<DeploymentCapability[] | null>(null);
   const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -271,6 +274,7 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
         if (!alive) return;
         setProfiles(p.profiles);
         setMethods(m.methods);
+        setCapabilities(m.capabilities ?? null);
       } catch (e) {
         if (alive) setLoadError(humanError(e));
       }
@@ -280,9 +284,12 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
 
   const profile = profiles?.find((p) => p.id === state.profileId) ?? null;
   const method = methods && state.platform ? pickMethod(methods, state.platform) : null;
-  const platforms = methods ? platformOptions(methods, state.mode) : [];
+  const deploymentOpts = methods ? deploymentOptions(methods, capabilities, state.mode) : [];
+  const selectedOption = deploymentOpts.find(
+    (o) => o.platform === state.platform && o.deployment === state.deployment,
+  ) ?? null;
   const modeAvail = methods ? linuxModeAvailability(methods) : { managed: false, existing: false };
-  const platformOk = platformSelectable(method, state.mode);
+  const platformOk = !!selectedOption?.selectable;
 
   const goto = useCallback((step: WizardState['step']) => {
     setState((s) => ({ ...s, step }));
@@ -310,12 +317,18 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
       setCreated({ token: res.token, worker: res.worker });
       goto('install');
       // Install-step data — instructions fall back to the legacy contract
-      // (compatibility path) if the Setup Contract endpoint fails.
+      // (compatibility path) if the Setup Contract endpoint fails. The
+      // selected platform AND deployment travel together (one capability).
       void (async () => {
         try {
           const [wf, ins] = await Promise.all([
             fetchSetupWorkflows(profile.id),
-            fetchSetupInstructions(profile.id, state.platform ?? 'linux', state.mode ?? 'managed'),
+            fetchSetupInstructions(
+              profile.id,
+              state.platform ?? 'linux',
+              state.mode ?? 'managed',
+              state.deployment ?? 'native',
+            ),
           ]);
           setWorkflows(wf.workflows);
           setInstructions(ins);
@@ -328,7 +341,7 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
     } finally {
       setBusy(false);
     }
-  }, [busy, profile, name, state.platform, state.mode, goto]);
+  }, [busy, profile, name, state.platform, state.deployment, state.mode, goto]);
 
   const onCopyKey = useCallback(async () => {
     if (!created) return;
@@ -421,26 +434,33 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        {/* ── Step 3: platform ── */}
+        {/* ── Step 3: platform × deployment (one capability model) ── */}
         {state.step === 'platform' && (
           <div class="setup__step">
             <p class="card__label">{t('worker_setup_platform_title')}</p>
-            {platforms.map((p) => (
-              <label class={'setup__choice' + (p.selectable ? '' : ' setup__choice--disabled')} key={p.platform}>
+            {deploymentOpts.map((o) => (
+              <label class={'setup__choice' + (o.selectable ? '' : ' setup__choice--disabled')} key={o.key}>
                 <input
-                  type="radio" name="setup-platform" value={p.platform}
-                  disabled={!p.selectable}
-                  checked={state.platform === p.platform}
-                  onChange={() => { if (p.selectable) setState((s) => ({ ...s, platform: p.platform })); }}
+                  type="radio" name="setup-deployment" value={o.key}
+                  disabled={!o.selectable}
+                  checked={state.platform === o.platform && state.deployment === o.deployment}
+                  onChange={() => {
+                    if (o.selectable) setState((s) => ({ ...s, platform: o.platform, deployment: o.deployment }));
+                  }}
                 />
                 <span class="setup__choice-main">
                   <span class="setup__choice-title">
-                    {p.platform === 'linux' ? 'Linux' : p.platform === 'windows' ? 'Windows' : 'Docker'}
+                    {o.label}
+                    {' '}· {t(o.availabilityKey)}
                   </span>
                   <span class="card__hint">
-                    {t(p.stateKey)}
-                    {p.selectable && p.installerVersion ? ` · v${p.installerVersion}` : ''}
+                    {t(o.stateKey)}
+                    {o.selectable && o.installerVersion ? ` · v${o.installerVersion}` : ''}
                   </span>
+                  {/* Preview/Experimental: informational notice, never blocking */}
+                  {o.selectable && o.notice && (
+                    <span class="card__hint card__hint--wrap">{o.notice}</span>
+                  )}
                 </span>
               </label>
             ))}
@@ -533,6 +553,13 @@ function InstallStep({ created, method, mode, workflows, instructions, instructi
 
   return (
     <div class="setup__step setup__install">
+      {/* Preview/Experimental deployment — informational notice from the
+          backend capability model, never blocking (same copy as the
+          installer prints). */}
+      {instructions?.availability && instructions.availability !== 'stable' && instructions.notice && (
+        <p class="modal__notice setup__notice">{instructions.notice}</p>
+      )}
+
       {/* One-time Worker Key (existing secure lifecycle — Phase 3.1 §14) */}
       <p class="modal__notice worker__warn">{t('worker_credential_warning')}</p>
       <p class="card__label">{t('worker_setup_key_title')}</p>
@@ -651,6 +678,18 @@ function InstallStep({ created, method, mode, workflows, instructions, instructi
       )}
 
       <p class="card__hint card__hint--wrap">{t('worker_setup_verify_hint')}</p>
+
+      {/* Preview/Experimental installs: a direct path for testers to report
+          real installation problems (informational — diagnostics above never
+          contain the Worker Key). */}
+      {instructions?.availability && instructions.availability !== 'stable' && (
+        <p class="card__hint card__hint--wrap">
+          {t('worker_setup_report_problem_hint')}{' '}
+          <a href="https://github.com/Animastor/animastor/issues" target="_blank" rel="noreferrer">
+            {t('worker_setup_report_problem')}
+          </a>
+        </p>
+      )}
     </div>
   );
 }

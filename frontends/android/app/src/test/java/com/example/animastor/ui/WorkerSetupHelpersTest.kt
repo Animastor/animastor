@@ -1,5 +1,6 @@
 package com.example.animastor.ui
 
+import com.example.animastor.repository.DeploymentCapability
 import com.example.animastor.repository.SetupArtifactInfo
 import com.example.animastor.repository.SetupInstructions
 import com.example.animastor.repository.SetupInstructionsInstaller
@@ -75,6 +76,24 @@ class WorkerSetupHelpersTest {
         method("linux", true, "1.0.0"),
         method("windows", false, null),
         method("docker", false, null)
+    )
+
+    /** The backend capability model (GET /setup/methods → capabilities). */
+    private val capabilities = listOf(
+        DeploymentCapability("linux", "native", "stable", true, null, null),
+        DeploymentCapability("windows", "native", "preview", true, null,
+            "Windows support is currently in Preview. The installer is under active development and may have platform-specific issues."),
+        DeploymentCapability("linux", "docker", "experimental", true, null,
+            "Docker deployment is Experimental. GPU support and host-specific Docker configurations may require additional setup."),
+        DeploymentCapability("windows", "docker", null, false, "unsupported_combination",
+            "Docker deployment requires the linux platform; windows containers are not a supported target.")
+    )
+
+    /** Methods shaped like the NEW backend responses (windows/docker available). */
+    private val methodsLive = listOf(
+        method("linux", true, "1.4.0").copy(status = "available"),
+        method("windows", true, "1.4.0").copy(status = "available"),
+        method("docker", true, "1.4.0").copy(status = "available")
     )
 
     // ── Profiles ─────────────────────────────────────────────────────────
@@ -208,7 +227,7 @@ class WorkerSetupHelpersTest {
     fun wizard_createOnlyWithValidName() {
         val base = WorkerSetupHelpers.WizardState(
             step = WizardStep.CREATE, profileId = "image/qwen-image",
-            mode = "managed", platform = "linux"
+            mode = "managed", platform = "linux", deployment = "native"
         )
         assertFalse(WorkerSetupHelpers.canGoNext(base, platformSelectable = true, nameValid = false))
         assertTrue(WorkerSetupHelpers.canGoNext(base, platformSelectable = true, nameValid = true))
@@ -219,7 +238,7 @@ class WorkerSetupHelpersTest {
         // The wizard state machine holds only selections — no credential field.
         val s = WorkerSetupHelpers.initialWizardState()
         val fields = s.javaClass.declaredFields.map { it.name }
-        assertEquals(listOf("step", "profileId", "mode", "platform"), fields)
+        assertEquals(listOf("step", "profileId", "mode", "platform", "deployment"), fields)
     }
 
     @Test
@@ -236,10 +255,76 @@ class WorkerSetupHelpersTest {
         assertEquals(WizardStep.INSTALL, WorkerSetupHelpers.nextStep(s))
         s = s.copy(step = WizardStep.INSTALL)
         assertNull(WorkerSetupHelpers.nextStep(s))
-        // platform step blocked unless the platform is actually selectable
-        val atPlatform = WorkerSetupHelpers.WizardState(step = WizardStep.PLATFORM, platform = "linux")
+        // platform step blocked unless platform AND deployment are chosen and
+        // the combination is actually selectable
+        val atPlatform = WorkerSetupHelpers.WizardState(
+            step = WizardStep.PLATFORM, platform = "linux", deployment = "native")
         assertFalse(WorkerSetupHelpers.canGoNext(atPlatform, platformSelectable = false, nameValid = false))
         assertTrue(WorkerSetupHelpers.canGoNext(atPlatform, platformSelectable = true, nameValid = false))
+        // a platform without a deployment choice never advances
+        assertFalse(WorkerSetupHelpers.canGoNext(
+            atPlatform.copy(deployment = null), platformSelectable = true, nameValid = false))
+    }
+
+    // ── Deployment options (capability model rendered) ───────────────────
+
+    @Test
+    fun deploymentOptions_availabilityLevelsFromBackendModel() {
+        val opts = WorkerSetupHelpers.deploymentOptions(methodsLive, capabilities, "managed")
+        assertEquals(listOf("linux-native", "windows-native", "linux-docker"), opts.map { it.key })
+        val byKey = opts.associateBy { it.key }
+        assertEquals("stable", byKey["linux-native"]!!.availability)
+        assertEquals("worker_setup_availability_stable", byKey["linux-native"]!!.availabilityKey)
+        assertNull(byKey["linux-native"]!!.notice)
+        assertEquals("preview", byKey["windows-native"]!!.availability)
+        assertEquals("worker_setup_availability_preview", byKey["windows-native"]!!.availabilityKey)
+        assertTrue(byKey["windows-native"]!!.notice!!.contains("Preview"))
+        assertEquals("experimental", byKey["linux-docker"]!!.availability)
+        assertEquals("worker_setup_availability_experimental", byKey["linux-docker"]!!.availabilityKey)
+        assertTrue(byKey["linux-docker"]!!.notice!!.contains("Experimental"))
+        // labels communicate WHERE (platform) and HOW (deployment)
+        assertEquals("Linux · Native", byKey["linux-native"]!!.label)
+        assertEquals("Windows · Native", byKey["windows-native"]!!.label)
+        assertEquals("Linux · Docker", byKey["linux-docker"]!!.label)
+    }
+
+    @Test
+    fun deploymentOptions_unsupportedCombinationsNeverRendered() {
+        val opts = WorkerSetupHelpers.deploymentOptions(methodsLive, capabilities, "managed")
+        assertTrue(opts.none { it.platform == "windows" && it.deployment == "docker" })
+    }
+
+    @Test
+    fun deploymentOptions_selectabilityFollowsRealArtifacts() {
+        // all artifacts up → everything selectable in managed mode
+        for (o in WorkerSetupHelpers.deploymentOptions(methodsLive, capabilities, "managed")) {
+            assertTrue(o.key, o.selectable)
+        }
+        // linux installer down → linux native AND docker (deploys linux) blocked
+        val linuxDown = listOf(
+            method("linux", false, "1.4.0", false),
+            method("windows", true, "1.4.0").copy(status = "available")
+        )
+        val opts = WorkerSetupHelpers.deploymentOptions(linuxDown, capabilities, "managed")
+        assertFalse(opts.find { it.key == "linux-native" }!!.selectable)
+        assertFalse(opts.find { it.key == "linux-docker" }!!.selectable)
+        assertTrue(opts.find { it.key == "windows-native" }!!.selectable)
+    }
+
+    @Test
+    fun deploymentOptions_dockerIsManagedModeOnly() {
+        val existing = WorkerSetupHelpers.deploymentOptions(methodsLive, capabilities, "existing")
+        assertFalse(existing.find { it.key == "linux-docker" }!!.selectable)
+        assertTrue(existing.find { it.key == "linux-native" }!!.selectable)
+        assertTrue(existing.find { it.key == "windows-native" }!!.selectable)
+    }
+
+    @Test
+    fun deploymentOptions_fallbackWithoutCapabilitiesNeverInvents() {
+        val opts = WorkerSetupHelpers.deploymentOptions(methodsLive, null, "managed")
+        assertEquals(listOf("linux-native", "windows-native", "linux-docker"), opts.map { it.key })
+        assertEquals(listOf("stable", "preview", "experimental"), opts.map { it.availability })
+        assertNull(opts.find { it.key == "windows-native" }!!.notice)
     }
 
     @Test
@@ -348,6 +433,16 @@ class WorkerSetupHelpersTest {
         assertEquals("worker_setup_step_download_bundle_title", WorkerSetupHelpers.stepTitleKey("download-bundle"))
         assertEquals("worker_setup_step_start_worker_body", WorkerSetupHelpers.stepBodyKey("start-worker"))
         assertEquals("worker_setup_step_installer_unavailable_title", WorkerSetupHelpers.stepTitleKey("installer-unavailable"))
+    }
+
+    @Test
+    fun instructionSteps_dockerAndWindowsPreviewStepsMapped() {
+        for (id in listOf("docker-prerequisites", "docker-build", "docker-install", "docker-runtime", "isolated-unavailable")) {
+            assertTrue(id, WorkerSetupHelpers.stepTitleKey(id) != null)
+            assertTrue(id, WorkerSetupHelpers.stepBodyKey(id) != null)
+        }
+        assertEquals("worker_setup_step_docker_install_title", WorkerSetupHelpers.stepTitleKey("docker-install"))
+        assertEquals("worker_setup_step_docker_runtime_body", WorkerSetupHelpers.stepBodyKey("docker-runtime"))
     }
 
     // ── Misc ─────────────────────────────────────────────────────────────

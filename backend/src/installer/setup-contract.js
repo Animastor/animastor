@@ -69,6 +69,117 @@ function getWorkerBundleVersion() {
 
 const PLATFORMS = Object.freeze(['linux', 'windows', 'docker']);
 
+/**
+ * OS platforms (installer/platform — Platform × Deployment are orthogonal:
+ * docker is a DEPLOYMENT of a platform, never an OS of its own). The legacy
+ * UI dimension 'docker' (PLATFORMS above) stays accepted everywhere and is
+ * normalized to platform=linux + deployment=docker.
+ */
+const OS_PLATFORMS = Object.freeze(['linux', 'windows']);
+
+/** Deployment targets exposed to the UI (installer/platform DEPLOYMENTS). */
+const DEPLOYMENTS = Object.freeze(['native', 'docker']);
+
+/** Availability levels of a platform+deployment combination. */
+const AVAILABILITY_LEVELS = Object.freeze(['stable', 'preview', 'experimental']);
+
+/**
+ * Canonical UI copy for non-stable combinations (informational, never
+ * blocking). The levels themselves are DERIVED from the real installer
+ * adapters (see deploymentCapabilities) — this map only carries the text.
+ */
+const DEPLOYMENT_NOTICES = Object.freeze({
+    'windows:native':
+        'Windows support is currently in Preview. The installer is under active development and may have platform-specific issues.',
+    'linux:docker':
+        'Docker deployment is Experimental. GPU support and host-specific Docker configurations may require additional setup.',
+});
+
+/** Availability level of one combination, derived from the adapter flags. */
+function availabilityLevel(platformAdapter, deploymentAdapter) {
+    if (platformAdapter.experimental || deploymentAdapter.experimental) return 'experimental';
+    if (!platformAdapter.productionReady || !deploymentAdapter.productionReady) return 'preview';
+    return 'stable';
+}
+
+/**
+ * The single capability model consumed by BOTH frontends: every allowed
+ * platform+deployment combination with its honest availability level.
+ *
+ * Derived from the REAL installer adapters (platform/linux.js, platform/
+ * windows.js, platform/deployment/*) — flipping an adapter flag is the only
+ * change needed to move a combination from experimental → preview → stable
+ * in the UI (no frontend change, ever).
+ *
+ * windows+docker is NOT allowed (docker is a linux deployment target —
+ * platform/index.js getDeploymentAdapter rejects it); it is still listed
+ * with allowed=false so the contract states the full matrix explicitly.
+ *
+ * @returns {Array<{platform: string, deployment: string, availability: ?string,
+ *                   allowed: boolean, reason: ?string, notice: ?string}>}
+ */
+function deploymentCapabilities() {
+    const linux = require('./platform/linux');
+    const windows = require('./platform/windows');
+    const native = require('./platform/deployment/native');
+    const docker = require('./platform/deployment/docker');
+    const entry = (platform, platformAdapter, deployment, deploymentAdapter) => {
+        if (deployment === 'docker' && platform !== 'linux') {
+            return {
+                platform, deployment, availability: null, allowed: false,
+                reason: 'unsupported_combination',
+                notice: 'Docker deployment requires the linux platform; windows containers are not a supported target.',
+            };
+        }
+        const availability = availabilityLevel(platformAdapter, deploymentAdapter);
+        const key = `${platform}:${deployment}`;
+        return {
+            platform,
+            deployment,
+            availability,
+            allowed: true,
+            reason: null,
+            notice: availability === 'stable' ? null : (DEPLOYMENT_NOTICES[key] || null),
+        };
+    };
+    return Object.freeze([
+        entry('linux', linux, 'native', native),
+        entry('linux', linux, 'docker', docker),
+        entry('windows', windows, 'native', windows),
+        entry('windows', windows, 'docker', docker),
+    ]);
+}
+
+/**
+ * Validate + normalize a UI deployment selection. Accepts the legacy UI
+ * platform 'docker' (→ linux + docker). Throws coded errors: the route maps
+ * unsupported_platform → 404, invalid_deployment / unsupported_combination
+ * → 400.
+ * @returns {{platform: string, deployment: string, capability: object}}
+ */
+function resolveDeploymentTarget({ platform = 'linux', deployment = 'native' } = {}) {
+    let p = platform;
+    let d = deployment;
+    if (p === 'docker') { p = 'linux'; d = 'docker'; } // legacy UI dimension
+    if (!OS_PLATFORMS.includes(p)) {
+        const err = new Error(`unsupported platform "${platform}" (expected one of ${[...OS_PLATFORMS, 'docker'].join(', ')})`);
+        err.code = 'unsupported_platform';
+        throw err;
+    }
+    if (!DEPLOYMENTS.includes(d)) {
+        const err = new Error(`unsupported deployment "${deployment}" (expected one of ${DEPLOYMENTS.join(', ')})`);
+        err.code = 'invalid_deployment';
+        throw err;
+    }
+    const capability = deploymentCapabilities().find((c) => c.platform === p && c.deployment === d);
+    if (!capability || !capability.allowed) {
+        const err = new Error(`the combination "${p} + ${d}" is not supported (docker deployment requires the linux platform)`);
+        err.code = 'unsupported_combination';
+        throw err;
+    }
+    return { platform: p, deployment: d, capability };
+}
+
 /** Install modes exposed to the UI (resolver RUNTIME_MODES minus none). */
 const INSTALL_MODES = Object.freeze(['managed', 'existing', 'shared', 'isolated']);
 
@@ -350,29 +461,80 @@ function getInstallationMethods({ registry = defaultRegistry, probe = null } = {
         },
     };
 
-    const planned = (platform) => ({
-        platform,
-        architectures: platform === 'windows' ? ['x86_64'] : [],
-        status: 'planned',
+    // Windows (native deployment): the installer bundle is platform-neutral
+    // and the hub serves a Windows bootstrap for it — availability mirrors
+    // the same hub probe as linux. The honest availability LEVEL lives in
+    // deploymentCapabilities (preview); here it is plain artifact metadata.
+    const windows = {
+        platform: 'windows',
+        architectures: ['x86_64'],
+        status: (installerAvailable || bundleAvailable) ? 'available' : 'unavailable',
         installer: {
-            available: false, status: 'planned', version: null,
-            download_url: null, sha256: null, signature: null, signature_algorithm: null,
+            available: installerAvailable,
+            // Implemented and test-covered, production validation pending —
+            // the same honest draft marker as linux.
+            status: installerAvailable ? 'draft' : 'unavailable',
+            version: (p.installer && p.installer.version) || getInstallerVersion(),
+            download_url: installerAvailable ? '/gpu/installer' : null,
+            sha256: (p.installer && p.installer.sha256) || null,
+            signature: null,
+            signature_algorithm: null,
         },
         uninstaller: {
             available: false, status: 'planned', version: null,
             download_url: null, sha256: null, signature: null, signature_algorithm: null,
         },
         worker_bundle: {
-            // The bundle itself is platform-neutral (Node.js); it becomes
-            // "available" for a platform together with its installer.
+            available: bundleAvailable,
+            status: bundleAvailable ? 'available' : 'unavailable',
+            version: (p.worker_bundle && p.worker_bundle.version) || getWorkerBundleVersion(),
+            download_url: bundleAvailable ? '/gpu/worker-bundle' : null,
+            sha256: (p.worker_bundle && p.worker_bundle.sha256) || null,
+            files: workerBundleFiles,
+        },
+        supported_profiles: profileIds,
+        minimum_requirements: {
+            node: strictestMinimum(manifests, 'nodejs'),
+            python: strictestMinimum(manifests, 'python'),
+            gpu: 'NVIDIA GPU with a CUDA-capable driver (detected by the installer; never installed/upgraded by it)',
+        },
+    };
+
+    // Docker (legacy UI platform — in the capability model it is the docker
+    // DEPLOYMENT of linux). Artifacts mirror linux: the container fetches
+    // the installer bundle from the hub itself. The honest availability
+    // LEVEL lives in deploymentCapabilities (experimental).
+    const docker = {
+        platform: 'docker',
+        deployment_of: 'linux',
+        architectures: ['x86_64'],
+        status: (installerAvailable || bundleAvailable) ? 'available' : 'unavailable',
+        installer: {
+            available: installerAvailable,
+            status: installerAvailable ? 'draft' : 'unavailable',
+            version: (p.installer && p.installer.version) || getInstallerVersion(),
+            download_url: installerAvailable ? '/gpu/installer' : null,
+            sha256: (p.installer && p.installer.sha256) || null,
+            signature: null,
+            signature_algorithm: null,
+        },
+        uninstaller: {
             available: false, status: 'planned', version: null,
-            download_url: null, sha256: null, files: [],
+            download_url: null, sha256: null, signature: null, signature_algorithm: null,
+        },
+        worker_bundle: {
+            available: bundleAvailable,
+            status: bundleAvailable ? 'available' : 'unavailable',
+            version: (p.worker_bundle && p.worker_bundle.version) || getWorkerBundleVersion(),
+            download_url: bundleAvailable ? '/gpu/worker-bundle' : null,
+            sha256: (p.worker_bundle && p.worker_bundle.sha256) || null,
+            files: workerBundleFiles,
         },
         supported_profiles: profileIds,
         minimum_requirements: null,
-    });
+    };
 
-    return { methods: [linux, planned('windows'), planned('docker')] };
+    return { methods: [linux, windows, docker] };
 }
 
 /**
@@ -459,6 +621,75 @@ function envTemplateBlock(manifests, { hubUrl = null } = {}) {
 }
 
 /**
+ * Docker deployment instruction steps — the canonical container flow
+ * (linux platform, E2E validated on a VPS: real API worker creation,
+ * interactive hidden Worker Key prompt inside the container, Online via
+ * beacon, real generation, crash recovery, container restart).
+ *
+ * The entrypoint (docker/worker/entrypoint.sh) fetches the installer bundle
+ * from the hub, verifies the hub-published sha256 and runs the universal
+ * installer inside the container. Profile/mode stay separate concepts —
+ * they travel as env (ANIMASTOR_PROFILE / ANIMASTOR_MODE), never mixed into
+ * the platform/deployment selection, and the Worker Key NEVER appears in
+ * any command (entered at the installer's hidden prompt).
+ *
+ * GPU drivers belong to the HOST environment — the container only sees the
+ * GPU through the runtime (--gpus all + NVIDIA Container Toolkit on the
+ * host); nothing NVIDIA-related is ever installed inside the container.
+ */
+function dockerContainerSteps({ profileIds, mode, hubUrl }) {
+    const steps = [];
+    steps.push({
+        id: 'docker-prerequisites',
+        title: 'Docker — what the host needs',
+        body: 'The worker runs inside a Docker container on your Linux host.',
+        requirements: {
+            docker: 'Docker must be available on the host.',
+            gpu: 'For NVIDIA GPU workloads, the host must provide NVIDIA drivers and container GPU runtime support (NVIDIA Container Toolkit). GPU drivers belong to the host — never install them inside the container.',
+        },
+    });
+    steps.push({
+        id: 'docker-build',
+        title: 'Build the worker image',
+        body: 'Clone the Animastor repository and build the worker image from its canonical Dockerfile (the image runs the universal installer in docker deployment).',
+        code: 'git clone https://github.com/Animastor/animastor.git\ncd animastor\ndocker build -t animastor-worker -f docker/worker/Dockerfile docker/worker',
+    });
+    steps.push({
+        id: 'docker-install',
+        title: 'First run — install (interactive)',
+        body: 'Run the install container once per profile. The installer asks for the Worker Key (hidden input) inside the container — paste the key saved above. Profile and mode are passed as configuration, never typed.',
+        code: profileIds.map((p) => [
+            'docker run -it --rm \\',
+            '    -v ~/animastor/data:/data/animastor \\',
+            '    --entrypoint /usr/local/bin/entrypoint.sh \\',
+            '    -e ANIMASTOR_EXIT_AFTER_INSTALL=1 \\',
+            `    -e ANIMASTOR_HUB_URL=${hubUrl || '<hub-url>'} \\`,
+            `    -e ANIMASTOR_PROFILE=${p} \\`,
+            `    -e ANIMASTOR_MODE=${mode} \\`,
+            '    animastor-worker install',
+        ].join('\n')).join('\n\n'),
+    });
+    steps.push({
+        id: 'docker-runtime',
+        title: 'Runtime container',
+        body: 'Start the persistent runtime container. On (re)start it resumes automatically (ComfyUI + worker) and stays alive as PID 1. For NVIDIA GPU hosts add --gpus all — the driver comes from the host.',
+        code: [
+            'docker run -d --name animastor-worker \\',
+            '    --restart unless-stopped \\',
+            '    -v ~/animastor/data:/data/animastor \\',
+            '    animastor-worker',
+            '# NVIDIA GPU host: add  --gpus all  to the command above',
+        ].join('\n'),
+    });
+    steps.push({
+        id: 'verify',
+        title: 'Verify',
+        body: 'After the container finishes installing, the worker connects to Animastor automatically. Return to Settings → Private Workers: the status changes to ONLINE after the first heartbeat, usually within ~30 seconds.',
+    });
+    return steps;
+}
+
+/**
  * Dynamic setup instructions (task §9, Phase 3.2 bootstrap flow). Nothing is
  * hardcoded in the frontends: commands, versions and checksums come from
  * canonical metadata. The Worker Key is referenced by placeholder ONLY — its
@@ -478,12 +709,13 @@ function envTemplateBlock(manifests, { hubUrl = null } = {}) {
  *      heartbeat (~30s). A terminal diagnostics command is provided as
  *      optional secondary info (verify_command), not as a required step.
  *
- * @param {{profileIds: string[], platform?: string, mode?: string,
- *          origin?: string, registry?: object, probe?: object}} args
+ * @param {{profileIds: string[], platform?: string, deployment?: string,
+ *          mode?: string, origin?: string, registry?: object, probe?: object}} args
  */
 function buildInstructions({
     profileIds,
     platform = 'linux',
+    deployment = 'native',
     mode = 'managed',
     origin = '',
     registry = defaultRegistry,
@@ -494,11 +726,10 @@ function buildInstructions({
         err.code = 'invalid_profile';
         throw err;
     }
-    if (!PLATFORMS.includes(platform)) {
-        const err = new Error(`unsupported platform "${platform}" (expected one of ${PLATFORMS.join(', ')})`);
-        err.code = 'unsupported_platform';
-        throw err;
-    }
+    // Platform × Deployment capability validation (single backend authority):
+    // legacy UI platform 'docker' normalizes to linux + docker; windows +
+    // docker is rejected here — the frontend is never the only gate.
+    const target = resolveDeploymentTarget({ platform, deployment });
     if (!INSTALL_MODES.includes(mode)) {
         const err = new Error(`unsupported mode "${mode}" (expected one of ${INSTALL_MODES.join(', ')})`);
         err.code = 'invalid_mode';
@@ -514,13 +745,18 @@ function buildInstructions({
         return m;
     });
 
-    const artifacts = getPlatformArtifacts({ platform, registry, probe });
+    // Artifacts always come from the OS platform method (docker deploys linux).
+    const artifacts = getPlatformArtifacts({ platform: target.platform, registry, probe });
     const base = String(origin || '').replace(/\/$/, '');
     const hubUrl = base ? `${base}/gpu` : null;
     const steps = [];
 
     const response = {
-        platform,
+        platform: target.platform,
+        deployment: target.deployment,
+        // Honest availability level + informational notice (null when stable).
+        availability: target.capability.availability,
+        notice: target.capability.notice,
         mode,
         profile_ids: profileIds,
         worker_key_policy: {
@@ -548,6 +784,27 @@ function buildInstructions({
     const bundleAvailable = !!(bundle && bundle.available);
 
     if (!installerAvailable) {
+        if (target.deployment === 'docker') {
+            // The container fetches the installer bundle itself — without
+            // the hub-served bundle the deployment cannot start. No fake
+            // commands (the host bundle flows do not apply to containers).
+            steps.push({
+                id: 'installer-unavailable',
+                title: 'Docker deployment temporarily unavailable',
+                body: 'The installer bundle is temporarily unavailable from this deployment, so the worker container cannot install. Please try again later.',
+            });
+            return response;
+        }
+        if (target.platform === 'windows' && mode === 'existing' && bundleAvailable) {
+            // The explicit bundle flow is a POSIX path — never rendered as
+            // Windows commands in Preview.
+            steps.push({
+                id: 'installer-unavailable',
+                title: 'Installer temporarily unavailable',
+                body: 'The Windows installer is temporarily unavailable. Please try again later.',
+            });
+            return response;
+        }
         if (mode === 'existing' && bundleAvailable) {
             // Existing ComfyUI without the installer: the worker runtime
             // bundle alone is enough to connect an already installed ComfyUI.
@@ -618,7 +875,11 @@ function buildInstructions({
     // ── Bootstrap flow (installer artifact is served by the hub) ────────
 
     const profileParam = encodeURIComponent(profileIds.join(','));
-    const bootstrapUrl = `${base}/gpu/installer?profile=${profileParam}&mode=${mode}`;
+    // platform is EXPLICIT in the bootstrap URL: the hub serves the matching
+    // launcher (bash for linux, PowerShell for windows) — no User-Agent
+    // sniffing dependency. Never a Worker Key here (credential gates in the
+    // bootstrap reject one even if someone tried).
+    const bootstrapUrl = `${base}/gpu/installer?profile=${profileParam}&mode=${mode}&platform=${target.platform}`;
     response.installer = {
         version: artifacts.installer.version,
         sha256: artifacts.installer.sha256 || null,
@@ -626,6 +887,25 @@ function buildInstructions({
         download_url: bootstrapUrl,
     };
     response.verify_command = '$HOME/animastor/tools/status.sh';
+
+    if (target.deployment === 'docker') {
+        // Docker deployment (linux platform) — the canonical container flow
+        // (E2E validated on a VPS). The entrypoint fetches + sha256-verifies
+        // the installer bundle from the hub and runs the real installer
+        // inside the container (deployment=docker auto-detected there); the
+        // Worker Key is asked interactively (hidden input) on first boot.
+        steps.push(...dockerContainerSteps({ profileIds, mode, hubUrl }));
+        response.installer = {
+            version: artifacts.installer.version,
+            sha256: artifacts.installer.sha256 || null,
+            status: artifacts.installer.status || 'available',
+            download_url: `${base}/gpu/installer/bundle`,
+        };
+        // No host-side verify command for containers — the page heartbeat
+        // below is the verification (nothing invented).
+        response.verify_command = null;
+        return response;
+    }
 
     if (mode === 'existing') {
         steps.push({
@@ -643,6 +923,16 @@ function buildInstructions({
     }
 
     if (mode === 'isolated') {
+        if (target.platform === 'windows') {
+            // The explicit per-profile bundle flow is a POSIX path — no
+            // invented Windows commands while Windows is Preview.
+            steps.push({
+                id: 'isolated-unavailable',
+                title: 'Isolated mode is not available on Windows yet',
+                body: 'The per-profile isolated flow currently ships with Linux instructions only. Use the managed or existing mode for the Windows (Preview) installer.',
+            });
+            return response;
+        }
         // Isolated mode = several independent ComfyUI environments — one
         // installer run per profile into its own root. That is beyond what a
         // single embedded-profile bootstrap run can express, so this
@@ -681,19 +971,37 @@ function buildInstructions({
         return response;
     }
 
-    steps.push({
-        id: 'download-bootstrap',
-        title: 'Download the installer',
-        body: `Download the bootstrap installer (installer version ${artifacts.installer.version}). The profile and connection mode you selected here are already embedded — nothing needs to be typed.`,
-        code: `curl -fsSL -o animastor-installer.sh ${bootstrapUrl}`,
-    });
+    if (target.platform === 'windows') {
+        // Windows Native (Preview): the hub serves the PowerShell launcher
+        // for this URL (platform=windows) — never Linux commands here.
+        steps.push({
+            id: 'download-bootstrap',
+            title: 'Download the installer',
+            body: `Download the bootstrap installer (installer version ${artifacts.installer.version}). The profile and connection mode you selected here are already embedded — nothing needs to be typed.`,
+            code: `Invoke-WebRequest -UseBasicParsing -Uri "${bootstrapUrl}" -OutFile animastor-installer.ps1`,
+        });
 
-    steps.push({
-        id: 'run-bootstrap',
-        title: 'Run the installer',
-        body: 'The installer itself downloads and verifies all components (ComfyUI, models, worker), then asks for the Worker Key (hidden input) — paste the key saved above.',
-        code: 'bash animastor-installer.sh',
-    });
+        steps.push({
+            id: 'run-bootstrap',
+            title: 'Run the installer',
+            body: 'The installer itself downloads and verifies all components (ComfyUI, models, worker), then asks for the Worker Key (hidden input) — paste the key saved above.',
+            code: 'powershell -ExecutionPolicy Bypass -File .\\animastor-installer.ps1',
+        });
+    } else {
+        steps.push({
+            id: 'download-bootstrap',
+            title: 'Download the installer',
+            body: `Download the bootstrap installer (installer version ${artifacts.installer.version}). The profile and connection mode you selected here are already embedded — nothing needs to be typed.`,
+            code: `curl -fsSL -o animastor-installer.sh ${bootstrapUrl}`,
+        });
+
+        steps.push({
+            id: 'run-bootstrap',
+            title: 'Run the installer',
+            body: 'The installer itself downloads and verifies all components (ComfyUI, models, worker), then asks for the Worker Key (hidden input) — paste the key saved above.',
+            code: 'bash animastor-installer.sh',
+        });
+    }
 
     steps.push({
         id: 'verify',
@@ -819,7 +1127,7 @@ function mapEntryToAction(entry, { mode, downloadSpecs }) {
  * mode=existing the real detection happens on the GPU machine; actions are
  * marked conditional.
  */
-function buildSetupPlan({ profileIds, mode, platform = 'linux', registry = defaultRegistry }) {
+function buildSetupPlan({ profileIds, mode, platform = 'linux', deployment = 'native', registry = defaultRegistry }) {
     if (!Array.isArray(profileIds) || profileIds.length === 0) {
         const err = new Error('profile_ids is required (non-empty array)');
         err.code = 'invalid_profile';
@@ -830,11 +1138,22 @@ function buildSetupPlan({ profileIds, mode, platform = 'linux', registry = defau
         err.code = 'invalid_mode';
         throw err;
     }
-    if (platform != null && !PLATFORMS.includes(platform)) {
-        const err = new Error(`unsupported platform "${platform}" (expected one of ${PLATFORMS.join(', ')})`);
-        err.code = 'unsupported_platform';
-        throw err;
-    }
+    const target = (() => {
+        try {
+            return resolveDeploymentTarget({ platform: platform == null ? 'linux' : platform, deployment });
+        } catch (e) {
+            // The plan is a UI preview: an unsupported combination is an
+            // honest BLOCKED result, not an exception.
+            if (e.code === 'unsupported_combination') {
+                return {
+                    platform: platform == null ? 'linux' : platform,
+                    deployment,
+                    capability: { allowed: false, availability: null, notice: e.message },
+                };
+            }
+            throw e;
+        }
+    })();
     const manifests = profileIds.map((id) => {
         const m = registry.get(id);
         if (!m || isHiddenManifest(m)) {
@@ -853,22 +1172,33 @@ function buildSetupPlan({ profileIds, mode, platform = 'linux', registry = defau
     const warnings = [];
     const blocks = [];
 
-    // Platform gate: no non-linux installer exists yet — honest BLOCKED.
-    if (platform && platform !== 'linux') {
+    // Capability gate — the ONLY unsupported combination (windows + docker)
+    // is honestly BLOCKED; everything else proceeds (validation is a backend
+    // authority, never frontend-only).
+    if (!target.capability.allowed) {
         return {
             result: 'BLOCKED',
-            platform,
+            platform: target.platform,
+            deployment: target.deployment,
+            availability: null,
             mode,
             profiles: profileIds,
             actions: [],
             warnings,
             blocks: [{
-                code: 'PLATFORM_NOT_SUPPORTED',
-                message: `Installation on "${platform}" is planned but not available yet (no installer artifact published).`,
+                code: 'UNSUPPORTED_COMBINATION',
+                message: target.capability.notice || 'This platform and deployment combination is not supported.',
             }],
             sharing: null,
             disk_budget_bytes_approx: null,
         };
+    }
+
+    // Preview/Experimental combinations stay selectable — informational
+    // warning, never a blocker (the installer prints the same notice).
+    if (target.capability.availability !== 'stable') {
+        warnings.push(target.capability.notice
+            || `${target.platform} + ${target.deployment} is ${target.capability.availability} — production validation is pending`);
     }
 
     // Sharing verdict (multi-profile) — machine-readable (task §15).
@@ -987,7 +1317,9 @@ function buildSetupPlan({ profileIds, mode, platform = 'linux', registry = defau
 
     return {
         result,
-        platform: platform || 'linux',
+        platform: target.platform,
+        deployment: target.deployment,
+        availability: target.capability.availability,
         mode,
         profiles: profileIds,
         actions,
@@ -1000,6 +1332,9 @@ function buildSetupPlan({ profileIds, mode, platform = 'linux', registry = defau
 
 module.exports = {
     PLATFORMS,
+    OS_PLATFORMS,
+    DEPLOYMENTS,
+    AVAILABILITY_LEVELS,
     INSTALL_MODES,
     SETUP_WORKER_STATUSES,
     SHARING_VERDICT_MAP,
@@ -1017,6 +1352,8 @@ module.exports = {
     adaptSetupStatus,
     normalizeCapabilities,
     buildSetupPlan,
+    deploymentCapabilities,
+    resolveDeploymentTarget,
     // exposed for tests
     projectProfile,
     displayNameFromSlug,

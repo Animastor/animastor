@@ -18,10 +18,29 @@ import { getJson, postJson } from '../../api/client';
 // ── Contract DTOs (1:1 with backend/src/installer/setup-contract.js) ────────
 
 export type SetupPlatform = 'linux' | 'windows' | 'docker';
+/** OS platforms in the capability model (docker is a DEPLOYMENT, not an OS). */
+export type SetupOSPlatform = 'linux' | 'windows';
+export type SetupDeployment = 'native' | 'docker';
+export type SetupAvailability = 'stable' | 'preview' | 'experimental';
 export type SetupInstallMode = 'managed' | 'existing' | 'shared' | 'isolated';
 export type SetupWorkerStatus =
   | 'NOT_CONFIGURED' | 'INSTALLING' | 'CONNECTING'
   | 'ONLINE' | 'OFFLINE' | 'ERROR' | 'REVOKED';
+
+/**
+ * The single backend capability model (GET /setup/methods → capabilities):
+ * every Platform × Deployment combination with its honest availability.
+ * Web and Android render the SAME source of truth — no local availability
+ * tables, no `if (platform === 'windows')` scattered across components.
+ */
+export interface DeploymentCapability {
+  platform: SetupOSPlatform;
+  deployment: SetupDeployment;
+  availability: SetupAvailability | null;
+  allowed: boolean;
+  reason: string | null;
+  notice: string | null;
+}
 
 export interface SetupArtifactInfo {
   available: boolean;
@@ -90,7 +109,13 @@ export interface SetupInstallerInfo {
 }
 
 export interface SetupInstructions {
-  platform: SetupPlatform;
+  platform: SetupOSPlatform;
+  /** native | docker (docker is a deployment of linux). */
+  deployment?: SetupDeployment;
+  /** Honest availability of the selected combination (informational). */
+  availability?: SetupAvailability | null;
+  /** Backend notice for non-stable combinations (rendered verbatim). */
+  notice?: string | null;
   mode: SetupInstallMode;
   profile_ids: string[];
   steps: SetupInstructionStep[];
@@ -127,16 +152,28 @@ export function fetchSetupProfiles(): Promise<{ profiles: SetupProfile[] }> {
   return getJson<{ profiles: SetupProfile[] }>(`${BASE}/profiles`);
 }
 
-export function fetchSetupMethods(): Promise<{ methods: SetupMethod[] }> {
-  return getJson<{ methods: SetupMethod[] }>(`${BASE}/methods`);
+export function fetchSetupMethods(): Promise<SetupMethodsResponse> {
+  return getJson<SetupMethodsResponse>(`${BASE}/methods`);
+}
+
+/** GET /setup/methods response envelope: artifact metadata + the shared
+ *  Platform × Deployment × Availability capability model. */
+export interface SetupMethodsResponse {
+  methods: SetupMethod[];
+  capabilities?: DeploymentCapability[];
 }
 
 export function fetchSetupWorkflows(profileId: string): Promise<{ workflows: SetupWorkflow[] }> {
   return getJson<{ workflows: SetupWorkflow[] }>(`${BASE}/workflows?profile_id=${encodeURIComponent(profileId)}`);
 }
 
-export function fetchSetupInstructions(profileId: string, platform: SetupPlatform, mode: SetupInstallMode): Promise<SetupInstructions> {
-  const q = `profile_id=${encodeURIComponent(profileId)}&platform=${platform}&mode=${mode}`;
+export function fetchSetupInstructions(
+  profileId: string,
+  platform: SetupPlatform,
+  mode: SetupInstallMode,
+  deployment: SetupDeployment = 'native',
+): Promise<SetupInstructions> {
+  const q = `profile_id=${encodeURIComponent(profileId)}&platform=${platform}&deployment=${deployment}&mode=${mode}`;
   return getJson<SetupInstructions>(`${BASE}/instructions?${q}`);
 }
 
@@ -155,8 +192,13 @@ export interface SetupPlanResponse {
   sharing: { verdict: string } | null;
 }
 
-export function postSetupPlan(profileIds: string[], mode: SetupInstallMode, platform: SetupPlatform): Promise<SetupPlanResponse> {
-  return postJson<SetupPlanResponse>(`${BASE}/plan`, { profile_ids: profileIds, mode, platform });
+export function postSetupPlan(
+  profileIds: string[],
+  mode: SetupInstallMode,
+  platform: SetupPlatform,
+  deployment: SetupDeployment = 'native',
+): Promise<SetupPlanResponse> {
+  return postJson<SetupPlanResponse>(`${BASE}/plan`, { profile_ids: profileIds, mode, platform, deployment });
 }
 
 // ── Pure helpers (unit-tested in workerSetup.test.ts) ───────────────────────
@@ -266,6 +308,116 @@ export function linuxModeAvailability(methods: SetupMethod[]): { managed: boolea
   };
 }
 
+// ── Deployment options (the capability model, rendered) ─────────────────────
+
+export type DeploymentKey = 'linux-native' | 'windows-native' | 'linux-docker';
+
+/** One selectable "Platform · Deployment" choice in the wizard. */
+export interface DeploymentOption {
+  key: DeploymentKey;
+  platform: SetupOSPlatform;
+  deployment: SetupDeployment;
+  /** Platform × Deployment label, e.g. "Linux · Native". */
+  label: string;
+  availability: SetupAvailability;
+  availabilityKey: 'worker_setup_availability_stable' | 'worker_setup_availability_preview' | 'worker_setup_availability_experimental';
+  /** true only when the combination can actually serve the selected mode. */
+  selectable: boolean;
+  /** i18n state key (same model as [PlatformOption.stateKey]). */
+  stateKey:
+  | 'worker_setup_platform_ready'
+  | 'worker_setup_platform_existing_only'
+  | 'worker_setup_platform_no_installer'
+  | 'worker_setup_platform_soon'
+  | 'worker_setup_platform_unavailable';
+  installerVersion: string | null;
+  /** Backend notice for non-stable levels — informational, never blocking. */
+  notice: string | null;
+}
+
+const AVAILABILITY_KEYS = {
+  stable: 'worker_setup_availability_stable',
+  preview: 'worker_setup_availability_preview',
+  experimental: 'worker_setup_availability_experimental',
+} as const;
+
+/** Artifact availability of one OS platform for the given mode (same rules
+ *  as [platformSelectable]). */
+function osSelectable(methods: SetupMethod[], platform: SetupOSPlatform, mode: 'managed' | 'existing' | null): boolean {
+  const m = methods.find((x) => x.platform === platform);
+  if (!m || m.status === 'planned') return false;
+  if (m.installer.available) return true;
+  return mode === 'existing' && m.worker_bundle.available;
+}
+
+function artifactStateKey(
+  methods: SetupMethod[], platform: SetupOSPlatform, mode: 'managed' | 'existing' | null,
+): { stateKey: DeploymentOption['stateKey']; installerVersion: string | null } {
+  const m = methods.find((x) => x.platform === platform);
+  if (!m || m.status === 'planned') return { stateKey: 'worker_setup_platform_soon', installerVersion: null };
+  if (m.installer.available) return { stateKey: 'worker_setup_platform_ready', installerVersion: m.installer.version };
+  if (m.worker_bundle.available) {
+    return mode === 'existing'
+      ? { stateKey: 'worker_setup_platform_existing_only', installerVersion: null }
+      : { stateKey: 'worker_setup_platform_no_installer', installerVersion: null };
+  }
+  return { stateKey: 'worker_setup_platform_unavailable', installerVersion: m.installer.version };
+}
+
+/**
+ * Map the backend capability model to wizard choices. The docker deployment
+ * deploys linux (its artifacts ARE the linux artifacts); it stays a managed-
+ * mode path (the container installs the full stack itself). Unallowed
+ * combinations (windows+docker) are never rendered. If the backend response
+ * carries no capabilities (older backend), the honest fallback mirrors the
+ * legacy platform options — never a locally invented availability table.
+ */
+export function deploymentOptions(
+  methods: SetupMethod[],
+  capabilities: DeploymentCapability[] | null | undefined,
+  mode: 'managed' | 'existing' | null = null,
+): DeploymentOption[] {
+  const LABELS: Record<DeploymentKey, string> = {
+    'linux-native': 'Linux · Native',
+    'windows-native': 'Windows · Native',
+    'linux-docker': 'Linux · Docker',
+  };
+  const caps = (capabilities && capabilities.length > 0)
+    ? capabilities
+    : [
+      { platform: 'linux', deployment: 'native', availability: 'stable', allowed: true, reason: null, notice: null },
+      { platform: 'windows', deployment: 'native', availability: 'preview', allowed: true, reason: null, notice: null },
+      { platform: 'linux', deployment: 'docker', availability: 'experimental', allowed: true, reason: null, notice: null },
+    ] as DeploymentCapability[];
+  const order: DeploymentKey[] = ['linux-native', 'windows-native', 'linux-docker'];
+  return order
+    .map((key) => {
+      const [platform, deployment] = key.split('-') as [SetupOSPlatform, SetupDeployment];
+      const cap = caps.find((c) => c.platform === platform && c.deployment === deployment);
+      if (!cap || !cap.allowed || !cap.availability) return null;
+      const artifactPlatform: SetupOSPlatform = 'linux'; // docker deploys linux
+      const selectable = deployment === 'docker'
+        ? mode === 'managed' && osSelectable(methods, artifactPlatform, 'managed')
+        : osSelectable(methods, platform, mode);
+      const { stateKey, installerVersion } = artifactStateKey(
+        methods, deployment === 'docker' ? 'linux' : platform, mode,
+      );
+      return {
+        key,
+        platform,
+        deployment,
+        label: LABELS[key],
+        availability: cap.availability,
+        availabilityKey: AVAILABILITY_KEYS[cap.availability],
+        selectable,
+        stateKey,
+        installerVersion,
+        notice: cap.notice,
+      } satisfies DeploymentOption;
+    })
+    .filter((x): x is DeploymentOption => x !== null);
+}
+
 export function pickMethod(methods: SetupMethod[], platform: SetupPlatform): SetupMethod | null {
   return methods.find((m) => m.platform === platform) ?? null;
 }
@@ -306,11 +458,12 @@ export interface WizardState {
   step: WizardStep;
   profileId: string | null;
   mode: 'managed' | 'existing' | null;
-  platform: SetupPlatform | null;
+  platform: SetupOSPlatform | null;
+  deployment: SetupDeployment | null;
 }
 
 export function initialWizardState(): WizardState {
-  return { step: 'profile', profileId: null, mode: null, platform: null };
+  return { step: 'profile', profileId: null, mode: null, platform: null, deployment: null };
 }
 
 const STEP_ORDER: WizardStep[] = ['profile', 'mode', 'platform', 'create', 'install'];
@@ -319,7 +472,7 @@ export function canGoNext(state: WizardState, ctx: { platformSelectable: boolean
   switch (state.step) {
     case 'profile': return state.profileId !== null;
     case 'mode': return state.mode !== null;
-    case 'platform': return state.platform !== null && ctx.platformSelectable;
+    case 'platform': return state.platform !== null && state.deployment !== null && ctx.platformSelectable;
     case 'create': return ctx.nameValid;
     default: return false;
   }
@@ -352,6 +505,11 @@ export function stepTitleKey(id: string): string | null {
     'verify': 'worker_setup_step_verify_title',
     'installer-unavailable': 'worker_setup_step_installer_unavailable_title',
     'platform-planned': 'worker_setup_step_planned_title',
+    'isolated-unavailable': 'worker_setup_step_isolated_unavailable_title',
+    'docker-prerequisites': 'worker_setup_step_docker_prereq_title',
+    'docker-build': 'worker_setup_step_docker_build_title',
+    'docker-install': 'worker_setup_step_docker_install_title',
+    'docker-runtime': 'worker_setup_step_docker_runtime_title',
   };
   return map[id] ?? null;
 }
@@ -368,6 +526,11 @@ export function stepBodyKey(id: string): string | null {
     'verify': 'worker_setup_step_verify_body',
     'installer-unavailable': 'worker_setup_step_installer_unavailable_body',
     'platform-planned': 'worker_setup_step_planned_body',
+    'isolated-unavailable': 'worker_setup_step_isolated_unavailable_body',
+    'docker-prerequisites': 'worker_setup_step_docker_prereq_body',
+    'docker-build': 'worker_setup_step_docker_build_body',
+    'docker-install': 'worker_setup_step_docker_install_body',
+    'docker-runtime': 'worker_setup_step_docker_runtime_body',
   };
   return map[id] ?? null;
 }

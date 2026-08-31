@@ -23,6 +23,7 @@ import androidx.lifecycle.lifecycleScope
 import com.example.animastor.BuildConfig
 import com.example.animastor.R
 import com.example.animastor.network.RetrofitClient
+import com.example.animastor.repository.DeploymentCapability
 import com.example.animastor.repository.PrivateWorker
 import com.example.animastor.repository.SetupInstructions
 import com.example.animastor.repository.SetupMethod
@@ -66,6 +67,7 @@ class WorkerSetupWizardFragment : Fragment() {
         const val KEY_PROFILE = "wizard_profile"
         const val KEY_MODE = "wizard_mode"
         const val KEY_PLATFORM = "wizard_platform"
+        const val KEY_DEPLOYMENT = "wizard_deployment"
         const val KEY_NAME = "wizard_name"
     }
 
@@ -80,6 +82,9 @@ class WorkerSetupWizardFragment : Fragment() {
     private var state: WizardState = WorkerSetupHelpers.initialWizardState()
     private var profiles: List<SetupProfile>? = null
     private var methods: List<SetupMethod>? = null
+    // The single backend capability model (Platform × Deployment ×
+    // Availability) — the SAME source of truth the Web client renders.
+    private var capabilities: List<DeploymentCapability>? = null
     private var busy = false
 
     // Worker creation result — the ONE-TIME key lives here only while the
@@ -198,7 +203,8 @@ class WorkerSetupWizardFragment : Fragment() {
                     step = restored,
                     profileId = s.getString(KEY_PROFILE),
                     mode = s.getString(KEY_MODE),
-                    platform = s.getString(KEY_PLATFORM)
+                    platform = s.getString(KEY_PLATFORM),
+                    deployment = s.getString(KEY_DEPLOYMENT)
                 )
                 workerName = s.getString(KEY_NAME) ?: ""
             }
@@ -213,6 +219,7 @@ class WorkerSetupWizardFragment : Fragment() {
         outState.putString(KEY_PROFILE, state.profileId)
         outState.putString(KEY_MODE, state.mode)
         outState.putString(KEY_PLATFORM, state.platform)
+        outState.putString(KEY_DEPLOYMENT, state.deployment)
         outState.putString(KEY_NAME, workerName)
     }
 
@@ -224,6 +231,7 @@ class WorkerSetupWizardFragment : Fragment() {
                 if (!isAdded) return@launch
                 profiles = p.profiles
                 methods = m.methods
+                capabilities = m.capabilities
                 render()
             } catch (e: Throwable) {
                 if (isAdded) showError(humanError(e))
@@ -238,6 +246,14 @@ class WorkerSetupWizardFragment : Fragment() {
 
     private val selectedMethod: SetupMethod?
         get() = methods?.let { ms -> state.platform?.let { WorkerSetupHelpers.pickMethod(ms, it) } }
+
+    /** The selected Platform × Deployment capability option (web parity). */
+    private val selectedDeploymentOption: WorkerSetupHelpers.DeploymentOption?
+        get() = methods?.let { ms ->
+            WorkerSetupHelpers.deploymentOptions(ms, capabilities, state.mode).find {
+                it.platform == state.platform && it.deployment == state.deployment
+            }
+        }
 
     private fun nameValid(): Boolean {
         val wt = selectedProfile?.worker_type ?: "image"
@@ -277,7 +293,7 @@ class WorkerSetupWizardFragment : Fragment() {
     }
 
     private fun updateFooter() {
-        val platformOk = WorkerSetupHelpers.platformSelectable(selectedMethod, state.mode)
+        val platformOk = selectedDeploymentOption?.selectable == true
         val canNext = WorkerSetupHelpers.canGoNext(state, platformOk, nameValid())
         backBtn?.visibility =
             if (state.step != WizardStep.PROFILE && state.step != WizardStep.INSTALL) View.VISIBLE else View.GONE
@@ -482,26 +498,29 @@ class WorkerSetupWizardFragment : Fragment() {
         return wrapper
     }
 
-    // ── Step 3: platform (unavailable ones never actionable) ─────────────
+    // ── Step 3: platform × deployment (unavailable ones never actionable) ─
 
     private fun renderPlatformStep(b: LinearLayout) {
         val ms = methods ?: return
         stepLabel(b, getString(R.string.worker_setup_platform_title))
-        for (opt in WorkerSetupHelpers.platformOptions(ms, state.mode)) {
-            val platformName = when (opt.platform) {
-                "linux" -> "Linux"
-                "windows" -> "Windows"
-                else -> "Docker"
-            }
+        for (opt in WorkerSetupHelpers.deploymentOptions(ms, capabilities, state.mode)) {
             val stateText = getString(stringResForPlatformState(opt.stateKey)) +
                 if (opt.selectable && opt.installerVersion != null) " · v${opt.installerVersion}" else ""
+            val availability = getString(availabilityResFor(opt.availabilityKey))
             b.addView(modeChoiceRow(
-                checked = state.platform == opt.platform,
+                checked = state.platform == opt.platform && state.deployment == opt.deployment,
                 enabled = opt.selectable,
-                title = platformName,
+                title = "${opt.label} · $availability",
                 desc = stateText,
-                onPick = { state = state.copy(platform = opt.platform); render() }
+                onPick = {
+                    state = state.copy(platform = opt.platform, deployment = opt.deployment); render()
+                }
             ))
+            // Preview/Experimental: informational notice from the backend
+            // capability model — never blocking, same copy as the installer.
+            if (opt.selectable && opt.notice != null) {
+                hintView(b, opt.notice).apply { setPadding(0, dp(2), 0, dp(6)) }
+            }
         }
     }
 
@@ -511,6 +530,12 @@ class WorkerSetupWizardFragment : Fragment() {
         "worker_setup_platform_no_installer" -> R.string.worker_setup_platform_no_installer
         "worker_setup_platform_soon" -> R.string.worker_setup_platform_soon
         else -> R.string.worker_setup_platform_unavailable
+    }
+
+    private fun availabilityResFor(key: String): Int = when (key) {
+        "worker_setup_availability_stable" -> R.string.worker_setup_availability_stable
+        "worker_setup_availability_preview" -> R.string.worker_setup_availability_preview
+        else -> R.string.worker_setup_availability_experimental
     }
 
     // ── Step 4: create worker (name; type comes from the profile) ────────
@@ -578,7 +603,12 @@ class WorkerSetupWizardFragment : Fragment() {
                 createdWorker = res.worker
                 state = state.copy(step = WizardStep.INSTALL)
                 render()
-                loadInstallData(profile.id ?: "", state.platform ?: "linux", state.mode ?: MODE_MANAGED)
+                loadInstallData(
+                    profile.id ?: "",
+                    state.platform ?: "linux",
+                    state.mode ?: MODE_MANAGED,
+                    state.deployment ?: WorkerSetupHelpers.DEPLOYMENT_NATIVE
+                )
             } catch (e: Throwable) {
                 if (isAdded) showError(humanError(e))
             } finally {
@@ -588,14 +618,14 @@ class WorkerSetupWizardFragment : Fragment() {
         }
     }
 
-    private fun loadInstallData(profileId: String, platform: String, mode: String) {
+    private fun loadInstallData(profileId: String, platform: String, mode: String, deployment: String) {
         lifecycleScope.launch {
             try {
                 val wf = RetrofitClient.api.setupWorkflows(profileId)
                 if (isAdded) { workflows = wf.workflows; render() }
             } catch (_: Throwable) { /* workflows stay null → "—" */ }
             try {
-                val ins = RetrofitClient.api.setupInstructions(profileId, platform, mode)
+                val ins = RetrofitClient.api.setupInstructions(profileId, platform, deployment, mode)
                 if (!isAdded) return@launch
                 instructions = ins
                 render()
@@ -615,6 +645,22 @@ class WorkerSetupWizardFragment : Fragment() {
         if (token == null || worker == null) return
         val method = selectedMethod
         val mode = state.mode ?: MODE_MANAGED
+
+        // Preview/Experimental deployment — informational notice from the
+        // backend capability model, never blocking (same copy as the
+        // installer prints on the machine).
+        val insNotice = instructions?.takeIf { !it.availability.isNullOrEmpty() && it.availability != "stable" }?.notice
+        if (insNotice != null) {
+            TextView(ctx).apply {
+                text = insNotice
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+                background = ContextCompat.getDrawable(ctx, R.drawable.bg_dialog_notice)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                setLineSpacing(0f, 1.3f)
+                b.addView(this)
+            }
+        }
 
         // One-time Worker Key (existing secure lifecycle — Phase 3.1 §14)
         TextView(ctx).apply {
@@ -804,6 +850,27 @@ class WorkerSetupWizardFragment : Fragment() {
         }
 
         hintView(b, getString(R.string.worker_setup_verify_hint)).apply { setPadding(0, dp(12), 0, 0) }
+
+        // Preview/Experimental installs: a direct path for testers to report
+        // real installation problems (diagnostics above never contain the
+        // Worker Key).
+        val ins = instructions
+        if (ins != null && !ins.availability.isNullOrEmpty() && ins.availability != "stable") {
+            val report = TextView(ctx).apply {
+                text = getString(R.string.worker_setup_report_problem_hint) + " " +
+                    getString(R.string.worker_setup_report_problem)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimary))
+                setOnClickListener {
+                    try {
+                        startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://github.com/Animastor/animastor/issues")))
+                    } catch (_: Throwable) { /* no browser — silently ignored */ }
+                }
+                b.addView(this)
+            }
+            report.setPadding(0, dp(6), 0, 0)
+        }
     }
 
     /** Collapsed "summary ▸" row + expandable content (web parity: <details>).

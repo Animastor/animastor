@@ -8,12 +8,12 @@ import {
   fetchSetupProfiles, fetchSetupMethods, fetchSetupWorkflows,
   fetchSetupInstructions,
   resolveArtifactUrl, installerDownloadUrl, installerVersion, installerSha256,
-  groupProfilesByType, platformOptions, pickMethod,
+  groupProfilesByType, platformOptions, deploymentOptions, pickMethod,
   platformSelectable, linuxModeAvailability,
   setupStatusKey, setupStatusClass,
   initialWizardState, canGoNext, nextStep, prevStep,
   stepTitleKey, stepBodyKey, formatDiskBudget,
-  type SetupProfile, type SetupMethod,
+  type SetupProfile, type SetupMethod, type DeploymentCapability,
 } from './workerSetup';
 import { buildSetupContract, renderEnvBlock, looksLikeWorkerToken } from './privateWorkers';
 
@@ -71,6 +71,24 @@ const METHODS: SetupMethod[] = [
   method('linux', true, '1.0.0'),
   method('windows', false, null),
   method('docker', false, null),
+];
+
+/** The backend capability model (GET /setup/methods → capabilities). */
+const CAPABILITIES: DeploymentCapability[] = [
+  { platform: 'linux', deployment: 'native', availability: 'stable', allowed: true, reason: null, notice: null },
+  { platform: 'windows', deployment: 'native', availability: 'preview', allowed: true, reason: null,
+    notice: 'Windows support is currently in Preview. The installer is under active development and may have platform-specific issues.' },
+  { platform: 'linux', deployment: 'docker', availability: 'experimental', allowed: true, reason: null,
+    notice: 'Docker deployment is Experimental. GPU support and host-specific Docker configurations may require additional setup.' },
+  { platform: 'windows', deployment: 'docker', availability: null, allowed: false, reason: 'unsupported_combination',
+    notice: 'Docker deployment requires the linux platform; windows containers are not a supported target.' },
+];
+
+/** Methods shaped like the NEW backend responses (windows/docker available). */
+const METHODS_LIVE: SetupMethod[] = [
+  method('linux', true, '1.4.0'),
+  { ...method('windows', true, '1.4.0'), status: 'available' },
+  { ...method('docker', true, '1.4.0'), status: 'available' },
 ];
 
 // ── Profiles ────────────────────────────────────────────────────────────────
@@ -179,6 +197,78 @@ describe('installation', () => {
   });
 });
 
+// ── Deployment options (capability model rendered) ──────────────────────────
+
+describe('deploymentOptions — the backend capability model', () => {
+  it('Linux·Native is Stable, Windows·Native Preview, Linux·Docker Experimental', () => {
+    const opts = deploymentOptions(METHODS_LIVE, CAPABILITIES, 'managed');
+    expect(opts.map((o) => o.key)).toEqual(['linux-native', 'windows-native', 'linux-docker']);
+    const byKey = Object.fromEntries(opts.map((o) => [o.key, o]));
+    expect(byKey['linux-native'].availability).toBe('stable');
+    expect(byKey['linux-native'].availabilityKey).toBe('worker_setup_availability_stable');
+    expect(byKey['linux-native'].notice).toBeNull();
+    expect(byKey['windows-native'].availability).toBe('preview');
+    expect(byKey['windows-native'].availabilityKey).toBe('worker_setup_availability_preview');
+    expect(byKey['windows-native'].notice).toContain('Preview');
+    expect(byKey['linux-docker'].availability).toBe('experimental');
+    expect(byKey['linux-docker'].availabilityKey).toBe('worker_setup_availability_experimental');
+    expect(byKey['linux-docker'].notice).toContain('Experimental');
+    // labels communicate WHERE (platform) and HOW (deployment)
+    expect(byKey['linux-native'].label).toBe('Linux · Native');
+    expect(byKey['windows-native'].label).toBe('Windows · Native');
+    expect(byKey['linux-docker'].label).toBe('Linux · Docker');
+  });
+
+  it('unsupported combinations (windows+docker) are never rendered', () => {
+    const opts = deploymentOptions(METHODS_LIVE, CAPABILITIES, 'managed');
+    expect(opts.find((o) => o.platform === 'windows' && o.deployment === 'docker')).toBeUndefined();
+  });
+
+  it('selectability follows the real artifacts of the deployed platform', () => {
+    // all artifacts up → everything selectable in managed mode
+    for (const o of deploymentOptions(METHODS_LIVE, CAPABILITIES, 'managed')) expect(o.selectable).toBe(true);
+    // linux installer down → linux native AND docker (deploys linux) not selectable
+    const linuxDown: SetupMethod[] = [
+      method('linux', false, '1.4.0', false),
+      { ...method('windows', true, '1.4.0'), status: 'available' },
+    ];
+    const opts = deploymentOptions(linuxDown, CAPABILITIES, 'managed');
+    expect(opts.find((o) => o.key === 'linux-native')!.selectable).toBe(false);
+    expect(opts.find((o) => o.key === 'linux-docker')!.selectable).toBe(false);
+    expect(opts.find((o) => o.key === 'windows-native')!.selectable).toBe(true);
+  });
+
+  it('docker is a managed-mode path; Existing ComfyUI stays a host (native) flow', () => {
+    const existing = deploymentOptions(METHODS_LIVE, CAPABILITIES, 'existing');
+    expect(existing.find((o) => o.key === 'linux-docker')!.selectable).toBe(false);
+    expect(existing.find((o) => o.key === 'linux-native')!.selectable).toBe(true);
+    expect(existing.find((o) => o.key === 'windows-native')!.selectable).toBe(true);
+  });
+
+  it('without capabilities (older backend) the honest fallback still renders the three options', () => {
+    const opts = deploymentOptions(METHODS_LIVE, null, 'managed');
+    expect(opts.map((o) => o.key)).toEqual(['linux-native', 'windows-native', 'linux-docker']);
+    expect(opts.map((o) => o.availability)).toEqual(['stable', 'preview', 'experimental']);
+    expect(opts.find((o) => o.key === 'windows-native')!.notice).toBeNull();
+  });
+
+  it('per-variant bootstrap URLs come from the contract, the deployment is explicit', async () => {
+    const seen: string[] = [];
+    const fetchMock = vi.fn(async (url: string) => {
+      seen.push(String(url));
+      return { ok: true, status: 200, statusText: 'OK', json: async () => ({}) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await fetchSetupInstructions('image/qwen-image', 'linux', 'managed', 'native');
+    await fetchSetupInstructions('image/qwen-image', 'windows', 'managed', 'native');
+    await fetchSetupInstructions('audio/qwen-tts', 'linux', 'managed', 'docker');
+    expect(seen[0]).toContain('platform=linux&deployment=native');
+    expect(seen[1]).toContain('platform=windows&deployment=native');
+    expect(seen[2]).toContain('platform=linux&deployment=docker');
+    for (const url of seen) expect(url).not.toContain('wrk.');
+  });
+});
+
 // ── Artifact URLs ───────────────────────────────────────────────────────────
 
 describe('resolveArtifactUrl', () => {
@@ -209,7 +299,7 @@ describe('worker', () => {
     // the wizard state machine holds only selections — no credential field
     const s = initialWizardState();
     expect(JSON.stringify(s)).not.toContain('wrk.');
-    expect(Object.keys(s)).toEqual(['step', 'profileId', 'mode', 'platform']);
+    expect(Object.keys(s)).toEqual(['step', 'profileId', 'mode', 'platform', 'deployment']);
   });
 
   it('status — extended model maps every status to a label + pill class', () => {
@@ -242,10 +332,18 @@ describe('worker', () => {
     expect(nextStep(s)).toBe('install');
     s = { ...s, step: 'install' };
     expect(nextStep(s)).toBeNull();
-    // platform step blocked unless the platform is actually selectable
-    const atPlatform = { ...initialWizardState(), step: 'platform' as const, platform: 'linux' as const };
+    // platform step blocked unless platform AND deployment are chosen and
+    // the combination is actually selectable
+    const atPlatform = {
+      ...initialWizardState(), step: 'platform' as const,
+      platform: 'linux' as const, deployment: 'native' as const,
+    };
     expect(canGoNext(atPlatform, { platformSelectable: false, nameValid: false })).toBe(false);
     expect(canGoNext(atPlatform, { platformSelectable: true, nameValid: false })).toBe(true);
+    // a platform without a deployment choice never advances
+    expect(canGoNext(
+      { ...atPlatform, deployment: null }, { platformSelectable: true, nameValid: false },
+    )).toBe(false);
   });
 });
 
@@ -365,6 +463,15 @@ describe('instruction step mapping', () => {
     expect(stepTitleKey('download-bundle')).toBe('worker_setup_step_download_bundle_title');
     expect(stepBodyKey('start-worker')).toBe('worker_setup_step_start_worker_body');
     expect(stepTitleKey('installer-unavailable')).toBe('worker_setup_step_installer_unavailable_title');
+  });
+
+  it('docker deployment + windows preview steps have localized mappings', () => {
+    for (const id of ['docker-prerequisites', 'docker-build', 'docker-install', 'docker-runtime', 'isolated-unavailable']) {
+      expect(stepTitleKey(id), id).toBeTypeOf('string');
+      expect(stepBodyKey(id), id).toBeTypeOf('string');
+    }
+    expect(stepTitleKey('docker-install')).toBe('worker_setup_step_docker_install_title');
+    expect(stepBodyKey('docker-runtime')).toBe('worker_setup_step_docker_runtime_body');
   });
 });
 
