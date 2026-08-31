@@ -337,6 +337,21 @@ today.
 
 ### 7.4 Counts & visibility
 
+**D3 semantics — what the global count means.** Today the counts are an
+*inventory of physical workers* (fresh heartbeats; busy workers remain
+counted, with `system_busy` as a separate bucket — `worker-health.js:153-166`).
+For V1 we make the semantics explicit and preserve double counting:
+
+> **Definition (normative):** `system.*` is a **capacity indicator** —
+> "the number of workers currently able to serve the system pool" — NOT
+> a physical inventory of machines. A policy-active private worker
+> genuinely is able to serve the system pool (its spare capacity), so
+> counting it there is correct; counting it also in its owner's
+> `private.*` bucket is equally correct, because the two buckets answer
+> different questions ("what can I submit jobs to" vs "what do I own").
+> Consequence: `private + system` is NOT the number of physical
+> machines and must never be presented as such.
+
 - **One conscious invariant relaxation is required**: today "a private
   heartbeat is never in the global count". A policy-active private
   worker *is* contributing global capacity, so the heartbeat payload
@@ -345,6 +360,10 @@ today.
   pool. The invariant is restated as: *"a private worker **without an
   active public policy** is never in the global count."* This must be an
   explicit, test-covered decision — see §12 (decision D3).
+- If a true physical-inventory view is ever needed (V3 dashboards),
+  it must be a **separate derived field** (e.g. `system.unique_workers`
+  = system.* − policy-active), not a redefinition of `system.*`. The
+  capacity-indicator meaning above is frozen for all V1 clients.
 - Heartbeats from workers without a policy are byte-identical to today;
   the parser must treat the field as optional (forward/backward
   compatibility).
@@ -437,7 +456,7 @@ global counts that already exist.
 |---|---|---|
 | D1 | One active policy per worker (UNIQUE index) | **Yes** — removes all dispatch ambiguity |
 | D2 | V1 scope = `public` only, CHECK-enforced | **Yes** — V2 widens the CHECK |
-| D3 | Relax "private never in global count" for policy-active workers (double-count into private + global) | **Yes**, with tests; document the invariant change |
+| D3 | Relax "private never in global count" for policy-active workers (double-count into private + global) | **Yes** — `system.*` is normatively a *capacity indicator* ("able to serve the system pool"), not physical inventory (§7.4); physical inventory, if ever needed, is a separate derived field. Tests + documented invariant change |
 | D4 | Policy state reaches the hub via auth-mirror/beacon payload (≤30s TTL), PG authoritative | **Yes** |
 | D5 | `expires_at = NULL` allowed ("until stopped") | **Yes**; UI offers presets |
 | D6 | Stop-sharing semantics: worker just stops popping the system pool (no queue cleanup) | **Yes** — direct consequence of V1 lane reuse |
