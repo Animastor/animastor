@@ -129,8 +129,8 @@ another check).
 
 ### 1.6 Progress pub/sub
 
-`backend/src/services/progress-pubsub.cjs` — Redis publish в
-`animastor:progress:{bookId}`. Frontend уже читает и рендерит
+`backend/src/services/progress-pubsub.cjs` — Redis publish to
+`animastor:progress:{bookId}`. Frontend already reads and renders
 `{ type: 'vbook', stage, message, scene_index, total_scenes, window_scene_index, window_total_scenes, … }`.
 
 For Parallel we just need to add new field to payload, e.g.
@@ -297,28 +297,28 @@ Savings: ~60–120s on first window. On 5+ windows this becomes significant.
 Orchestrator **doesn't know** about Provider/Model — it knows about Task. Resolution
 Task→AgentProfile→Provider done by single resolver.
 
-### 4.2 AnalysisWorkflow — определение
+### 4.2 AnalysisWorkflow — definition
 
 ```ts
 interface AnalysisWorkflow {
   id: string;                     // "txt-import-v1"
-  version: number;                // bump для safe-migration
+  version: number;                // bump for safe-migration
   tasks: AnalysisTask[];
 }
 
 interface AnalysisTask {
   id: string;                     // "extract_characters"
-  stepType: AgentStepType;        // для PG whitelist
-  agentProfile: string;           // id профиля
-  provider?: string;              // явный provider id (overrides default)
-  model?: string;                 // явная модель (overrides provider default)
-  input: TaskInputSpec;           // какие поля из context передавать
-  output: TaskOutputSpec;         // куда писать результат
-  dependencies: string[];         // ids других tasks
+  stepType: AgentStepType;        // for PG whitelist
+  agentProfile: string;           // profile id
+  provider?: string;              // explicit provider id (overrides default)
+  model?: string;                 // explicit model (overrides provider default)
+  input: TaskInputSpec;           // which fields from context to pass
+  output: TaskOutputSpec;         // where to write results
+  dependencies: string[];         // ids of other tasks
   retryPolicy?: RetryPolicy;
   timeoutMs?: number;
   maxTokens?: number;
-  optional?: boolean;             // failure не валит весь run
+  optional?: boolean;             // failure does not abort entire run
 }
 
 interface RetryPolicy {
@@ -331,7 +331,7 @@ interface AgentProfile {
   id: string;                     // "character-extractor"
   promptFile: string;             // ai/rules/<file>.md
   examplesPath?: string;          // ai/examples/<dir>/...
-  outputSchema: string;           // имя схемы для validation
+  outputSchema: string;           // schema name for validation
 }
 
 interface TaskInputSpec {
@@ -345,9 +345,9 @@ interface TaskOutputSpec {
 }
 ```
 
-**Текущий Sequential pipeline** = `AnalysisWorkflow` со всеми
-`dependencies: [...]` указывающими на единственный предыдущий шаг. Никаких
-правок orchestrator'а — тот же код, просто `dependency-aware scheduler`.
+**Current Sequential pipeline** = `AnalysisWorkflow` with all
+`dependencies: [...]` pointing to the single previous step. No
+orchestrator changes — same code, just `dependency-aware scheduler`.
 
 ### 4.3 Minimal architecture for first Parallel mode
 
@@ -448,7 +448,7 @@ Existing routes remain unchanged:
 - `POST /api/v1/book/import-txt` (RAW_IMPORTED)
 - `POST /api/v1/book/:bookId/bootstrap` (run analysis)
 - `POST /api/v1/book/:bookId/bootstrap-next-window` (continue)
-- `GET /api/v1/book/:bookId/agent-status` (poll для UI)
+- `GET /api/v1/book/:bookId/agent-status` (poll for UI)
 
 ### 6.2 SSE payload — additive extension
 
@@ -502,7 +502,7 @@ module.exports = {
 
 Resolution in `agent-bootstrap.js`:
 ```js
-// parallel-future (НЕ в первой итерации)
+// parallel-future (NOT in first iteration)
 const profile = profiles[task.agentProfile];
 const provider = await resolveProviderById(profile.provider);
 const callOptions = {
@@ -593,48 +593,48 @@ const callOptions = {
 
 ### 8.5 Step type whitelist migration
 
-- Существующий whitelist содержит `analyze_characters`, `analyze_locations`,
-  `generate_voices` — уже подходят. Для Parallel вводим `analyze_scenes`
-  (отдельно от `create_scenes`). Migration: расширить CHECK constraint
-  через `ALTER TABLE … DROP/ADD CONSTRAINT` (см.
-  `storage/postgres/schema.js:685` существующий паттерн).
+- Existing whitelist contains `analyze_characters`, `analyze_locations`,
+  `generate_voices` — already suitable. For Parallel we introduce `analyze_scenes`
+  (separate from `create_scenes`). Migration: extend CHECK constraint
+  via `ALTER TABLE … DROP/ADD CONSTRAINT` (see
+  `storage/postgres/schema.js:685` existing pattern).
 
 ### 8.6 Coverage / dedup
 
-- `stepCreateScenes` сейчас retry'ит при coverage failure и падает в
-  `buildFallbackScenes`. Это sequential внутри Parallel-фазы не ломает —
-  scenes останется sequential. Защищаем: `stepCreateScenes` остаётся
-  вызовом из `runPipeline`, **не** в Parallel-batch.
+- `stepCreateScenes` currently retries on coverage failure and falls into
+  `buildFallbackScenes`. Being sequential within the Parallel phase does not break —
+  scenes remain sequential. Protected: `stepCreateScenes` stays as a
+  call from `runPipeline`, **not** in Parallel-batch.
 
 ### 8.7 Memory & event-loop
 
-- 3 параллельных AI call'а — нормально для Node.js (Promise-based).
-- Никакой I/O между ними, кроме fetch. Connection pool / fetch'и
-  независимы.
-- Размер ответа max 8K tokens (~32KB JSON) — суммарно <100KB на batch,
+- 3 parallel AI calls — fine for Node.js (Promise-based).
+- No I/O between them, only fetch. Connection pool / fetches
+  independent.
+- Max response size 8K tokens (~32KB JSON) — total <100KB per batch,
   negligible.
 
 ### 8.8 Frontend regression
 
-- Старый UI ждёт `stage='extracting_chars' → extracting_locs →
-  voice_generation → creating_scenes`. В Parallel-режиме порядок событий
-  может меняться (3 события parallel). Решение: новое SSE `type='analysis'`
-  событие содержит `task_id`, старые vbook-события публикуются
-  **вперёд** как обычно (при входе в step), `task_id` — для опционального
-  прогресс-индикатора "2/4 tasks completed".
+- Old UI expects `stage='extracting_chars' → extracting_locs →
+  voice_generation → creating_scenes`. In Parallel mode the event order
+  may change (3 parallel events). Solution: new SSE `type='analysis'`
+  event contains `task_id`, old vbook events are published
+  **first** as usual (on step entry), `task_id` — for optional
+  progress indicator "2/4 tasks completed".
 
 ### 8.9 DB writes contention
 
-- `agent_steps` INSERT в начале task, UPDATE на завершении. 3 параллельных
-  INSERT — стандартная нагрузка для PG, не проблема.
+- `agent_steps` INSERT at task start, UPDATE on completion. 3 parallel
+  INSERTs — standard PG load, not a problem.
 
-### 8.10 Sequential режим остаётся прежним
+### 8.10 Sequential mode remains unchanged
 
 - **Kill switch:** `TXT_IMPORT_PARALLEL_ANALYSIS_ENABLED=false` →
-  orchestrator использует **тот же** sequential код. Никакого нового пути
-  для существующих клиентов.
-- **Back-compat agent_steps:** все шаги имеют те же `step_type` →
-  существующие логи (аналитика, retry-counter) работают.
+  orchestrator uses **the same** sequential code. No new path
+  for existing clients.
+- **Back-compat agent_steps:** all steps have the same `step_type` →
+  existing logs (analytics, retry-counter) work.
 
 ---
 
@@ -790,11 +790,11 @@ const callOptions = {
 
 - `docs/architecture/architecture-map.md` §3.5 — AI agent pipeline map
 - `docs/architecture/recoverable-work-set.md` §5.4b — book-level concurrency
-- `docs/07-agents-and-generators/AGENTS.md` — полное описание pipeline
-- `docs/04-planning/TXT_IMPORT_STRUCTURE_V2.md` — структурный анализ (фаза 0)
-- `backend/src/services/agent/bootstrap.js` — текущий orchestrator
-- `backend/src/services/agent/pipeline-runner.js` — текущий pipeline
-- `backend/src/services/agent/pipeline-steps.js` — все step-функции
+- `docs/07-agents-and-generators/AGENTS.md` — full pipeline description
+- `docs/04-planning/TXT_IMPORT_STRUCTURE_V2.md` — structural analysis (phase 0)
+- `backend/src/services/agent/bootstrap.js` — current orchestrator
+- `backend/src/services/agent/pipeline-runner.js` — current pipeline
+- `backend/src/services/agent/pipeline-steps.js` — all step functions
 - `backend/src/services/agent/ai-caller.js` — provider context + retry
 - `backend/src/services/ai-service.js` — transport layer
 - `backend/src/services/workspace-ai-provider.js` — provider resolution
@@ -813,7 +813,7 @@ The minimal vertical slice proposed in §4.3 is implemented (commits
 - `backend/src/services/agent/parallel-analysis-orchestrator.js`
   orchestrates the first parallel phase; voices stays in its legacy
   sequential slot because it needs the merged character set.
-- All §12 acceptance criteria pass; the §11 "не трогать пока" list was
+- All §12 acceptance criteria pass; the §11 "do not touch yet" list was
   respected (no generic DAG engine, no scene-level parallelism, no
   marketplace, no GPU/LLM mixing). See AGENTS.md "Parallel Analysis
   Mode" for the full contract.
