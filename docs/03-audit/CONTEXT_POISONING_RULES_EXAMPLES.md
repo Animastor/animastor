@@ -6,20 +6,20 @@ Status: **Option 1 applied** (examples anonymized); **Option 3 applied**
 
 ## Symptom
 
-При генерации книги `royallib_com_1786206633026` (русскоязычная книга) в
-`video.action` появился выдуманный id **`zhenshchina_v_budochke`** — такого
-персонажа НЕТ в `characters.json` книги (там только mikhail_berlioz,
-ivan_ponyrev, prozrachnyy). При этом сам id — это «женщина в будочке»,
-персонаж-эпизод из **«Мастера и Маргариты»** Булгакова — той самой книги,
-которую генерировали.
+During generation of book `royallib_com_1786206633026` (a Russian-language book),
+a fabricated id **`zhenshchina_v_budochke`** appeared in
+`video.action` — this character does NOT exist in the book's `characters.json`
+(only mikhail_berlioz, ivan_ponyrev, prozrachnyy are present). The id itself means
+"woman in a kiosk" — an episode character from **"The Master and Margarita"**
+by Bulgakov, the very book being generated.
 
-Последствия:
-- Видео-промпт ссылается на id без паспорта (`character_id: tokens` в секции
-  characters отсутствует) → ломается маппинг движения на персонажа.
-- Строка спикера «женщина в будочке speaking with lip movement» — сырой
-  русский алиас, который ни во что не резолвится.
-- В других прогонах агент «придумывал» ей паспорт и голос — потому что тот же
-  id фигурирует в примерах шага извлечения персонажей.
+Consequences:
+- Video prompt references an id without a passport (`character_id: tokens` in the
+  characters section is absent) → character motion mapping breaks.
+- Speaker line "zhenshchina_v_budochke speaking with lip movement" — raw
+  Russian alias that resolves to nothing.
+- In other runs the agent "invented" a passport and voice for her — because the same
+  id appears in the character extraction step examples.
 
 ## Poisoning Mechanism
 
@@ -54,27 +54,27 @@ demo book **"Evening in the City"** (M. Demin): `anna_smirnova`, `boris_volkov`,
 `dmitry_orekhov`, location `city_park`. The same fictional pair is used in
 rule examples.
 
-| Было (M&M) | Стало (нейтрально) |
+| Before (M&M) | After (neutral) |
 |---|---|
 | `mikhail_berlioz` / `ivan_ponyrev` | `anna_smirnova` / `boris_volkov` |
-| `zhenshchina_v_budochke` (женщина в будочке) | `kiosk_saleswoman` (женщина у киоска) |
+| `zhenshchina_v_budochke` (woman in a kiosk) | `kiosk_saleswoman` (woman at the kiosk) |
 | `patriarch_ponds` | `city_park` |
-| «Берлиоз» / «Бездомный» / «Воланд» | Анна / Борис / Дмитрий |
-| «МАССОЛИТ» | «глава журнала» |
-| «Дайте нарзану» | «Дайте воды» |
-| «прозрачный гражданин» | «незнакомец в светлом плаще» |
+| "Berlioz" / "Bezdomny" / "Woland" | Anna / Boris / Dmitry |
+| "MASSOLIT" | "magazine chapter" |
+| "Give me Narzan" | "Give me water" |
+| "transparent citizen" | "stranger in a light coat" |
 
-Затронутые файлы: `ai/rules/{characters,visuals,units,scenes,locations,
+Files affected: `ai/rules/{characters,visuals,units,scenes,locations,
 video_action_polish,video_action_reconciliation,passport_reconciliation,
-storyboard_polish}.md`, `ai/examples/*.json` (9 файлов),
-`ai/workflows/video-ltx-{1p,2p,3p,4p}.json` (дефолтные промпты),
-`src/services/agent/pipeline-steps.js` (инжектируемый пример алиасов),
-`src/services/ai-service.js` (инлайн-примеры refineDraft).
+storyboard_polish}.md`, `ai/examples/*.json` (9 files),
+`ai/workflows/video-ltx-{1p,2p,3p,4p}.json` (default prompts),
+`src/services/agent/pipeline-steps.js` (injectable alias example),
+`src/services/ai-service.js` (inline refineDraft examples).
 
-**Ограничение:** любой конкретный id в примерах потенциально может протечь —
-даже нейтральный `kiosk_saleswoman`. Вариант 1 устраняет *известное*
-заражение (совпадение демо-книги с генерируемой), но не закрывает механизм
-полностью.
+**Limitation:** any specific id in examples can potentially leak —
+including the neutral `kiosk_saleswoman`. Option 1 eliminates *known*
+contamination (demo book matching the generated book) but does not close the
+mechanism entirely.
 
 ### Option 2 — Explicit Warning in Rules (optional)
 
@@ -87,142 +87,139 @@ Minimal changes, but the model may ignore it.
 Two-layer defense — detection is deterministic, recovery is LLM-based
 (reverse transliteration doesn't work: the project is multilingual):
 
-1. **Детект (`src/utils/snake-guard.js`, общий с аудит-скриптом).**
-   snake_case-токен (`[A-Za-z]` + ≥1 подчёркивание, без possessive `'s`) —
-   это выдуманный id, если его нет среди known ids (characters + locations)
-   и нет в whitelist'е технических/визуальных слов (`close_up`, `park_bench`,
-   `street_lamp`, …). Варианты реальных id (префиксы) не считаются фэнтези.
-2. **LLM-ремонт (`stepRepairFantasyIds`, финальный visual-шаг в обеих ветках
-   pipeline-runner).** Если в `image.prompt` / `video.action` найден фэнтези-id
-   — юнит (с исходным текстом и списком известных id) уходит агенту, который
-   пересобирает промпт, восстанавливая естественное обозначение из текста
-   книги (языко-зависимо, не транслитом). Результат снова сканируется:
-   нечистый ответ отбрасывается, остаётся оригинал.
-3. **Барьер на записи (`book/lazy-book/create.js`):** `scene.participants`
-   фильтруется по known ids — фэнтези-id, переживший LLM-шаги, в книгу не
-   попадает (известные id и естественные обозначения сохраняются).
-4. **Спикер:** фэнтези-id в `audio.speaker` тоже попадает в скан/ремонт
-   (пересобирается в естественное обозначение); голос не выдумывается
-   (`stepGenerateVoices` — только персонажи с описанной внешностью), а для
-   неизвестного спикера аудио-конвейер молча использует голос рассказчика.
+1. **Detection (`src/utils/snake-guard.js`, shared with audit script).**
+   A snake_case token (`[A-Za-z]` + ≥1 underscore, no possessive `'s`) is
+   a fabricated id if it is not among known ids (characters + locations)
+   and not in the whitelist of technical/visual words (`close_up`, `park_bench`,
+   `street_lamp`, etc.). Real id variants (prefixes) are not counted as fantasy.
+2. **LLM repair (`stepRepairFantasyIds`, final visual step in both branches of
+   pipeline-runner).** If a fantasy-id is found in `image.prompt` / `video.action`
+   — the unit (with original text and known id list) is sent to the agent, which
+   rebuilds the prompt, restoring the natural designation from the book
+   text (language-dependent, not transliteration). The result is scanned again:
+   a non-clean response is discarded, the original is kept.
+3. **Write-time barrier (`book/lazy-book/create.js`):** `scene.participants`
+   is filtered by known ids — a fantasy-id that survived LLM steps does not
+   enter the book (known ids and natural designations are preserved).
+4. **Speaker:** fantasy-id in `audio.speaker` also goes through scan/repair
+   (rebuilt to natural designation); voice is not invented
+   (`stepGenerateVoices` — only characters with described appearance), and for
+   unknown speakers the audio pipeline silently uses the narrator's voice.
 
-Превентивная подсказка в `%CONTEXT%` visuals (перечислять эпизодических
-участников агенту заранее) **рассматривалась и отклонена**: она дублировала
-правило visuals.md («unnamed person → describe as extra, do NOT invent id»),
-добавляла токены в каждый visual-вызов ради редкого кейса и не покрывала сам
-вектор (фэнтези-id всё равно отбрасывались молча). Гарантию даёт финальный
-ремонт-шаг — он детерминированно ловит всё, что проскочило.
+A preventive hint in `%CONTEXT%` visuals (listing episode participants to the agent
+in advance) **was considered and rejected**: it duplicated the visuals.md rule
+("unnamed person → describe as extra, do NOT invent id"), added tokens to every
+visual call for a rare case, and did not cover the vector itself (fantasy-ids
+were still silently discarded). The guarantee comes from the final repair step —
+it deterministically catches everything that slipped through.
 
-Цена: ремонт срабатывает только на флагнутые юниты (редкость) — один маленький
-LLM-вызов на окно. Тесты: `tests/snake-guard.test.js`.
+Cost: repair only triggers on flagged units (rare) — one small LLM call per window.
+Tests: `tests/snake-guard.test.js`.
 
-## Методология аудита (фикс «he»/«the»)
+## Audit methodology ("he"/"the" fix)
 
-Ложное срабатывание «he» внутри «t**he** alley» — классическая ошибка
-подстрочного поиска. Аудит-скрипт `backend/scripts/audit-video-actions.js`
-использует **word-boundary** регулярки (`\bhe\b`, `\bthe two men\b`), поэтому
-«the alley» никогда не триггерит «he», а «heat» — «she». См. скрипт.
+A false positive on "he" inside "t**he** alley" — classic substring search error.
+The audit script `backend/scripts/audit-video-actions.js` uses **word-boundary**
+regexes (`\bhe\b`, `\bthe two men\b`), so "the alley" never triggers "he",
+and "heat" — "she". See the script.
 
-## Статус
+## Status
 
-- [x] Вариант 1: примеры обезличены (рулсы + ai/examples + workflow-дефолты + инлайн-строки)
-- [ ] Вариант 2: предупреждение в рулсах
-- [x] Вариант 3: гибрид — snake-guard детект + `stepRepairFantasyIds` (финальный visual-шаг, обе ветки) + барьер participants/mentions/id в create.js (превенция в %CONTEXT% отклонена — см. выше)
-- [x] Химеры: `findCanonicalId` (Tier 1–3) + канонизация в ремонтном шаге / create.js / аудите
-- [x] Скрипт аудита: `backend/scripts/audit-video-actions.js` (теперь использует общий `snake-guard`)
+- [x] Option 1: examples anonymized (rules + ai/examples + workflow defaults + inline strings)
+- [ ] Option 2: warning in rules
+- [x] Option 3: hybrid — snake-guard detection + `stepRepairFantasyIds` (final visual step, both branches) + barrier participants/mentions/id in create.js (preventive hint rejected — see above)
+- [x] Chimeras: `findCanonicalId` (Tier 1–3) + canonicalization in repair step / create.js / audit
+- [x] Audit script: `backend/scripts/audit-video-actions.js` (now uses shared `snake-guard`)
 
-## Химеры: канонизация к реестру (слой 2 гибрида)
+## Chimeras: canonicalization to registry (hybrid layer 2)
 
-Политика двух классов:
+Two-class policy:
 
-1. **Эпизодический персонаж с полной упаковкой — не дефект.** Если система
-   упаковала «женщину в будочке» в полноценную сущность (id, роль, паспорт,
-   голос) — это допустимо и не лечится.
-2. **Химера — дефект и лечится обязательно.** Snake-id, который *похож* на
-   существующего персонажа, но не совпадает с ним побайтово: полу-русский /
-   полу-английский (`mikhail_berлиоз`), неправильная транслитерация
-   (`ivan_ponerov` vs `ivan_ponyrev`, `y`/`iy`), хвостовой подчёркивание
-   (`mihail_bulgakov_`), опечатка в 1–2 буквы, шумовой суффикс
-   (`anna_smirnova_extra`). Для системы это другой ключ — за ним нет паспорта.
+1. **Episode character with full packaging — not a defect.** If the system
+   packaged "the kiosk saleswoman" into a full entity (id, role, passport,
+   voice) — this is acceptable and not treated.
+2. **Chimera — a defect, always treated.** A snake-id that *looks like* an
+   existing character but does not byte-match: half-Russian /
+   half-English (`mikhail_berлиоз`), wrong transliteration
+   (`ivan_ponerov` vs `ivan_ponyrev`, `y`/`iy`), trailing underscore
+   (`mihail_bulgakov_`), 1–2 character typo, noise suffix
+   (`anna_smirnova_extra`). To the system this is a different key — no passport behind it.
 
-Защита (`findCanonicalId` в `src/utils/snake-guard.js`) — три ступени
-убывающей уверенности, исправление ВСЕГДА берёт существующий id из
-`characters.json`, новый вариант не генерируется:
+Protection (`findCanonicalId` in `src/utils/snake-guard.js`) — three tiers of
+decreasing confidence, repair ALWAYS takes an existing id from
+`characters.json`, no new variant is generated:
 
-1. **Tier 1** — равенство после нормализации (транслитерация кириллицы через
-   `CYR_LATIN_MAP`, lowercase, стрип мусора): `mikhail_berлиоз` →
+1. **Tier 1** — equality after normalization (Cyrillic transliteration via
+   `CYR_LATIN_MAP`, lowercase, junk strip): `mikhail_berлиоз` →
    `mikhail_berlioz`, `mihail_bulgakov_` → `mihail_bulgakov`.
-2. **Tier 2** — уникальный ближайший по Левенштейну в консервативном пороге
-   (≤3, ≤15% длины, длина ≥8): `mihail_bulgakoviy` → `mihail_bulgakov`,
-   `ivan_ponerov` → `ivan_ponyrev`. Два равнодалёких кандидата → НЕ уверенно
-   → уходит в LLM-ремонт.
-3. **Tier 3** — известный id + шумовой суффикс: `anna_smirnova_extra` →
+2. **Tier 2** — unique nearest by Levenshtein in conservative threshold
+   (≤3, ≤15% of length, length ≥8): `mihail_bulgakoviy` → `mihail_bulgakov`,
+   `ivan_ponerov` → `ivan_ponyrev`. Two equally close candidates → NOT confident
+   → goes to LLM repair.
+3. **Tier 3** — known id + noise suffix: `anna_smirnova_extra` →
    `anna_smirnova`.
 
-Где применяется канонизация (все через один `snake-guard`):
+Where canonicalization is applied (all through single `snake-guard`):
 
-| Точка | Что делает |
+| Point | What it does |
 |---|---|
-| `stepRepairFantasyIds` | канонизация ДО LLM-флага: химеры чинятся детерминированно без вызова; в LLM уходят только токены без уверенного соответствия |
-| `create.js` participants | химера-участник → канонический id (`onReplace`), истинная фантазия → drop (`onDrop`) |
-| `create.js` mentions | цель алиаса канонизируется или дропается — битый алиас в книгу не пишется |
-| `create.js` char/location id | mixed-script id нормализуется к чистому латинскому (`patriarshie_pруды` → `patriarshie_prudy`) |
-| `audit-video-actions.js` | CHIMERA-проверка + mixed-script id + mentions-таргеты |
+| `stepRepairFantasyIds` | canonicalization BEFORE LLM flagging: chimeras fixed deterministically without calling LLM; only tokens without confident match go to LLM |
+| `create.js` participants | chimera participant → canonical id (`onReplace`), true fantasy → drop (`onDrop`) |
+| `create.js` mentions | alias target canonicalized or dropped — broken alias not written to book |
+| `create.js` char/location id | mixed-script id normalized to pure Latin (`patriarshie_pруды` → `patriarshie_prudy`) |
+| `audit-video-actions.js` | CHIMERA check + mixed-script id + mentions targets |
 
-## Гибрид: почему не транслитерация
+## Hybrid: why not transliteration
 
-Обратная транслитерация (`zhenshchina_v_budochke` → «женщина в будочке»)
-работает только для кириллицы и «правильного» транслита. Проект мультиязычный
-(ru/en/de/zh/ar/…), поэтому восстановление исходного обозначения делегировано
-LLM: детект говорит «это фэнтези-id», а агент по тексту юнита возвращает
-естественное обозначение на языке книги («the kiosk saleswoman»). Детерминизм —
-только в решении «ремонтировать или нет», смысл восстанавливается контекстно.
+Reverse transliteration (`zhenshchina_v_budochke` → "woman in a kiosk")
+only works for Cyrillic and "correct" transliteration. The project is multilingual
+(ru/en/de/zh/ar/…), so restoring the original designation is delegated to
+LLM: detection says "this is a fantasy-id" and the agent returns the
+natural designation in the book's language ("the kiosk saleswoman") based on the
+unit text. Determinism is only in the "repair or not" decision; meaning is
+restored contextually.
 
 ## Known Limitations of Option 3
 
 - **Partial fix is not rolled back but completed with deterministic fallback:**
-  если агент-ремонт починил одно поле юнита, но оставил фэнтези-id в другом
-  (или вернул грязный черновик), `mergeRepairResults` сохраняет черновик LLM и
-  программно взрывает оставшийся invented-токен в обычные слова
-  (`kiosk_saleswoman` → "kiosk saleswoman") через `desnakeifyText` — фэнтези-id
-  в книгу не попадает никогда. Реверт к оригиналу остаётся только как крайняя
-  мера (если даже fallback не смог очистить поле). Счётчик `fallbackFixed`
-  виден в логе шага. Пример из боя: LLM не смог убрать `kiosk_saleswoman` из
-  `video.action` трёх юнитов — старый код ревертил (фэнтези-id оставался в
-  книге, аудит FAIL), новый код отдаёт "kiosk saleswoman".
-- **Fallback — это слова, а не перевод:** для латинских id деснейкификация даёт
-  осмысленные слова ("kiosk saleswoman"); для транслитерированных id
-  ("zhenshchina_v_budochke") — сырой транслит, который пользователь явно
-  отверг. Поэтому fallback работает ТОЛЬКО как последний рубеж после LLM:
-  первично агент восстанавливает естественное обозначение по тексту юнита.
-- **Усечённые варианты реальных id** (`mikhail_berlio` при реальном
-  `mikhail_berlioz`) считаются вариантами персонажа, а не фэнтези — они
-  сознательно пропускаются и ремонтом не чинятся (консервативная защита от
-  ложных срабатываний).
-- **Усечённые варианты реальных id** (`mikhail_berlio` при реальном
-  `mikhail_berlioz`) считаются вариантами персонажа, а не фэнтези — они
-  сознательно пропускаются и ремонтом не чинятся (консервативная защита от
-  ложных срабатываний).
-- **Out-of-format промпты** (> `IMAGE_PROMPT_MAX_CHARS`, legacy/пользовательские)
-  не сканируются и не ремонтируются — политика «не трогать то, что модель
-  не видела целиком».
-- **Fuzzy-слияние (Tier 2) в реестровых путях отключено** (`fuzzy: false` в
-  create.js): два реальных разных персонажа с похожими id
-  (`sergey_ivanov` / `sergey_ivanova`) могут быть разными людьми — в записи в
-  реестр выравниваются только нормализованные-равные (Tier 1) и суффиксные
-  (Tier 3) варианты; опечатки уходят в ремонт промптов. В промптах (ремонтный
-  шаг) fuzzy остаётся — там ошибка влияет только на текст кадра.
-- **Миграция уже сгенерированных книг:** старые главы могут ссылаться на
-  mixed-script location id, которого нет в канонизированной карте — новые
-  окна пишут канонические id; остатки ловит аудит-скрипт.
+  if the repair agent fixed one field of the unit but left a fantasy-id in another
+  (or returned a dirty draft), `mergeRepairResults` preserves the LLM draft and
+  programmatically bursts the remaining invented token into plain words
+  (`kiosk_saleswoman` → "kiosk saleswoman") via `desnakeifyText` — fantasy-ids
+  never enter the book. Revert to original remains only as a last resort
+  (if even fallback could not clean the field). The `fallbackFixed` counter
+  is visible in the step log. Real-world example: LLM could not remove `kiosk_saleswoman` from
+  `video.action` of three units — old code reverted (fantasy-id remained in
+  book, audit FAIL), new code outputs "kiosk saleswoman".
+- **Fallback is words, not translation:** for Latin ids denakeification produces
+  meaningful words ("kiosk saleswoman"); for transliterated ids
+  ("zhenshchina_v_budochke") — raw transliteration, which the user explicitly
+  rejects. Therefore fallback works ONLY as the last line of defense after LLM:
+  the agent primarily restores the natural designation from the unit text.
+- **Truncated variants of real ids** (`mikhail_berlio` when the real
+  `mikhail_berlioz` exists) are treated as character variants, not fantasy — they
+  are deliberately skipped and not repaired (conservative protection against
+  false positives).
+- **Out-of-format prompts** (> `IMAGE_PROMPT_MAX_CHARS`, legacy/user-created)
+  are not scanned and not repaired — policy of "don't touch what the model
+  has not seen in full".
+- **Fuzzy merge (Tier 2) is disabled in registry paths** (`fuzzy: false` in
+  create.js): two real different characters with similar ids
+  (`sergey_ivanov` / `sergey_ivanova`) may be different people — in registry
+  writes only normalized-equal (Tier 1) and suffix-based (Tier 3)
+  variants are aligned; typos go to prompt repair. In prompts (repair step)
+  fuzzy remains — there an error affects only frame text.
+- **Migration of already-generated books:** old chapters may reference
+  mixed-script location ids not in the canonicalized map — new
+  windows write canonical ids; remnants caught by the audit script.
 
 ## Known Remnants (not injected — intentionally untouched)
 
-- `backend/src/scripts/test-scene-split.cjs` — дев-скрипт с M&M-фикстурами; не
-  вызывается из package.json/тестов (ручной инструмент).
-- Комментарии в `src/image/iu-processor.js`, `src/image/character-utils.js`,
-  `src/audio/segments.js` — упоминают «Берлиоз»/«нарзан» как иллюстрацию; в
-  промпты не попадают.
-- `GENERIC_WORDS` в `src/image/helpers.js` / `src/utils/character-identity.js`
-  содержит `zhenshchina` — это гард-список (исключение общих слов из алиасов),
-  его трогать нельзя.
+- `backend/src/scripts/test-scene-split.cjs` — dev script with M&M fixtures; not
+  called from package.json/tests (manual tool).
+- Comments in `src/image/iu-processor.js`, `src/image/character-utils.js`,
+  `src/audio/segments.js` — mention "Berlioz"/"Narzan" as illustration; do not
+  enter prompts.
+- `GENERIC_WORDS` in `src/image/helpers.js` / `src/utils/character-identity.js`
+  contains `zhenshchina` — this is a guard list (exclusion of common words from aliases),
+  do not touch it.
