@@ -13,6 +13,7 @@
 //     book.json
 //     bible.json            (optional)
 //     characters.json       (optional)
+//     behavior.json         (optional, per-character behavior — keyed by character_id)
 //     chapters/
 //       ch-XXXXXXXX.json    (one per chapter, Cover is first)
 //
@@ -139,6 +140,17 @@ function buildBookFromBundle(rawFiles) {
             throw new Error("Invalid JSON in voices.json")
         }
     }
+
+    // Behavior (optional, per-character behavior keyed by character_id)
+    const behaviorKey = findFile("behavior.json");
+    let behaviors = {};
+    if (behaviorKey) {
+        try {
+            behaviors = JSON.parse(files[behaviorKey]);
+        } catch {
+            throw new Error("Invalid JSON in behavior.json")
+        }
+    }
     if (charactersKey) {
         try {
             characters = JSON.parse(files[charactersKey])
@@ -215,7 +227,8 @@ function buildBookFromBundle(rawFiles) {
         characters,
         chapters,
         locations,
-        voices
+        voices,
+        behaviors
     }
 }
 
@@ -296,7 +309,7 @@ function saveBookBundle(book, files) {
             chaptersOrder.map(cf => cf.split('/').pop())
         );
         const rootBasenames = new Set(
-            ['manifest.json', 'book.json', 'bible.json', 'locations.json', 'voices.json', 'characters.json']
+            ['manifest.json', 'book.json', 'bible.json', 'locations.json', 'voices.json', 'characters.json', 'behavior.json']
         );
 
         for (const [filePath, content] of Object.entries(files)) {
@@ -407,6 +420,15 @@ function saveBookBundle(book, files) {
         fs.writeFileSync(voPath, JSON.stringify(book.voices, null, 2));
     } else if (fs.existsSync(voPath)) {
         fs.unlinkSync(voPath);
+    }
+
+    // Save behavior.json separately (optional, per-character behavior)
+    const bhPath = path.join(bookDir, 'behavior.json');
+    const hasBehaviors = book.behaviors && Object.keys(book.behaviors).length > 0;
+    if (hasBehaviors) {
+        fs.writeFileSync(bhPath, JSON.stringify(book.behaviors, null, 2));
+    } else if (fs.existsSync(bhPath)) {
+        fs.unlinkSync(bhPath);
     }
 
     // Save characters.json (optional)
@@ -527,6 +549,14 @@ function loadBookFromDir(bookId, bookDir) {
             voices = JSON.parse(fs.readFileSync(voicesPath, 'utf8'));
         }
 
+        // Optional behavior.json — load as top-level key (per-character behavior
+        // keyed by character_id, same pattern as voices.json)
+        let behaviors = {};
+        const behaviorPath = path.join(bookDir, 'behavior.json');
+        if (fs.existsSync(behaviorPath)) {
+            behaviors = JSON.parse(fs.readFileSync(behaviorPath, 'utf8'));
+        }
+
         // Optional characters.json
         let characters = [];
         const charPath = path.join(bookDir, 'characters.json');
@@ -550,7 +580,7 @@ function loadBookFromDir(bookId, bookDir) {
             }
         }
 
-        return { manifest, book: bookMeta, bible, characters, chapters, locations, voices };
+        return { manifest, book: bookMeta, bible, characters, chapters, locations, voices, behaviors };
     } catch (err) {
         console.error(`Failed to load book from dir ${bookId}:`, err.message);
         return null;

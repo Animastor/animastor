@@ -1,0 +1,258 @@
+// ======================================================
+// BEHAVIOR CRUD ROUTES — manual Behavior editor (pass 1)
+// ======================================================
+// Verifies the endpoints the Editors use for the Behaviors tab:
+//   1. behavior.json mirrors voices.json: a map keyed by the EXISTING
+//      character_id (no id transliteration — the key is a character id).
+//   2. POST /behaviors requires character_id (400), an existing character
+//      (404) and no behavior yet for that character (409).
+//   3. PATCH /behaviors/{characterId} merges fields via setDeep — unknown
+//      keys pass through so a future schema extension survives round-trips.
+//   4. DELETE removes the whole entry; deleting the CHARACTER removes the
+//      dangling behavior too.
+//   5. Persistence goes through the EXISTING book.loadBook/saveBookBundle
+//      (no parallel storage path); buildBookFromBundle parses behavior.json
+//      on vbook import.
+//
+// Mounts the real sub-registrar with minimal deps, like
+// entity-crud-routes.test.js; fixtures follow the same pattern.
+
+const { expect } = require('chai');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+const bookModule = require('../src/book/index');
+const config = require('../src/config/runtime-config');
+
+const ORIG_BOOKS_DIR = config.BOOKS_DIR;
+
+function createResponse() {
+    return {
+        statusCode: 200,
+        body: null,
+        status(code) {
+            this.statusCode = code;
+            return this;
+        },
+        json(body) {
+            this.body = body;
+            return this;
+        },
+    };
+}
+
+describe('BEHAVIOR CRUD ROUTES — manual Behavior editor', () => {
+    let tmpDir;
+    let bookId;
+    let bookDir;
+    let handlers;
+    let app;
+
+    const CHAPTER_ID = 'ch-123456';
+
+    function registerRoutes() {
+        handlers = new Map();
+        app = {
+            post(path, handler) { handlers.set('POST ' + path, handler); },
+            get() {},
+            put() {},
+            patch(path, handler) { handlers.set('PATCH ' + path, handler); },
+            delete(path, handler) { handlers.set('DELETE ' + path, handler); },
+        };
+        require('../src/routes/book/entity-crud-routes.cjs')(app, {}, {
+            book: bookModule,
+            utils: { log: () => {} },
+        });
+        require('../src/routes/book/core-routes.cjs')(app, {}, {
+            book: bookModule,
+            utils: { log: () => {} },
+        });
+    }
+
+    // Direct handler invocation with explicit params (route templates above are
+    // registered once; tests pass concrete ids via params). PATCH and DELETE
+    // share the path template, so the method is part of the key. Async handlers
+    // (core-routes PATCH) execute synchronously up to their first await — the
+    // response object is populated after the call either way.
+    function invoke(pathTemplate, params, body) {
+        const handler = handlers.get(pathTemplate);
+        if (!handler) throw new Error(`No handler for ${pathTemplate}`);
+        const res = createResponse();
+        handler({ params, body: body || {} }, res);
+        return res;
+    }
+
+    beforeEach(() => {
+        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'behavior-crud-'));
+        bookId = 'test-book-' + Date.now();
+        bookDir = path.join(tmpDir, bookId);
+        fs.mkdirSync(bookDir, { recursive: true });
+        fs.mkdirSync(path.join(bookDir, 'chapters'), { recursive: true });
+
+        config.BOOKS_DIR = tmpDir;
+
+        fs.writeFileSync(path.join(bookDir, 'manifest.json'), JSON.stringify({
+            book_id: bookId,
+            vbook_version: '3.1',
+            build_id: 'build-test',
+            state: 'BOOTSTRAPPED',
+            created_at: new Date().toISOString(),
+        }, null, 2));
+
+        fs.writeFileSync(path.join(bookDir, 'book.json'), JSON.stringify({
+            book_id: bookId,
+            version: '3.0',
+            title: 'Test Book',
+            author: 'Test Author',
+            language: 'ru',
+            structure: { chapters_order: [`chapters/${CHAPTER_ID}.json`] },
+        }, null, 2));
+
+        fs.writeFileSync(path.join(bookDir, 'chapters', `${CHAPTER_ID}.json`), JSON.stringify({
+            chapter_id: CHAPTER_ID,
+            chapter_title: 'Chapter 1',
+            scenes: [{
+                scene_id: 'sc-123456',
+                type: 'narration',
+                participants: ['hero'],
+                units: [{ id: 'iu-123456', text: 'The hero arrives.' }],
+            }],
+        }, null, 2));
+
+        fs.writeFileSync(path.join(bookDir, 'characters.json'), JSON.stringify([
+            { id: 'hero', name: 'Hero', passport: { appearance: 'Tall, dark hair' } },
+            { id: 'sidekick', name: 'Sidekick', passport: { appearance: 'Short, red hair' } },
+        ], null, 2));
+
+        registerRoutes();
+    });
+
+    afterEach(() => {
+        config.BOOKS_DIR = ORIG_BOOKS_DIR;
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+    });
+
+    function readBehaviorsFile() {
+        return JSON.parse(fs.readFileSync(path.join(bookDir, 'behavior.json'), 'utf8'));
+    }
+    // When the LAST behavior is deleted, saveBookBundle unlinks the registry
+    // file (empty collection → file removed). loadBook is the canonical read
+    // path — it defaults to an empty map for an absent file.
+    function loadedBehaviors() {
+        return bookModule.loadBook(bookId).behaviors || {};
+    }
+
+    const BEH_POST = 'POST /api/v1/book/:bookId/behaviors';
+    const BEH_PATCH = 'PATCH /api/v1/book/:bookId/behaviors/:characterId';
+    const BEH_DEL = 'DELETE /api/v1/book/:bookId/behaviors/:characterId';
+    const CHAR_DEL = 'DELETE /api/v1/book/:bookId/characters/:characterId';
+
+    // ======================================================
+    // POST — create
+    // ======================================================
+    it('POST creates behavior.json keyed by the existing character_id', () => {
+        const res = invoke(BEH_POST, { bookId }, {
+            character_id: 'hero',
+            instruction: 'Calm, restrained gestures, speaks slowly.',
+        });
+        expect(res.statusCode).to.equal(200);
+        expect(res.body).to.include({ saved: true, character_id: 'hero' });
+
+        const behaviors = readBehaviorsFile();
+        expect(behaviors.hero).to.deep.equal({ instruction: 'Calm, restrained gestures, speaks slowly.' });
+        // Sidekick untouched — no phantom entries.
+        expect(Object.keys(behaviors)).to.deep.equal(['hero']);
+    });
+
+    it('POST without character_id is rejected (400)', () => {
+        const res = invoke(BEH_POST, { bookId }, { instruction: 'no owner' });
+        expect(res.statusCode).to.equal(400);
+    });
+
+    it('POST for an unknown character is rejected (404)', () => {
+        const res = invoke(BEH_POST, { bookId }, { character_id: 'ghost', instruction: 'x' });
+        expect(res.statusCode).to.equal(404);
+    });
+
+    it('POST a second behavior for the same character is rejected (409)', () => {
+        expect(invoke(BEH_POST, { bookId }, { character_id: 'hero', instruction: 'a' }).statusCode).to.equal(200);
+        const res = invoke(BEH_POST, { bookId }, { character_id: 'hero', instruction: 'b' });
+        expect(res.statusCode).to.equal(409);
+        // The original entry is intact.
+        expect(readBehaviorsFile().hero.instruction).to.equal('a');
+    });
+
+    // ======================================================
+    // PATCH — edit (free-form fields, passthrough of unknown keys)
+    // ======================================================
+    it('PATCH updates the instruction and keeps unknown keys (schema-tolerant storage)', () => {
+        invoke(BEH_POST, { bookId }, { character_id: 'hero', instruction: 'first draft' });
+        // A future schema writes an extra key straight into behavior.json.
+        const behaviors = readBehaviorsFile();
+        behaviors.hero.gestures = 'minimal';
+        fs.writeFileSync(path.join(bookDir, 'behavior.json'), JSON.stringify(behaviors, null, 2));
+
+        const res = invoke(BEH_PATCH, { bookId, characterId: 'hero' }, {
+            fields: { instruction: 'edited instruction' },
+        });
+        expect(res.statusCode).to.equal(200);
+
+        const after = readBehaviorsFile();
+        expect(after.hero.instruction).to.equal('edited instruction');
+        expect(after.hero.gestures).to.equal('minimal');
+    });
+
+    it('PATCH for a character without behavior is rejected (404)', () => {
+        const res = invoke(BEH_PATCH, { bookId, characterId: 'sidekick' }, { fields: { instruction: 'x' } });
+        expect(res.statusCode).to.equal(404);
+    });
+
+    // ======================================================
+    // DELETE — remove behavior / character
+    // ======================================================
+    it('DELETE removes the whole behavior entry; the file is unlinked when empty', () => {
+        invoke(BEH_POST, { bookId }, { character_id: 'hero', instruction: 'a' });
+        invoke(BEH_POST, { bookId }, { character_id: 'sidekick', instruction: 'b' });
+
+        const res = invoke(BEH_DEL, { bookId, characterId: 'hero' });
+        expect(res.statusCode).to.equal(200);
+        expect(loadedBehaviors().sidekick.instruction).to.equal('b');
+
+        invoke(BEH_DEL, { bookId, characterId: 'sidekick' });
+        expect(fs.existsSync(path.join(bookDir, 'behavior.json'))).to.equal(false);
+        expect(loadedBehaviors()).to.deep.equal({});
+    });
+
+    it('DELETE for a missing behavior is rejected (404)', () => {
+        const res = invoke(BEH_DEL, { bookId, characterId: 'hero' });
+        expect(res.statusCode).to.equal(404);
+    });
+
+    it('DELETE character removes the dangling behavior (dangling-data cleanup)', () => {
+        invoke(BEH_POST, { bookId }, { character_id: 'hero', instruction: 'a' });
+
+        const res = invoke(CHAR_DEL, { bookId, characterId: 'hero' });
+        expect(res.statusCode).to.equal(200);
+
+        const chars = JSON.parse(fs.readFileSync(path.join(bookDir, 'characters.json'), 'utf8'));
+        expect(chars.find(c => c.id === 'hero')).to.be.undefined;
+        expect(loadedBehaviors()).to.deep.equal({});
+    });
+
+    // ======================================================
+    // Persistence roundtrip — vbook import parses behavior.json
+    // ======================================================
+    it('buildBookFromBundle parses behavior.json from a vbook bundle', () => {
+        fs.writeFileSync(path.join(bookDir, 'behavior.json'), JSON.stringify({
+            hero: { instruction: 'Calm and deliberate.' },
+        }, null, 2));
+
+        const AdmZip = require('adm-zip');
+        const zip = new AdmZip();
+        bookModule.addDirToZip(zip, bookDir, '');
+        const built = bookModule.buildBookFromBundle(bookModule.extractBookBundle(zip.toBuffer()));
+
+        expect(built.behaviors).to.deep.equal({ hero: { instruction: 'Calm and deliberate.' } });
+    });
+});

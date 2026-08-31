@@ -237,6 +237,11 @@ class Repository(
         api.patchVoice(bookId, voiceId, mapOf("fields" to fields))
     }
 
+    suspend fun patchBehavior(bookId: String, characterId: String, fields: Map<String, @JvmSuppressWildcards Any?>) {
+        Log.d("Repo", "patchBehavior: $bookId/$characterId keys=${fields.keys}")
+        api.patchBehavior(bookId, characterId, mapOf("fields" to fields))
+    }
+
     // ── Manual entity add/delete (Editor tables) ──
     // POST/DELETE through the dedicated endpoints; the id stays free-form — the
     // server transliterates non-canonical input (reusing its cyrToLatin util),
@@ -270,6 +275,18 @@ class Repository(
     suspend fun deleteVoice(bookId: String, voiceId: String) {
         Log.i("Repo", "deleteVoice: $bookId/$voiceId")
         api.deleteVoice(bookId, voiceId)
+    }
+
+    // ── Behavior (behavior.json — keyed by the existing character_id) ──
+
+    suspend fun createBehavior(bookId: String, body: Map<String, @JvmSuppressWildcards Any?>) {
+        Log.d("Repo", "createBehavior: $bookId body=${body.keys}")
+        api.createBehavior(bookId, body)
+    }
+
+    suspend fun deleteBehavior(bookId: String, characterId: String) {
+        Log.i("Repo", "deleteBehavior: $bookId/$characterId")
+        api.deleteBehavior(bookId, characterId)
     }
 
     // ── Structure add/delete (Editor — chapters/scenes/units) ──

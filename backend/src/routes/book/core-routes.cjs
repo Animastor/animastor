@@ -675,6 +675,45 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
+    // PATCH BOOK BEHAVIOR (per-character, keyed by character_id).
+    // Manual Behavior editor only for now: behavior does not participate in
+    // generation/runtime yet, so unlike PATCH VOICE there is no dirty-scene
+    // propagation — fields are merged via setDeep (unknown keys pass through
+    // so a future schema extension survives round-trips).
+    // ======================================================
+    app.patch('/api/v1/book/:bookId/behaviors/:characterId', async (req, res) => {
+        try {
+            const { bookId, characterId } = req.params;
+            const { fields } = req.body;
+
+            if (!fields || typeof fields !== 'object' || Object.keys(fields).length === 0) {
+                return res.status(400).json({ error: 'Provide "fields" object' });
+            }
+
+            const oldBook = book.loadBook(bookId);
+            if (!oldBook) return res.status(404).json({ error: 'Book not found' });
+
+            const behaviors = oldBook.behaviors || {};
+            const behavior = behaviors[characterId];
+            if (!behavior) {
+                return res.status(404).json({ error: `Behavior for character ${characterId} not found` });
+            }
+
+            for (const [key, value] of Object.entries(fields)) {
+                setDeep(behavior, key, value === '' ? null : value);
+            }
+            log(`[PATCH BEHAVIOR] ${bookId}/${characterId}: fields=${Object.keys(fields).join(', ')}`);
+
+            book.saveBookBundle(oldBook, null);
+
+            return res.json({ saved: true, book_id: bookId, character_id: characterId });
+        } catch (err) {
+            console.error('[PATCH BEHAVIOR] Error:', err.message);
+            return res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
     // GET BOOK COVER DATA
     // ======================================================
     app.get('/api/v1/book/:bookId/cover', async (req, res) => {

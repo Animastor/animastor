@@ -332,6 +332,7 @@ export interface BookData {
   chapters?: BookChapter[] | null;
   characters?: BookCharacter[] | null;
   voices?: Record<string, BookVoiceEntry> | null;
+  behaviors?: Record<string, BookBehaviorEntry> | null;
   locations?: Record<string, BookLocation> | null;
   /** Server-computed flat scene list (thin-client contract) — preferred over traversal. */
   scene_list?: { chapter_id?: string | null; scene_id?: string | null; type?: string | null }[] | null;
@@ -379,6 +380,15 @@ export interface BookCharacter {
 
 export interface BookVoiceEntry {
   instruction?: string | null;
+}
+
+// Per-character behavior (behavior.json) — keyed by character_id, same
+// pattern as voices. Pass 1 edits only `instruction`; unknown extra keys are
+// preserved server-side (schema-tolerant storage) so a future Behavior
+// schema extension survives round-trips.
+export interface BookBehaviorEntry {
+  instruction?: string | null;
+  [key: string]: unknown;
 }
 
 export interface BookLocationEnvironment {

@@ -10,8 +10,8 @@
 //    WaveformView canvas (lib/waveform.tsx, R10) with draggable range handles,
 //    and a reset-to-original button. Drag preview is local; PUT /timings on
 //    release applies the server-side cascade (N2, 1:1).
-//  - 8 property tabs (Global/Chapter/Scene/Audio/Unit/Characters/Voices/
-//    Locations) with scroll indicators; default tab = Unit (index 4).
+//  - 9 property tabs (Global/Chapter/Scene/Audio/Unit/Characters/Voices/
+//    Behavior/Locations) with scroll indicators; default tab = Unit (index 4).
 //  - Field editors per tab (inputCard/readOnlyCard ports). Characters/Voices are
 //    editable and save through dedicated endpoints (PATCH /characters/{id},
 //    PATCH /voices/{id}) — the Android save path routed their keys into the
@@ -42,15 +42,16 @@ import {
 import { navigateTo, position as positionSignal } from '../state/positionStore';
 import { seekToPosition, invalidateDeletedScene, invalidateDeletedChapter } from '../state/playbackStore';
 import { Waveform } from '../lib/waveform';
-import { DeleteConfirmDialog, ENTITY_SCHEMAS, EntityAddButton, EntityDeleteButton, EntityEditorDialog, StructureAddDialog } from '../lib/entityEditor';
+import { BehaviorAddDialog, DeleteConfirmDialog, ENTITY_SCHEMAS, EntityAddButton, EntityDeleteButton, EntityEditorDialog, StructureAddDialog } from '../lib/entityEditor';
 import type { EntityKind, StructureKind, StructureParentOption } from '../lib/entityEditor';
 import { chapterId as genChapterId, sceneId as genSceneId, unitId as genUnitId } from '../lib/idgen';
 import { IconChevronDown, IconChevronLeft, IconChevronRight, IconChevronUp, IconClock, IconClose, IconFullscreen, IconImageOff, IconPlay, IconReset, IconSave, IconStop } from '../app/icons';
 
 // ── Tabs (propertyTabs) — Global is the first level (mirrors the top-level
 //    book metadata in the JSON), then Chapter → Scene → Audio → Unit ("Модуль")
-//    → Characters/Voices/Locations. Default to Unit (index 4) like EditFragment ──
-const TABS = ['edit_global_tab', 'edit_chapter_tab', 'edit_scene', 'edit_audio', 'edit_units_tab', 'edit_characters_tab', 'edit_voices_tab', 'edit_locations_tab'] as const;
+//    → Characters/Voices/Behavior/Locations. Default to Unit (index 4) like
+//    EditFragment ──
+const TABS = ['edit_global_tab', 'edit_chapter_tab', 'edit_scene', 'edit_audio', 'edit_units_tab', 'edit_characters_tab', 'edit_voices_tab', 'edit_behavior_tab', 'edit_locations_tab'] as const;
 const DEFAULT_TAB = 4;
 const GLOBAL_TAB = 0;
 const CHAPTER_TAB = 1;
@@ -59,7 +60,8 @@ const AUDIO_TAB = 3;
 const UNITS_TAB = 4;
 const CHARS_TAB = 5;
 const VOICES_TAB = 6;
-const LOCATIONS_TAB = 7;
+const BEHAVIORS_TAB = 7;
+const LOCATIONS_TAB = 8;
 
 const PASSPORT_OVERRIDE_FIELDS = ['appearance', 'clothes', 'video_tokens'];
 
@@ -220,6 +222,9 @@ export function EditPage(props: { path?: string }) {
   // schema-driven pattern; both dialogs share the busy/error state since only
   // one is open at a time.
   const [entityAddKind, setEntityAddKind] = useState<EntityKind | null>(null);
+  // Behavior add uses a dedicated dialog (character dropdown — behavior.json
+  // is keyed by an existing character_id, not a free-form id).
+  const [behaviorAddOpen, setBehaviorAddOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ kind: EntityKind; id: string } | null>(null);
   const [entityBusy, setEntityBusy] = useState(false);
   const [entityError, setEntityError] = useState<string | null>(null);
@@ -1225,6 +1230,57 @@ export function EditPage(props: { path?: string }) {
       }
     }
 
+    // BEHAVIORS tab — PATCH /behaviors/{characterId} per CHANGED entry
+    // (instruction), mirroring the VOICES_TAB branch. Behavior does not affect
+    // generation yet, so the PATCH is a plain edit (no dirty propagation).
+    if (tab === BEHAVIORS_TAB) {
+      setSaveLoading(true, true);
+      try {
+        const byChar = new Map<string, Record<string, string>>();
+        Object.entries(fv).forEach(([key, value]) => {
+          if (!key.startsWith('behavior.')) return;
+          const rest = key.slice('behavior.'.length);
+          const dot = rest.indexOf('.');
+          if (dot <= 0) return;
+          const charId = rest.slice(0, dot);
+          const fieldKey = rest.slice(dot + 1);
+          const m = byChar.get(charId) ?? {};
+          m[fieldKey] = value;
+          byChar.set(charId, m);
+        });
+        const behaviors = bd.behaviors ?? {};
+        let anyChanged = false;
+        for (const [charId, fields] of byChar) {
+          // Skip entities deleted since the editor rendered (stale fieldValues).
+          if (!(charId in behaviors)) continue;
+          const orig = behaviors[charId]?.instruction ?? '';
+          const changed: Record<string, string> = {};
+          Object.entries(fields).forEach(([k, v]) => {
+            if (v !== orig) changed[k] = v;
+          });
+          if (Object.keys(changed).length === 0) continue;
+          anyChanged = true;
+          await patchJson(`/book/${encodeURIComponent(bId)}/behaviors/${encodeURIComponent(charId)}`, { fields: changed });
+        }
+        if (!anyChanged) {
+          setSaveLoading(false, true);
+          saveDirtyRef.current = false;
+          setSaveDirty(false);
+          return true;
+        }
+        const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`).catch(() => null);
+        if (fresh) setBookData(fresh);
+        setSaveLoading(false, true);
+        setErrorText(null);
+        saveDirtyRef.current = false;
+        setSaveDirty(false);
+        return true;
+      } catch (e) {
+        showSaveError(`${(e as Error).name}: ${(e as Error).message || 'unknown'}`);
+        return false;
+      }
+    }
+
     const ch = chapters[currentChIndex];
     const sc = currentScene();
     const chapterId = ch?.chapter_id;
@@ -1423,7 +1479,7 @@ export function EditPage(props: { path?: string }) {
   }, []);
 
   const entityCollection = useCallback((kind: EntityKind): string =>
-    kind === 'character' ? 'characters' : kind === 'location' ? 'locations' : 'voices', []);
+    kind === 'character' ? 'characters' : kind === 'location' ? 'locations' : kind === 'behavior' ? 'behaviors' : 'voices', []);
 
   const buildCreateBody = useCallback((kind: EntityKind, values: Record<string, string>): Record<string, unknown> => {
     const body: Record<string, unknown> = {};
@@ -1469,6 +1525,36 @@ export function EditPage(props: { path?: string }) {
       setEntityBusy(false);
     }
   }, [entityCollection, buildCreateBody, refreshBook]);
+
+  // ── Behavior add — POST /behaviors with the selected existing character.
+  //     The dialog offers only characters without a behavior yet (the server
+  //     rejects duplicates with 409). ──
+  const behaviorCharacters = useMemo(() => {
+    const bd = bookData;
+    const behaviors = bd?.behaviors ?? {};
+    return (bd?.characters ?? [])
+      .filter((c) => c.id && !(c.id in behaviors))
+      .map((c) => ({ id: c.id as string, name: c.name ?? '' }));
+  }, [bookData]);
+
+  const saveBehavior = useCallback(async (values: { characterId: string; instruction: string }) => {
+    const bId = bookIdSignal.value;
+    if (!bId) return;
+    setEntityBusy(true);
+    setEntityError(null);
+    try {
+      await postJson(`/book/${encodeURIComponent(bId)}/behaviors`, {
+        character_id: values.characterId,
+        instruction: values.instruction,
+      });
+      setBehaviorAddOpen(false);
+      await refreshBook();
+    } catch (e) {
+      setEntityError((e as Error).message);
+    } finally {
+      setEntityBusy(false);
+    }
+  }, [refreshBook]);
 
   const confirmDeleteEntity = useCallback(async () => {
     const target = deleteTarget;
@@ -1639,9 +1725,9 @@ export function EditPage(props: { path?: string }) {
     }
   }, [structureDelete]);
 
-  const isEntityTab = tab === CHARS_TAB || tab === VOICES_TAB || tab === LOCATIONS_TAB;
+  const isEntityTab = tab === CHARS_TAB || tab === VOICES_TAB || tab === LOCATIONS_TAB || tab === BEHAVIORS_TAB;
   const isStructureTab = tab === CHAPTER_TAB || tab === SCENE_TAB || tab === UNITS_TAB;
-  const currentEntityKind: EntityKind = tab === CHARS_TAB ? 'character' : tab === LOCATIONS_TAB ? 'location' : 'voice';
+  const currentEntityKind: EntityKind = tab === CHARS_TAB ? 'character' : tab === LOCATIONS_TAB ? 'location' : tab === BEHAVIORS_TAB ? 'behavior' : 'voice';
 
   // ── Content builders ──
 
@@ -1846,6 +1932,30 @@ export function EditPage(props: { path?: string }) {
     ));
   };
 
+  // Behaviors tab — one card per behavior, keyed by character_id (behavior.json
+  // mirrors voices.json); the card title shows the character's name when known.
+  const buildBehaviorsFields = (): JSX.Element[] => {
+    const behaviors = bookData?.behaviors ?? {};
+    const entries = Object.entries(behaviors);
+    if (entries.length === 0) {
+      return [<div class="edit-empty-inline" key="empty">{t('edit_no_behaviors')}</div>];
+    }
+    const chars = bookData?.characters ?? [];
+    return entries.map(([charId, entry]) => {
+      const ch = chars.find((c) => c.id === charId);
+      const title = ch?.name ? `${charId} — ${ch.name}` : charId;
+      return (
+        <div class="edit-card" key={charId}>
+          <div class="edit-card__head">
+            <EntityDeleteButton onClick={() => { setEntityError(null); setDeleteTarget({ kind: 'behavior', id: charId }); }} />
+            <span class="edit-card__title">{title}</span>
+          </div>
+          {inputCard(t('field_instruction'), entry?.instruction ?? '', (entry?.instruction?.length ?? 0) > 80, `behavior.${charId}.instruction`)}
+        </div>
+      );
+    });
+  };
+
   const buildLocationsFields = (): JSX.Element[] => {
     const locations = bookData?.locations ?? bookData?.bible?.locations ?? {};
     const entries = Object.entries(locations);
@@ -1968,6 +2078,7 @@ export function EditPage(props: { path?: string }) {
     if (tab === CHARS_TAB) return <>{buildCharactersFields()}</>;
     if (tab === VOICES_TAB) return <>{buildVoicesFields()}</>;
     if (tab === LOCATIONS_TAB) return <>{buildLocationsFields()}</>;
+    if (tab === BEHAVIORS_TAB) return <>{buildBehaviorsFields()}</>;
     if (tab === GLOBAL_TAB) return <>{buildGlobalFields()}</>;
     const sc = currentScene();
     if (!sc) return <div class="edit-empty-inline" />;
@@ -2240,7 +2351,8 @@ export function EditPage(props: { path?: string }) {
             <div class="edit-entity-table">
               <EntityAddButton onClick={() => {
                 setEntityError(null);
-                if (isStructureTab) openStructureAdd(tab === CHAPTER_TAB ? 'chapter' : tab === SCENE_TAB ? 'scene' : 'unit');
+                if (tab === BEHAVIORS_TAB) setBehaviorAddOpen(true);
+                else if (isStructureTab) openStructureAdd(tab === CHAPTER_TAB ? 'chapter' : tab === SCENE_TAB ? 'scene' : 'unit');
                 else setEntityAddKind(currentEntityKind);
               }} />
               {renderContent()}
@@ -2320,6 +2432,18 @@ export function EditPage(props: { path?: string }) {
           error={entityError}
           onSave={(values) => void saveEntity(entityAddKind, values)}
           onClose={() => { if (!entityBusy) { setEntityAddKind(null); setEntityError(null); } }}
+        />
+      )}
+
+      {/* Behavior add dialog — picks an existing character without a behavior
+          yet (behavior.json is keyed by character_id, not a free-form id). */}
+      {behaviorAddOpen && (
+        <BehaviorAddDialog
+          characters={behaviorCharacters}
+          busy={entityBusy}
+          error={entityError}
+          onSave={(values) => void saveBehavior(values)}
+          onClose={() => { if (!entityBusy) { setBehaviorAddOpen(false); setEntityError(null); } }}
         />
       )}
 

@@ -25,7 +25,7 @@ import { IconAdd, IconMinus } from '../app/icons';
 import { t } from '../app/i18n';
 import type { StrKey } from '../app/i18n';
 
-export type EntityKind = 'character' | 'location' | 'voice';
+export type EntityKind = 'character' | 'location' | 'voice' | 'behavior';
 
 export interface EntityFieldDef {
   /** Flat form key — dotted for nested payload keys (passport.appearance). */
@@ -82,6 +82,19 @@ export const ENTITY_SCHEMAS: Record<EntityKind, EntitySchema> = {
     addTitleKey: 'entity_add_voice',
     deleteTitleKey: 'entity_delete_voice',
     deleteConfirmKey: 'entity_delete_voice_confirm',
+    fields: [
+      { key: 'instruction', labelKey: 'field_instruction', multiline: true },
+    ],
+  },
+  // Behavior is keyed by an EXISTING character_id (behavior.json mirrors
+  // voices.json), so the generic add dialog (free-form id + name) is not used
+  // for it — BehaviorAddDialog below picks the character instead. The schema
+  // still carries the delete-confirm strings and the field list.
+  behavior: {
+    kind: 'behavior',
+    addTitleKey: 'entity_add_behavior',
+    deleteTitleKey: 'entity_delete_behavior',
+    deleteConfirmKey: 'entity_delete_behavior_confirm',
     fields: [
       { key: 'instruction', labelKey: 'field_instruction', multiline: true },
     ],
@@ -198,6 +211,71 @@ export function EntityEditorDialog({ schema, existingIds, busy, error, onSave, o
             )}
           </div>
         ))}
+        {(formError || error) && <div class="entity-form__error">{(formError ?? error) as string}</div>}
+      </div>
+    </Modal>
+  );
+}
+
+// ── Behavior add dialog — a behavior belongs to an EXISTING character
+//    (behavior.json is keyed by character_id), so instead of the generic
+//    free-form id field the dialog picks a character that has no behavior
+//    yet. Same visual pattern (Modal + entity-form) as EntityEditorDialog. ──
+export function BehaviorAddDialog({ characters, busy, error, onSave, onClose }: {
+  /** Characters without a behavior yet: { id, name }. */
+  characters: { id: string; name: string }[];
+  busy: boolean;
+  error: string | null;
+  onSave: (values: { characterId: string; instruction: string }) => void;
+  onClose: () => void;
+}): JSX.Element {
+  const [characterId, setCharacterId] = useState(characters[0]?.id ?? '');
+  const [instruction, setInstruction] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const handleSave = () => {
+    if (!characterId) {
+      setFormError(t('behavior_character_required'));
+      return;
+    }
+    setFormError(null);
+    onSave({ characterId, instruction: instruction.trim() });
+  };
+
+  return (
+    <Modal title={t('entity_add_behavior')} onClose={onClose} footer={
+      <>
+        <button type="button" class="btn btn--outlined" disabled={busy} onClick={onClose}>{t('dialog_cancel')}</button>
+        <button type="button" class="btn" disabled={busy} onClick={handleSave}>
+          {busy ? t('edit_saving') : t('edit_save')}
+        </button>
+      </>
+    }>
+      <div class="entity-form">
+        <div class="edit-field">
+          <label class="edit-field__label" for="behavior-character">{t('behavior_character')} *</label>
+          <select
+            id="behavior-character"
+            class="edit-field__input"
+            value={characterId}
+            onChange={(e) => setCharacterId((e.target as HTMLSelectElement).value)}
+          >
+            {characters.map((c) => (
+              <option key={c.id} value={c.id}>{c.name ? `${c.name} (${c.id})` : c.id}</option>
+            ))}
+          </select>
+          <span class="entity-form__hint">{t('behavior_character_hint')}</span>
+        </div>
+        <div class="edit-field">
+          <label class="edit-field__label" for="behavior-instruction">{t('field_instruction')}</label>
+          <textarea
+            id="behavior-instruction"
+            class="edit-field__input edit-field__input--area"
+            rows={3}
+            value={instruction}
+            onInput={(e) => setInstruction((e.target as HTMLTextAreaElement).value)}
+          />
+        </div>
         {(formError || error) && <div class="entity-form__error">{(formError ?? error) as string}</div>}
       </div>
     </Modal>

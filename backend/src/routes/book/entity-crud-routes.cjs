@@ -143,6 +143,14 @@ module.exports = function (app, redis, deps) {
                 oldBook.voices = voices;
             }
 
+            // Same dangling-data cleanup for the character's behavior
+            // (behavior.json is keyed by character_id).
+            const behaviors = oldBook.behaviors || {};
+            if (behaviors[characterId]) {
+                delete behaviors[characterId];
+                oldBook.behaviors = behaviors;
+            }
+
             book.saveBookBundle(oldBook, null);
             log(`[DELETE CHARACTER] ${bookId}/${characterId} (removed ${before.length - after.length} character(s))`);
             return res.json({ saved: true, book_id: bookId, character_id: characterId });
@@ -262,6 +270,73 @@ module.exports = function (app, redis, deps) {
             return res.json({ saved: true, book_id: bookId, voice_id: voiceId });
         } catch (err) {
             console.error('[DELETE VOICE] Error:', err.message);
+            return res.status(err.statusCode || 500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // BEHAVIORS — add / delete (manual, keyed by character_id)
+    //
+    // behavior.json mirrors voices.json: a map keyed by the existing
+    // character_id ({"berlioz": {"instruction": "..."}}). A behavior belongs
+    // to a character that must already exist — no id transliteration here,
+    // the key is a character id, not a free-form entity id.
+    // ======================================================
+    app.post('/api/v1/book/:bookId/behaviors', (req, res) => {
+        try {
+            const { bookId } = req.params;
+            const body = req.body || {};
+            const characterId = body.character_id && String(body.character_id).trim()
+                ? String(body.character_id).trim()
+                : null;
+            if (!characterId) {
+                return res.status(400).json({ error: 'character_id is required' });
+            }
+
+            const oldBook = loadBook(bookId);
+            const chars = oldBook.characters || [];
+            if (!chars.some(c => c && c.id === characterId)) {
+                return res.status(404).json({ error: `Character ${characterId} not found` });
+            }
+
+            const behaviors = oldBook.behaviors || {};
+            if (behaviors[characterId]) {
+                return res.status(409).json({ error: `Behavior for character "${characterId}" already exists` });
+            }
+
+            behaviors[characterId] = {
+                instruction: body.instruction && String(body.instruction).trim()
+                    ? String(body.instruction).trim()
+                    : '',
+            };
+            oldBook.behaviors = behaviors;
+
+            book.saveBookBundle(oldBook, null);
+            log(`[ADD BEHAVIOR] ${bookId}/${characterId}`);
+            return res.json({ saved: true, book_id: bookId, character_id: characterId });
+        } catch (err) {
+            console.error('[ADD BEHAVIOR] Error:', err.message);
+            return res.status(err.statusCode || 500).json({ error: err.message });
+        }
+    });
+
+    app.delete('/api/v1/book/:bookId/behaviors/:characterId', (req, res) => {
+        try {
+            const { bookId, characterId } = req.params;
+            const oldBook = loadBook(bookId);
+
+            const behaviors = oldBook.behaviors || {};
+            if (!behaviors[characterId]) {
+                return res.status(404).json({ error: `Behavior for character ${characterId} not found` });
+            }
+            delete behaviors[characterId];
+            oldBook.behaviors = behaviors;
+
+            book.saveBookBundle(oldBook, null);
+            log(`[DELETE BEHAVIOR] ${bookId}/${characterId}`);
+            return res.json({ saved: true, book_id: bookId, character_id: characterId });
+        } catch (err) {
+            console.error('[DELETE BEHAVIOR] Error:', err.message);
             return res.status(err.statusCode || 500).json({ error: err.message });
         }
     });

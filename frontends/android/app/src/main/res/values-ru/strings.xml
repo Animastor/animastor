@@ -104,12 +104,14 @@
     <string name="edit_characters_tab">Персонажи</string>
     <string name="edit_voices_tab">Голоса</string>
     <string name="edit_locations_tab">Локации</string>
+    <string name="edit_behavior_tab">Поведение</string>
     <string name="edit_global_tab">Глобальные</string>
     <string name="edit_no_characters">Нет персонажей</string>
     <string name="edit_tabs_global_book">Книга</string>
     <string name="edit_tabs_global_world">Мир</string>
     <string name="edit_no_locations">Нет локаций</string>
     <string name="edit_no_voices">Нет голосов</string>
+    <string name="edit_no_behaviors">Нет поведений</string>
     <string name="edit_narrator_voice">Рассказчик</string>
     <string name="edit_character_voice">%1$s (голос персонажа)</string>
     <!-- Field labels -->
@@ -165,12 +167,19 @@
     <string name="entity_add_character">Добавить персонажа</string>
     <string name="entity_add_location">Добавить локацию</string>
     <string name="entity_add_voice">Добавить голос</string>
+    <string name="entity_add_behavior">Добавить поведение</string>
+    <string name="behavior_character">Персонаж</string>
+    <string name="behavior_character_hint">Поведение создаётся для существующего персонажа</string>
+    <string name="behavior_character_required">Выберите персонажа</string>
+    <string name="behavior_no_characters_available">У всех персонажей уже есть поведение — сначала добавьте персонажа</string>
     <string name="entity_delete_character">Удалить персонажа?</string>
     <string name="entity_delete_character_confirm">Вы действительно хотите удалить этого персонажа? Будет удалён весь его паспорт.</string>
     <string name="entity_delete_location">Удалить локацию?</string>
     <string name="entity_delete_location_confirm">Вы действительно хотите удалить эту локацию?</string>
     <string name="entity_delete_voice">Удалить голос?</string>
     <string name="entity_delete_voice_confirm">Вы действительно хотите удалить этот голос?</string>
+    <string name="entity_delete_behavior">Удалить поведение?</string>
+    <string name="entity_delete_behavior_confirm">Вы действительно хотите удалить это поведение?</string>
 
     <!-- Structure (главы / сцены / модули) -->
     <string name="structure_add_chapter">Добавить главу</string>

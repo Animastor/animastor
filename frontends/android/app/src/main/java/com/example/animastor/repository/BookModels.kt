@@ -17,6 +17,10 @@ data class BookData(
     val chapters: List<Chapter>? = null,
     val locations: Map<String, Location>? = null,
     val voices: Map<String, VoiceEntry>? = null,
+    // Per-character behavior (behavior.json) — keyed by character_id, same
+    // pattern as voices. Pass 1 edits only `instruction`; unknown extra keys
+    // are preserved server-side (schema-tolerant storage).
+    val behaviors: Map<String, BehaviorEntry>? = null,
     // Flat scene list in book order, computed server-side (thin-client contract).
     // Clients build playback queues and navigation from this list instead of
     // re-implementing chapter→scene traversal. Cover is the first entry with
@@ -169,6 +173,11 @@ fun CharPassport.videoTokensAsText(): String = when (val t = video_tokens) {
 }
 
 data class VoiceEntry(
+    val instruction: String? = null
+)
+
+/** Per-character behavior (behavior.json) — keyed by character_id. */
+data class BehaviorEntry(
     val instruction: String? = null
 )
 

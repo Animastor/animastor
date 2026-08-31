@@ -70,10 +70,13 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
     // ── Manual entity add/delete (characters / voices / locations tables) ──
     // One schema-driven pattern (EntityKind + EntityDef) so Add/Delete for the
-    // three entity types — and later Unit/Scene — never fork into near-identical
+    // entity types — and later Unit/Scene — never fork into near-identical
     // implementations. The id stays free-form: the server transliterates
     // non-canonical input (its own cyrToLatin util), so no client-side copy.
-    private enum class EntityKind { CHARACTER, LOCATION, VOICE }
+    // BEHAVIOR is the exception on the add path: behavior.json is keyed by an
+    // EXISTING character_id, so its add dialog (showAddBehaviorDialog) picks a
+    // character instead of a free-form id; delete/reuse flows are shared.
+    private enum class EntityKind { CHARACTER, LOCATION, VOICE, BEHAVIOR }
 
     private class EntityField(val key: String, val labelRes: Int, val multiline: Boolean = false)
 
@@ -121,10 +124,19 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 EntityField("instruction", R.string.field_instruction, multiline = true),
             )
         )
+        EntityKind.BEHAVIOR -> EntityDef(
+            kind,
+            R.string.entity_add_behavior,
+            R.string.entity_delete_behavior,
+            R.string.entity_delete_behavior_confirm,
+            listOf(
+                EntityField("instruction", R.string.field_instruction, multiline = true),
+            )
+        )
     }
 
-    /** Editor tab positions that render entity tables (characters/voices/locations). */
-    private val ENTITY_TABS = setOf(5, 6, 7)
+    /** Editor tab positions that render entity tables (characters/voices/locations/behavior). */
+    private val ENTITY_TABS = setOf(5, 6, 7, 8)
 
     // ======================================================
     // Structure add/delete (chapters / scenes / units)
@@ -219,6 +231,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 4 -> showAddStructureDialog(StructureKind.UNIT)
                 5 -> showAddEntityDialog(EntityKind.CHARACTER)
                 6 -> showAddEntityDialog(EntityKind.VOICE)
+                7 -> showAddBehaviorDialog()
                 else -> showAddEntityDialog(EntityKind.LOCATION)
             }
         }
@@ -615,6 +628,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         EntityKind.CHARACTER -> (bookData?.characters ?: emptyList()).mapNotNull { it.id }.toSet()
         EntityKind.LOCATION -> (bookData?.locations ?: emptyMap()).keys.toSet()
         EntityKind.VOICE -> (bookData?.voices ?: emptyMap()).keys.toSet()
+        EntityKind.BEHAVIOR -> (bookData?.behaviors ?: emptyMap()).keys.toSet()
     }
 
     /** Flat form values → the backend create payload (mirror of the web builder). */
@@ -639,6 +653,11 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 if (env.isNotEmpty()) body["environment"] = env
             }
             EntityKind.VOICE -> {
+                values["instruction"]?.takeIf { it.isNotBlank() }?.let { body["instruction"] = it }
+            }
+            EntityKind.BEHAVIOR -> {
+                // Not reached via showAddEntityDialog (behavior add uses
+                // showAddBehaviorDialog); kept for schema completeness.
                 values["instruction"]?.takeIf { it.isNotBlank() }?.let { body["instruction"] = it }
             }
         }
@@ -726,6 +745,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     EntityKind.CHARACTER -> viewModel.repository.createCharacter(bookId, body)
                     EntityKind.LOCATION -> viewModel.repository.createLocation(bookId, body)
                     EntityKind.VOICE -> viewModel.repository.createVoice(bookId, body)
+                    // Not reached via showAddEntityDialog — behavior add goes
+                    // through showAddBehaviorDialog/createBehavior below.
+                    EntityKind.BEHAVIOR -> viewModel.repository.createBehavior(bookId, body)
                 }
                 reloadEntityTable()
             } catch (e: Exception) {
@@ -733,6 +755,105 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 showSaveError("${e::class.simpleName}: ${e.message ?: "unknown"}")
             }
         }
+    }
+
+    /** Behavior add dialog — a behavior belongs to an EXISTING character
+     *  (behavior.json is keyed by character_id), so the dialog offers a
+     *  character spinner (characters without a behavior yet) + instruction
+     *  field instead of the generic free-form id + name form. Same visual
+     *  pattern (TextInputLayout, AppDialogs) as the entity add dialog. */
+    private fun showAddBehaviorDialog() {
+        val ctx = requireContext()
+        val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
+        val behaviors = bookData?.behaviors ?: emptyMap()
+        val options = (bookData?.characters ?: emptyList())
+            .filter { !it.id.isNullOrBlank() && it.id !in behaviors }
+            .map { ch ->
+                val id = ch.id ?: ""
+                val label = if (ch.name.isNullOrBlank()) id else "${ch.name} ($id)"
+                id to label
+            }
+        if (options.isEmpty()) {
+            showSaveError(getString(R.string.behavior_no_characters_available))
+            return
+        }
+
+        val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val errorText = TextView(ctx).apply {
+            textSize = 12f
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorError))
+            visibility = View.GONE
+            setPadding(0, 8, 0, 0)
+        }
+
+        // Character spinner (required — the server rejects unknown ids with 404).
+        val tilChar = TextInputLayout(ctx).apply {
+            hint = getString(R.string.behavior_character)
+            isHintEnabled = true
+            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
+            helperText = getString(R.string.behavior_character_hint)
+        }
+        val sp = android.widget.Spinner(ctx)
+        val adapter = android.widget.ArrayAdapter(ctx, android.R.layout.simple_spinner_item, options.map { it.second })
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        sp.adapter = adapter
+        var selectedCharId = options.first().first
+        sp.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
+                selectedCharId = options.getOrNull(position)?.first ?: ""
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {
+                selectedCharId = ""
+            }
+        }
+        tilChar.addView(sp)
+        container.addView(tilChar)
+
+        // Instruction (single free-text Behavior field, pass 1).
+        val tilInstruction = TextInputLayout(ctx).apply {
+            hint = getString(R.string.field_instruction)
+            isHintEnabled = true
+            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
+        }
+        val etInstruction = TextInputEditText(ctx).apply {
+            textSize = 14f
+            minLines = 3
+            gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            setPadding(12, 10, 12, 10)
+        }
+        tilInstruction.addView(etInstruction)
+        container.addView(tilInstruction)
+        container.addView(errorText)
+
+        AppDialogs.action(
+            ctx = ctx,
+            title = getString(R.string.entity_add_behavior),
+            content = container,
+            cancelText = getString(R.string.dialog_cancel),
+            actionText = getString(R.string.edit_save),
+        ) { dlg ->
+            val instruction = etInstruction.text?.toString()?.trim() ?: ""
+            if (selectedCharId.isBlank()) {
+                errorText.text = getString(R.string.behavior_character_required)
+                errorText.visibility = View.VISIBLE
+                return@action
+            }
+            errorText.visibility = View.GONE
+            dlg.dismiss()
+            lifecycleScope.launch {
+                try {
+                    val body = mutableMapOf<String, Any?>("character_id" to selectedCharId)
+                    if (instruction.isNotBlank()) body["instruction"] = instruction
+                    viewModel.repository.createBehavior(bookId, body)
+                    reloadEntityTable()
+                } catch (e: Exception) {
+                    Log.e("EditFragment", "behavior create failed", e)
+                    showSaveError("${e::class.simpleName}: ${e.message ?: "unknown"}")
+                }
+            }
+        }.show()
     }
 
     /** Delete confirmation — destructive action never fires without confirmation. */
@@ -768,6 +889,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                         EntityKind.CHARACTER -> viewModel.repository.deleteCharacter(bookId, id)
                         EntityKind.LOCATION -> viewModel.repository.deleteLocation(bookId, id)
                         EntityKind.VOICE -> viewModel.repository.deleteVoice(bookId, id)
+                        EntityKind.BEHAVIOR -> viewModel.repository.deleteBehavior(bookId, id)
                     }
                     reloadEntityTable()
                 } catch (e: Exception) {
@@ -1465,7 +1587,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 4 -> buildUnitFields(frame)
                 5 -> buildCharactersFields(frame)
                 6 -> buildVoicesFields(frame)
-                7 -> buildLocationsFields(frame)
+                7 -> buildBehaviorsFields(frame)
+                8 -> buildLocationsFields(frame)
             }
             // Entity tables (characters/voices/locations) and structure tabs
             // (chapters/scenes/units) get the floating "+" overlay button —
@@ -1723,6 +1846,63 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     if (!fieldValues.containsKey(key)) fieldValues[key] = v
                     inner.addView(inputCard(ctx, passportFieldLabel(key), fieldValues[key] ?: v, (v.length > 80), storeKey = key))
                 }
+
+                card.addView(inner)
+                ll.addView(card)
+            }
+        }
+
+        parent.addView(ll)
+    }
+
+    /** Behaviors tab — one card per behavior keyed by character_id
+     *  (behavior.json mirrors voices.json); the header shows the character's
+     *  name when known, delete follows the shared entity flow. */
+    private fun buildBehaviorsFields(parent: ViewGroup) {
+        val ctx = parent.context
+        val bd = bookData
+        val behaviors = bd?.behaviors ?: emptyMap()
+        val characters = bd?.characters ?: emptyList()
+
+        val ll = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, 8)
+        }
+
+        if (behaviors.isEmpty()) {
+            ll.addView(TextView(ctx).apply {
+                text = getString(R.string.edit_no_behaviors)
+                textSize = 13f
+                setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+                setPadding(0, 8, 0, 8)
+            })
+        } else {
+            behaviors.forEach { (charId, entry) ->
+                val card = MaterialCardView(ctx).apply {
+                    layoutParams = ViewGroup.MarginLayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).also { it.setMargins(0, 0, 0, 6) }
+                    radius = 12f
+                    cardElevation = 1f
+                    setContentPadding(12, 8, 12, 8)
+                }
+
+                val inner = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                }
+
+                // Header row: character id (+name) + delete button (web parity)
+                val ch = characters.find { it.id == charId }
+                val headTitle = if (ch?.name.isNullOrBlank()) charId else "$charId — ${ch?.name}"
+                inner.addView(entityCardHead(ctx, headTitle) {
+                    showDeleteConfirmDialog(EntityKind.BEHAVIOR, charId)
+                })
+
+                val key = "behavior.$charId.instruction"
+                val v = entry.instruction ?: ""
+                if (!fieldValues.containsKey(key)) fieldValues[key] = v
+                inner.addView(inputCard(ctx, getString(R.string.field_instruction), fieldValues[key] ?: v, (v.length > 80), storeKey = key))
 
                 card.addView(inner)
                 ll.addView(card)
@@ -2544,8 +2724,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 return
             }
 
-            // Locations tab (7) — save per-location fields via dedicated PATCH
-            if (selectedTab == 7) {
+            // Locations tab (8) — save per-location fields via dedicated PATCH
+            if (selectedTab == 8) {
                 setSaveLoading(true)
                 lifecycleScope.launch {
                     try {
@@ -2718,6 +2898,63 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 return
             }
 
+            // Behaviors tab (7) — dedicated PATCH per changed behavior
+            // (instruction), mirroring the web EditPage BEHAVIORS_TAB branch.
+            // behavior.* keys must not leak into the scene PATCH below.
+            if (selectedTab == 7) {
+                setSaveLoading(true)
+                lifecycleScope.launch {
+                    try {
+                        val byChar = mutableMapOf<String, MutableMap<String, String>>()
+                        fieldValues.forEach { (key, value) ->
+                            if (key.startsWith("behavior.")) {
+                                val rest = key.removePrefix("behavior.")
+                                val dot = rest.indexOf('.')
+                                if (dot > 0) {
+                                    val charId = rest.substring(0, dot)
+                                    val fieldKey = rest.substring(dot + 1)
+                                    byChar.getOrPut(charId) { mutableMapOf() }[fieldKey] = value
+                                }
+                            }
+                        }
+
+                        if (byChar.isEmpty()) {
+                            setSaveLoading(false)
+                            return@launch
+                        }
+
+                        val behaviors = bd.behaviors ?: emptyMap()
+                        var anyChanged = false
+                        byChar.forEach { (charId, fields) ->
+                            // Skip entities deleted since the editor rendered
+                            // (stale fieldValues must not PATCH a 404).
+                            if (!behaviors.containsKey(charId)) return@forEach
+                            val orig = behaviors[charId]?.instruction ?: ""
+                            val changed = mutableMapOf<String, String>()
+                            fields.forEach { (k, v) -> if (v != orig) changed[k] = v }
+                            if (changed.isEmpty()) return@forEach
+                            anyChanged = true
+                            viewModel.repository.patchBehavior(bookId, charId, changed)
+                        }
+
+                        if (!anyChanged) {
+                            setSaveLoading(false)
+                            return@launch
+                        }
+
+                        bookData = runCatching { viewModel.repository.getBook(bookId) }.getOrNull()
+                        chapters = bookData?.chapters ?: emptyList()
+                        viewModel.markUnsavedChanges()
+                        setSaveLoading(false)
+                        errorText?.visibility = View.GONE
+                    } catch (e: Exception) {
+                        Log.e("EditFragment", "behaviors save failed", e)
+                        showSaveError("${e::class.simpleName}: ${e.message ?: "unknown"}")
+                    }
+                }
+                return
+            }
+
             val ch = chapters.getOrNull(currentChIndex) ?: run {
                 showSaveError("No chapter data")
                 return
@@ -2753,13 +2990,16 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     //   - participants string → array
                     //   - empty string → null
                     // Exclude chapter_title from fields (sent separately below).
-                    // Characters/Voices are saved through their dedicated PATCH
-                    // endpoints (tabs 5/6 above) — char.* / voice.* keys must NOT
-                    // reach the scene PATCH here: setDeep would write them into
-                    // the unit/scene object as junk keys that never persist to
-                    // characters.json / voices.json.
+                    // Characters/Voices/Behaviors are saved through their dedicated
+                    // PATCH endpoints (tabs 5/6/8 above) — char.* / voice.* /
+                    // behavior.* keys must NOT reach the scene PATCH here: setDeep
+                    // would write them into the unit/scene object as junk keys that
+                    // never persist to characters.json / voices.json / behavior.json.
                     val sendFields = fieldValues
-                        .filterKeys { it != "chapter_title" && !it.startsWith("char.") && !it.startsWith("voice.") }
+                        .filterKeys {
+                            it != "chapter_title" && !it.startsWith("char.") &&
+                                !it.startsWith("voice.") && !it.startsWith("behavior.")
+                        }
                     patchBody["fields"] = sendFields
 
                     if (hasUnit && sceneUnits != null) {

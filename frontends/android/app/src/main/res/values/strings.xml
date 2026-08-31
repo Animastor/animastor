@@ -299,12 +299,14 @@
     <string name="edit_characters_tab">Characters</string>
     <string name="edit_voices_tab">Voices</string>
     <string name="edit_locations_tab">Locations</string>
+    <string name="edit_behavior_tab">Behavior</string>
     <string name="edit_global_tab">Global</string>
     <string name="edit_no_characters">No characters</string>
     <string name="edit_tabs_global_book">Book</string>
     <string name="edit_tabs_global_world">World</string>
     <string name="edit_no_locations">No locations</string>
     <string name="edit_no_voices">No voices</string>
+    <string name="edit_no_behaviors">No behaviors</string>
     <string name="edit_narrator_voice">Narrator</string>
     <string name="edit_character_voice">%1$s (character voice)</string>
     <!-- Field labels for chars/voices/locations tabs -->
@@ -361,12 +363,19 @@
     <string name="entity_add_character">Add character</string>
     <string name="entity_add_location">Add location</string>
     <string name="entity_add_voice">Add voice</string>
+    <string name="entity_add_behavior">Add behavior</string>
+    <string name="behavior_character">Character</string>
+    <string name="behavior_character_hint">A behavior is created for an existing character</string>
+    <string name="behavior_character_required">Select a character</string>
+    <string name="behavior_no_characters_available">All characters already have a behavior — add a character first</string>
     <string name="entity_delete_character">Delete character?</string>
     <string name="entity_delete_character_confirm">Are you sure you want to delete this character? Its entire passport will be removed.</string>
     <string name="entity_delete_location">Delete location?</string>
     <string name="entity_delete_location_confirm">Are you sure you want to delete this location?</string>
     <string name="entity_delete_voice">Delete voice?</string>
     <string name="entity_delete_voice_confirm">Are you sure you want to delete this voice?</string>
+    <string name="entity_delete_behavior">Delete behavior?</string>
+    <string name="entity_delete_behavior_confirm">Are you sure you want to delete this behavior?</string>
 
     <!-- Structure (chapters / scenes / units) -->
     <string name="structure_add_chapter">Add chapter</string>

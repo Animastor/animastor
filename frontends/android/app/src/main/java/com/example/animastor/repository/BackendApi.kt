@@ -148,6 +148,13 @@ interface BackendApi {
         @Body body: Map<String, @JvmSuppressWildcards Any?>
     ): GenericResponse
 
+    @PATCH("/api/v1/book/{bookId}/behaviors/{characterId}")
+    suspend fun patchBehavior(
+        @Path("bookId") bookId: String,
+        @Path("characterId") characterId: String,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): GenericResponse
+
     // ── Manual entity add/delete (Editor tables — characters/locations/voices) ──
 
     @POST("/api/v1/book/{bookId}/characters")
@@ -184,6 +191,20 @@ interface BackendApi {
     suspend fun deleteVoice(
         @Path("bookId") bookId: String,
         @Path("voiceId") voiceId: String
+    ): GenericResponse
+
+    // ── Behavior (behavior.json — keyed by the existing character_id) ──
+
+    @POST("/api/v1/book/{bookId}/behaviors")
+    suspend fun createBehavior(
+        @Path("bookId") bookId: String,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): GenericResponse
+
+    @HTTP(method = "DELETE", path = "/api/v1/book/{bookId}/behaviors/{characterId}", hasBody = false)
+    suspend fun deleteBehavior(
+        @Path("bookId") bookId: String,
+        @Path("characterId") characterId: String
     ): GenericResponse
 
     // ── Structure add/delete (Editor — chapters/scenes/units) ──
