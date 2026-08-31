@@ -62,7 +62,7 @@ The following bugs were closed as part of sprint N.0–N.9. Details in `docs/TOD
 
 ---
 
-## 4. Excessive Responsibility of scene-orchestrator.js (PARTIALLY FIXED)
+## 4. Excessive Responsibility of scene-orchestrator.js — Partially Fixed
 
 **Problem (was):** ~1200 lines, mixing dispatch execution, callback handling, state management, layer config, padded text trimming.
 
@@ -191,7 +191,7 @@ The following bugs were closed as part of sprint N.0–N.9. Details in `docs/TOD
 
 ---
 
-## 13. No Graceful Shutdown *(FIXED)*
+## 13. No Graceful Shutdown — Fixed
 
 **Problem (was):** backend.cjs didn't handle SIGTERM/SIGINT signals for proper process termination, lease release, state preservation.
 
@@ -223,7 +223,7 @@ The following bugs were closed as part of sprint N.0–N.9. Details in `docs/TOD
 
 ---
 
-## 15. Slim Runtime — Governance Modules in Debug (✅ FIXED)
+## 15. Slim Runtime — Governance Modules in Debug — Fixed
 
 **Problem (was):** In v2.0.0 runtime/index.js was "slimmed": governance modules (circuit-breaker, fairness, policy-engine, etc.) moved from core pipeline to debug section and loaded lazily. Files saved on disk but not in main cycle. Some had `require()` on non-existent files — mine for debug endpoints (500s).
 
@@ -245,7 +245,7 @@ The following bugs were closed as part of sprint N.0–N.9. Details in `docs/TOD
 
 ---
 
-## 16. Dual State Model — Excess Complexity *(PARTIALLY FIXED in v2.1.0, Н.6+Н.7)*
+## 16. Dual State Model — Excess Complexity — Fixed (v2.1.0, Н.6+Н.7)
 
 **Problem (was):** Dual State Model (per-asset + linear FSM) with sequential transition validation that blocked parallel dispatch.
 
