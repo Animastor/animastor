@@ -42,6 +42,7 @@ import {
 import { navigateTo, position as positionSignal } from '../state/positionStore';
 import { seekToPosition, invalidateDeletedScene, invalidateDeletedChapter } from '../state/playbackStore';
 import { bookResource, emitLocal, onResourceInvalidated } from '../state/resourceInvalidations';
+import { resilientReload, sharedRecovery } from '../state/resilientReloader';
 import { Waveform } from '../lib/waveform';
 import { BehaviorAddDialog, DeleteConfirmDialog, ENTITY_SCHEMAS, EntityAddButton, EntityDeleteButton, EntityEditorDialog, StructureAddDialog } from '../lib/entityEditor';
 import type { EntityKind, StructureKind, StructureParentOption } from '../lib/entityEditor';
@@ -218,6 +219,9 @@ export function EditPage(props: { path?: string }) {
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveText, setSaveText] = useState<string>(t('edit_save'));
   const [errorText, setErrorText] = useState<string | null>(null);
+  // Reload recovery notice ("retrying automatically…") — never an error wall;
+  // content already on screen stays visible and usable underneath.
+  const [updateNotice, setUpdateNotice] = useState(false);
 
   // Entity Add/Delete (Characters / Locations / Voices tables) — one reusable
   // schema-driven pattern; both dialogs share the busy/error state since only
@@ -311,6 +315,7 @@ export function EditPage(props: { path?: string }) {
     blocksSceneKey.current = null;
     setPosLabel(t('navigate_no_position'));
     setErrorText(null);
+    setUpdateNotice(false);
     setHasUnits(false);
     setUnitCountText('');
     stopPlaybackInternal();
@@ -350,7 +355,17 @@ export function EditPage(props: { path?: string }) {
     setSaveDirty(true);
   }, []);
 
+  // Ref mirror for the resilient reload failure path: "is there already
+  // content on screen?" must not put bookData into loadAndSync's deps.
+  const bookDataRef = useRef<BookData | null>(null);
+  bookDataRef.current = bookData;
+
   // ── loadAndSync: fetch book + sync chapter/scene indexes ──
+  // Reload recovery layer (EditFragment parity): the fetch goes through the
+  // resilient reloader — bounded backoff 1s→2s→5s→10s + connectivity-restore
+  // fast path. Content already on screen is NEVER replaced by an error: a
+  // transient failure shows the unobtrusive retry notice while attempts run;
+  // the hard edit_load_failed error is reserved for the initial load.
   const loadAndSync = useCallback(async (chId: string | null, scId: string | null) => {
     const bId = bookIdSignal.value;
     if (!bId) {
@@ -358,21 +373,28 @@ export function EditPage(props: { path?: string }) {
       return;
     }
     setLoading(true);
-    try {
-      const bd = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`);
-      setBookData(bd);
+    const result = await resilientReload({
+      recovery: sharedRecovery(),
+      attempt: () => getJson<BookData>(`/book/${encodeURIComponent(bId)}`),
+      onRetry: () => setUpdateNotice(true),
+    });
+    if (result.kind === 'success') {
+      setUpdateNotice(false);
+      setBookData(result.value);
       // snapshotCurrentBook() — fire-and-forget server snapshot (non-fatal).
       void postJson(`/book/${encodeURIComponent(bId)}/snapshot`).catch(() => {});
-      const chs = bd.chapters ?? [];
+      const chs = result.value.chapters ?? [];
       const nc = Math.max(0, chs.findIndex((c) => c.chapter_id === chId));
       const ns = Math.max(0, (chs[nc]?.scenes ?? []).findIndex((s) => s.scene_id === scId));
       setCurrentChIndex(nc);
       setCurrentScIndex(ns);
-    } catch {
-      showSaveError(t('edit_load_failed'));
-    } finally {
-      setLoading(false);
+    } else {
+      // "Data really unavailable" vs "network blip": the hard error only
+      // fires when there is nothing on screen yet.
+      setUpdateNotice(false);
+      if (bookDataRef.current == null) showSaveError(t('edit_load_failed'));
     }
+    setLoading(false);
   }, [showSaveError, clearEditor]);
 
   // ── External book change (EditFragment.onExternalBookChange parity): the
@@ -397,8 +419,13 @@ export function EditPage(props: { path?: string }) {
     }
     // No position anchored (book open, nothing selected) — still refresh the
     // entity-table snapshot, without emitting a spurious LOCAL event.
-    const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`).catch(() => null);
-    if (fresh) setBookData(fresh);
+    const result = await resilientReload({
+      recovery: sharedRecovery(),
+      attempt: () => getJson<BookData>(`/book/${encodeURIComponent(bId)}`),
+      onRetry: () => setUpdateNotice(true),
+    });
+    setUpdateNotice(false);
+    if (result.kind === 'success') setBookData(result.value);
   }, [loadAndSync]);
 
   // ── Draft snapshot for external navigation (plan §5.2): when the position
@@ -583,24 +610,26 @@ export function EditPage(props: { path?: string }) {
   const loadBookAndAutoPosition = useCallback(async () => {
     const bId = bookIdSignal.value;
     if (!bId) return;
-    try {
-      const bd = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`);
-      // Race guard: the user may have picked a position elsewhere while the
-      // fetch was in flight — never clobber a newer choice.
-      if (positionSignal.value.chapterId != null) return;
-      const chs = bd.chapters ?? [];
-      const firstCh = chs[0];
-      const firstSc = firstCh?.scenes?.[0];
-      if (firstCh && firstSc) {
-        navigateTo({
-          chapterId: firstCh.chapter_id ?? null,
-          sceneId: firstSc.scene_id ?? null,
-          unitId: firstSc.units?.[0]?.id ?? null,
-          chunkId: null,
-          unitIndex: 0,
-        });
-      }
-    } catch { /* keep the empty state (no book data to position on) */ }
+    const result = await resilientReload({
+      recovery: sharedRecovery(),
+      attempt: () => getJson<BookData>(`/book/${encodeURIComponent(bId)}`),
+    });
+    if (result.kind !== 'success') return;
+    // Race guard: the user may have picked a position elsewhere while the
+    // fetch was in flight — never clobber a newer choice.
+    if (positionSignal.value.chapterId != null) return;
+    const chs = result.value.chapters ?? [];
+    const firstCh = chs[0];
+    const firstSc = firstCh?.scenes?.[0];
+    if (firstCh && firstSc) {
+      navigateTo({
+        chapterId: firstCh.chapter_id ?? null,
+        sceneId: firstSc.scene_id ?? null,
+        unitId: firstSc.units?.[0]?.id ?? null,
+        chunkId: null,
+        unitIndex: 0,
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -2457,6 +2486,10 @@ export function EditPage(props: { path?: string }) {
       {dirty && ((dirty.changed ?? 0) + (dirty.added ?? 0) + (dirty.removed ?? 0)) > 0 && (
         <div class="edit-dirty">{dirtyIndicatorText(dirty)}</div>
       )}
+
+      {/* Update-retry notice (reload recovery layer): shown while a failed
+          reload is retrying with backoff — content on screen stays. */}
+      {updateNotice && <div class="edit-update-notice">{t('edit_update_retrying')}</div>}
 
       {/* Error */}
       {errorText && <div class="edit-error">{errorText}</div>}

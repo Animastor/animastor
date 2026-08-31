@@ -18,6 +18,7 @@ import {
 import type { TaskLabels, TaskRow } from '../state/generateStore';
 import { position as positionSignal } from '../state/positionStore';
 import { bookResource, onResourceInvalidated } from '../state/resourceInvalidations';
+import { resilientReload, sharedRecovery } from '../state/resilientReloader';
 import { toast } from '../lib/ui';
 import { IconPlay, IconStop, IconSettings, IconLibrary, IconVolumeUp, IconVolumeOff, IconImage, IconImageOff, IconVideocam, IconVideocamOff } from '../app/icons';
 import { AnalysisProgressPanel } from './AnalysisProgressPanel';
@@ -66,7 +67,11 @@ export function GeneratePage(props: { path?: string }) {
   const loadBook = useCallback(async () => {
     const bId = bookId.value;
     if (!bId) { setBookData(null); return; }
-    try { setBookData(await getJson<BookData>(`/book/${encodeURIComponent(bId)}`)); } catch { /* keep stale */ }
+    const result = await resilientReload({
+      recovery: sharedRecovery(),
+      attempt: () => getJson<BookData>(`/book/${encodeURIComponent(bId)}`),
+    });
+    if (result.kind === 'success') setBookData(result.value);
   }, []);
 
   useEffect(() => {

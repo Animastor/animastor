@@ -10,6 +10,7 @@ import { bookId, buildId, onPlaybackPrepared } from '../state/generateStore';
 import { navigateTo, position as positionSignal } from '../state/positionStore';
 import type { ActivePosition } from '../state/positionStore';
 import { bookResource, onResourceInvalidated } from '../state/resourceInvalidations';
+import { resilientReload, sharedRecovery } from '../state/resilientReloader';
 import { seekToPosition } from '../state/playbackStore';
 import { IconImageOff, IconPlay } from '../app/icons';
 
@@ -121,14 +122,13 @@ export function NavigatePage(props: { path?: string }) {
     if (loadingRef.current) return;
     loadingRef.current = true;
     setLoading(true);
-    try {
-      setBookData(await getJson<BookData>(`/book/${encodeURIComponent(bId)}`));
-    } catch {
-      // keep existing data (Android: empty state only when nothing loaded yet)
-    } finally {
-      loadingRef.current = false;
-      setLoading(false);
-    }
+    const result = await resilientReload({
+      recovery: sharedRecovery(),
+      attempt: () => getJson<BookData>(`/book/${encodeURIComponent(bId)}`),
+    });
+    if (result.kind === 'success') setBookData(result.value);
+    loadingRef.current = false;
+    setLoading(false);
   }, []);
 
   useEffect(() => {

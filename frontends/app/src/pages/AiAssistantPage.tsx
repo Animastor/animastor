@@ -7,6 +7,7 @@ import { t, tf, currentLang } from '../app/i18n';
 import { bookId as generateBookId } from '../state/generateStore';
 import { position as positionSignal } from '../state/positionStore';
 import { bookResource, emitExternal, onResourceInvalidated } from '../state/resourceInvalidations';
+import { resilientReload, sharedRecovery } from '../state/resilientReloader';
 import { setSecondaryTitle } from '../app/titleStore';
 import { Modal, toast } from '../lib/ui';
 import { IconMic, IconMicOff, IconSend, IconMenu, IconAdd, IconSparkle, IconDownload, IconEdit, IconMap, IconFile, IconCheck, IconCopy, IconClose } from '../app/icons';
@@ -112,26 +113,31 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
     const update = async () => {
       const pos = positionSignal.value;
       if (!pos.chapterId || !generateBookId.value) { setPositionLabel(t('navigate_no_position')); return; }
-      try {
-        const book = await getJson<BookData>(`/book/${encodeURIComponent(generateBookId.value)}`);
-        if (!alive) return;
-        const ch: BookChapter | undefined = book.chapters?.find((c) => c.chapter_id === pos.chapterId);
-        const sc: BookScene | undefined = ch?.scenes?.find((s) => s.scene_id === pos.sceneId);
-        const scIdx = sc?.display_index ?? 0;
-        const uIdx = unitIndex(book, pos.chapterId, pos.sceneId, pos.unitIndex);
-        const isSpecial = ch?.is_special === true;
-        const chTitle = ch?.chapter_title;
-        const scTitle = sc?.scene_title;
-        const chLabel = isSpecial ? (chTitle || (ch?.type ?? '')?.charAt(0).toUpperCase() + (ch?.type ?? '').slice(1))
-          : chTitle || (ch?.display_number != null ? `${t('navigate_chapter')} ${ch.display_number}` : '');
-        const scLabel = scIdx > 0 ? `${t('navigate_scene')} ${scIdx}` : '';
-        const unitLabel = uIdx > 0 ? `${t('navigate_unit')} ${uIdx}` : '';
-        if (!chLabel && !scLabel) { setPositionLabel(t('navigate_no_position')); return; }
-        const full = scTitle
-          ? `${chLabel} / ${scLabel} — ${scTitle}${unitLabel ? ' / ' + unitLabel : ''}`
-          : `${chLabel} / ${scLabel}${unitLabel ? ' / ' + unitLabel : ''}`;
-        setPositionLabel(full);
-      } catch { if (alive) setPositionLabel(t('navigate_no_position')); }
+      const result = await resilientReload({
+        recovery: sharedRecovery(),
+        attempt: () => getJson<BookData>(`/book/${encodeURIComponent(generateBookId.value)}`),
+      });
+      if (!alive) return;
+      // Keep the current label on final failure (content already visible);
+      // only reset to "no position" when there is genuinely nothing selected.
+      if (result.kind !== 'success') return;
+      const book = result.value;
+      const ch: BookChapter | undefined = book.chapters?.find((c) => c.chapter_id === pos.chapterId);
+      const sc: BookScene | undefined = ch?.scenes?.find((s) => s.scene_id === pos.sceneId);
+      const scIdx = sc?.display_index ?? 0;
+      const uIdx = unitIndex(book, pos.chapterId, pos.sceneId, pos.unitIndex);
+      const isSpecial = ch?.is_special === true;
+      const chTitle = ch?.chapter_title;
+      const scTitle = sc?.scene_title;
+      const chLabel = isSpecial ? (chTitle || (ch?.type ?? '')?.charAt(0).toUpperCase() + (ch?.type ?? '').slice(1))
+        : chTitle || (ch?.display_number != null ? `${t('navigate_chapter')} ${ch.display_number}` : '');
+      const scLabel = scIdx > 0 ? `${t('navigate_scene')} ${scIdx}` : '';
+      const unitLabel = uIdx > 0 ? `${t('navigate_unit')} ${uIdx}` : '';
+      if (!chLabel && !scLabel) { setPositionLabel(t('navigate_no_position')); return; }
+      const full = scTitle
+        ? `${chLabel} / ${scLabel} — ${scTitle}${unitLabel ? ' / ' + unitLabel : ''}`
+        : `${chLabel} / ${scLabel}${unitLabel ? ' / ' + unitLabel : ''}`;
+      setPositionLabel(full);
     };
     positionLabelRefreshRef.current = () => { void update(); };
     void update();
