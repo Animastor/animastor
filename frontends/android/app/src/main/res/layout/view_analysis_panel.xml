@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Parallel AI Analysis panel (web parity f661a922) — container inflated
+     into the VBook section's progress list, below the regular worker rows.
+     Sequential mode never attaches it (renderAnalysisPanel guards on
+     analysisMode == "parallel" + analysisProgress.active). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/analysisPanel"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingTop="8dp"
+    android:paddingStart="4dp"
+    android:paddingEnd="4dp">
+
+    <TextView
+        android:id="@+id/analysisPanelTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="12sp"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:fontFamily="sans-serif-medium"
+        android:letterSpacing="0.04"
+        android:singleLine="true"
+        android:ellipsize="end" />
+
+    <!-- Per-task rows (Characters / Locations / Voices) -->
+    <LinearLayout
+        android:id="@+id/analysisPanelRows"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="6dp"
+        android:layout_marginBottom="2dp"
+        android:background="?attr/colorSurfaceVariant" />
+
+    <!-- Overall row is inflated here -->
+    <LinearLayout
+        android:id="@+id/analysisOverallContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical" />
+
+</LinearLayout>

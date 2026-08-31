@@ -11,7 +11,15 @@ data class LayerConfigResponse(
     // Per-worker generation timeouts (minutes)
     val audio_timeout_minutes: Int? = null,
     val image_timeout_minutes: Int? = null,
-    val video_timeout_minutes: Int? = null
+    val video_timeout_minutes: Int? = null,
+    // Parallel / Subagent AI Analysis (web parity f661a922): analysis_mode
+    // selects the orchestrator path (sequential = legacy, parallel =
+    // concurrent characters+locations+voices); analysis_parallelism caps
+    // in-flight LLM calls (1..8). Both OPTIONAL on the wire — backend may
+    // omit them; the UI falls back to defaults (sequential, 3) matching
+    // the backend layer-config DEFAULTS.
+    val analysis_mode: String? = null,
+    val analysis_parallelism: Int? = null
 )
 
 data class LayerConfigUpdate(
@@ -22,7 +30,11 @@ data class LayerConfigUpdate(
     val chunk_size: Int? = null,
     val audio_timeout_minutes: Int? = null,
     val image_timeout_minutes: Int? = null,
-    val video_timeout_minutes: Int? = null
+    val video_timeout_minutes: Int? = null,
+    // Partial PUT contract: null fields are omitted by Gson so the backend
+    // preserves the stored value (web LayerConfigUpdate parity).
+    val analysis_mode: String? = null,
+    val analysis_parallelism: Int? = null
 )
 
 /**

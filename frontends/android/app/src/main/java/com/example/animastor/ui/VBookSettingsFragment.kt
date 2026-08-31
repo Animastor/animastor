@@ -12,10 +12,17 @@ import com.example.animastor.repository.LayerConfigUpdate
 import kotlinx.coroutines.launch
 
 /**
- * VBook generation settings: chunk size (scenes per pass).
+ * VBook generation settings: chunk size (scenes per pass) + AI Analysis Mode
+ * (sequential vs parallel) + Max Parallel Tasks (web parity f661a922 —
+ * SettingsPage VBookSection).
  *
- * Accepts no arguments — reads chunk_size from layer-config.
+ * Accepts no arguments — reads chunk_size / analysis_mode /
+ * analysis_parallelism from layer-config (single round-trip, no new endpoint).
  * Opened from GenerateFragment's VBook gear icon button.
+ *
+ * Instant apply (web parity): the selection IS the save, no Apply button.
+ * The partial PUT contract means existing fields are preserved — each
+ * change sends only the field the user touched.
  */
 class VBookSettingsFragment : Fragment(R.layout.fragment_vbook_settings) {
 
@@ -27,6 +34,12 @@ class VBookSettingsFragment : Fragment(R.layout.fragment_vbook_settings) {
     companion object {
         /** Default chunk size (scenes per pass). */
         const val DEFAULT_CHUNK_SIZE = 3
+
+        /** Default AI analysis mode (legacy behaviour until opted in). */
+        const val DEFAULT_ANALYSIS_MODE = "sequential"
+
+        /** Default max parallel tasks (concurrency limit, not agent count). */
+        const val DEFAULT_ANALYSIS_PARALLELISM = 3
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -60,7 +73,45 @@ class VBookSettingsFragment : Fragment(R.layout.fragment_vbook_settings) {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
-        // ── Load current chunk_size from layer-config ──
+        // ── Max parallel tasks (1..8) — instant apply, parallel mode only ──
+        b.analysisParallelismSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: View?, position: Int, id: Long) {
+                if (!initialized) return
+                val selectedValue = (b.analysisParallelismSpinner.selectedItem as? Int)
+                    ?: DEFAULT_ANALYSIS_PARALLELISM
+                viewModel.setAnalysisParallelism(selectedValue.coerceIn(1, 8))
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
+        // ── AI Analysis Mode — segmented control (project .seg__btn pattern) ──
+        val selectMode: (String) -> Unit = { mode ->
+            b.analysisModeSequentialButton.isSelected = mode == "sequential"
+            b.analysisModeParallelButton.isSelected = mode == "parallel"
+            // Max Parallel Tasks row is soft-disabled unless parallel is selected
+            // (web .card__row--disabled parity: opacity 0.55).
+            b.analysisParallelismRow.alpha = if (mode == "parallel") 1f else 0.55f
+            b.analysisParallelismSpinner.isEnabled = mode == "parallel"
+            b.analysisParallelismDefaultButton.isEnabled = mode == "parallel"
+        }
+        b.analysisModeSequentialButton.setOnClickListener {
+            selectMode("sequential")
+            viewModel.setAnalysisMode("sequential")
+        }
+        b.analysisModeParallelButton.setOnClickListener {
+            selectMode("parallel")
+            viewModel.setAnalysisMode("parallel")
+        }
+
+        // ── Default buttons ──
+        b.chunkSizeDefaultButton.setOnClickListener {
+            b.chunkSizeSpinner.setSelection(DEFAULT_CHUNK_SIZE - 1)
+        }
+        b.analysisParallelismDefaultButton.setOnClickListener {
+            b.analysisParallelismSpinner.setSelection(DEFAULT_ANALYSIS_PARALLELISM - 1)
+        }
+
+        // ── Load current config from layer-config (single round-trip) ──
         lifecycleScope.launch {
             try {
                 val bookId = viewModel.bookId
@@ -68,28 +119,44 @@ class VBookSettingsFragment : Fragment(R.layout.fragment_vbook_settings) {
 
                 val cfg = viewModel.repository.getLayerConfig(bookId)
                 val currentChunk = cfg.chunk_size.coerceIn(1, 5)
+                // analysis_mode defaults to sequential — backend authoritative.
+                // Any other value (undefined / future mode) maps to sequential,
+                // matching the backend _clampAnalysisMode behaviour.
+                val currentMode = analysisModeFromWire(cfg.analysis_mode)
+                val currentParallelism = (cfg.analysis_parallelism ?: DEFAULT_ANALYSIS_PARALLELISM)
+                    .coerceIn(1, 8)
 
                 // Setup scenes-per-pass dropdown (1..5)
-                val options = (1..5).toList()
-                val adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, options)
-                adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-                b.chunkSizeSpinner.adapter = adapter
+                val chunkOptions = (1..5).toList()
+                val chunkAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, chunkOptions)
+                chunkAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+                b.chunkSizeSpinner.adapter = chunkAdapter
                 b.chunkSizeSpinner.setSelection((currentChunk - 1).coerceIn(0, 4))
+
+                // Setup max-parallel-tasks dropdown (1..8)
+                val parOptions = (1..8).toList()
+                val parAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, parOptions)
+                parAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+                b.analysisParallelismSpinner.adapter = parAdapter
+                b.analysisParallelismSpinner.setSelection((currentParallelism - 1).coerceIn(0, 7))
+
+                selectMode(currentMode)
             } catch (e: Exception) {
-                // On error, default to 3
-                val options = (1..5).toList()
-                val adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, options)
-                adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-                b.chunkSizeSpinner.adapter = adapter
+                // On error, default to 3 / sequential
+                val chunkAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, (1..5).toList())
+                chunkAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+                b.chunkSizeSpinner.adapter = chunkAdapter
                 b.chunkSizeSpinner.setSelection(DEFAULT_CHUNK_SIZE - 1)
+
+                val parAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, (1..8).toList())
+                parAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+                b.analysisParallelismSpinner.adapter = parAdapter
+                b.analysisParallelismSpinner.setSelection(DEFAULT_ANALYSIS_PARALLELISM - 1)
+
+                selectMode(DEFAULT_ANALYSIS_MODE)
             } finally {
                 initialized = true // load settled — user changes now persist
             }
-        }
-
-        // ── Default button: reset chunk size to 3 (saved instantly via listener) ──
-        b.chunkSizeDefaultButton.setOnClickListener {
-            b.chunkSizeSpinner.setSelection(DEFAULT_CHUNK_SIZE - 1)
         }
     }
 

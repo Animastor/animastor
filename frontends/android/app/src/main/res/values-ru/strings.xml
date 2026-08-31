@@ -255,6 +255,19 @@
     <string name="progress_vbook_stage_video_action_polish">⟳ Полирую непрерывность движений...</string>
     <string name="progress_vbook_stage_fantasy_snake_repair">⟳ Восстанавливаю естественные обозначения персонажей...</string>
     <string name="progress_vbook_stage_cancelled">✗ Отменено</string>
+    <!-- Parallel AI Analysis — per-task labels + status (web parity f661a922) -->
+    <string name="progress_analysis_section_title">AI-анализ — параллельный режим</string>
+    <string name="progress_analysis_task_characters">Персонажи</string>
+    <string name="progress_analysis_task_locations">Локации</string>
+    <string name="progress_analysis_task_voices">Голоса</string>
+    <string name="progress_analysis_status_pending">В очереди</string>
+    <string name="progress_analysis_status_running">Выполняется</string>
+    <string name="progress_analysis_status_completed">Завершено</string>
+    <string name="progress_analysis_status_failed">Ошибка</string>
+    <string name="progress_analysis_status_cancelled">Отменено</string>
+    <string name="progress_analysis_failed_detail">Не удалось: %1$s</string>
+    <string name="progress_analysis_overall">Итого</string>
+    <string name="progress_analysis_total_time">Общее время анализа: %1$s</string>
 
     <!-- IU not generated -->
     <string name="iu_not_generated">Не сгенерировано</string>
@@ -475,6 +488,13 @@
     <string name="vbook_settings_scenes_per_pass">Сцен за раз</string>
     <string name="vbook_settings_scenes_per_pass_desc">Сколько сцен AI создаёт за один проход (1-5). Большие значения обрабатывают больше текста за проход, но увеличивают время на окно.</string>
     <string name="vbook_settings_default">По умолчанию</string>
+    <!-- Parallel / Subagent AI Analysis (web parity f661a922) -->
+    <string name="vbook_settings_analysis_mode">Режим AI-анализа</string>
+    <string name="vbook_settings_analysis_mode_sequential">Последовательный</string>
+    <string name="vbook_settings_analysis_mode_parallel">Параллельный</string>
+    <string name="vbook_settings_analysis_mode_desc">Как AI выполняет задачи извлечения (персонажи, локации, голоса). Параллельный режим ускоряет анализ, но не меняет итоговый результат.</string>
+    <string name="vbook_settings_analysis_parallelism">Макс. параллельных задач</string>
+    <string name="vbook_settings_analysis_parallelism_desc">Максимум одновременно выполняемых AI-задач. Это concurrency-лимит, а не количество отдельных API-агентов.</string>
 
     <string name="toggle_on">Вкл.</string>
     <string name="toggle_off">Выкл.</string>

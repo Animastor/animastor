@@ -47,7 +47,25 @@ data class ProgressEvent(
     val window_total_scenes: Int? = null,
     val window_start_scene: Int? = null,
     /** Human-readable PROGRESS_STAGES text from backend (e.g. "⟳ Извлекаю персонажей...") */
-    val message: String? = null
+    val message: String? = null,
+    // ── Parallel AI Analysis (web parity f661a922) ──
+    // type == "analysis" — per-task event from parallel-analysis-orchestrator.js.
+    // The 'analysis' type is ADDITIVE: existing 'vbook' / 'generation_complete' /
+    // 'import_complete' types are unchanged. snake_case preserved as the server
+    // emits it.
+    val task: String? = null,           // 'characters' | 'locations' | 'voices'
+    val status: String? = null,         // 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+    val completed_tasks: Int? = null,   // tasks done so far (incl. failed)
+    val failed_tasks: Int? = null,
+    val total_tasks: Int? = null,
+    val duration_ms: Long? = null,
+    val error: String? = null,
+    // type == "vbook", stage == "analysis_parallel" inter-wave heartbeat:
+    // { analysis_completed, analysis_failed, analysis_total, analysis_mode }
+    val analysis_completed: Int? = null,
+    val analysis_failed: Int? = null,
+    val analysis_total: Int? = null,
+    val analysis_mode: String? = null
 ) {
     /** Convenience: true if this is a VBook pipeline event. */
     fun isVBook(): Boolean = type == "vbook"
@@ -174,7 +192,7 @@ class ProgressStream(
 
                 try {
                     val event = gson.fromJson(data, ProgressEvent::class.java)
-                    if (event.type == "progress" || event.type == "vbook" || event.type == "generation_complete" || event.type == "import_complete") {
+                    if (event.type == "progress" || event.type == "vbook" || event.type == "analysis" || event.type == "generation_complete" || event.type == "import_complete") {
                         onProgressEvent(event)
                     }
                     // "open" events (type=open) are informational — ignore

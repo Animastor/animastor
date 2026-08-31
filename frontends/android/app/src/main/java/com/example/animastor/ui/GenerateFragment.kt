@@ -20,7 +20,10 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.example.animastor.R
 import com.example.animastor.databinding.DialogGenerateScopeBinding
 import com.example.animastor.databinding.FragmentGenerateBinding
+import com.example.animastor.databinding.ItemAnalysisOverallRowBinding
+import com.example.animastor.databinding.ItemAnalysisTaskRowBinding
 import com.example.animastor.databinding.ItemWorkerProgressBinding
+import com.example.animastor.databinding.ViewAnalysisPanelBinding
 import com.example.animastor.network.RetrofitClient
 import com.example.animastor.repository.BookData
 import com.google.android.material.chip.Chip
@@ -41,6 +44,23 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
     private val pulseAnimators = mutableMapOf<Int, ObjectAnimator>() // viewId -> animator
 
     private var bookData: BookData? = null
+
+    // ── Parallel AI Analysis panel (web parity f661a922) ──
+    // Timer refs captured while rendering the panel; the 500ms tick updates
+    // only these TextViews (SSE events drive status transitions — same split
+    // as the web AnalysisProgressPanel's local nowMs tick).
+    private class AnalysisRowRef(
+        val timer: TextView,
+        val startedAt: Long?,
+        val finishedAt: Long?,
+    )
+    private class AnalysisOverallRef(
+        val timer: TextView,
+        val phaseStartedAt: Long?,
+        val phaseFinishedAt: Long?,
+    )
+    private var analysisRowRefs: List<AnalysisRowRef> = emptyList()
+    private var analysisOverallRef: AnalysisOverallRef? = null
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -422,6 +442,9 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             doneRow.workerStopButton.visibility = View.GONE
             container.addView(doneRow.root)
         }
+        // Parallel AI Analysis panel stays visible below the Done row while
+        // the analysis phase is active (web WorkerSection children parity).
+        renderAnalysisPanel()
     }
 
     /**
@@ -452,6 +475,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                 }
             }
         }
+        refreshAnalysisTimers(System.currentTimeMillis())
     }
 
     private fun renderTaskRowsToSections(rows: List<TaskRow>) {
@@ -548,6 +572,10 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
 
             container.addView(row)
         }
+
+        // Parallel AI Analysis per-task panel (web parity f661a922) — renders
+        // below the regular rows; nothing attached in sequential mode.
+        renderAnalysisPanel()
     }
 
     private fun clearAllProgressLists() {
@@ -556,7 +584,180 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         b.audioProgressList.removeAllViews()
         b.imageProgressList.removeAllViews()
         b.videoProgressList.removeAllViews()
+        renderAnalysisPanel()
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  PARALLEL AI ANALYSIS PANEL (Milestone #2, web parity f661a922)
+    // ═══════════════════════════════════════════════════════════════
+
+    private val ANALYSIS_PANEL_TAG = "analysisPanel"
+
+    /**
+     * Render the per-task analysis panel into the VBook section's progress
+     * list, below the regular worker rows. Native re-implementation of the
+     * web AnalysisProgressPanel — NOT a literal copy of the CSS layout.
+     *
+     * Sequential compatibility: renders NOTHING when analysisMode is
+     * "sequential" or when no analysis phase has been observed — the legacy
+     * single indeterminate VBook row UI stays untouched.
+     */
+    private fun renderAnalysisPanel() {
+        val b = binding ?: return
+        val container = b.vbookProgressList
+
+        // Remove the previous panel first — the caller paths clear the
+        // containers each 1.5s pass, but each pass re-attaches a fresh panel.
+        container.findViewWithTag<View>(ANALYSIS_PANEL_TAG)?.let { container.removeView(it) }
+
+        val ap = viewModel.uiState.value.analysisProgress
+        if (viewModel.analysisMode != "parallel" || ap == null || !ap.active) {
+            analysisRowRefs = emptyList()
+            analysisOverallRef = null
+            return
+        }
+
+        val accentColor = requireContext().getColor(R.color.cinema_accent)
+        val greenColor = requireContext().getColor(R.color.cinema_success)
+        val errorColor = requireContext().getColor(R.color.cinema_error)
+        val textColor = requireContext().getColor(R.color.cinema_text_secondary)
+        val mutedColor = requireContext().getColor(R.color.cinema_text_disabled)
+
+        val panel = ViewAnalysisPanelBinding.inflate(layoutInflater, container, false)
+        panel.root.tag = ANALYSIS_PANEL_TAG
+        panel.analysisPanelTitle.text = getString(R.string.progress_analysis_section_title)
+
+        val refs = mutableListOf<AnalysisRowRef>()
+        for (id in AnalysisTaskId.entries) {
+            val row = ap.tasks[id] ?: continue
+            val rowBinding = ItemAnalysisTaskRowBinding.inflate(
+                layoutInflater, panel.analysisPanelRows, false
+            )
+
+            val (glyph, glyphColor, statusLabel, statusColor) = when (row.status) {
+                AnalysisStatus.COMPLETED -> Quadruple("✓", greenColor, getString(R.string.progress_analysis_status_completed), greenColor)
+                AnalysisStatus.FAILED -> Quadruple("✗", errorColor, getString(R.string.progress_analysis_status_failed), errorColor)
+                AnalysisStatus.CANCELLED -> Quadruple("✗", mutedColor, getString(R.string.progress_analysis_status_cancelled), mutedColor)
+                AnalysisStatus.RUNNING -> Quadruple("●", accentColor, getString(R.string.progress_analysis_status_running), accentColor)
+                AnalysisStatus.PENDING -> Quadruple("○", mutedColor, getString(R.string.progress_analysis_status_pending), mutedColor)
+            }
+            rowBinding.analysisStatusIcon.text = glyph
+            rowBinding.analysisStatusIcon.setTextColor(glyphColor)
+            rowBinding.analysisName.text = analysisTaskLabel(id)
+            rowBinding.analysisStatus.text = statusLabel
+            rowBinding.analysisStatus.setTextColor(statusColor)
+
+            when (row.status) {
+                AnalysisStatus.RUNNING -> {
+                    // No granular progress for LLM calls — indeterminate bar,
+                    // no % text (web parity).
+                    rowBinding.analysisPercent.visibility = View.GONE
+                    rowBinding.analysisBar.isIndeterminate = true
+                    rowBinding.analysisBar.setIndicatorColor(accentColor)
+                    rowBinding.analysisBar.visibility = View.VISIBLE
+                }
+                AnalysisStatus.COMPLETED -> {
+                    rowBinding.analysisPercent.text = "100%"
+                    rowBinding.analysisPercent.setTextColor(greenColor)
+                    rowBinding.analysisBar.isIndeterminate = false
+                    rowBinding.analysisBar.setProgressCompat(100, true)
+                    rowBinding.analysisBar.setIndicatorColor(greenColor)
+                }
+                AnalysisStatus.FAILED, AnalysisStatus.CANCELLED -> {
+                    // Bar shows full but with error/cancel tint — the row
+                    // stopped moving while the failure stays visible.
+                    rowBinding.analysisPercent.text = "100%"
+                    rowBinding.analysisPercent.setTextColor(if (row.status == AnalysisStatus.FAILED) errorColor else mutedColor)
+                    rowBinding.analysisBar.isIndeterminate = false
+                    rowBinding.analysisBar.setProgressCompat(100, true)
+                    rowBinding.analysisBar.setIndicatorColor(if (row.status == AnalysisStatus.FAILED) errorColor else mutedColor)
+                }
+                AnalysisStatus.PENDING -> {
+                    rowBinding.analysisPercent.text = "0%"
+                    rowBinding.analysisPercent.setTextColor(mutedColor)
+                    rowBinding.analysisBar.isIndeterminate = false
+                    rowBinding.analysisBar.setProgressCompat(0, false)
+                    rowBinding.analysisBar.setIndicatorColor(mutedColor)
+                }
+            }
+
+            if (row.status == AnalysisStatus.FAILED && !row.error.isNullOrBlank()) {
+                rowBinding.analysisError.text = getString(R.string.progress_analysis_failed_detail, row.error)
+                rowBinding.analysisError.setTextColor(errorColor)
+                rowBinding.analysisError.visibility = View.VISIBLE
+            } else {
+                rowBinding.analysisError.visibility = View.GONE
+            }
+
+            rowBinding.analysisTimer.text = formatTimerText(analysisElapsedSeconds(row.startedAt, row.finishedAt, System.currentTimeMillis()))
+            panel.analysisPanelRows.addView(rowBinding.root)
+            refs.add(AnalysisRowRef(rowBinding.analysisTimer, row.startedAt, row.finishedAt))
+        }
+        analysisRowRefs = refs
+
+        // ── Overall row (web OverallRow parity) ──
+        val overall = ItemAnalysisOverallRowBinding.inflate(
+            layoutInflater, panel.analysisOverallContainer, false
+        )
+        overall.analysisOverallLabel.text = getString(R.string.progress_analysis_overall)
+
+        val pct = analysisOverallPercent(ap)
+        val allTerminal = ap.allTerminal
+        val hasFailure = ap.failedTasks > 0
+        val overallColor = when {
+            hasFailure && allTerminal -> errorColor
+            allTerminal -> greenColor
+            else -> accentColor
+        }
+        overall.analysisOverallPercent.text = "$pct%"
+        overall.analysisOverallPercent.setTextColor(overallColor)
+        overall.analysisOverallBar.isIndeterminate = false
+        overall.analysisOverallBar.setProgressCompat(pct, true)
+        overall.analysisOverallBar.setIndicatorColor(overallColor)
+
+        val phaseSec = analysisElapsedSeconds(ap.phaseStartedAt, ap.phaseFinishedAt, System.currentTimeMillis())
+        overall.analysisOverallTimer.text = formatTimerText(phaseSec)
+
+        // "Total analysis time" caption — only once every task is terminal.
+        if (allTerminal) {
+            overall.analysisOverallTotal.text = getString(R.string.progress_analysis_total_time, formatTimerText(phaseSec))
+            overall.analysisOverallTotal.setTextColor(if (hasFailure) errorColor else textColor)
+            overall.analysisOverallTotal.visibility = View.VISIBLE
+        } else {
+            overall.analysisOverallTotal.visibility = View.GONE
+        }
+        panel.analysisOverallContainer.addView(overall.root)
+        analysisOverallRef = AnalysisOverallRef(overall.analysisOverallTimer, ap.phaseStartedAt, ap.phaseFinishedAt)
+
+        container.addView(panel.root)
+    }
+
+    /** Live/frozen elapsed seconds for one analysis row (web elapsedSeconds parity). */
+    private fun analysisElapsedSeconds(startedAt: Long?, finishedAt: Long?, nowMs: Long): Long {
+        if (startedAt == null) return 0
+        val end = finishedAt ?: nowMs
+        return (end - startedAt).coerceAtLeast(0) / 1000
+    }
+
+    /** Update the panel's timers without rebuilding rows — called every 500ms. */
+    private fun refreshAnalysisTimers(nowMs: Long) {
+        for (ref in analysisRowRefs) {
+            ref.timer.text = formatTimerText(analysisElapsedSeconds(ref.startedAt, ref.finishedAt, nowMs))
+        }
+        analysisOverallRef?.let { ref ->
+            ref.timer.text = formatTimerText(analysisElapsedSeconds(ref.phaseStartedAt, ref.phaseFinishedAt, nowMs))
+        }
+    }
+
+    /** Localized task name for a parallel-analysis task id (backend wire id). */
+    private fun analysisTaskLabel(id: AnalysisTaskId): String = when (id) {
+        AnalysisTaskId.CHARACTERS -> getString(R.string.progress_analysis_task_characters)
+        AnalysisTaskId.LOCATIONS -> getString(R.string.progress_analysis_task_locations)
+        AnalysisTaskId.VOICES -> getString(R.string.progress_analysis_task_voices)
+    }
+
+    /** Minimal 4-tuple for the status style table above. */
+    private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
     private var _highlightColor: Int = 0
     private var _highlightedRow: View? = null

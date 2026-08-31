@@ -1,9 +1,51 @@
 # ANDROID ↔ WEB PARITY AUDIT
 
+> **Checkpoint 3:** 2026-08-31 · **Commits audited:** web `443559b8` .. `f661a922` / android → this commit
 > **Checkpoint 2:** 2026-08-28 · **Commits audited:** web `25796bb` .. `101a802c` / android → this commit
 > **Checkpoint 1:** 2026-08-24 · **Commits audited:** web `f81a807` .. `25796bb` / android `20e6df4`
 
 ---
+
+## Checkpoint 3 — Parallel AI Analysis (Milestone #2, web `f661a922`)
+
+Web commits audited (Milestone #2 frontend wiring series):
+
+| Web commit | Change | Android status |
+|---|---|---|
+| `443559b8` | AI Analysis Mode settings (sequential/parallel) + Max Parallel Tasks 1..8 | **ANDROID GAP → FIXED** — VBook settings gains a segmented mode control + parallelism spinner (instant-apply, partial PUT, same defaults; native project `.seg__btn` pattern, no Web UI copy) |
+| `6c6274c6` | LayerConfig model + analysisMode/analysisParallelism signals | **ANDROID GAP → FIXED** — `LayerConfigResponse/Update` extended; `GenerateViewModel.loadLayerConfig()` loads both fields from the same GET `/book/:id/layer-config` (single round-trip, no new endpoint) |
+| `c7bc1fa0` | `vbookAnalysisProgress` signal + SSE routing for `analysis` events | **ANDROID GAP → FIXED** — `AnalysisProgress` state machine (`ui/AnalysisProgress.kt`, pure JVM) + `ProgressStream` accepts `type:"analysis"`; routing in `GenerateViewModel` mirrors `handleProgressEvent` (additive; legacy `vbook`/`generation_complete`/`import_complete` branches untouched) |
+| `dab31e3c` | AnalysisProgressPanel (per-task rows + overall row + status icons) | **ANDROID GAP → FIXED** — native panel (`view_analysis_panel.xml` + task/overall row layouts) rendered below the VBook worker rows in `GenerateFragment`; glyph/✓ ● ○ ✗ vocabulary, indeterminate running bar, frozen terminal timers, inline failed-row error |
+| `3acdc5d0` | Panel wired into the VBook WorkerSection | **ANDROID GAP → FIXED** — panel attaches to `vbookProgressList` in all three render paths (Rows / DoneRow / Hidden), nothing in sequential mode |
+| `d5f9c70a` | Cancellation / reset hooks | **ANDROID GAP → FIXED** — `clearVBookProgress()` resets the analysis state in lockstep; explicit resets in `cancelGeneration()`, `cancelTask("vbook")`, `startVBookGeneration()`, `importBookFromFile()`, `createBlankBook()`; `closeBook()` wipes `GenUiState` |
+| `ba2b3366` | 19-test analysis state machine suite | **ANDROID GAP → FIXED** — `AnalysisProgressTest` (21 JVM tests, same scenarios: pure transition, failure isolation, counters never trusted, out-of-order SSE, timer freeze, mode coercion, sequential no-op) |
+| `afb088ec` | docs(agent) frontend wiring | **PARITY** — this checkpoint |
+| `f661a922` | test fix | n/a |
+
+**Backend contract (unchanged, shared with Web):** SSE `type:"analysis"`
+`{ task, status, completed_tasks, failed_tasks, total_tasks, duration_ms, error }`
++ vbook heartbeat `{ stage:"analysis_parallel", analysis_completed, analysis_failed,
+analysis_total, analysis_mode }`; layer-config `analysis_mode` (sequential|parallel,
+default sequential) + `analysis_parallelism` (1..8, default 3) via the existing
+GET/PUT `/book/:id/layer-config`. No Android-specific API, no second SSE channel.
+
+**Key invariants preserved:** per-task row statuses are the single source of
+truth (orchestrator counters are advisory); failed tasks count as done for the
+overall bar but stay surfaced as failures; heartbeat counters ratchet with max;
+reset is reserved for cancel / new run / book close (failure isolation never
+clears the state); sequential mode renders nothing new.
+
+### §G: Files (checkpoint 3)
+
+- `ui/AnalysisProgress.kt` (NEW) — pure state machine (unit-testable, no Android imports)
+- `ui/GenerateViewModel.kt` — analysisMode/analysisParallelism, SSE routing, reset hooks, GenUiState.analysisProgress
+- `ui/GenerateFragment.kt` — panel rendering + 500ms timer refs
+- `ui/VBookSettingsFragment.kt` — AI Analysis Mode card (mode seg + parallelism spinner)
+- `network/ProgressStream.kt` — ProgressEvent analysis fields + `analysis` type pass-through
+- `repository/LayerConfig.kt` — analysis_mode / analysis_parallelism
+- `res/layout/view_analysis_panel.xml`, `item_analysis_task_row.xml`, `item_analysis_overall_row.xml` (NEW)
+- `res/layout/fragment_vbook_settings.xml` — new settings card
+- `res/values/strings.xml`, `res/values-ru/strings.xml` — en/ru strings (web i18n parity)
 
 ## Checkpoint 2 — Private Worker Setup Contract (Phase 3 / 3.1)
 
@@ -280,9 +322,10 @@ the «воркер» wording from the start. EN dictionary unchanged (web parity
 | `BookSessionStoreTest` | 14 | All passing |
 | `PlayerGateTest` | 16 | All passing |
 | `BetaSettingsHelpersTest` | 15 | All passing |
-| `WorkerSetupHelpersTest` (NEW — checkpoint 2) | 22 | All passing |
-| **Android unit tests total** | **67** | **All passing** |
-| Web vitest | 130 (web suite at `7e102997`) | Untouched in checkpoint 2 |
+| `WorkerSetupHelpersTest` (checkpoint 2) | 31 | All passing |
+| `AnalysisProgressTest` (NEW — checkpoint 3) | 21 | All passing |
+| **Android unit tests total** | **97** | **All passing** |
+| Web vitest | 136 (web suite at `f661a922`) | Untouched in checkpoint 3 |
 | Android compileDebugKotlin | — | BUILD SUCCESSFUL |
 | Android assembleDebug | — | BUILD SUCCESSFUL (`app-debug.apk`) |
 

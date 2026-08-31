@@ -177,6 +177,19 @@
     <string name="progress_vbook_stage_video_action_polish">⟳ Polishing motion continuity...</string>
     <string name="progress_vbook_stage_fantasy_snake_repair">⟳ Restoring natural character references...</string>
     <string name="progress_vbook_stage_cancelled">✗ Cancelled</string>
+    <!-- Parallel AI Analysis — per-task labels + status (web parity f661a922) -->
+    <string name="progress_analysis_section_title">AI Analysis — Parallel</string>
+    <string name="progress_analysis_task_characters">Characters</string>
+    <string name="progress_analysis_task_locations">Locations</string>
+    <string name="progress_analysis_task_voices">Voices</string>
+    <string name="progress_analysis_status_pending">Waiting</string>
+    <string name="progress_analysis_status_running">Running</string>
+    <string name="progress_analysis_status_completed">Completed</string>
+    <string name="progress_analysis_status_failed">Failed</string>
+    <string name="progress_analysis_status_cancelled">Cancelled</string>
+    <string name="progress_analysis_failed_detail">Failed: %1$s</string>
+    <string name="progress_analysis_overall">Overall</string>
+    <string name="progress_analysis_total_time">Total analysis time: %1$s</string>
 
     <!-- IU not generated -->
     <string name="iu_not_generated">Not generated</string>
@@ -497,6 +510,13 @@
     <string name="vbook_settings_scenes_per_pass">Scenes per pass</string>
     <string name="vbook_settings_scenes_per_pass_desc">How many scenes the AI agent creates per generation pass (1-5). Larger values process more text per pass but take longer per window.</string>
     <string name="vbook_settings_default">Default</string>
+    <!-- Parallel / Subagent AI Analysis (web parity f661a922) -->
+    <string name="vbook_settings_analysis_mode">AI Analysis Mode</string>
+    <string name="vbook_settings_analysis_mode_sequential">Sequential</string>
+    <string name="vbook_settings_analysis_mode_parallel">Parallel</string>
+    <string name="vbook_settings_analysis_mode_desc">How the AI runs the extraction tasks (characters, locations, voices). Parallel mode speeds up analysis without changing the final result.</string>
+    <string name="vbook_settings_analysis_parallelism">Max parallel tasks</string>
+    <string name="vbook_settings_analysis_parallelism_desc">Maximum number of AI analysis tasks that can run simultaneously. This is a concurrency limit, not the number of separate API agents.</string>
 
     <!-- Toggle chip labels -->
     <string name="toggle_on">On</string>

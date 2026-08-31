@@ -308,6 +308,48 @@ class GenerateViewModel(
     private val _layerConfigLoaded = MutableStateFlow(false)
     val layerConfigLoadedFlow: StateFlow<Boolean> = _layerConfigLoaded.asStateFlow()
 
+    // ── Parallel / Subagent AI Analysis (web parity f661a922) ────
+    // analysisMode governs the orchestrator path the backend uses for the
+    // first AI phase (characters + locations + voices). Defaults to
+    // 'sequential' so every existing book keeps legacy behaviour until
+    // VBook settings opts in. analysisParallelism caps the number of
+    // concurrent LLM requests the orchestrator dispatches (1..8).
+    // Both are sourced from /book/:id/layer-config on every loadLayerConfig
+    // call — backend authoritative, defaults match layer-config DEFAULTS
+    // on the server so a missing field never flips the mode.
+
+    /** Coerced to "sequential" | "parallel" (backend _clampAnalysisMode parity). */
+    var analysisMode: String = "sequential"
+        private set
+
+    /** Concurrency limit 1..8, default 3 (backend _clampInt parity). */
+    var analysisParallelism: Int = 3
+        private set
+
+    fun setAnalysisMode(mode: String) {
+        val clamped = analysisModeFromWire(mode)
+        analysisMode = clamped
+        viewModelScope.launch {
+            runCatching {
+                bookId.takeIf { it.isNotBlank() }?.let {
+                    _repository.putLayerConfig(it, LayerConfigUpdate(analysis_mode = clamped))
+                }
+            }.onFailure { e -> Log.w(TAG, "setAnalysisMode failed: ${e.message}") }
+        }
+    }
+
+    fun setAnalysisParallelism(value: Int) {
+        val clamped = value.coerceIn(1, 8)
+        analysisParallelism = clamped
+        viewModelScope.launch {
+            runCatching {
+                bookId.takeIf { it.isNotBlank() }?.let {
+                    _repository.putLayerConfig(it, LayerConfigUpdate(analysis_parallelism = clamped))
+                }
+            }.onFailure { e -> Log.w(TAG, "setAnalysisParallelism failed: ${e.message}") }
+        }
+    }
+
     fun audioEnabled(): Boolean = _audioEnabled.value
     fun videoEnabled(): Boolean = _videoEnabled.value
     fun vbookEnabled(): Boolean = _vbookEnabled.value
@@ -345,8 +387,13 @@ class GenerateViewModel(
                 imageEnabled = cfg.image_enabled
                 _videoEnabled.value = cfg.video_enabled
                 _vbookEnabled.value = cfg.vbook_enabled
+                // Milestone #2 — backend authoritative. Any value other than
+                // "parallel" maps to "sequential"; parallelism clamped to [1,8]
+                // (same coercion as the Settings page).
+                analysisMode = analysisModeFromWire(cfg.analysis_mode)
+                cfg.analysis_parallelism?.let { analysisParallelism = it.coerceIn(1, 8) }
                 _layerConfigLoaded.value = true
-                Log.i(TAG, "loadLayerConfig: a=${cfg.audio_enabled} i=${cfg.image_enabled} v=${cfg.video_enabled} vb=${cfg.vbook_enabled}")
+                Log.i(TAG, "loadLayerConfig: a=${cfg.audio_enabled} i=${cfg.image_enabled} v=${cfg.video_enabled} vb=${cfg.vbook_enabled} am=$analysisMode ap=$analysisParallelism")
             }
             .onFailure { e ->
                 Log.w(TAG, "loadLayerConfig failed: ${e.message}")
@@ -564,6 +611,10 @@ class GenerateViewModel(
         // gate the UI until VBook progress or server workers appear.
         _newGenerationPending = true
         _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.ANALYZING)) }
+        // Parallel AI Analysis (Milestone #2): wipe per-task rows from a
+        // previous run before the new generation's events arrive — the
+        // first SSE 'analysis' events re-populate the panel fresh.
+        resetAnalysisState()
         // Manual per-window mode: one click = one window = one generation. The
         // timer always starts fresh for the new window (no survival across
         // windows); the previous window's finalise already stopped it.
@@ -608,7 +659,7 @@ class GenerateViewModel(
                     pollVBookProgress(bid, token)
                 } else {
                     Log.w(TAG, "startVBookGeneration: no active agent session — tearing down")
-                    _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
+                    clearVBookProgress()
                     stopTimer()
                 }
             }
@@ -740,6 +791,11 @@ class GenerateViewModel(
         stopTimer()  // 🕐 отмена — останавливаем таймер
         stopProgressStream()  // ❄ закрываем SSE канал
         resetProgressState()
+        // Parallel AI Analysis (Milestone #2): when the user cancels mid-run,
+        // any in-flight analysis rows must be frozen/cleared so the UI stops
+        // spinning. Backend may publish a few late SSE events after this;
+        // they will only re-populate rows on the next run's events.
+        resetAnalysisState()
         viewModelScope.launch {
             runCatching {
                 _repository.cancelGeneration(bookId)
@@ -775,7 +831,7 @@ class GenerateViewModel(
         // Сброс worker tracking и vbook прогресса от предыдущей сессии,
         // чтобы избежать двух прогресс-баров при повторном открытии.
         resetProgressState()
-        _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
+        clearVBookProgress()
         // A new import starts a fresh session: invalidate any in-flight VBook
         // poll job (so its failure handler can never touch the new UI) and stop
         // the previous session's timer explicitly — the old implicit stop came
@@ -947,7 +1003,7 @@ class GenerateViewModel(
     fun createBlankBook() {
         Log.i(TAG, "createBlankBook")
         resetProgressState()
-        _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
+        clearVBookProgress()
         vbookPollToken++
         generationJob?.cancel()
         generationJob = null
@@ -1092,6 +1148,11 @@ class GenerateViewModel(
      */
     fun clearVBookProgress() {
         _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
+        // Parallel AI Analysis (Milestone #2): clear per-task rows in lockstep
+        // with the legacy signal so a new generation / re-open never shows
+        // stale per-task rows from the previous run. Idempotent — safe to
+        // call even when the analysis state was never touched (sequential).
+        resetAnalysisState()
     }
 
     /**
@@ -1503,6 +1564,27 @@ class GenerateViewModel(
     private val progressStream: ProgressStream by lazy {
         ProgressStream(viewModelScope).apply {
             onProgressEvent = { event ->
+                // Parallel AI Analysis (Milestone #2, web parity): route the
+                // additive 'analysis' events + the analysis_parallel vbook
+                // heartbeat into the per-task progress state BEFORE the
+                // existing switch so the legacy vbook handling is untouched.
+                if (event.type == "analysis" || (event.type == "vbook" && event.stage == "analysis_parallel")) {
+                    _uiState.update { it.copy(
+                        analysisProgress = applyProgressEventToAnalysis(
+                            prev = it.analysisProgress ?: resetAnalysisProgress(),
+                            type = event.type,
+                            stage = event.stage,
+                            task = event.task,
+                            status = event.status,
+                            durationMs = event.duration_ms,
+                            error = event.error,
+                            analysisCompleted = event.analysis_completed,
+                            analysisFailed = event.analysis_failed,
+                            analysisTotal = event.analysis_total,
+                            nowMs = System.currentTimeMillis(),
+                        )
+                    )}
+                }
                 if (event.type == "vbook" || event.isVBook()) {
                     // VBook progress via SSE — update VBookProgress directly
                     val stage = when (event.vbookStage) {
@@ -1583,6 +1665,9 @@ class GenerateViewModel(
         // session timer and freeze later GPU done rows at 00:00:00).
         if (type == "vbook") {
             _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
+            // Web cancelTask('vbook') clears the analysis rows too (single-point
+            // clearVBookProgress reset — failure isolation is unaffected).
+            resetAnalysisState()
             vbookPollToken++
             generationJob?.cancel()
             generationJob = null
@@ -1611,6 +1696,18 @@ class GenerateViewModel(
         taskReadyFloor.clear()
         taskFrozenElapsed.clear()
         _generationCompleted = false
+    }
+
+    /**
+     * Reset the parallel analysis progress to a fresh empty state (web
+     * resetAnalysisProgress parity). Called from every clearVBookProgress()
+     * call site (restore / cancelTask / book switch / close / new import) so
+     * per-task rows from a previous run never leak into the next run.
+     * Idempotent — safe even when the analysis state was never touched
+     * (e.g. sequential mode).
+     */
+    fun resetAnalysisState() {
+        _uiState.update { it.copy(analysisProgress = resetAnalysisProgress()) }
     }
 
     /**
@@ -1950,7 +2047,11 @@ data class GenUiState(
     val importProgress: Float = 0f,
     val importProgressMessages: List<String> = emptyList(),
     /** Structured VBook agent progress for the GPU-style panel */
-    val vbookProgress: VBookProgress? = null
+    val vbookProgress: VBookProgress? = null,
+    /** Parallel AI Analysis per-task progress (web parity f661a922).
+     *  Only populated in parallel mode — sequential never sees analysis
+     *  events, so the legacy single-row VBook UI stays untouched. */
+    val analysisProgress: AnalysisProgress? = null
 )
 
 enum class PlayerPhase {
