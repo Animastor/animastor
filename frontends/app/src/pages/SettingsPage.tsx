@@ -129,7 +129,7 @@ function GeneralSection() {
             <span>{t('settings_language')}</span>
             <Segmented
               value={language}
-              options={[['auto', t('settings_language_auto')], ['ru', t('settings_language_ru')], ['en', t('settings_language_en')]]}
+              options={[['auto', t('settings_language_auto')], ['en', t('settings_language_en')], ['ru', t('settings_language_ru')]]}
               onChange={(v) => onLang(v as 'auto' | 'ru' | 'en')}
             />
           </div>
