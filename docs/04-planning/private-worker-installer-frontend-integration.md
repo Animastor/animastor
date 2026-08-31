@@ -348,7 +348,7 @@ Worker offline
 Last seen: 2 h ago
 [View diagnostics]  [Reinstall]  [Copy troubleshooting info]
 ```
-Diagnostics — без secrets (token никогда; только token_prefix).
+Diagnostics — without secrets (token never; only token_prefix).
 
 ### 5.6 Error UX (installer errors)
 
@@ -417,7 +417,7 @@ the listed to be implemented now.
 ### 6.3 `GET /api/v1/workers/:id/status` (extension of existing `GET /:id`)
 
 - **Purpose:** details for Online card and diagnostics.
-- **Response (добавить к PublicWorker):**
+- **Response (add to PublicWorker):**
   ```jsonc
   { "worker": { …, "details": {
       "gpu": "NVIDIA L40S", "vram_gb": 46, "worker_version": "2.0.0",
@@ -496,9 +496,9 @@ Target chain (matches "frontend doesn't hardcode version" requirement):
 ```
 GET /api/v1/workers/setup/installer   →  latest compatible version
         ↓
-download_url / command + sha256       →  frontend показывает/копирует
+download_url / command + sha256       →  frontend displays/copies
         ↓
-installer package (self-contained)    →  сам содержит/получает:
+installer package (self-contained)    →  self-contained; contains/obtains:
                                           manifests, worker bundle, workflow baselines
 ```
 
@@ -554,16 +554,16 @@ Current lifecycle **correct and preserved**:
 | Who passes to Installer | **User**: installer prompts interactively (hidden input, `cli.js:123-152`); not via argv/URL |
 | Manual entry | Yes, on GPU machine (installer prompt). No key input fields in frontends — and shouldn't be |
 | How to prevent logs | Installer: `safety-rules.js` SECRET_NAMES + redaction; `.env` chmod 600; merge semantics (existing valid token untouched); frontends: transient state only, no localStorage/URL/analytics |
-| How to know worker registered | Installer: `verifyRegistration` → `POST /api/v1/worker/verify`; UI: статус OFFLINE → ONLINE в течение ~30 с (heartbeat TTL). Wizard Step 6 явно говорит «вернитесь — статус обновится» |
+| How to know worker registered | Installer: `verifyRegistration` → `POST /api/v1/worker/verify`; UI: status OFFLINE → ONLINE within ~30s (heartbeat TTL). Wizard Step 6 explicitly says "come back — status will update" |
 
-Дополнительно для новой UX:
-- Wizard показывает key **рядом с командой installer'а** и объясняет: «installer
-  запросит этот ключ на сервере; вставьте его там» (+ кнопка Copy).
-- Env-блок с токеном (как сегодня) остаётся доступным для ручного сценария, но
-  не является основным путём.
-- Rotate: подтверждение → новый key показывается один раз → инструкция
-  «перезапустите worker / installer обновит .env при rerun» (merge-семантика
-  installer'а не затирает токен автоматически — пользователь обновляет сам).
+Additional for the new UX:
+- Wizard displays key **next to the installer command** and explains: "installer
+  will request this key on the server; paste it there" (+ Copy button).
+- Env block with token (as today) remains available for manual scenarios, but
+  is not the primary path.
+- Rotate: confirmation → new key shown once → instruction
+  "restart worker / installer will update .env on rerun" (merge semantics
+  of installer do not overwrite the token automatically — user updates it themselves).
 
 ---
 
@@ -571,28 +571,28 @@ Current lifecycle **correct and preserved**:
 
 Workflow — first-class artifact (Phase 1.5, policy `editable-baseline`).
 
-UI-модель:
+UI model:
 ```
 Profile (wizard Step 1)
    ↓
-Available workflows          (из setup/profiles: workflow ids + display names)
+Available workflows          (from setup/profiles: workflow ids + display names)
    ↓
-Download baseline workflow   (GET /gpu/workflow/:id — когда появится;
-                              сегодня — только repo checkout, installer делает сам)
+Download baseline workflow   (GET /gpu/workflow/:id — when available;
+                              today — only repo checkout, installer does it)
 ```
 
-Сообщения пользователю (ключевые формулировки):
-- «Это официальный Animastor baseline workflow. Его можно открыть и изменить
-  в ComfyUI.» — baseline является отправной точкой, не тюрьмой.
-- «В production workflow доставляется сервером per-task — локальная копия
-  нужна только для редактирования/отладки.» (факт: worker получает workflow в
+User messages (key formulations):
+- "This is the official Animastor baseline workflow. You can open and modify
+  it in ComfyUI." — baseline is a starting point, not a prison.
+- "In production, workflow is delivered server-side per-task — the local copy
+  is only needed for editing/debugging." (fact: worker receives workflow in
   `task.params`, `gpu-dispatcher.js`).
-- Installer никогда не перезаписывает изменённые пользователем копии
-  (`workflow-artifacts.js`: fresh copy → отдельный путь
+- Installer never overwrites user-modified copies
+  (`workflow-artifacts.js`: fresh copy → separate path
   `*.animastor-baseline.json`).
 
-Frontend не даёт редактировать workflow в Settings — только скачать/открыть
-ссылку; редактирование происходит в ComfyUI.
+Frontend does not allow editing workflows in Settings — only download/open
+link; editing happens in ComfyUI.
 
 ---
 
@@ -603,122 +603,122 @@ old:  one worker file + worker key
 new:  profile + installer + (ComfyUI/deps/models/workflow) + worker + key + verification
 ```
 
-Фазы (старую инструкцию НЕ удалять до готовности новой):
+Phases (do NOT delete old instructions until new ones are ready):
 
-1. **Backend groundwork** (отдельная задача):
-   - endpoints §6.1–6.5 (read-only, на базе существующих манифестов);
-   - hub: `/gpu/worker-bundle` (чинит сломанный single-file download — можно
-     сделать первым, независимо от фронтов);
-   - packaging installer'а (§7); `GET /gpu/workflow/:id`.
-2. **Web** (приоритет 1): wizard в `/settings/private-workers`; список workers
-   без изменений; старые i18n-строки помечаются deprecated, но остаются
-   fallback'ом при недоступности setup API.
-3. **Android** (приоритет 2): тот же wizard на Fragments; parity-тесты.
-4. **Docs**: переписать `EXPERIMENTAL_BETA_WORKER_SETUP.md` под новую модель;
-   обновить `ANDROID_WEB_PARITY.md`.
-5. **Cleanup** (только после принятия новой UX): удалить старые строки
-   §4 #1–#6, удалить/заменить §4 #7, сузить `/gpu/worker-source` до
-   deprecated-alias'а `/gpu/worker-bundle`.
+1. **Backend groundwork** (separate task):
+   - endpoints §6.1–6.5 (read-only, based on existing manifests);
+   - hub: `/gpu/worker-bundle` (fixes broken single-file download — can be
+     done first, independent of frontends);
+   - installer packaging (§7); `GET /gpu/workflow/:id`.
+2. **Web** (priority 1): wizard in `/settings/private-workers`; worker list
+   unchanged; old i18n strings marked deprecated but remain as
+   fallback when setup API is unavailable.
+3. **Android** (priority 2): same wizard on Fragments; parity tests.
+4. **Docs**: rewrite `EXPERIMENTAL_BETA_WORKER_SETUP.md` for the new model;
+   update `ANDROID_WEB_PARITY.md`.
+5. **Cleanup** (only after new UX is accepted): remove old strings
+   §4 #1–#6, remove/replace §4 #7, narrow `/gpu/worker-source` to
+   deprecated alias of `/gpu/worker-bundle`.
 
-Гейты: installer E2E на реальном GPU ещё **не принят**
-(`private-worker-installer-e2e-acceptance.md`: нет GPU на dev-хосте) — до
-принятия UI обязан показывать `status: "draft"` профилей и сохранять ручной
-fallback. Манифесты draft → stable только после подтверждённого research
-(checksum'ы/URL'ы моделей) и golden run.
+Gates: installer E2E on real GPU **not yet accepted**
+(`private-worker-installer-e2e-acceptance.md`: no GPU on dev host) — until
+accepted, UI must show `status: "draft"` for profiles and preserve manual
+fallback. Manifests draft → stable only after confirmed research
+(checksums/URLs of models) and golden run.
 
 ---
 
 ## 12. Security considerations
 
-| Секрет/канал | Правило |
+| Secret/channel | Rule |
 |---|---|
-| **Worker Key** (`wrk.…`) | Показывается один раз (create/rotate). Не в URL, не в query, не в argv installer'а (hidden prompt). PG: только SHA-256. Фронты: transient state, никакого localStorage/sessionStorage/IndexedDB/analytics. Crash reports: redaction по `SECRET_NAMES`. Clipboard: допустим (основной перенос на GPU-машину), но clip-метки нейтральны (`animastor-worker-token`), автоочистка не обязательна — ключ одноразово показан и ротируем |
-| **Installer credentials** | Installer аутентифицируется только Worker Key'ом при `verify`; никаких отдельных installer-секретов не вводить. Download артефактов — публичный HTTPS + sha256 в UI (целостность), подпись — будущее улучшение |
-| **Hugging Face / ModelScope tokens** | Вводятся **только на GPU-машине** (installer prompt, как `HF_TOKEN`); фронты никогда не запрашивают и не передают их; в download-planner'е токены — только headers (`engine/downloader.js`) |
-| **Logs** | Backend: token не логируется (существующее правило). Installer: `registerSecret` + redaction. Фронты: не логировать содержимое token/env-блока (сегодня не логируют — сохранить; при добавлении error-tracking — mask `wrk.*` целиком) |
-| **Analytics** | Запрещено отправлять token, env-блок, содержимое `.env` в любую аналитику; события wizard'а — только без параметров-секретов (profile id, platform, mode — можно) |
-| **Deep links** | `https://app.animastor.in/settings/private-workers?...` допустимы только с несекретными параметрами (`?profile=image/qwen-image`); token в deep link — запрещён |
-| **Setup API** | §6 — только сессия + workspace guard; setup/metadata не содержит секретов; `instructions` содержит token-placeholder, не значение |
-| **Worker bundle download** | Публичный (как сегодня `/gpu/worker-source`) — в bundle нет секретов; `.env.example` — только имена переменных |
+| **Worker Key** (`wrk.…`) | Shown once (create/rotate). Not in URL, not in query, not in installer argv (hidden prompt). PG: SHA-256 only. Frontends: transient state, no localStorage/sessionStorage/IndexedDB/analytics. Crash reports: redaction per `SECRET_NAMES`. Clipboard: allowed (primary transfer to GPU machine), but clip labels are neutral (`animastor-worker-token`), auto-clear not required — key shown once and rotated |
+| **Installer credentials** | Installer authenticates only with Worker Key at `verify`; no separate installer secrets to enter. Artifact download — public HTTPS + sha256 in UI (integrity), signing — future improvement |
+| **Hugging Face / ModelScope tokens** | Entered **only on the GPU machine** (installer prompt, as `HF_TOKEN`); frontends never request or transmit them; in download-planner, tokens are headers only (`engine/downloader.js`) |
+| **Logs** | Backend: token not logged (existing rule). Installer: `registerSecret` + redaction. Frontends: do not log token/env block content (currently don't — preserve; when adding error-tracking — mask `wrk.*` entirely) |
+| **Analytics** | Forbidden to send token, env block, `.env` contents to any analytics; wizard events — only without secret parameters (profile id, platform, mode — allowed) |
+| **Deep links** | `https://app.animastor.in/settings/private-workers?...` allowed only with non-secret parameters (`?profile=image/qwen-image`); token in deep link — forbidden |
+| **Setup API** | §6 — session + workspace guard only; setup/metadata contains no secrets; `instructions` contains token-placeholder, not the value |
+| **Worker bundle download** | Public (as today `/gpu/worker-source`) — bundle contains no secrets; `.env.example` — variable names only |
 
 ---
 
-## 13. Файлы, которые потребуется изменить (реализация — отдельная задача)
+## 13. Files to be changed (implementation — separate task)
 
-**Backend (новые endpoints + дистрибуция):**
-- `backend/src/routes/worker-routes.cjs` — setup endpoints §6.1–6.5 (или новый `worker-setup-routes.cjs`)
-- `backend/src/installer/` — projection манифестов в UI-safe вид; packaging-скрипт (tarball/single-file)
+**Backend (new endpoints + distribution):**
+- `backend/src/routes/worker-routes.cjs` — setup endpoints §6.1–6.5 (or new `worker-setup-routes.cjs`)
+- `backend/src/installer/` — manifest projection to UI-safe view; packaging script (tarball/single-file)
 - `gpu-hub/gpu-hub.js` — `/gpu/worker-bundle`, `/gpu/workflow/:id`, `/gpu/installer*`
-- `docker-compose.yml` — mounts для bundle/артефактов (сейчас только `worker.cjs:110-112`)
-- `backend/src/storage/postgres/repositories/worker-repo.js` — при расширении status-деталей (heartbeat read)
+- `docker-compose.yml` — mounts for bundle/artifacts (currently only `worker.cjs:110-112`)
+- `backend/src/storage/postgres/repositories/worker-repo.js` — when extending status details (heartbeat read)
 
 **Web:**
 - `frontends/app/src/features/workers/PrivateWorkersSection.tsx` — wizard, management block, status details
-- `frontends/app/src/features/workers/privateWorkers.ts` — замена `buildSetupContract` на API-клиент; типы
-- `frontends/app/src/features/workers/privateWorkers.test.ts` — новые фикстуры
-- `frontends/app/src/app/i18n.ts` — RU/EN блоки worker_* (замена старых шагов)
-- `frontends/app/src/api/models.ts`, `src/api/client.ts` — типы/вызовы §6
-- новые компоненты wizard'а в `features/workers/` (по реализации)
+- `frontends/app/src/features/workers/privateWorkers.ts` — replace `buildSetupContract` with API client; types
+- `frontends/app/src/features/workers/privateWorkers.test.ts` — new fixtures
+- `frontends/app/src/app/i18n.ts` — RU/EN worker_* blocks (replace old steps)
+- `frontends/app/src/api/models.ts`, `src/api/client.ts` — types/calls for §6
+- new wizard components in `features/workers/` (per implementation)
 
 **Android:**
 - `frontends/android/app/src/main/java/com/example/animastor/ui/PrivateWorkersFragment.kt` — wizard/management
-- `.../ui/BetaSettingsHelpers.kt` — замена `buildSetupContract`
-- `.../ui/BetaSettingsHelpersTest.kt` (test) — новые фикстуры
+- `.../ui/BetaSettingsHelpers.kt` — replace `buildSetupContract`
+- `.../ui/BetaSettingsHelpersTest.kt` (test) — new fixtures
 - `.../repository/BackendApi.kt`, `.../repository/PrivateWorkerModels.kt` — endpoints §6
-- `res/values/strings.xml`, `res/values-ru/strings.xml` — worker_* строки
-- возможно новый Fragment для wizard'а + layout XML
+- `res/values/strings.xml`, `res/values-ru/strings.xml` — worker_* strings
+- possibly new Fragment for wizard + layout XML
 
 **Docs:**
-- `docs/architecture/EXPERIMENTAL_BETA_WORKER_SETUP.md` — переписать
-- `ANDROID_WEB_PARITY.md` — раздел Private Workers setup
+- `docs/architecture/EXPERIMENTAL_BETA_WORKER_SETUP.md` — rewrite
+- `ANDROID_WEB_PARITY.md` — Private Workers setup section
 
 ---
 
-## 14. Открытые вопросы
+## 14. Open Questions
 
-1. **Packaging installer'а.** Сегодня это модуль backend-репо
-   (`backend/src/installer/`, bin `animastor-installer`). Нужен артефакт для
-   GPU-машин: tarball? single-file bundle? npm-пакет? Кто и когда его собирает
-   (CI/release)? От этого зависит §6.4 и §7.
-2. **VRAM-минимумы неизвестны** (`gpu_min_vram_gb: null` во всех манифестах,
-   open question 12 архитектуры). UI пока может показывать только «verified
-   reference: L40S 46 GB» — приемлемо ли на старте?
-3. **Model sources не исследованы** (большинство записей `repository: null`,
-   verification unknown) → installer BLOCKED по моделям. Frontend должен
-   честно показывать draft-статус. Когда research завершится?
-4. **Node 18 vs 20**: `start-worker.sh` ставит Node 18, `worker.cjs` требует
-   20+ (open question 11 архитектуры). Инструкции должны давать одну версию.
-5. **Сигнал «Installing».** Сегодня backend не знает, что installer запущен.
-   Нужен ли check-in endpoint (`POST /worker/install-state`)? Это изменение
-   installer'а (не worker protocol) — отложить или включить в backend-фазу?
-6. **Multi-profile.** `worker_type` у worker'а один; wizard допускает выбор
-   нескольких профилей. Модель: один worker = один профиль (N workers), или
-   multi-profile worker (требует worker protocol изменений — вне scope)?
-   Рекомендуется: один worker на профиль; shared-режим — один ComfyUI, несколько
-   worker-процессов (open question 4 архитектуры).
-7. **`/gpu/worker-source`**: расширить in-place (breaking для старых команд?)
-   или добавить `/gpu/worker-bundle` рядом (рекомендуется)?
+1. **Installer packaging.** Currently a module in the backend repo
+   (`backend/src/installer/`, bin `animastor-installer`). An artifact for
+   GPU machines is needed: tarball? single-file bundle? npm package? Who builds
+   it and when (CI/release)? This affects §6.4 and §7.
+2. **VRAM minimums unknown** (`gpu_min_vram_gb: null` in all manifests,
+   architecture open question 12). UI can currently only show "verified
+   reference: L40S 46 GB" — acceptable at launch?
+3. **Model sources not researched** (most entries `repository: null`,
+   verification unknown) → installer BLOCKED on models. Frontend must
+   honestly show draft status. When will research be complete?
+4. **Node 18 vs 20**: `start-worker.sh` installs Node 18, `worker.cjs` requires
+   20+ (architecture open question 11). Instructions must specify one version.
+5. **"Installing" signal.** Currently backend does not know that the installer is running.
+   Is a check-in endpoint needed (`POST /worker/install-state`)? This is an installer change
+   (not worker protocol) — defer or include in backend phase?
+6. **Multi-profile.** Worker has one `worker_type`; wizard allows selecting
+   multiple profiles. Model: one worker = one profile (N workers), or
+   multi-profile worker (requires worker protocol changes — out of scope)?
+   Recommended: one worker per profile; shared mode — one ComfyUI, multiple
+   worker processes (architecture open question 4).
+7. **`/gpu/worker-source`**: extend in-place (breaking for old commands?)
+   or add `/gpu/worker-bundle` alongside (recommended)?
 8. **Windows installer format** (.bat / PowerShell / .exe / packaged) —
-   отложен; сейчас только `installer.available=false, status=planned` (§15.4).
-9. **Uninstaller** не существует — нужен отдельный дизайн (ownership-модель
-   §15.6) до того, как UI пообещает кнопку Uninstall.
-10. **E2E acceptance** installer'а заблокирован (нет GPU на dev-хосте) —
-    гейт для stable-статуса профилей и для удаления старой инструкции.
-11. **ComfyUI pin-конфликт профилей** (v0.27.0 vs форк c4cfee7a) — влияет на
-    shared-режим и на то, что wizard покажет при выборе нескольких профилей.
-12. **Instructions: серверная сборка vs клиентская.** §6.5 предлагает серверную;
-    альтернатива — фронты собирают шаги из §6.1/6.4 (меньше endpoint'ов, но
-    больше дублирования). Решение при реализации.
+   deferred; currently only `installer.available=false, status=planned` (§15.4).
+9. **Uninstaller** does not exist — separate design needed (ownership model
+   §15.6) before UI promises an Uninstall button.
+10. **E2E acceptance** of installer blocked (no GPU on dev host) —
+    gate for stable profile status and for removing old instructions.
+11. **ComfyUI pin profile conflict** (v0.27.0 vs fork c4cfee7a) — affects
+    shared mode and what the wizard shows when multiple profiles are selected.
+12. **Instructions: server-side vs client-side build.** §6.5 proposes server-side;
+    alternative — frontends build steps from §6.1/6.4 (fewer endpoints, but
+    more duplication). Decision at implementation time.
 
 ---
 
-## 15. Platform & Installation Lifecycle (дополнение)
+## 15. Platform & Installation Lifecycle (supplement)
 
-### 15.1 Принцип: frontend не привязан к Linux
+### 15.1 Principle: frontend is not bound to Linux
 
-Новый installer реализован для Linux, но архитектура frontend'а **не** должна
-содержать предположение «Private Worker = Linux Installer». Вводится сущность
-**Installation Method** (platform + lifecycle artifacts), отдаваемая через
+The new installer is implemented for Linux, but the frontend architecture **must not**
+assume "Private Worker = Linux Installer". A new entity **Installation Method**
+(platform + lifecycle artifacts) is introduced, served via
 `GET /api/v1/workers/setup/methods` (§6.2):
 
 ```jsonc
@@ -730,121 +730,121 @@ fallback. Манифесты draft → stable только после подтв
                           "uninstaller": { "available": false, "status": "planned" } }
 ```
 
-Точные значения `platform` — `linux | windows | docker` (docker покрывает
-container/VM-сценарии managed-серверов; при необходимости позже выделить
-`cloud` отдельно).
+Exact `platform` values — `linux | windows | docker` (docker covers
+container/VM scenarios for managed servers; `cloud` can be split out later
+if needed).
 
-### 15.2 Installer metadata contract (минимальный безопасный)
+### 15.2 Installer metadata contract (minimum safe)
 
-Поля (§6.4 — надмножество): `platform, arch, installer{available, version,
-download_url|command, sha256, release_notes}, uninstaller{…то же…},
-supported_profiles[], minimum_requirements{}`. Полный набор
-(signature, отдельные checksum-манифесты, auto-update channel) — не нужен
-сейчас; схема расширяема. `sha256` — обязателен с первого релиза;
-`signature` — будущее улучшение.
+Fields (§6.4 — superset): `platform, arch, installer{available, version,
+download_url|command, sha256, release_notes}, uninstaller{...same...},
+supported_profiles[], minimum_requirements{}`. Full set
+(signature, separate checksum manifests, auto-update channel) — not needed
+now; schema is extensible. `sha256` — mandatory from first release;
+`signature` — future improvement.
 
 ### 15.3 Linux
 
-- **Linux Installer** — существует (Phase 2.1, тесты passing; E2E на железе —
-  blocked, §14 Q10). UI: `installer.available=true` только после E2E-принятия;
-  до этого — `available=true, status=draft` с предупреждением.
-- **Linux Uninstaller** — самостоятельный lifecycle artifact, **не** существует
-  сегодня. Не предполагать `reinstall = uninstall + install`: это разные
-  операции (reinstall/repair = идемпотентный rerun installer'а — уже
-  поддерживается engine'ом через resume/idempotency; uninstall = отдельный
-  артефакт со своей логикой и версией).
+- **Linux Installer** — exists (Phase 2.1, tests passing; E2E on hardware —
+  blocked, §14 Q10). UI: `installer.available=true` only after E2E acceptance;
+  before that — `available=true, status=draft` with a warning.
+- **Linux Uninstaller** — standalone lifecycle artifact, **does not** exist
+  today. Do not assume `reinstall = uninstall + install`: these are different
+  operations (reinstall/repair = idempotent rerun of installer — already
+  supported by the engine via resume/idempotency; uninstall = separate
+  artifact with its own logic and version).
 
 ### 15.4 Windows
 
-Не реализуется сейчас. Архитектурная возможность заложена: frontend получает
-`platform=windows, installer.available=false|true` и рендерит соответствующий
-блок («coming soon» / команду). Формат (.bat / PowerShell / .exe / packaged)
-выбирается позже; рекомендация на сегодня — PowerShell-скрипт как ближайший
-аналог linux-обёртки, packaged installer как целевой. В contracts ничего
-windows-специфичного не добавлять.
+Not implemented now. Architectural capability is built in: frontend receives
+`platform=windows, installer.available=false|true` and renders the
+appropriate block ("coming soon" / command). Format (.bat / PowerShell / .exe / packaged)
+chosen later; today's recommendation — PowerShell script as closest analog
+of the linux wrapper, packaged installer as the target. Nothing windows-specific
+added to contracts.
 
-### 15.5 Операции lifecycle в UX
+### 15.5 Lifecycle operations in UX
 
-Отдельные операции, не спрятанные в troubleshooting:
+Separate operations, not hidden in troubleshooting:
 
 ```
 Private Worker
   Status: Online
   [Worker details]
   Management
-  ├── Reinstall / Repair     (rerun installer'а; идемпотентно, resume)
-  └── Uninstall Worker       (отдельный uninstaller-артефакт)
+  ├── Reinstall / Repair     (rerun installer; idempotent, resume)
+  └── Uninstall Worker       (standalone uninstaller artifact)
 ```
 
-Расположение: Settings → Private Workers → строка worker'а → Management
-(Web: row actions/details; Android: row menu). Install — в wizard'е;
-Repair/Uninstall — у существующего worker'а.
+Location: Settings → Private Workers → worker row → Management
+(Web: row actions/details; Android: row menu). Install — in wizard;
+Repair/Uninstall — for existing worker.
 
 ### 15.6 Uninstall safety (ownership model)
 
-Uninstaller различает:
+Uninstaller distinguishes:
 
-| Класс | Примеры | Действие |
+| Class | Examples | Action |
 |---|---|---|
-| **Animastor-managed** | Animastor Worker (bundle), Animastor-generated config (`.env`-ключи installer'а), installer state (`.animastor-installer/`), Animastor-specific services, Animastor-managed deps (если безопасно и установлено installer'ом) | можно удалить |
-| **User-owned** | пользовательский ComfyUI, workflows, models, custom nodes, python-окружения | **никогда** автоматически |
+| **Animastor-managed** | Animastor Worker (bundle), Animastor-generated config (`.env` keys from installer), installer state (`.animastor-installer/`), Animastor-specific services, Animastor-managed deps (if safe and installed by installer) | can remove |
+| **User-owned** | user's own ComfyUI, workflows, models, custom nodes, python environments | **never** automatically |
 
-UX (обязательное подтверждение):
+UX (mandatory confirmation):
 ```
 Remove Animastor Worker?
 This will not remove your ComfyUI, models, custom nodes or workflows.
 [Uninstall]  [Cancel]
 ```
-Особенно для **Existing ComfyUI**: удаляется только Animastor-managed
-компоненты; пользовательское окружение не трогается. Для **Managed**
-installer владеет большим набором компонентов — uninstall может предложить
-удалить и установленные им модели/ноды, но только явным отдельным
-подтверждением (по логике `safety-rules.js`: delete_model/delete_custom_node —
+Especially for **Existing ComfyUI**: only Animastor-managed
+components removed; user environment untouched. For **Managed**,
+installer owns a larger set of components — uninstall may offer
+to also remove installed models/nodes, but only with explicit separate
+confirmation (per `safety-rules.js` logic: delete_model/delete_custom_node —
 NEVER_AUTOMATIC).
 
 ### 15.7 Managed vs Existing uninstall
 
-- **Managed:** installer владеет ComfyUI/deps/models → uninstall может удалить
-  всё им установленное (по явному выбору), worker bundle и state — всегда.
-- **Existing:** пользователь владел ComfyUI до installer'а → uninstall удаляет
-  **только** Animastor-managed компоненты (worker bundle, .env-ключи
-  Animastor, baseline-копии workflows, созданные installer'ом; модели/ноды —
-  только если пользователь явно отметил их как установленные installer'ом).
+- **Managed:** installer owns ComfyUI/deps/models → uninstall can remove
+  everything it installed (by explicit choice), worker bundle and state — always.
+- **Existing:** user owned ComfyUI before installer → uninstall removes
+  **only** Animastor-managed components (worker bundle, .env keys,
+  Animastor baseline workflow copies created by installer; models/nodes —
+  only if user explicitly marked them as installed by installer).
 
-### 15.8 Frontend UI, управляемый metadata
+### 15.8 Frontend UI, driven by metadata
 
-UI автоматически меняется от `platform × installation status × installer
+UI automatically adapts based on `platform × installation status × installer
 availability × uninstaller availability × worker status`:
 
 ```
 Linux     ✓ Installer available   ✓ Uninstaller available
 Windows   ! Installer coming soon
-Windows   ✓ Installer available   ✓ Uninstaller available   (будущее)
+Windows   ✓ Installer available   ✓ Uninstaller available   (future)
 ```
 
-Никаких отдельных захардкоженных страниц под ОС: один wizard/management,
-данные — из §6.2/§6.4; недоступный артефакт → disabled-блок с пояснением.
+No separate hardcoded pages per OS: one wizard/management,
+data — from §6.2/§6.4; unavailable artifact → disabled block with explanation.
 
 ### 15.9 Android lifecycle parity
 
-Android имеет ту же lifecycle-модель (Install / Repair / Uninstall / Status /
-Diagnostics), но **не запускает installer локально**. Android предоставляет:
-download link, инструкцию, copy command, open external link, worker status,
-uninstall instructions/action (команда/ссылка на uninstaller-артефакт).
-Web и Android используют один backend metadata contract (§6.2, §6.4).
+Android has the same lifecycle model (Install / Repair / Uninstall / Status /
+Diagnostics) but **does not run installer locally**. Android provides:
+download link, instructions, copy command, open external link, worker status,
+uninstall instructions/action (command/link to uninstaller artifact).
+Web and Android use the same backend metadata contract (§6.2, §6.4).
 
 ### 15.10 Versioning
 
-Installer и Uninstaller версионируются **независимо**:
+Installer and Uninstaller are versioned **independently**:
 
 ```
 Linux Installer 1.2.0      Linux Uninstaller 1.0.1
-Windows Installer 1.0.0    Windows Uninstaller 1.0.0   (будущее)
+Windows Installer 1.0.0    Windows Uninstaller 1.0.0   (future)
 ```
 
-Frontend получает актуальные версии из backend/release metadata (§6.2/§6.4) и
-никогда не хранит их hardcoded. Worker bundle version — отдельно
-(`worker_bundle.version`, сегодня v2.0.0; `min_version` в манифестах).
+Frontend fetches current versions from backend/release metadata (§6.2/§6.4) and
+never hardcodes them. Worker bundle version — separate
+(`worker_bundle.version`, today v2.0.0; `min_version` in manifests).
 
 ### 15.11 Future-proof model
 
@@ -853,110 +853,110 @@ Private Worker
       ↓
 Installation Manager        (setup API §6, wizard, management block)
       ↓
-Platform                    (linux | windows | docker — из setup/methods)
+Platform                    (linux | windows | docker — from setup/methods)
       ↓
 Installation Artifact
       ├── Installer         (versioned, per-platform)
       └── Uninstaller       (versioned, per-platform, independent)
 ```
 
-— а не `Private Worker → Linux Installer`. Добавление Windows/Docker позже =
-новая запись в `setup/methods`, без переписывания Private Worker UI.
+— not `Private Worker → Linux Installer`. Adding Windows/Docker later =
+new entry in `setup/methods`, no Private Worker UI rewrite needed.
 
 ---
 
-## 16. Phase 3 Implementation (Backend Setup Contract) — реализовано 2026-08-27
+## 16. Phase 3 Implementation (Backend Setup Contract) — implemented 2026-08-27
 
-Единый backend contract для Web и Android реализован как дополнительный слой
-поверх существующего Worker API (без breaking changes; UI не менялся).
-Полные схемы ответов, auth/security, artifact/worker-bundle модели и план
-миграции с `/gpu/worker-source` — в
+A unified backend contract for Web and Android implemented as an additional layer
+on top of the existing Worker API (no breaking changes; UI unchanged).
+Full response schemas, auth/security, artifact/worker-bundle models and migration
+plan from `/gpu/worker-source` — in
 `docs/04-planning/private-worker-setup-contract-api.md`.
 
 ### 16.1 Endpoints
 
-| Endpoint | Назначение |
+| Endpoint | Purpose |
 |---|---|
-| `GET /api/v1/private-worker/setup/profiles` | UI-safe профили из canonical installer манифестов (`?type=`) |
+| `GET /api/v1/private-worker/setup/profiles` | UI-safe profiles from canonical installer manifests (`?type=`) |
 | `GET /api/v1/private-worker/setup/methods` | platforms × installer/uninstaller/worker_bundle metadata |
-| `GET /api/v1/private-worker/setup/artifacts` | артефакты одной platform (`?platform=`, неизвестная → 404) |
+| `GET /api/v1/private-worker/setup/artifacts` | artifacts for one platform (`?platform=`, unknown → 404) |
 | `GET /api/v1/private-worker/setup/workflows` | baseline workflows: sha256, `editable: true`, download_url |
-| `GET /api/v1/private-worker/setup/instructions` | динамическая инструкция (`?profile_id=&platform=&mode=`) |
-| `GET /api/v1/private-worker/setup/workers/:id` | расширенный UI-safe статус (adapter) + normalized capabilities |
-| `POST /api/v1/private-worker/setup/plan` | UI-safe installation plan (preview; никогда не исполняется) |
-| `GET /gpu/worker-bundle` (+`/sha256`) | полный worker bundle tar.gz (Worker Key НЕ внутри) |
-| `GET /gpu/workflow/:id` | baseline workflow (allowlist из манифестов; `old_*.json` не отдаются) |
+| `GET /api/v1/private-worker/setup/instructions` | dynamic instructions (`?profile_id=&platform=&mode=`) |
+| `GET /api/v1/private-worker/setup/workers/:id` | extended UI-safe status (adapter) + normalized capabilities |
+| `POST /api/v1/private-worker/setup/plan` | UI-safe installation plan (preview; never executed) |
+| `GET /gpu/worker-bundle` (+`/sha256`) | full worker bundle tar.gz (Worker Key NOT inside) |
+| `GET /gpu/workflow/:id` | baseline workflow (allowlist from manifests; `old_*.json` not served) |
 | `GET /gpu/installer` (+`/sha256`) | self-contained installer package tar.gz |
-| `GET /gpu/worker-source` | **DEPRECATED** — работает, помечен `Deprecation: true` + `Link` |
+| `GET /gpu/worker-source` | **DEPRECATED** — works, marked `Deprecation: true` + `Link` |
 
-### 16.2 Ключевые решения реализации
+### 16.2 Key implementation decisions
 
-- **Проекции, а не манифесты:** `backend/src/installer/setup-contract.js` —
-  единственный выход манифестов наружу; сырые манифесты, source URL'ы моделей,
-  provenance, resolver-детали не покидают backend.
-- **Честность вместо выдумок:** VRAM unknown → `null`; uninstaller не
-  существует → `available:false, status:"planned"` (schema готова к
-  `available:true` без изменения фронтов); неисследованные источники моделей
-  → plan `BLOCKED` c `MODEL_SOURCE_NOT_PUBLISHED`; Windows/Docker →
+- **Projections, not manifests:** `backend/src/installer/setup-contract.js` —
+  sole outward-facing manifest layer; raw manifests, model source URLs,
+  provenance, resolver details do not leave the backend.
+- **Honesty over fabrication:** VRAM unknown → `null`; uninstaller does not
+  exist → `available:false, status:"planned"` (schema ready for
+  `available:true` without frontend changes); unresearched model sources
+  → plan `BLOCKED` with `MODEL_SOURCE_NOT_PUBLISHED`; Windows/Docker →
   `PLATFORM_NOT_SUPPORTED`.
-- **Installer artifact реален:** hub собирает self-contained пакет
+- **Installer artifact is real:** hub builds a self-contained package
   (`src/installer/**` + `ai/install-manifests/**` + generated package.json)
-  детерминированным pure-JS ustar-райтером (`gpu-hub/tarball.js`); версия
-  `1.0.0`, статус `draft` (E2E на железе не принят), sha256 публикуется и
-  резолвится backend'ом server-side.
-- **Worker bundle:** tar.gz из 6 файлов; `.env*` (кроме `.env.example`)
-  исключены фильтром hub'а; токен — только через существующий one-time
+  via deterministic pure-JS ustar writer (`gpu-hub/tarball.js`); version
+  `1.0.0`, status `draft` (E2E on hardware not accepted), sha256 published and
+  resolved server-side by backend.
+- **Worker bundle:** tar.gz from 6 files; `.env*` (except `.env.example`)
+  excluded by hub filter; token — only via existing one-time
   disclosure + installer hidden prompt. Single-file `/gpu/worker-source`
-  помечен deprecated (не удалён).
-- **Статус worker'а:** adapter поверх существующей derivation —
-  ONLINE/OFFLINE/REVOKED не ломаются; создан и ни разу не виделся →
-  `CONNECTING`; `NOT_CONFIGURED/INSTALLING/ERROR` задокументированы как
-  состояния фронта/будущих сигналов. `base_status` отдаётся рядом.
-- **Sharing:** реальные verdict'ы resolver'а — audio+image ⇒
-  `SHARED_COMPATIBLE`, image+video ⇒ `REQUIRES_ISOLATION` (разные ComfyUI
-  commit'ы reference-окружений); multi-ComfyUI orchestration не реализуется.
-- **Instructions** собираются сервером (решение §14 Q12 — серверная сборка):
-  фронтам не хардкодить ни команд, ни версий; токен только placeholder'ом.
-- **Security:** все endpoints под сессией зарегистрированного пользователя +
-  workspace guard; чужой worker → неразличимый 404; download URL'ы — только
-  backend-авторизованные origin-relative константы; тесты на отсутствие
-  token/token_hash/секретов во всех ответах.
+  marked deprecated (not removed).
+- **Worker status:** adapter on top of existing derivation —
+  ONLINE/OFFLINE/REVOKED not broken; created but never seen →
+  `CONNECTING`; `NOT_CONFIGURED/INSTALLING/ERROR` documented as
+  frontend/future signal states. `base_status` served alongside.
+- **Sharing:** real resolver verdicts — audio+image ⇒
+  `SHARED_COMPATIBLE`, image+video ⇒ `REQUIRES_ISOLATION` (different ComfyUI
+  commit reference environments); multi-ComfyUI orchestration not implemented.
+- **Instructions** built server-side (decision §14 Q12 — server-side build):
+  frontends do not hardcode commands or versions; token as placeholder only.
+- **Security:** all endpoints under registered user session +
+  workspace guard; foreign worker → indistinguishable 404; download URLs — only
+  backend-authorized origin-relative constants; tests verify absence of
+  token/token_hash/secrets in all responses.
 
-### 16.3 Покрытие тестами (все passing)
+### 16.3 Test coverage (all passing)
 
 - `backend/tests/worker-setup-api.test.js` — API: auth/isolation, profiles,
   platforms, artifacts+checksum, workflows, instructions, worker status,
   security sweep, plan (image/video/audio, managed/existing/shared/isolated,
   SHARED_COMPATIBLE/REQUIRES_ISOLATION), legacy API intact;
-- `backend/tests/installer-setup-contract.test.js` — проекции: hidden
-  profiles не отдаются, planned-платформы, editable workflows, token
-  placeholder, status adapter, capabilities, plan-семантика, hub outage →
+- `backend/tests/installer-setup-contract.test.js` — projections: hidden
+  profiles not served, planned platforms, editable workflows, token
+  placeholder, status adapter, capabilities, plan semantics, hub outage →
   sha256 null;
-- `backend/tests/gpu-hub-artifacts.test.js` — bundle состав/детерминизм/
-  `.env`-исключение, workflow allowlist + traversal, installer package,
-  sha256 integrity, deprecated worker-source работает.
-- Полный backend suite: 1705 тестов passing.
+- `backend/tests/gpu-hub-artifacts.test.js` — bundle composition/determinism/
+  `.env` exclusion, workflow allowlist + traversal, installer package,
+  sha256 integrity, deprecated worker-source works.
+- Full backend suite: 1705 tests passing.
 
-### 16.4 Открытые blockers (унаследованы, не блокируют UI-фазы)
+### 16.4 Open blockers (inherited, do not block UI phases)
 
-1. Linux uninstaller не существует (нужен отдельный ownership-design, §15.6)
-   — в контракте `planned`.
-2. Model sources не исследованы (D5) → plan честно BLOCKED по моделям.
-3. E2E installer'а на реальном GPU не принят → installer `status: draft`.
-4. VRAM-минимумы неизвестны → `gpu.min_vram_gb: null`.
-5. `details` (GPU/VRAM online-детали) требуют расширения heartbeat payload
-   hub'а — в контракте пока `null`.
+1. Linux uninstaller does not exist (separate ownership design needed, §15.6)
+   — `planned` in contract.
+2. Model sources not researched (D5) → plan honestly BLOCKED on models.
+3. E2E installer on real GPU not accepted → installer `status: draft`.
+4. VRAM minimums unknown → `gpu.min_vram_gb: null`.
+5. `details` (GPU/VRAM online details) require extending hub heartbeat payload
+   — currently `null` in contract.
 
 ---
 
-### Связанные документы
+### Related documents
 
-- `docs/04-planning/private-worker-setup-contract-api.md` — **Phase 3 API reference (реализовано)**
+- `docs/04-planning/private-worker-setup-contract-api.md` — **Phase 3 API reference (implemented)**
 - `docs/04-planning/private-worker-installer-architecture.md`
 - `docs/04-planning/private-worker-installer-phase15.md`
 - `docs/04-planning/private-worker-installer-manifest-resolver.md`
 - `docs/04-planning/private-worker-installer-e2e-acceptance.md`
-- `docs/architecture/EXPERIMENTAL_BETA_WORKER_SETUP.md` (к переписыванию, §11)
+- `docs/architecture/EXPERIMENTAL_BETA_WORKER_SETUP.md` (to be rewritten, §11)
 - `docs/architecture/LINUX_INSTALLER_RECONNAISSANCE.md`
-- `docs/04-planning/RunPod_Integration_GPU_Hub.md` (managed-сценарии)
+- `docs/04-planning/RunPod_Integration_GPU_Hub.md` (managed scenarios)
 - `ANDROID_WEB_PARITY.md`
