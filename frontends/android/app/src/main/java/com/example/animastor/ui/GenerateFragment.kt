@@ -26,6 +26,7 @@ import com.example.animastor.databinding.ItemWorkerProgressBinding
 import com.example.animastor.databinding.ViewAnalysisPanelBinding
 import com.example.animastor.network.RetrofitClient
 import com.example.animastor.repository.BookData
+import com.example.animastor.repository.ResourceInvalidations
 import com.google.android.material.chip.Chip
 import com.google.android.material.color.MaterialColors
 import kotlinx.coroutines.delay
@@ -70,6 +71,20 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         // ── Position bar ──
         observePosition()
         loadBook()
+
+        // ── Invalidation pipeline (view layer): the book JSON changed
+        // externally (AI Assistant patch) — refresh the cached book snapshot
+        // so the position bar reflects the new titles. ──
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                ResourceInvalidations.events.collect { event ->
+                    val currentBook = viewModel.bookId
+                    if (event.kind != ResourceInvalidations.Kind.EXTERNAL) return@collect
+                    if (currentBook.isBlank() || event.resource != ResourceInvalidations.Keys.book(currentBook)) return@collect
+                    loadBook()
+                }
+            }
+        }
 
         // ── Toggle chips ──
         // ── Toggle chips — save listener refs for later state restoration ──

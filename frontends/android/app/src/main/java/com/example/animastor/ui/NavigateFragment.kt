@@ -19,6 +19,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.animastor.R
 import com.example.animastor.databinding.FragmentNavigateBinding
 import com.example.animastor.repository.BookData
+import com.example.animastor.repository.ResourceInvalidations
 import com.example.animastor.repository.unitIndex
 
 import com.example.animastor.repository.Chapter
@@ -245,6 +246,19 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
                     //   - First real emission with no prior replay → isLoading=false → fetch
                     //   - Subsequent generation completions → isLoading=false → fetch
                     if (viewModel.bookId.isNotBlank() && viewModel.bookId == prep.bookId) {
+                        loadBook()
+                    }
+                }
+                // ── Invalidation pipeline (view layer) ──────────────────
+                // The book JSON changed outside this screen (AI Assistant
+                // patch, another device) — re-read the structure so the tree
+                // shows new/renamed chapters, scenes and units without a
+                // manual refresh. Same resource-key contract as EditFragment.
+                launch {
+                    ResourceInvalidations.events.collect { event ->
+                        val currentBook = viewModel.bookId
+                        if (event.kind != ResourceInvalidations.Kind.EXTERNAL) return@collect
+                        if (currentBook.isBlank() || event.resource != ResourceInvalidations.Keys.book(currentBook)) return@collect
                         loadBook()
                     }
                 }

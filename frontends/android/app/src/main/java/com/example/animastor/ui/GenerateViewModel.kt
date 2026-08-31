@@ -13,6 +13,7 @@ import com.example.animastor.network.RetrofitClient
 import com.example.animastor.repository.AssetsStateResponse
 import com.example.animastor.repository.BookSessionStore
 import com.example.animastor.repository.DiffSummary
+import com.example.animastor.repository.ResourceInvalidations
 import com.example.animastor.repository.SharedPrefsKeyValueStore
 import java.util.concurrent.ConcurrentHashMap
 import com.example.animastor.repository.DirtyScene
@@ -229,6 +230,22 @@ class GenerateViewModel(
         val live = bookSessionStore.loadLive()
         bookId = live.bookId
         buildId = live.buildId
+
+        // ── Invalidation pipeline (data layer) ──────────────────────────
+        // When the book bundle is invalidated (AI Assistant patch = EXTERNAL,
+        // this client's own entity/structure writes = LOCAL), evict the JSON
+        // metadata caches so the next read of any screen re-fetches fresh
+        // data. Screen-level re-fetches live in the fragments (Edit/Navigate/
+        // Generate/AiAssistant collect the same bus).
+        viewModelScope.launch {
+            ResourceInvalidations.events.collect { event ->
+                val res = event.resource
+                if (res == ResourceInvalidations.Keys.BOOK_PREFIX || res.startsWith(ResourceInvalidations.Keys.BOOK_PREFIX)) {
+                    _repository.clearBookJsonCaches()
+                    Log.d(TAG, "invalidation: $event — cleared book JSON caches")
+                }
+            }
+        }
     }
 
     private fun persistBookId(id: String) {

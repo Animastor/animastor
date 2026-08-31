@@ -326,7 +326,63 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                         updateDirtyIndicator(summary)
                     }
                 }
+                // ── Invalidation pipeline (view layer) ──────────────────
+                // The book bundle was mutated outside the editor's own save
+                // flow (AI Assistant patch, another device). Re-read the
+                // canonical JSON and rebuild the current tab so the tables and
+                // fields show fresh values without any manual refresh — even
+                // when the editor stayed open under the assistant overlay or
+                // the user just switched back to this tab (fragments are
+                // show()/hide()'d, so position changes alone do not re-trigger
+                // loadAndSync).
+                launch {
+                    ResourceInvalidations.events.collect { event ->
+                        val res = event.resource
+                        val currentBook = viewModel.bookId
+                        if (event.kind != ResourceInvalidations.Kind.EXTERNAL) return@collect
+                        if (currentBook.isBlank() || res != ResourceInvalidations.Keys.book(currentBook)) return@collect
+                        onExternalBookChange()
+                    }
+                }
             }
+        }
+    }
+
+    /**
+     * The canonical book JSON changed externally — re-fetch it and drop the
+     * local dirty buffer so [rebuildContent] renders the fresh server values
+     * (fieldValues otherwise keeps pre-change text like the description the
+     * assistant just rewrote). Position/tab selection is preserved; structural
+     * indexes are clamped in case the patch added/removed chapters or scenes.
+     * LOCAL events are ignored on purpose: the editor already re-fetches right
+     * after its own saves (saveToBackend / reloadEntityTable), and dropping
+     * the dirty buffer there would clobber values the user is still typing.
+     */
+    private fun onExternalBookChange() {
+        val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
+        lifecycleScope.launch {
+            val fresh = runCatching { viewModel.repository.getBook(bookId) }.getOrNull()
+                ?: return@launch
+            // Ignore a book switch that happened while the fetch was in flight.
+            if (viewModel.bookId != bookId) return@launch
+            bookData = fresh
+            chapters = fresh.chapters ?: emptyList()
+            // Server data wins after an external change: drop the stale buffer
+            // and the passport-override blocks derived from the old JSON.
+            fieldValues.clear()
+            passportOverrideBlocks.clear()
+            passportBlocksSceneKey = null
+            if (chapters.isEmpty()) {
+                clearEditor()
+                return@launch
+            }
+            currentChIndex = currentChIndex.coerceIn(0, chapters.size - 1)
+            val sceneCount = chapters.getOrNull(currentChIndex)?.scenes?.size ?: 0
+            currentScIndex = if (sceneCount > 0) currentScIndex.coerceIn(0, sceneCount - 1) else 0
+            updateCarousel()
+            updatePositionLabel()
+            rebuildContent(binding?.propertyTabs?.selectedTabPosition ?: 0)
+            loadTimelineData()
         }
     }
 

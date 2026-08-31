@@ -210,36 +210,43 @@ class Repository(
     suspend fun updateBook(bookId: String, bookData: BookData) {
         Log.d("Repo", "updateBook: $bookId")
         api.updateBook(bookId, bookData)
+        notifyBookChanged(bookId)
     }
 
     suspend fun patchBookMetadata(bookId: String, fields: Map<String, @JvmSuppressWildcards Any?>) {
         Log.d("Repo", "patchBookMetadata: $bookId keys=${fields.keys}")
         api.patchBookMetadata(bookId, fields)
+        notifyBookChanged(bookId)
     }
 
     suspend fun patchScene(bookId: String, chapterId: String, sceneId: String, body: Map<String, @JvmSuppressWildcards Any?>) {
         Log.d("Repo", "patchScene: $bookId/$chapterId/$sceneId keys=${body.keys}")
         api.patchScene(bookId, chapterId, sceneId, body)
+        notifyBookChanged(bookId)
     }
 
     suspend fun patchLocation(bookId: String, locationId: String, fields: Map<String, @JvmSuppressWildcards Any?>) {
         Log.d("Repo", "patchLocation: $bookId/$locationId keys=${fields.keys}")
         api.patchLocation(bookId, locationId, mapOf("fields" to fields))
+        notifyBookChanged(bookId)
     }
 
     suspend fun patchCharacter(bookId: String, characterId: String, fields: Map<String, @JvmSuppressWildcards Any?>) {
         Log.d("Repo", "patchCharacter: $bookId/$characterId keys=${fields.keys}")
         api.patchCharacter(bookId, characterId, mapOf("fields" to fields))
+        notifyBookChanged(bookId)
     }
 
     suspend fun patchVoice(bookId: String, voiceId: String, fields: Map<String, @JvmSuppressWildcards Any?>) {
         Log.d("Repo", "patchVoice: $bookId/$voiceId keys=${fields.keys}")
         api.patchVoice(bookId, voiceId, mapOf("fields" to fields))
+        notifyBookChanged(bookId)
     }
 
     suspend fun patchBehavior(bookId: String, characterId: String, fields: Map<String, @JvmSuppressWildcards Any?>) {
         Log.d("Repo", "patchBehavior: $bookId/$characterId keys=${fields.keys}")
         api.patchBehavior(bookId, characterId, mapOf("fields" to fields))
+        notifyBookChanged(bookId)
     }
 
     // ── Manual entity add/delete (Editor tables) ──
@@ -250,31 +257,37 @@ class Repository(
     suspend fun createCharacter(bookId: String, body: Map<String, @JvmSuppressWildcards Any?>) {
         Log.d("Repo", "createCharacter: $bookId body=${body.keys}")
         api.createCharacter(bookId, body)
+        notifyBookChanged(bookId)
     }
 
     suspend fun deleteCharacter(bookId: String, characterId: String) {
         Log.i("Repo", "deleteCharacter: $bookId/$characterId")
         api.deleteCharacter(bookId, characterId)
+        notifyBookChanged(bookId)
     }
 
     suspend fun createLocation(bookId: String, body: Map<String, @JvmSuppressWildcards Any?>) {
         Log.d("Repo", "createLocation: $bookId body=${body.keys}")
         api.createLocation(bookId, body)
+        notifyBookChanged(bookId)
     }
 
     suspend fun deleteLocation(bookId: String, locationId: String) {
         Log.i("Repo", "deleteLocation: $bookId/$locationId")
         api.deleteLocation(bookId, locationId)
+        notifyBookChanged(bookId)
     }
 
     suspend fun createVoice(bookId: String, body: Map<String, @JvmSuppressWildcards Any?>) {
         Log.d("Repo", "createVoice: $bookId body=${body.keys}")
         api.createVoice(bookId, body)
+        notifyBookChanged(bookId)
     }
 
     suspend fun deleteVoice(bookId: String, voiceId: String) {
         Log.i("Repo", "deleteVoice: $bookId/$voiceId")
         api.deleteVoice(bookId, voiceId)
+        notifyBookChanged(bookId)
     }
 
     // ── Behavior (behavior.json — keyed by the existing character_id) ──
@@ -282,11 +295,13 @@ class Repository(
     suspend fun createBehavior(bookId: String, body: Map<String, @JvmSuppressWildcards Any?>) {
         Log.d("Repo", "createBehavior: $bookId body=${body.keys}")
         api.createBehavior(bookId, body)
+        notifyBookChanged(bookId)
     }
 
     suspend fun deleteBehavior(bookId: String, characterId: String) {
         Log.i("Repo", "deleteBehavior: $bookId/$characterId")
         api.deleteBehavior(bookId, characterId)
+        notifyBookChanged(bookId)
     }
 
     // ── Structure add/delete (Editor — chapters/scenes/units) ──
@@ -300,7 +315,9 @@ class Repository(
 
     suspend fun createChapter(bookId: String, body: Map<String, @JvmSuppressWildcards Any?>): StructureCreateResponse {
         Log.d("Repo", "createChapter: $bookId body=${body.keys}")
-        return api.createChapter(bookId, body)
+        val res = api.createChapter(bookId, body)
+        notifyBookChanged(bookId)
+        return res
     }
 
     suspend fun deleteChapter(bookId: String, chapterId: String) {
@@ -309,28 +326,35 @@ class Repository(
         // Local Cache Invalidation: clear all caches so deleted entities
         // are not resurrected from stale data.
         clearCache()
+        notifyBookChanged(bookId)
     }
 
     suspend fun createScene(bookId: String, chapterId: String, body: Map<String, @JvmSuppressWildcards Any?>): StructureCreateResponse {
         Log.d("Repo", "createScene: $bookId/$chapterId body=${body.keys}")
-        return api.createScene(bookId, chapterId, body)
+        val res = api.createScene(bookId, chapterId, body)
+        notifyBookChanged(bookId)
+        return res
     }
 
     suspend fun deleteScene(bookId: String, chapterId: String, sceneId: String) {
         Log.i("Repo", "deleteScene: $bookId/$chapterId/$sceneId")
         api.deleteScene(bookId, chapterId, sceneId)
         clearCache()
+        notifyBookChanged(bookId)
     }
 
     suspend fun createUnit(bookId: String, chapterId: String, sceneId: String, body: Map<String, @JvmSuppressWildcards Any?>): StructureCreateResponse {
         Log.d("Repo", "createUnit: $bookId/$chapterId/$sceneId body=${body.keys}")
-        return api.createUnit(bookId, chapterId, sceneId, body)
+        val res = api.createUnit(bookId, chapterId, sceneId, body)
+        notifyBookChanged(bookId)
+        return res
     }
 
     suspend fun deleteUnit(bookId: String, chapterId: String, sceneId: String, unitId: String) {
         Log.i("Repo", "deleteUnit: $bookId/$chapterId/$sceneId/$unitId")
         api.deleteUnit(bookId, chapterId, sceneId, unitId)
         clearCache()
+        notifyBookChanged(bookId)
     }
 
     suspend fun chatWithAiFull(request: AiChatRequest): AiChatResponse {
@@ -487,7 +511,9 @@ class Repository(
 
     suspend fun reorderBook(bookId: String, chapters: List<ReorderChapter>): ReorderResponse {
         Log.d("Repo", "reorderBook: $bookId chapters=${chapters.size}")
-        return api.reorderBook(bookId, ReorderRequest(chapters))
+        val res = api.reorderBook(bookId, ReorderRequest(chapters))
+        notifyBookChanged(bookId)
+        return res
     }
 
     fun cacheAudioFile(chunkId: String, bytes: ByteArray): File? {
@@ -510,6 +536,30 @@ class Repository(
      *  always re-fetched instead of a potentially stale cached response. */
     fun clearStoryboardCache() {
         storyboardCache.evictAll()
+    }
+
+    /**
+     * Drop the in-memory JSON metadata caches (storyboard + chunk) while
+     * keeping binary media caches. Called when the book bundle is invalidated
+     * (AI Assistant patch / local entity edit): unit text and prompts live in
+     * these cached JSON payloads, so they must be re-read after any external
+     * mutation of the book.
+     */
+    fun clearBookJsonCaches() {
+        storyboardCache.evictAll()
+        chunkCache.evictAll()
+    }
+
+    /**
+     * Single funnel for "this client just changed the book bundle on the
+     * server" — every mutation method below reports through it so the
+     * invalidation pipeline (cache eviction + view re-fetch) has exactly one
+     * point of truth. The AI Assistant's own mutations arrive as the chat
+     * response and are emitted by the caller as EXTERNAL.
+     */
+    private fun notifyBookChanged(bookId: String) {
+        if (bookId.isBlank()) return
+        ResourceInvalidations.emitLocal(ResourceInvalidations.Keys.book(bookId))
     }
 
     suspend fun getWorkerCounts(): WorkerCounts {

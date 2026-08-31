@@ -28,6 +28,7 @@ import com.example.animastor.repository.AiChatRequest
 import com.example.animastor.repository.AiMessage
 import com.example.animastor.repository.BookData
 import com.example.animastor.repository.ChatSessionApi
+import com.example.animastor.repository.ResourceInvalidations
 import com.example.animastor.repository.ToolCallResult
 import com.example.animastor.repository.unitIndex
 import com.google.android.material.button.MaterialButton
@@ -604,6 +605,25 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 if ((sessionAtSend != null && currentSessionId != sessionAtSend) || !isAdded) return@launch
 
                 apiMessages.add(AiMessage(role = "assistant", content = response.reply))
+
+                // ── External invalidation: the assistant just mutated the book
+                // bundle server-side (patches applied to characters/locations/
+                // voices/behavior/units). Notify every screen holding book
+                // data (Editor tables, Navigator tree, Generator context bar)
+                // so they re-read the canonical JSON. This is the
+                // "external mutation → invalidation event → reload" pipeline;
+                // scope is the resource key, not a Character-specific hack.
+                val patchedBookId = response.bookId
+                    ?.substringAfterLast("/api/v1/book/")
+                    ?.substringBeforeLast('/')
+                    ?.takeIf { it.isNotBlank() }
+                    ?: bid
+                if (response.patchesApplied > 0 && !patchedBookId.isNullOrBlank()) {
+                    ResourceInvalidations.emitExternal(ResourceInvalidations.Keys.book(patchedBookId))
+                    Log.i(TAG, "chat applied ${response.patchesApplied} patch(es) — emitted book invalidation for $patchedBookId")
+                    // The assistant's own cached context-bar snapshot is stale too.
+                    loadBookDataAsync()
+                }
 
                 // Build display text: use reply if non-empty, else show tool results summary
                 val displayText = if (response.reply.isNotBlank()) {
