@@ -126,6 +126,9 @@
     <string name="field_mood">настроение</string>
     <string name="field_atmosphere">атмосфера</string>
     <string name="field_instruction">инструкция</string>
+    <string name="field_baseline">базовое поведение</string>
+    <string name="field_quirks">привычки (по одной на строку)</string>
+    <string name="field_reactions">реакции (триггер → реакция, по одной на строку)</string>
     <string name="field_title">название</string>
     <string name="field_author">автор</string>
     <string name="field_language">язык</string>

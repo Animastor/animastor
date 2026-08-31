@@ -383,11 +383,23 @@ export interface BookVoiceEntry {
 }
 
 // Per-character behavior (behavior.json) — keyed by character_id, same
-// pattern as voices. Pass 1 edits only `instruction`; unknown extra keys are
-// preserved server-side (schema-tolerant storage) so a future Behavior
-// schema extension survives round-trips.
+// pattern as voices. Schema v2 — the Character Behavior contract (the stored
+// object is schema-tolerant: unknown future keys are preserved server-side):
+//   instruction — free-text overall manner (pass-1 legacy field, kept)
+//   baseline    — how the character behaves normally
+//   quirks      — recurring habits, one entry each
+//   reactions   — trigger → reaction patterns
+// Deliberately deferred: frequency/intensity, extraction, runtime use.
+export interface BehaviorReaction {
+  trigger?: string | null;
+  reaction?: string | null;
+}
+
 export interface BookBehaviorEntry {
   instruction?: string | null;
+  baseline?: string | null;
+  quirks?: string[] | null;
+  reactions?: BehaviorReaction[] | null;
   [key: string]: unknown;
 }
 

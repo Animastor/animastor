@@ -321,6 +321,9 @@
     <string name="field_mood">mood</string>
     <string name="field_atmosphere">atmosphere</string>
     <string name="field_instruction">instruction</string>
+    <string name="field_baseline">baseline behavior</string>
+    <string name="field_quirks">quirks (one per line)</string>
+    <string name="field_reactions">reactions (trigger → reaction, one per line)</string>
     <string name="field_title">title</string>
     <string name="field_author">author</string>
     <string name="field_language">language</string>

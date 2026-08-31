@@ -31,7 +31,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useSignal } from '@preact/signals';
 import { deleteJson, getJson, patchJson, postJson, putJson } from '../api/client';
 import type {
-  AppConfig, BookChapter, BookData, BookScene, BookUnit, CharPassport, SceneTiming, WaveformData,
+  AppConfig, BehaviorReaction, BookChapter, BookData, BookScene, BookUnit, CharPassport, SceneTiming, WaveformData,
 } from '../api/models';
 import { t, tf } from '../app/i18n';
 import { navigate } from '../app/router';
@@ -1253,13 +1253,29 @@ export function EditPage(props: { path?: string }) {
         for (const [charId, fields] of byChar) {
           // Skip entities deleted since the editor rendered (stale fieldValues).
           if (!(charId in behaviors)) continue;
-          const orig = behaviors[charId]?.instruction ?? '';
-          const changed: Record<string, string> = {};
+          const entry = behaviors[charId];
+          // Diff vs canonical entry: plain fields compare as text; quirks/
+          // reactions compare after round-tripping the stored JSON through the
+          // same line-based text the editor renders. An untouched card (the
+          // text equals the rendered form of the stored data) never PATCHes —
+          // so future per-reaction keys written by other tools survive.
+          const orig: Record<string, unknown> = {
+            instruction: entry?.instruction ?? '',
+            baseline: entry?.baseline ?? '',
+            quirks: behaviorLinesToText(entry?.quirks),
+            reactions: behaviorReactionsToText(entry?.reactions),
+          };
+          const changed: Record<string, unknown> = {};
           Object.entries(fields).forEach(([k, v]) => {
-            if (v !== orig) changed[k] = v;
+            if (v !== orig[k]) changed[k] = v;
           });
           if (Object.keys(changed).length === 0) continue;
           anyChanged = true;
+          // Structured fields are serialized here (the PATCH body carries real
+          // JSON arrays); 'quirks'/'reactions' text → arrays, null when empty
+          // (clears the field like the voice PATCH does).
+          if ('quirks' in changed) changed.quirks = behaviorTextToLines(changed.quirks as string);
+          if ('reactions' in changed) changed.reactions = parseBehaviorReactionsText(changed.reactions as string);
           await patchJson(`/book/${encodeURIComponent(bId)}/behaviors/${encodeURIComponent(charId)}`, { fields: changed });
         }
         if (!anyChanged) {
@@ -1934,6 +1950,9 @@ export function EditPage(props: { path?: string }) {
 
   // Behaviors tab — one card per behavior, keyed by character_id (behavior.json
   // mirrors voices.json); the card title shows the character's name when known.
+  // Structured fields (schema v2): instruction/baseline are plain text;
+  // quirks/reactions are edited as line-based text (behaviorLinesToText /
+  // behaviorReactionsToText round-trip rules).
   const buildBehaviorsFields = (): JSX.Element[] => {
     const behaviors = bookData?.behaviors ?? {};
     const entries = Object.entries(behaviors);
@@ -1951,6 +1970,9 @@ export function EditPage(props: { path?: string }) {
             <span class="edit-card__title">{title}</span>
           </div>
           {inputCard(t('field_instruction'), entry?.instruction ?? '', (entry?.instruction?.length ?? 0) > 80, `behavior.${charId}.instruction`)}
+          {inputCard(t('field_baseline'), entry?.baseline ?? '', (entry?.baseline?.length ?? 0) > 80, `behavior.${charId}.baseline`)}
+          {inputCard(t('field_quirks'), behaviorLinesToText(entry?.quirks), true, `behavior.${charId}.quirks`)}
+          {inputCard(t('field_reactions'), behaviorReactionsToText(entry?.reactions), true, `behavior.${charId}.reactions`)}
         </div>
       );
     });
@@ -2524,6 +2546,37 @@ export function EditPage(props: { path?: string }) {
       )}
     </section>
   );
+}
+
+// ── Behavior structured fields (schema v2) — line-based editor text ⇆ JSON ──
+// Identical rules on web and Android: quirks — one per line; reactions —
+// one pattern per line "trigger → reaction" ("→" or "->", earliest separator
+// wins; a line without a separator keeps the whole text as trigger with an
+// empty reaction). Untouched text never produces a PATCH (see BEHAVIORS_TAB).
+function behaviorLinesToText(quirks: string[] | null | undefined): string {
+  return (quirks ?? []).join('\n');
+}
+
+function behaviorTextToLines(text: string): string[] {
+  return text.split('\n').map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+function behaviorReactionsToText(reactions: BehaviorReaction[] | null | undefined): string {
+  return (reactions ?? []).map((r) => {
+    const trigger = (r.trigger ?? '').trim();
+    const reaction = (r.reaction ?? '').trim();
+    return reaction ? `${trigger} → ${reaction}` : trigger;
+  }).join('\n');
+}
+
+function parseBehaviorReactionsText(text: string): BehaviorReaction[] {
+  return behaviorTextToLines(text).map((line) => {
+    const seps = [line.indexOf('→'), line.indexOf('->')].filter((i) => i >= 0);
+    if (seps.length === 0) return { trigger: line, reaction: null };
+    const at = Math.min(...seps);
+    const sepLen = line[at] === '→' ? 1 : 2;
+    return { trigger: line.slice(0, at).trim(), reaction: line.slice(at + sepLen).trim() || null };
+  });
 }
 
 function dirtyIndicatorText(dirty: { changed?: number; added?: number; removed?: number }): string {

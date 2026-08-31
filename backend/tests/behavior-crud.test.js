@@ -241,11 +241,69 @@ describe('BEHAVIOR CRUD ROUTES — manual Behavior editor', () => {
     });
 
     // ======================================================
+    // Schema v2 — structured fields + backward compatibility
+    // ======================================================
+    it('PATCH accepts structured fields (baseline, quirks, reactions) and stores them verbatim', () => {
+        invoke(BEH_POST, { bookId }, { character_id: 'hero', instruction: 'seed' });
+        const res = invoke(BEH_PATCH, { bookId, characterId: 'hero' }, {
+            fields: {
+                baseline: 'Usually composed and measured.',
+                quirks: ['adjusts his tie', 'taps the table'],
+                reactions: [
+                    { trigger: 'is contradicted in public', reaction: 'freezes, then smiles coldly' },
+                    { trigger: 'is praised', reaction: null },
+                ],
+            },
+        });
+        expect(res.statusCode).to.equal(200);
+        expect(readBehaviorsFile().hero).to.deep.equal({
+            instruction: 'seed',
+            baseline: 'Usually composed and measured.',
+            quirks: ['adjusts his tie', 'taps the table'],
+            reactions: [
+                { trigger: 'is contradicted in public', reaction: 'freezes, then smiles coldly' },
+                { trigger: 'is praised', reaction: null },
+            ],
+        });
+    });
+
+    it('legacy behavior.json with only instruction keeps loading and editing (backward compatibility)', () => {
+        // Pass-1 file, written by hand — no baseline/quirks/reactions keys.
+        fs.writeFileSync(path.join(bookDir, 'behavior.json'), JSON.stringify({
+            hero: { instruction: 'Calm.' },
+        }, null, 2));
+
+        const loaded = bookModule.loadBook(bookId).behaviors;
+        expect(loaded.hero).to.deep.equal({ instruction: 'Calm.' });
+
+        const res = invoke(BEH_PATCH, { bookId, characterId: 'hero' }, { fields: { baseline: 'Calm and deliberate.' } });
+        expect(res.statusCode).to.equal(200);
+        // instruction untouched, baseline added alongside — no migration needed.
+        expect(readBehaviorsFile().hero).to.deep.equal({ instruction: 'Calm.', baseline: 'Calm and deliberate.' });
+    });
+
+    it('PATCHing one field never rewrites sibling fields (future per-reaction keys survive untouched cards)', () => {
+        invoke(BEH_POST, { bookId }, { character_id: 'hero', instruction: 'seed' });
+        const reactions = [{ trigger: 'x', reaction: 'y', intensity: 0.7 }];
+        const behaviors = readBehaviorsFile();
+        behaviors.hero.reactions = reactions;
+        fs.writeFileSync(path.join(bookDir, 'behavior.json'), JSON.stringify(behaviors, null, 2));
+
+        invoke(BEH_PATCH, { bookId, characterId: 'hero' }, { fields: { baseline: 'b' } });
+        expect(readBehaviorsFile().hero.reactions).to.deep.equal(reactions);
+    });
+
+    // ======================================================
     // Persistence roundtrip — vbook import parses behavior.json
     // ======================================================
     it('buildBookFromBundle parses behavior.json from a vbook bundle', () => {
         fs.writeFileSync(path.join(bookDir, 'behavior.json'), JSON.stringify({
-            hero: { instruction: 'Calm and deliberate.' },
+            hero: {
+                instruction: 'Calm and deliberate.',
+                baseline: 'Composed.',
+                quirks: ['adjusts his tie'],
+                reactions: [{ trigger: 'is contradicted', reaction: 'smiles coldly' }],
+            },
         }, null, 2));
 
         const AdmZip = require('adm-zip');
@@ -253,6 +311,13 @@ describe('BEHAVIOR CRUD ROUTES — manual Behavior editor', () => {
         bookModule.addDirToZip(zip, bookDir, '');
         const built = bookModule.buildBookFromBundle(bookModule.extractBookBundle(zip.toBuffer()));
 
-        expect(built.behaviors).to.deep.equal({ hero: { instruction: 'Calm and deliberate.' } });
+        expect(built.behaviors).to.deep.equal({
+            hero: {
+                instruction: 'Calm and deliberate.',
+                baseline: 'Composed.',
+                quirks: ['adjusts his tie'],
+                reactions: [{ trigger: 'is contradicted', reaction: 'smiles coldly' }],
+            },
+        });
     });
 });

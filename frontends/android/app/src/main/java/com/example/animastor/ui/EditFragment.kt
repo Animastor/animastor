@@ -1855,6 +1855,43 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         parent.addView(ll)
     }
 
+    // ── Behavior structured fields (schema v2) — line-based editor text ⇆ JSON ──
+    // Identical rules on web and Android: quirks — one per line; reactions —
+    // one pattern per line "trigger → reaction" ("→" or "->", earliest
+    // separator wins; a line without a separator keeps the whole text as
+    // trigger with an empty reaction). Untouched text never produces a PATCH.
+
+    private fun behaviorQuirksToText(quirks: List<String>?): String =
+        (quirks ?: emptyList()).joinToString("\n")
+
+    private fun behaviorReactionsToText(reactions: List<BehaviorReaction>?): String =
+        (reactions ?: emptyList()).joinToString("\n") { r ->
+            val trigger = r.trigger?.trim() ?: ""
+            val reaction = r.reaction?.trim() ?: ""
+            if (reaction.isEmpty()) trigger else "$trigger → $reaction"
+        }
+
+    private fun behaviorReactionsFromText(text: String): List<Map<String, String?>> =
+        text.split('\n')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .map { line ->
+                val separators = listOfNotNull(
+                    line.indexOf("→").takeIf { it >= 0 },
+                    line.indexOf("->").takeIf { it >= 0 },
+                )
+                if (separators.isEmpty()) {
+                    mapOf("trigger" to line, "reaction" to null)
+                } else {
+                    val at = separators.min()
+                    val sepLen = if (line[at] == '→') 1 else 2
+                    mapOf(
+                        "trigger" to line.substring(0, at).trim(),
+                        "reaction" to line.substring(at + sepLen).trim().takeIf { it.isNotEmpty() },
+                    )
+                }
+            }
+
     /** Behaviors tab — one card per behavior keyed by character_id
      *  (behavior.json mirrors voices.json); the header shows the character's
      *  name when known, delete follows the shared entity flow. */
@@ -1899,10 +1936,19 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     showDeleteConfirmDialog(EntityKind.BEHAVIOR, charId)
                 })
 
-                val key = "behavior.$charId.instruction"
-                val v = entry.instruction ?: ""
-                if (!fieldValues.containsKey(key)) fieldValues[key] = v
-                inner.addView(inputCard(ctx, getString(R.string.field_instruction), fieldValues[key] ?: v, (v.length > 80), storeKey = key))
+                // Schema v2: instruction/baseline are plain text; quirks/reactions
+                // round-trip through line-based text (behaviorQuirksToText /
+                // behaviorReactionsToText — same rules as the web editor).
+                listOf(
+                    Triple("behavior.$charId.instruction", entry.instruction ?: "", R.string.field_instruction),
+                    Triple("behavior.$charId.baseline", entry.baseline ?: "", R.string.field_baseline),
+                    Triple("behavior.$charId.quirks", behaviorQuirksToText(entry.quirks), R.string.field_quirks),
+                    Triple("behavior.$charId.reactions", behaviorReactionsToText(entry.reactions), R.string.field_reactions),
+                ).forEach { (key, v, labelRes) ->
+                    val multiline = key.endsWith(".quirks") || key.endsWith(".reactions")
+                    if (!fieldValues.containsKey(key)) fieldValues[key] = v
+                    inner.addView(inputCard(ctx, getString(labelRes), fieldValues[key] ?: v, multiline || v.length > 80, storeKey = key))
+                }
 
                 card.addView(inner)
                 ll.addView(card)
@@ -2929,9 +2975,27 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                             // Skip entities deleted since the editor rendered
                             // (stale fieldValues must not PATCH a 404).
                             if (!behaviors.containsKey(charId)) return@forEach
-                            val orig = behaviors[charId]?.instruction ?: ""
-                            val changed = mutableMapOf<String, String>()
-                            fields.forEach { (k, v) -> if (v != orig) changed[k] = v }
+                            val entry = behaviors[charId]
+                            // Diff vs canonical entry: plain fields compare as
+                            // text; quirks/reactions compare after round-tripping
+                            // the stored JSON through the same line-based text
+                            // the editor renders. An untouched card (the text
+                            // equals the rendered form of the stored data) never
+                            // PATCHes — future per-reaction keys written by other
+                            // tools survive.
+                            val changed = mutableMapOf<String, Any?>()
+                            fields.forEach { (k, v) ->
+                                when (k) {
+                                    "instruction" -> if (v != (entry?.instruction ?: "")) changed[k] = v
+                                    "baseline" -> if (v != (entry?.baseline ?: "")) changed[k] = v
+                                    "quirks" -> if (v != behaviorQuirksToText(entry?.quirks)) {
+                                        changed[k] = v.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+                                    }
+                                    "reactions" -> if (v != behaviorReactionsToText(entry?.reactions)) {
+                                        changed[k] = behaviorReactionsFromText(v)
+                                    }
+                                }
+                            }
                             if (changed.isEmpty()) return@forEach
                             anyChanged = true
                             viewModel.repository.patchBehavior(bookId, charId, changed)
