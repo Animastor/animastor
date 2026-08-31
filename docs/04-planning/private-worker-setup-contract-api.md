@@ -5,11 +5,11 @@
 > Web Setup Center integrated. Android UI not yet modified.
 > **Date:** 2026-08-27
 > **Proposal:** `docs/04-planning/private-worker-installer-frontend-integration.md`
-> **Код:** `backend/src/routes/worker-setup-routes.cjs`,
+> **Code:** `backend/src/routes/worker-setup-routes.cjs`,
 > `backend/src/installer/setup-contract.js`, `gpu-hub/gpu-hub.js` (artifacts),
 > `gpu-hub/tarball.js`; Web — `frontends/app/src/features/workers/workerSetup.ts`,
 > `frontends/app/src/features/workers/PrivateWorkersSection.tsx`
-> **Тесты:** `backend/tests/worker-setup-api.test.js`,
+> **Tests:** `backend/tests/worker-setup-api.test.js`,
 > `backend/tests/installer-setup-contract.test.js`,
 > `backend/tests/gpu-hub-artifacts.test.js`,
 > `frontends/app/src/features/workers/workerSetup.test.ts`
@@ -95,7 +95,7 @@ Public artifacts on GPU Hub (no auth — no secrets; nginx proxies
 
 ### 3.1 `GET /profiles`
 
-Query: `?type=audio|image|video` (опц.; иначе 400 `invalid_type`).
+Query: `?type=audio|image|video` (optional; otherwise 400 `invalid_type`).
 
 ```jsonc
 {
@@ -104,10 +104,10 @@ Query: `?type=audio|image|video` (опц.; иначе 400 `invalid_type`).
     "name": "Qwen Image",
     "description": "Qwen Image — private image generation via ComfyUI on your own GPU worker.",
     "worker_type": "image",
-    "status": "draft",                       // draft | stable; hidden/internal не отдаются
+    "status": "draft",                       // draft | stable; hidden/internal not served
     "supported_install_modes": ["managed", "existing", "shared", "isolated"],
     "gpu": {
-      "min_vram_gb": null,                   // unknown — честно null, не выдумано
+      "min_vram_gb": null,                   // unknown — honestly null, not fabricated
       "reference_gpu": "NVIDIA L40S (46068 MiB)"
     },
     "disk_budget_bytes_approx": 22780911288,
@@ -129,18 +129,18 @@ is excluded from contract.
     {
       "platform": "linux",
       "architectures": ["x86_64"],
-      "status": "available",                  // hub probe: артефакт реально раздаётся
+      "status": "available",                  // hub probe: artifact actually served
       "installer": {
-        "available": true,                    // Phase 3.1: только по результатам hub-probe
-        "status": "draft",                    // E2E на реальном GPU ещё не принят
+        "available": true,                    // Phase 3.1: only based on hub-probe results
+        "status": "draft",                    // E2E on real GPU not yet accepted
         "version": "1.0.0",                   // canonical: backend/src/installer/package.json
-        "download_url": "/gpu/installer",     // null, если артефакт недоступен
-        "sha256": "…64 hex…",                 // из hub-probe; null при недоступном hub
-        "signature": null,                    // будущее: signature + signature_algorithm
+        "download_url": "/gpu/installer",     // null if artifact unavailable
+        "sha256": "…64 hex…",                 // from hub-probe; null when hub unavailable
+        "signature": null,                    // future: signature + signature_algorithm
         "signature_algorithm": null
       },
       "uninstaller": {
-        "available": false,                   // uninstaller не существует — честно planned
+        "available": false,                   // uninstaller does not exist — honestly planned
         "status": "planned",
         "version": null, "download_url": null, "sha256": null,
         "signature": null, "signature_algorithm": null
@@ -171,7 +171,7 @@ availability.
 
 ### 3.3 `GET /artifacts`
 
-Query: `?platform=linux|windows|docker` (default `linux`; неизвестная →
+Query: `?platform=linux|windows|docker` (default `linux`; unknown →
 `404 unsupported_platform`).
 
 ```jsonc
@@ -179,7 +179,7 @@ Query: `?platform=linux|windows|docker` (default `linux`; неизвестная
   "platform": "linux",
   "architecture": "x86_64",
   "status": "available",
-  "installer":   { …как в methods… },
+  "installer":   { …as in methods… },
   "uninstaller": { … },
   "worker_bundle": { … },
   "supported_profiles": ["audio/qwen-tts", "image/qwen-image", "video/ltx-2.3"]
@@ -188,7 +188,7 @@ Query: `?platform=linux|windows|docker` (default `linux`; неизвестная
 
 ### 3.4 `GET /workflows`
 
-Query: `?profile_id=<id>` (опц.; неизвестный → `400 invalid_profile`).
+Query: `?profile_id=<id>` (optional; unknown → `400 invalid_profile`).
 
 ```jsonc
 {
@@ -198,22 +198,22 @@ Query: `?profile_id=<id>` (опц.; неизвестный → `400 invalid_prof
     "profile_id": "image/qwen-image",
     "baseline_available": true,
     "download_url": "/gpu/workflow/img-qwen-image",
-    "sha256": "fb4c25e5…",                   // baseline_sha256 из манифеста
-    "editable": true                          // baseline можно скачать и изменить
+    "sha256": "fb4c25e5…",                   // baseline_sha256 from manifest
+    "editable": true                          // baseline can be downloaded and modified
   }]
 }
 ```
 
-Workflow не immutable: `editable` не может быть `false` (валидация манифеста).
-Hub отдаёт только workflow'ы из allowlist'а манифестов — legacy `old_*.json`
-не отдаются; path traversal исключён.
+Workflow is not immutable: `editable` cannot be `false` (manifest validation).
+Hub serves only workflows from the manifest allowlist — legacy `old_*.json`
+not served; path traversal excluded.
 
 ### 3.5 `GET /instructions`
 
 Query: `?profile_id=<id>[,<id2>]&platform=linux|windows|docker&mode=managed|existing|shared|isolated`
-(defaults: `linux`, `managed`). Ошибки: неизвестный profile → `400
-invalid_profile`; неизвестная platform → `404 unsupported_platform`;
-неверный mode → `400 invalid_mode`.
+(defaults: `linux`, `managed`). Errors: unknown profile → `400
+invalid_profile`; unknown platform → `404 unsupported_platform`;
+invalid mode → `400 invalid_mode`.
 
  Worker is **already created** at this point (wizard: profile → mode → platform →
  create worker → install) — there is no `create-worker` step in instructions
@@ -311,7 +311,7 @@ Adapter (doesn't break ONLINE/OFFLINE/REVOKED):
 | REVOKED | — | `REVOKED` |
 | ONLINE | — | `ONLINE` |
 | OFFLINE | `null` (never seen) | `CONNECTING` |
-| OFFLINE | число | `OFFLINE` |
+| OFFLINE | number | `OFFLINE` |
 
 `NOT_CONFIGURED` — frontend state (worker not created); `INSTALLING` and
 `ERROR` reserved for future signals (installer check-in / worker
@@ -355,7 +355,7 @@ Response:
     { "code": "MODEL_SOURCE_NOT_PUBLISHED",
       "message": "qwen-image-2512-Q4_K_M.gguf: download source is not researched yet — the installer refuses to guess URLs (manifest status: draft)" }
   ],
-  "sharing": null,                            // или { verdict, can_share, message } при >1 профиле
+  "sharing": null,                            // or { verdict, can_share, message } when >1 profile
   "disk_budget_bytes_approx": 22780911288
 }
 ```
@@ -433,7 +433,7 @@ animastor-worker/
   worker-cleanup-journal.cjs
   package.json
   package-lock.json
-  .env.example          # только имена переменных + placeholder
+  .env.example          # variable names only + placeholder
 ```
 
 - **Worker Key NOT in bundle**: `.env` and any `.env.*` (except `.env.example`)
