@@ -235,6 +235,7 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
 
     const pos = positionSignal.value;
     try {
+      const AI_CHAT_TIMEOUT_MS = 180_000; // 3 min — matches backend AI_FETCH_TIMEOUT_MS
       const res = await postJson<AiChatResponse>('/ai/chat', {
         messages: apiMessagesRef.current,
         book_id: bid || null,
@@ -243,7 +244,7 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
         topic_id: 'book',
         scene_id: pos.sceneId,
         session_id: sessionAtSendRef.current,
-      });
+      }, AI_CHAT_TIMEOUT_MS);
 
       if (sessionAtSendRef.current == null && res.session_id) {
         setSession(res.session_id);

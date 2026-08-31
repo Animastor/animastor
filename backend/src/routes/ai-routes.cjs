@@ -51,7 +51,7 @@ module.exports = function(app, redis, deps) {
         });
     }
 
-    const AI_FETCH_TIMEOUT_MS = 60000;
+    const AI_FETCH_TIMEOUT_MS = 180_000; // 3 minutes — AI providers need time for large book contexts
 
     // ── Hermesian tool call parser ──────────────────────
     // Qwen3-32B (reasoning model) sometimes outputs tool_call as text in content
@@ -543,6 +543,9 @@ module.exports = function(app, redis, deps) {
             if (err.code === 'ENDPOINT_NOT_PUBLIC') {
                 return res.status(502).json({ error: err.message });
             }
+            if (err.name === 'AbortError' || err.code === 'ABORT_ERR') {
+                return res.status(504).json({ error: 'AI не ответил за отведённое время. Попробуйте отправить более короткий запрос или повторить позже.', code: 'ai_timeout' });
+            }
             res.status(500).json({ error: err.message });
         }
     });
@@ -679,6 +682,13 @@ module.exports = function(app, redis, deps) {
             if (err.code === 'ENDPOINT_NOT_PUBLIC') {
                 if (!res.headersSent) return res.status(502).json({ error: err.message });
                 res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+                res.end();
+                return;
+            }
+            if (err.name === 'AbortError' || err.code === 'ABORT_ERR') {
+                const timeoutMsg = 'AI не ответил за отведённое время. Попробуйте отправить более короткий запрос или повторить позже.';
+                if (!res.headersSent) return res.status(504).json({ error: timeoutMsg, code: 'ai_timeout' });
+                res.write(`data: ${JSON.stringify({ error: timeoutMsg, code: 'ai_timeout' })}\n\n`);
                 res.end();
                 return;
             }
@@ -908,7 +918,7 @@ module.exports = function(app, redis, deps) {
                 return res.status(502).json({ error: err.message });
             }
             if (err.name === 'AbortError' || err.code === 'ABORT_ERR') {
-                return res.status(504).json({ error: 'AI request timed out', code: 'ai_timeout' });
+                return res.status(504).json({ error: 'AI не ответил за отведённое время. Попробуйте отправить более короткий запрос или повторить позже.', code: 'ai_timeout' });
             }
             res.status(500).json({ error: err.message });
         }
