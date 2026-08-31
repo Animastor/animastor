@@ -50,8 +50,8 @@ how the worker is started; how the Pod is deleted.
 Backend should tell GPU Hub at approximately this level:
 
 ``` text
-Мне нужен worker типа video/image/audio
-с такими требованиями.
+I need a worker of type video/image/audio
+with these requirements.
 ```
 
 GPU Hub already decides where and how to get compute resources.
@@ -83,8 +83,7 @@ custom adapter preferred.
 
 ## 4. Where the Agent Should Learn About RunPod
 
-Перед началом реализации агент должен прочитать официальные источники
-RunPod.
+Before starting implementation, the agent should read the official RunPod sources.
 
 ### Required sources
 
@@ -198,13 +197,13 @@ This can serve as additional source of truth for GPU Hub.
 
 Important:
 
-**RunPod health не должен автоматически заменять наш собственный worker
+**RunPod health must not automatically replace our own worker
 heartbeat.**
 
-У Animastor должен оставаться собственный application-level health
+Animastor must maintain its own application-level health
 protocol.
 
-То есть:
+That is:
 
 ``` text
 RunPod says: Pod alive
@@ -216,9 +215,9 @@ worker considered healthy
 
 ### 6.4 Worker-level health
 
-RunPod предоставляет более подробную visibility по Serverless workers.
+RunPod provides more detailed visibility into Serverless workers.
 
-Это может позволить GPU Hub различать:
+This may allow GPU Hub to distinguish:
 
 ``` text
 GPU resource alive
@@ -227,13 +226,13 @@ worker process alive
 worker actually serving Animastor
 ```
 
-Это значительно лучше простого SSH-пинга.
+This is significantly better than simple SSH pinging.
 
 ## 7. Future Provider Adapter
 
-Не помещать RunPod API непосредственно в `gpu-hub.js`.
+Do not place RunPod API directly in `gpu-hub.js`.
 
-Предполагаемая архитектура:
+Proposed architecture:
 
 ``` text
 gpu-hub/
@@ -249,11 +248,11 @@ gpu-hub/
     provider-manager.js
 ```
 
-Названия файлов предварительные.
+File names are preliminary.
 
-Главная идея --- изолировать provider-specific API.
+The main idea is to isolate provider-specific API.
 
-Например:
+Example:
 
 ``` js
 provider.findCapacity(requirements)
@@ -264,28 +263,28 @@ provider.deleteWorker(id)
 provider.getMetrics(id)
 ```
 
-GPU Hub работает с абстракцией.
+GPU Hub works with the abstraction.
 
-RunPod adapter переводит эту абстракцию в REST API v2.
+RunPod adapter translates this abstraction to REST API v2.
 
 ## 8. RunPod Pod vs Serverless
 
-До реализации отдельно исследовать два режима.
+Before implementation, research both modes separately.
 
 ### Pods
 
-Подходят, если нам нужен: - долгоживущий worker; - полный контроль
-окружения; - постоянное подключение GPU Hub; - собственный worker
-process; - предсказуемый lifecycle.
+Suitable when we need: - long-lived worker; - full environment
+control; - persistent GPU Hub connection; - own worker
+process; - predictable lifecycle.
 
 ### Serverless
 
-Исследовать для: - burst workloads; - коротких задач; - автоматического
-scaling; - worker pools; - ситуаций, где постоянный Pod невыгоден.
+Research for: - burst workloads; - short tasks; - automatic
+scaling; - worker pools; - situations where a persistent Pod is not cost-effective.
 
-Не принимать решение заранее.
+Do not decide in advance.
 
-Для каждого типа генерации отдельно сравнить:
+Compare separately for each generation type:
 
 ``` text
 Audio
@@ -293,18 +292,18 @@ Image
 Video / LTX
 ```
 
-по: - startup time; - cold start; - стоимости; - доступности GPU; -
-времени генерации; - persistence; - возможности использовать
-существующие Animastor workers.
+by: - startup time; - cold start; - cost; - GPU availability; -
+generation time; - persistence; - ability to use
+existing Animastor workers.
 
 ## 9. Our Own Worker Contract Remains Primary
 
-RunPod не должен диктовать внутренний протокол Animastor worker'а.
+RunPod must not dictate Animastor's internal worker protocol.
 
-Сейчас GPU Hub уже имеет собственный protocol/version mechanism, worker
-registry и heartbeat.
+Currently GPU Hub already has its own protocol/version mechanism, worker
+registry and heartbeat.
 
-Будущая интеграция должна выглядеть так:
+Future integration should look like this:
 
 ``` text
 RunPod
@@ -316,7 +315,7 @@ Animastor Worker
 GPU Hub protocol
 ```
 
-А не:
+Not:
 
 ``` text
 Animastor Backend
@@ -324,11 +323,11 @@ Animastor Backend
 RunPod-specific worker protocol
 ```
 
-Это сохраняет переносимость.
+This preserves portability.
 
 ## 10. Future Worker Lifecycle
 
-Целевой сценарий:
+Target scenario:
 
 ``` text
 1. Backend / system requests worker
@@ -343,7 +342,7 @@ RunPod-specific worker protocol
 10. Backend can dispatch jobs
 ```
 
-При остановке:
+On shutdown:
 
 ``` text
 worker becomes IDLE
@@ -355,15 +354,15 @@ stop / suspend / destroy
 provider resource released
 ```
 
-Политика idle timeout будет определена отдельно.
+Idle timeout policy will be defined separately.
 
 ## 11. Recovery
 
-Очень важно не смешивать:
+It is very important not to mix:
 
 ### Infrastructure recovery
 
-Решает GPU Hub:
+Handled by GPU Hub:
 
 ``` text
 Pod dead
@@ -374,7 +373,7 @@ network failure
 
 ### Job recovery
 
-Решает Backend:
+Handled by Backend:
 
 ``` text
 job failed
@@ -384,19 +383,19 @@ build consistency
 result deduplication
 ```
 
-Текущая архитектура уже придерживается этой границы.
+The current architecture already adheres to this boundary.
 
-Будущая RunPod-интеграция не должна ломать её.
+The future RunPod integration must not break it.
 
 ## 12. Redis and RunPod
 
-Redis остаётся внутренним state/coordination layer GPU Hub.
+Redis remains the internal state/coordination layer of GPU Hub.
 
-RunPod является внешним infrastructure provider.
+RunPod is an external infrastructure provider.
 
-Не делать Redis зависимым от RunPod API.
+Do not make Redis dependent on the RunPod API.
 
-Пример:
+Example:
 
 ``` text
 Redis:
@@ -407,7 +406,7 @@ Redis:
   lifecycle state
 ```
 
-Дополнительно можно хранить mapping:
+Additionally, a mapping can be stored:
 
 ``` text
 Animastor worker ID
@@ -419,56 +418,56 @@ RunPod datacenter
 GPU type
 ```
 
-Но provider-specific metadata должна быть изолирована.
+But provider-specific metadata must be isolated.
 
 ## 13. Security
 
-API credentials RunPod не должны попадать: - в frontend; - в worker
-request; - в git; - в обычные логи; - в job payload.
+RunPod API credentials must not end up: - in the frontend; - in worker
+requests; - in git; - in regular logs; - in job payloads.
 
-Они должны находиться в server-side environment/secrets.
+They must reside in server-side environment/secrets.
 
-Для будущего adapter предусмотреть: - API key; - отдельный provider
-credential; - минимально необходимые permissions; - безопасное
-логирование; - отсутствие secret values в error messages.
+For the future adapter, account for: - API key; - separate provider
+credential; - minimal required permissions; - safe
+logging; - no secret values in error messages.
 
-## 14. MCP и coding agents
+## 14. MCP and coding agents
 
-MCP особенно полезен на этапе разработки и эксплуатации.
+MCP is especially useful during development and operations.
 
-Например, агент сможет исследовать:
+For example, the agent could explore:
 
 ``` text
-Какие GPU доступны?
-Какие Pods сейчас работают?
-Почему Pod не стартует?
-Какие datacenters имеют capacity?
-Какие worker resources сейчас существуют?
+What GPUs are available?
+What Pods are currently running?
+Why is a Pod not starting?
+What datacenters have capacity?
+What worker resources exist currently?
 ```
 
-Но destructive operations должны выполняться осторожно.
+But destructive operations must be performed carefully.
 
-Правило:
+Rule:
 
-> Сначала read-only discovery → затем анализ → затем явно определённая
+> First read-only discovery → then analysis → then explicitly defined
 > write operation.
 
-Не давать coding agent'у без необходимости возможность самостоятельно
-уничтожать production resources.
+Do not give the coding agent the ability to independently
+destroy production resources unless necessary.
 
-## 15. Этапы работы
+## 15. Work phases
 
 ### Phase 0 --- Research
 
-Изучить: - REST API v2; - migration guide; - MCP; - Pods; -
+Study: - REST API v2; - migration guide; - MCP; - Pods; -
 Serverless; - availability; - datacenters; - metrics; - pricing; -
 lifecycle.
 
-Результат: отдельная техническая заметка с актуальными endpoint'ами.
+Result: a separate technical note with current endpoints.
 
 ### Phase 1 --- GPU Hub Provider Interface
 
-Не подключая RunPod, определить абстракцию provider:
+Without connecting RunPod, define the provider abstraction:
 
 ``` text
 capacity
@@ -482,11 +481,11 @@ metrics
 
 ### Phase 2 --- RunPod Adapter
 
-Реализовать adapter исключительно через REST API v2.
+Implement adapter exclusively via REST API v2.
 
 ### Phase 3 --- Discovery
 
-Добавить:
+Add:
 
 ``` text
 GPU requirements
@@ -500,97 +499,96 @@ selection
 
 ### Phase 4 --- Provisioning
 
-Автоматически: - создать Pod / Serverless resource; - дождаться
-готовности; - запустить Animastor worker; - дождаться beacon; -
-перевести worker в READY.
+Automatically: - create Pod / Serverless resource; - wait for
+readiness; - start Animastor worker; - wait for beacon; -
+transition worker to READY.
 
 ### Phase 5 --- Lifecycle
 
-Добавить: - idle detection; - stop; - restart; - destroy; - recovery.
+Add: - idle detection; - stop; - restart; - destroy; - recovery.
 
 ### Phase 6 --- Observability
 
-Связать: - RunPod runtime metrics; - GPU Hub heartbeat; - worker
+Connect: - RunPod runtime metrics; - GPU Hub heartbeat; - worker
 status; - job status.
 
 ### Phase 7 --- Optimization
 
-После рабочего варианта добавить: - cost-aware selection; - datacenter
-selection; - GPU preference; - capacity-aware scheduling; - разные
-политики для Audio/Image/Video.
+After working variant, add: - cost-aware selection; - datacenter
+selection; - GPU preference; - capacity-aware scheduling; - different
+policies for Audio/Image/Video.
 
-## 16. Что НЕ делать сейчас
+## 16. What NOT to do now
 
-Пока не требуется:
+Not yet required:
 
--   мигрировать существующий код на RunPod;
--   менять backend orchestration;
--   переписывать GPU worker protocol;
--   добавлять RunPod credentials;
--   делать provisioning;
--   внедрять Serverless;
--   подключать MCP в production;
--   усложнять текущий GPU Hub.
+-   migrate existing code to RunPod;
+-   change backend orchestration;
+-   rewrite GPU worker protocol;
+-   add RunPod credentials;
+-   do provisioning;
+-   implement Serverless;
+-   connect MCP in production;
+-   complicate the current GPU Hub.
 
-Сначала закончить текущую архитектуру и подготовить provider
+First finish the current architecture and prepare the provider
 abstraction.
 
-## 17. Критерий готовности будущей интеграции
+## 17. Integration readiness criteria
 
-Интеграция считается архитектурно успешной, если Animastor сможет
-сказать:
+The integration is considered architecturally successful if Animastor can
+say:
 
 ``` text
-Мне нужен worker:
+I need a worker:
   type = video
   GPU = suitable for LTX
   VRAM >= X
   policy = cheapest/fastest/nearest
 ```
 
-а GPU Hub самостоятельно:
+and GPU Hub independently:
 
 ``` text
-1. ищет capacity;
-2. выбирает resource;
-3. создаёт resource;
-4. запускает worker;
-5. ждёт регистрацию;
-6. проверяет health;
-7. отдаёт worker в обычный Animastor workflow.
+1. finds capacity;
+2. selects resource;
+3. creates resource;
+4. starts worker;
+5. waits for registration;
+6. checks health;
+7. serves worker into normal Animastor workflow.
 ```
 
-При этом Backend не знает, был worker создан: - вручную; - на RunPod; -
-на другом cloud provider; - на собственной GPU-машине.
+Meanwhile Backend does not know whether the worker was created: - manually; - on RunPod; -
+on another cloud provider; - on a dedicated GPU machine.
 
-## 18. Архитектурный принцип
+## 18. Architectural principle
 
-> **RunPod --- provider. GPU Hub --- infrastructure orchestrator.
-> Backend --- application/job orchestrator. Worker --- execution
+> **RunPod — provider. GPU Hub — infrastructure orchestrator.
+> Backend — application/job orchestrator. Worker — execution
 > layer.**
 
-Это основное правило будущей интеграции.
+This is the core rule of future integration.
 
 ------------------------------------------------------------------------
 
-## Источники для будущего исследования
+## Sources for future research
 
 -   RunPod REST API v2: `https://api.runpod.io/v2`
--   RunPod REST API v2 migration guide --- официальный migration guide
-    RunPod
--   RunPod MCP Server --- официальная документация RunPod
+-   RunPod REST API v2 migration guide — official RunPod migration guide
+-   RunPod MCP Server — official RunPod documentation
 -   RunPod API / Pods / Serverless / GPU availability documentation
 
-## Связь с текущим Animastor
+## Connection to current Animastor
 
-Текущий GPU Hub уже находится в:
+The current GPU Hub is already located in:
 
 ``` text
 gpu-hub/
 ```
 
-и содержит: - worker registry; - Redis-backed state; - heartbeat; - task
-queues; - protocol version; - timeout handling; - error delivery обратно
-в backend.
+and contains: - worker registry; - Redis-backed state; - heartbeat; - task
+queues; - protocol version; - timeout handling; - error delivery back
+to backend.
 
-Будущая RunPod-интеграция должна развивать этот слой, а не обходить его.
+The future RunPod integration should develop this layer, not bypass it.
