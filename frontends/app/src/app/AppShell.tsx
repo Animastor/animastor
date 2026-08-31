@@ -19,6 +19,18 @@ import { useDesktopShell } from './desktop';
 
 const DESKTOP_PANEL_PREFS_KEY = 'animastor_desktop_panels';
 
+// AI helper bubble (onboarding): shared by the mobile Toolbar and the desktop
+// header. Shown once after creating a blank book (editor opened); dismissed by
+// clicking the bubble or the AI chip; persists for the session only.
+const AI_BUBBLE_DISMISSED = 'animastor_ai_bubble_dismissed';
+function aiBubbleDismissed(): boolean {
+  try { return sessionStorage.getItem(AI_BUBBLE_DISMISSED) === '1'; } catch { return false; }
+}
+function dismissAiBubble(): void {
+  try { sessionStorage.setItem(AI_BUBBLE_DISMISSED, '1'); } catch { /* ignore */ }
+  blankBookJustCreated.value = false;
+}
+
 interface DesktopPanelPrefs {
   filePanelCollapsed: boolean;
   navigatorPanelCollapsed: boolean;
@@ -115,6 +127,9 @@ function DesktopWorkspace({ path, isSecondary, children }: { path: string; isSec
     setAssistantOpen(false);
     assistantBtnRef.current?.focus();
   }, []);
+  // Desktop parity with the mobile Toolbar's AI helper bubble.
+  const [aiBubbleDismissedState, setAiBubbleDismissed] = useState(aiBubbleDismissed);
+  const showAiBubble = !aiBubbleDismissedState && path === '/edit' && blankBookJustCreated.value;
   useEffect(() => {
     if (!assistantOpen) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeAssistant(); };
@@ -162,15 +177,35 @@ function DesktopWorkspace({ path, isSecondary, children }: { path: string; isSec
           })}
         </nav>
         <div class="desktop-header__actions">
-          <button
-            ref={assistantBtnRef}
-            class={'toolbar__ai-chip' + (assistantOpen ? ' toolbar__ai-chip--active' : '')}
-            aria-label={t('toolbar_ai')}
-            aria-expanded={assistantOpen}
-            onClick={() => setAssistantOpen((open) => !open)}
-          >
-            {t('toolbar_ai')}
-          </button>
+          <span class="toolbar__ai-wrap">
+            {showAiBubble && (
+              <span
+                class="toolbar__ai-bubble"
+                onClick={() => {
+                  dismissAiBubble();
+                  setAiBubbleDismissed(true);
+                  setAssistantOpen(true);
+                }}
+              >
+                {t('ai_helper_hint')}
+              </span>
+            )}
+            <button
+              ref={assistantBtnRef}
+              class={'toolbar__ai-chip' + (assistantOpen ? ' toolbar__ai-chip--active' : '')}
+              aria-label={t('toolbar_ai')}
+              aria-expanded={assistantOpen}
+              onClick={() => {
+                if (showAiBubble) {
+                  dismissAiBubble();
+                  setAiBubbleDismissed(true);
+                }
+                setAssistantOpen((open) => !open);
+              }}
+            >
+              {t('toolbar_ai')}
+            </button>
+          </span>
           {/* Account & Workspace MVP (§19): [ User ] before [ Settings ] */}
           <UserMenu />
           <button
@@ -293,13 +328,9 @@ function Toolbar({ path, isSecondary }: { path: string; isSecondary: boolean }) 
   // with fragment_ai_assistant.xml — no standard toolbar, like the Android screen.
   if (path.startsWith('/ai')) return null;
 
-  // AI helper bubble: shown once after creating a blank book (editor opened).
-  // Dismissed by clicking the bubble or the AI chip; persists for the session only.
-  const AI_BUBBLE_DISMISSED = 'animastor_ai_bubble_dismissed';
-  const [aiBubbleDismissed, setAiBubbleDismissed] = useState(() => {
-    try { return sessionStorage.getItem(AI_BUBBLE_DISMISSED) === '1'; } catch { return false; }
-  });
-  const showAiBubble = !aiBubbleDismissed && path === '/edit' && blankBookJustCreated.value;
+  // AI helper bubble — state/logic shared with the desktop header (above).
+  const [aiBubbleDismissedState, setAiBubbleDismissed] = useState(aiBubbleDismissed);
+  const showAiBubble = !aiBubbleDismissedState && path === '/edit' && blankBookJustCreated.value;
   if (isSecondary) {
     // Pages may override the title and add a trailing action chip (e.g. the "</>"
     // dev chip on WorkflowDetails) — mirroring Android fragments calling
@@ -330,8 +361,7 @@ function Toolbar({ path, isSecondary }: { path: string; isSecondary: boolean }) 
       <span class="toolbar__ai-wrap">
         {showAiBubble && (
           <span class="toolbar__ai-bubble" onClick={() => {
-            try { sessionStorage.setItem(AI_BUBBLE_DISMISSED, '1'); } catch { /* ignore */ }
-            blankBookJustCreated.value = false;
+            dismissAiBubble();
             setAiBubbleDismissed(true);
             navigate('/ai');
           }}>
@@ -343,8 +373,7 @@ function Toolbar({ path, isSecondary }: { path: string; isSecondary: boolean }) 
           aria-label={t('toolbar_ai')}
           onClick={() => {
             if (showAiBubble) {
-              try { sessionStorage.setItem(AI_BUBBLE_DISMISSED, '1'); } catch { /* ignore */ }
-              blankBookJustCreated.value = false;
+              dismissAiBubble();
               setAiBubbleDismissed(true);
             }
             navigate('/ai');
