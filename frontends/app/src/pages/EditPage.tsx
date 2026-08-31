@@ -41,6 +41,7 @@ import {
 } from '../state/generateStore';
 import { navigateTo, position as positionSignal } from '../state/positionStore';
 import { seekToPosition, invalidateDeletedScene, invalidateDeletedChapter } from '../state/playbackStore';
+import { bookResource, emitLocal, onResourceInvalidated } from '../state/resourceInvalidations';
 import { Waveform } from '../lib/waveform';
 import { BehaviorAddDialog, DeleteConfirmDialog, ENTITY_SCHEMAS, EntityAddButton, EntityDeleteButton, EntityEditorDialog, StructureAddDialog } from '../lib/entityEditor';
 import type { EntityKind, StructureKind, StructureParentOption } from '../lib/entityEditor';
@@ -332,6 +333,17 @@ export function EditPage(props: { path?: string }) {
     setErrorText(message);
   }, []);
 
+  // Canonical book JSON re-read after THIS client's own write — store it and
+  // report a LOCAL invalidation (Android Repository.notifyBookChanged parity):
+  // every local write path funnels here so the data layer (playback preload
+  // cache) can evict JSON-derived data uniformly. EXTERNAL events are emitted
+  // by the AI Assistant instead — this editor only consumes those.
+  const applyFreshBook = useCallback((fresh: BookData) => {
+    setBookData(fresh);
+    const bId = bookIdSignal.value;
+    if (bId) emitLocal(bookResource(bId));
+  }, []);
+
   const markDirty = useCallback(() => {
     if (saveDirtyRef.current) return;
     saveDirtyRef.current = true;
@@ -362,6 +374,32 @@ export function EditPage(props: { path?: string }) {
       setLoading(false);
     }
   }, [showSaveError, clearEditor]);
+
+  // ── External book change (EditFragment.onExternalBookChange parity): the
+  //    canonical JSON was rewritten outside the editor's save flow. Server
+  //    wins — drop the local dirty buffer (stale pre-edit text like the
+  //    description the assistant just rewrote would otherwise keep rendering
+  //    through inputCard's seed map) and reload the current position. Tab
+  //    selection is preserved; loadAndSync re-clamps the chapter/scene
+  //    indexes in case the patch added/removed structure.
+  const refreshExternal = useCallback(async () => {
+    const bId = bookIdSignal.value;
+    if (!bId) return;
+    fieldValues.current = {};
+    saveDirtyRef.current = false;
+    setSaveDirty(false);
+    setOverrideBlocks([]);
+    blocksSceneKey.current = null;
+    const p = positionSignal.value;
+    if (p.chapterId != null && p.sceneId != null) {
+      await loadAndSync(p.chapterId, p.sceneId);
+      return;
+    }
+    // No position anchored (book open, nothing selected) — still refresh the
+    // entity-table snapshot, without emitting a spurious LOCAL event.
+    const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`).catch(() => null);
+    if (fresh) setBookData(fresh);
+  }, [loadAndSync]);
 
   // ── Draft snapshot for external navigation (plan §5.2): when the position
   //    changes from OUTSIDE the editor (Navigator panel click, AI, deep link)
@@ -513,6 +551,25 @@ export function EditPage(props: { path?: string }) {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bid, loadAndSync]);
+
+  // ── Invalidation pipeline (view layer — Android EditFragment parity): the
+  //    book bundle changed OUTSIDE the editor's own save flow (AI Assistant
+  //    patch, another device). Re-read the canonical JSON so tables and fields
+  //    show fresh values without any manual reload — including when the editor
+  //    stayed mounted under the assistant dock, or the user just switched back
+  //    to the tab (the position observer alone never re-fires for those).
+  //    LOCAL events are ignored on purpose: every save/entity/delete path here
+  //    already re-fetches, and dropping the field buffer mid-typing would
+  //    clobber the user's in-flight edits.
+  useEffect(() => {
+    return onResourceInvalidated((e) => {
+      const currentBook = bookIdSignal.value;
+      if (e.kind !== 'EXTERNAL') return;
+      if (!currentBook || e.resource !== bookResource(currentBook)) return;
+      void refreshExternal();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshExternal]);
 
   // ── Auto-position when a book is loaded but no position is selected yet
   //    (EditFragment.loadBookAndAutoPosition parity): a fresh generation can
@@ -1073,7 +1130,7 @@ export function EditPage(props: { path?: string }) {
           await patchJson(`/book/${encodeURIComponent(bId)}/metadata`, body);
         }
         const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`).catch(() => null);
-        if (fresh) setBookData(fresh);
+        if (fresh) applyFreshBook(fresh);
         setSaveLoading(false, true);
         setErrorText(null);
         return true;
@@ -1112,7 +1169,7 @@ export function EditPage(props: { path?: string }) {
           await patchJson(`/book/${encodeURIComponent(bId)}/locations/${encodeURIComponent(locId)}`, { fields });
         }
         const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`).catch(() => null);
-        if (fresh) setBookData(fresh);
+        if (fresh) applyFreshBook(fresh);
         setSaveLoading(false, true);
         setErrorText(null);
         return true;
@@ -1169,7 +1226,7 @@ export function EditPage(props: { path?: string }) {
           return true;
         }
         const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`).catch(() => null);
-        if (fresh) setBookData(fresh);
+        if (fresh) applyFreshBook(fresh);
         setSaveLoading(false, true);
         setErrorText(null);
         saveDirtyRef.current = false;
@@ -1218,7 +1275,7 @@ export function EditPage(props: { path?: string }) {
           return true;
         }
         const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`).catch(() => null);
-        if (fresh) setBookData(fresh);
+        if (fresh) applyFreshBook(fresh);
         setSaveLoading(false, true);
         setErrorText(null);
         saveDirtyRef.current = false;
@@ -1284,7 +1341,7 @@ export function EditPage(props: { path?: string }) {
           return true;
         }
         const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`).catch(() => null);
-        if (fresh) setBookData(fresh);
+        if (fresh) applyFreshBook(fresh);
         setSaveLoading(false, true);
         setErrorText(null);
         saveDirtyRef.current = false;
@@ -1347,7 +1404,7 @@ export function EditPage(props: { path?: string }) {
 
       // Thin-client: re-fetch canonical book data.
       const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`).catch(() => null);
-      if (fresh) setBookData(fresh);
+      if (fresh) applyFreshBook(fresh);
       setSaveLoading(false, true);
       setErrorText(null);
       saveDirtyRef.current = false;
@@ -1490,8 +1547,8 @@ export function EditPage(props: { path?: string }) {
     const bId = bookIdSignal.value;
     if (!bId) return;
     const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`).catch(() => null);
-    if (fresh) setBookData(fresh);
-  }, []);
+    if (fresh) applyFreshBook(fresh);
+  }, [applyFreshBook]);
 
   const entityCollection = useCallback((kind: EntityKind): string =>
     kind === 'character' ? 'characters' : kind === 'location' ? 'locations' : kind === 'behavior' ? 'behaviors' : 'voices', []);
@@ -1656,7 +1713,7 @@ export function EditPage(props: { path?: string }) {
       }
       setStructureAddKind(null);
       const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`);
-      setBookData(fresh);
+      applyFreshBook(fresh);
       if (position) {
         navigateTo({
           chapterId: position.chapterId || null,
@@ -1671,7 +1728,7 @@ export function EditPage(props: { path?: string }) {
     } finally {
       setEntityBusy(false);
     }
-  }, [structurePreviewId, bookData]);
+  }, [structurePreviewId, bookData, applyFreshBook]);
 
   const confirmDeleteStructure = useCallback(async () => {
     const target = structureDelete;
@@ -1708,7 +1765,7 @@ export function EditPage(props: { path?: string }) {
         invalidateDeletedScene(target.chapterId, target.sceneId ?? '', bld);
       }
       const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`);
-      setBookData(fresh);
+      applyFreshBook(fresh);
       // Re-anchor the position to a valid chapter+scene+unit. The current
       // chapter/scene are kept when they still exist (the scene index clamps to
       // a neighbour); the deleted element shifts indexes down. When the current
@@ -1738,7 +1795,7 @@ export function EditPage(props: { path?: string }) {
     } finally {
       setEntityBusy(false);
     }
-  }, [structureDelete]);
+  }, [structureDelete, applyFreshBook]);
 
   const isEntityTab = tab === CHARS_TAB || tab === VOICES_TAB || tab === LOCATIONS_TAB || tab === BEHAVIORS_TAB;
   const isStructureTab = tab === CHAPTER_TAB || tab === SCENE_TAB || tab === UNITS_TAB;

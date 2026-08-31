@@ -9,6 +9,7 @@ import { useDesktopShell } from '../app/desktop';
 import { bookId, buildId, onPlaybackPrepared } from '../state/generateStore';
 import { navigateTo, position as positionSignal } from '../state/positionStore';
 import type { ActivePosition } from '../state/positionStore';
+import { bookResource, onResourceInvalidated } from '../state/resourceInvalidations';
 import { seekToPosition } from '../state/playbackStore';
 import { IconImageOff, IconPlay } from '../app/icons';
 
@@ -135,6 +136,21 @@ export function NavigatePage(props: { path?: string }) {
     // observeGenerationCompletion — reload structure when generation finishes
     return onPlaybackPrepared((prep) => {
       if (bookId.value && bookId.value === prep.bookId) void loadBook();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bid, loadBook]);
+
+  // ── Invalidation pipeline (view layer — NavigateFragment parity): the book
+  // JSON changed outside this screen (AI Assistant patch, another device) —
+  // re-read the structure so the tree shows new/renamed chapters, scenes and
+  // units without a manual reload. Matters on desktop where this panel stays
+  // mounted; on mobile the remount fetches fresh data anyway.
+  useEffect(() => {
+    return onResourceInvalidated((e) => {
+      const currentBook = bookId.value;
+      if (e.kind !== 'EXTERNAL') return;
+      if (!currentBook || e.resource !== bookResource(currentBook)) return;
+      void loadBook();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bid, loadBook]);

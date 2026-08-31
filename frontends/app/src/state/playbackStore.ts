@@ -29,6 +29,7 @@ import type { ActivePosition } from './positionStore';
 import { onPlaybackPrepared } from './generateStore';
 import type { SceneRef } from './generateStore';
 import { getMedia, putMedia, clearCache as clearMediaCache, evictSceneMedia, evictChapterMedia } from '../cache/mediaCache';
+import { onResourceInvalidated, BOOK_RESOURCE_PREFIX } from './resourceInvalidations';
 
 export type PlayerPhase =
   | 'IDLE' | 'LOADING_BOOK' | 'GENERATING' | 'DOWNLOADING'
@@ -820,6 +821,20 @@ export function invalidateDeletedBook(): void {
   currentIndex = 0;
   currentUnitIndex = 0;
   uiState.value = { ...initial };
+}
+
+/** Book-bundle content invalidation (ResourceInvalidations data-layer
+ *  subscriber — Android GenerateViewModel.clearBookJsonCaches parity): the
+ *  canonical book JSON changed externally (AI Assistant patch) or through this
+ *  client's own edits → drop the player's preloaded scene data (storyboard /
+ *  unit-text payloads) so the next load re-reads fresh JSON. Binary media
+ *  (audio/video/images, buildId-keyed Cache API) is untouched — a text patch
+ *  never changes those blobs. Playback-safe: clearPreloadCache preserves the
+ *  live scene's blob URLs (the same eviction runs mid-playback after entity
+ *  deletes). */
+export function invalidateBookContent(): void {
+  bumpSceneEpoch();
+  clearPreloadCache();
 }
 
 // ── Layer toggles (fragment layer chip listeners) ──
@@ -2092,5 +2107,11 @@ export function wirePlaybackCoordination(): void {
       const coverScene = prep.scenes.find((s) => s.sceneType === 'cover') ?? prep.scenes[0];
       if (coverScene) void loadCoverIntoState(coverScene.chapterId, coverScene.sceneId);
     }
+  });
+  // Data-layer invalidation subscriber (Android GenerateViewModel init
+  // parity): any book-bundle invalidation evicts the player's JSON-derived
+  // scene cache so subsequent loads re-read the canonical data.
+  onResourceInvalidated((e) => {
+    if (e.resource.startsWith(BOOK_RESOURCE_PREFIX)) invalidateBookContent();
   });
 }

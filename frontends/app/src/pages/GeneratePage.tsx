@@ -17,6 +17,7 @@ import {
 } from '../state/generateStore';
 import type { TaskLabels, TaskRow } from '../state/generateStore';
 import { position as positionSignal } from '../state/positionStore';
+import { bookResource, onResourceInvalidated } from '../state/resourceInvalidations';
 import { toast } from '../lib/ui';
 import { IconPlay, IconStop, IconSettings, IconLibrary, IconVolumeUp, IconVolumeOff, IconImage, IconImageOff, IconVideocam, IconVideocamOff } from '../app/icons';
 import { AnalysisProgressPanel } from './AnalysisProgressPanel';
@@ -73,6 +74,19 @@ export function GeneratePage(props: { path?: string }) {
     return onPlaybackPrepared(() => { void loadBook(); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bid]);
+
+  // ── Invalidation pipeline (view layer — GenerateFragment parity): the book
+  // JSON changed outside this screen (AI Assistant patch) — refresh the cached
+  // book snapshot so the position bar reflects the new titles.
+  useEffect(() => {
+    return onResourceInvalidated((e) => {
+      const currentBook = bookId.value;
+      if (e.kind !== 'EXTERNAL') return;
+      if (!currentBook || e.resource !== bookResource(currentBook)) return;
+      void loadBook();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bid, loadBook]);
 
   // ── Position bar label (updatePositionBar equivalent) ──
   useEffect(() => {

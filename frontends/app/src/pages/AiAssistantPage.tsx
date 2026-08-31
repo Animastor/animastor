@@ -6,6 +6,7 @@ import { unitIndex } from '../api/models';
 import { t, tf, currentLang } from '../app/i18n';
 import { bookId as generateBookId } from '../state/generateStore';
 import { position as positionSignal } from '../state/positionStore';
+import { bookResource, emitExternal, onResourceInvalidated } from '../state/resourceInvalidations';
 import { setSecondaryTitle } from '../app/titleStore';
 import { Modal, toast } from '../lib/ui';
 import { IconMic, IconMicOff, IconSend, IconMenu, IconAdd, IconSparkle, IconDownload, IconEdit, IconMap, IconFile, IconCheck, IconCopy, IconClose } from '../app/icons';
@@ -101,6 +102,11 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
   }, []);
 
   // ── Position context bar (include_position_bar equivalent) ──
+  // refreshPositionLabel re-fetches the book snapshot and re-renders the label;
+  // it is also called after this assistant's own patches invalidate the book
+  // (stale chapter/scene titles otherwise stick until the next position change).
+  const positionLabelRefreshRef = useRef<(() => void) | null>(null);
+  const refreshPositionLabel = useCallback(() => { positionLabelRefreshRef.current?.(); }, []);
   useEffect(() => {
     let alive = true;
     const update = async () => {
@@ -127,9 +133,22 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
         setPositionLabel(full);
       } catch { if (alive) setPositionLabel(t('navigate_no_position')); }
     };
+    positionLabelRefreshRef.current = () => { void update(); };
     void update();
-    return () => { alive = false; };
+    return () => { alive = false; positionLabelRefreshRef.current = null; };
   }, [positionSignal.value, generateBookId.value]);
+
+  // ── Invalidation pipeline (view layer): the book changed outside this
+  // screen (editor save / another device) — refresh the context bar so the
+  // position label reflects the new titles. Same contract as Android. ──
+  useEffect(() => {
+    return onResourceInvalidated((e) => {
+      const currentBook = generateBookId.value;
+      if (e.kind !== 'EXTERNAL') return;
+      if (!currentBook || e.resource !== bookResource(currentBook)) return;
+      void refreshPositionLabel();
+    });
+  }, [refreshPositionLabel]);
 
   // ── Boot: create mode (no book) or load sessions ──
   useEffect(() => {
@@ -240,6 +259,21 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
         downloadUrl = `/api/v1/book/${b}/download`;
       }
       setMessages((prev) => [...prev, { id: nextId++, text: displayText, isUser: false, downloadUrl }]);
+
+      // ── External invalidation (Android AiAssistantFragment parity): the
+      // assistant just mutated the book bundle server-side (patches applied to
+      // characters/locations/voices/behavior/units). Notify every surface
+      // holding book data (Edit tables, Navigator tree, Generator context bar)
+      // so they re-read the canonical JSON — the reactive "external mutation →
+      // invalidation event → reload" pipeline, not a browser reload.
+      if (res.patches_applied > 0) {
+        const patchedBookId = res.book_id || bid;
+        if (patchedBookId) {
+          emitExternal(bookResource(patchedBookId));
+          // The assistant's own cached position-bar label is stale too.
+          void refreshPositionLabel();
+        }
+      }
     } catch (e) {
       setMessages((prev) => [...prev, { id: nextId++, text: tf('ai_error', (e as Error).message), isUser: false }]);
     } finally {
