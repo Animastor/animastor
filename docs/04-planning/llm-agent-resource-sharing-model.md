@@ -1,6 +1,9 @@
 # LLM / AI Resource Sharing Model — Design Document
 
-> 2026-08-31 · Research / architecture only — **no production code, no schema,
+> 2026-08-31 · Revision 2 — clarification pass: **cost risk vs trust/privacy
+> risk as independent dimensions** (owner confirmation, consumer trust
+> warning, operator classes, free-model sharing; no V1 scope growth).
+> Research / architecture only — **no production code, no schema,
 > no API, no Web/Android changes**. Companion to
 > `worker-sharing-model-design.md` (the GPU-worker sharing design, v2) and
 > `docs/architecture/EXPERIMENTAL_BETA_PERSONAL_AI_PROVIDER.md` (the Personal
@@ -56,10 +59,15 @@ thing.
    (`audio|image|video`). LLM dispatch stays in the backend's existing
    `resolveAIProvider(workspaceId, purpose)` seam, which was explicitly built
    as the extension point for future routing.
-5. Sharing a **paid API key endpoint** shares the owner's money; sharing a
-   **self-hosted runtime** (Ollama/vLLM/llama.cpp on the owner's GPU) shares
-   unmetered compute. V1 UX must make this distinction explicit and nudge
-   toward self-hosted sharing.
+5. **Cost and trust are independent properties** of an AI resource (§7.1):
+   *cost risk* (`free` / `metered` / `unknown`) answers whether consumption
+   can draw on the owner's money or quota; *trust information* answers who
+   operates the endpoint and where prompts can be processed. Free models on
+   external providers are legitimate sharing scenarios ("free today" is never
+   assumed to mean "free forever"). Sharing requires an explicit owner
+   confirmation whenever cost risk exists, and consumers receive an honest
+   Shared-AI trust warning. The platform never asserts permanent pricing or
+   perfect privacy.
 
 ---
 
@@ -368,6 +376,9 @@ system providers; the `purpose` tag already rides the resolver snapshot.
    decision; registries rot).
 6. **No LLM state on endpoints** — Animastor never relies on endpoint-side
    sessions, caches, or memory for correctness or isolation (§9).
+7. **Cost and trust are independent properties** — no single flag represents
+   both; the platform never asserts that an external provider is permanently
+   free or that a shared endpoint is completely private (§7.1).
 
 ---
 
@@ -385,24 +396,184 @@ Answering the brief's first design question precisely:
 | **API credential** | ❌ never exposed | The owner's key is decrypted only inside the backend proxy call. Consumers never see it. Note the economic caveat in §7.1. |
 | **Agent** | ❌ never shared | Agents are Animastor code + prompt files; they run in the backend on the *consumer's* resolved provider. There is no "agent instance" to hand over. |
 
-### 7.1 The critical economics distinction: self-hosted vs paid endpoints
+### 7.1 Two independent properties: cost risk and trust (PROPOSED)
 
-For workers, sharing donates *idle machine time*. For LLM endpoints there
-are two radically different cases:
+> **Architectural principle:** *Sharing does not imply free access, and
+> Shared does not imply untrusted access. Cost and trust are independent
+> properties of an AI resource.*
+>
+> The platform must never promise that an external provider is permanently
+> free, or that a shared endpoint is completely private.
 
-| Endpoint kind | What "sharing" donates | Risk |
+Two different questions must be answered by two different properties:
+
+- **Cost risk** — *"Can using this shared AI resource consume the owner's
+  money or quota?"*
+- **Trust / privacy risk** — *"Who operates the endpoint/provider, and where
+  can the user's prompt/data potentially be processed?"*
+
+These dimensions are **independent** and must NOT be collapsed into one flag
+(e.g. a single `paid=true`). One flag cannot answer both questions and
+produces wrong UX in both directions: a "paid" label on a currently-free
+model frightens owners and blocks legitimate community sharing; a "local"
+label on a proxy to an external provider hides the actual trust boundary.
+
+#### Cost risk classification (conceptual — no production field required in V1)
+
+| `cost_risk` | Meaning |
+|---|---|
+| `free` | Consumption does not draw on any paid quota: a self-hosted runtime, or a model that is currently free / free-tier on an external provider |
+| `metered` | Consumption draws on a paid quota or API account (paid models on aggregators, hosted APIs) |
+| `unknown` | Pricing is unknown, mixed, or subject to change |
+
+Rules:
+
+- One provider endpoint can expose **free models, paid models, free-tier
+  models, models whose pricing changes, and unknown/mixed pricing — all at
+  the same address**. Cost risk is therefore **declared per sharing decision
+  by the owner** (assisted by heuristics), never asserted by the platform.
+- **Free models are a first-class sharing scenario**, not an edge case: a
+  user who finds a currently-free model on an external provider and
+  intentionally shares it with the community is doing exactly what the Share
+  tier is for. The architecture must not be designed around the assumption
+  that Share is only for self-hosted models.
+- **"Free today" ≠ "free forever".** Pricing can change at any time; the
+  architecture makes no irreversible assumption about provider pricing
+  (no pricing APIs, no pricing guarantees, no permanent paid/free
+  classification of providers — V1 non-goals, §15).
+- `unknown` is treated as `metered` for confirmation purposes — fail-safe:
+  ask (§7.3).
+
+#### Trust / operator dimension
+
+Trust information answers **who operates/processes**, conceptually:
+
+| Operator class | Who processes the request |
+|---|---|
+| `self` | the owner's own machine/runtime |
+| `platform` | Animastor-operated infrastructure (System AI) |
+| `peer` | another user's machine/runtime (shared resource) |
+| `external` | a third-party provider (OpenRouter, aggregator, hosted API) — possibly via the owner's API account |
+
+**Trust is orthogonal to mode.** A `private`-mode provider pointed at
+OpenRouter is user-owned but *externally operated*. A share policy on the
+same provider routes consumers' prompts through the same external provider.
+The distinction that must never be blurred:
+
+> **`mode` answers WHO OWNS/GOVERNS the resource. Trust information answers
+> WHO OPERATES/PROCESSES the request.**
+
+They are separate dimensions and must not be merged into one enum: merging
+them would, for example, make it impossible to express "user-owned resource,
+externally operated" (private + external) — a combination that already
+exists in production today (every workspace provider pointing at
+OpenRouter).
+
+#### Worked examples (the four canonical cases)
+
+| Resource | Cost risk | Trust / privacy |
 |---|---|---|
-| **Self-hosted runtime** (Ollama / vLLM / llama.cpp / LM Studio on the owner's GPU) | unmetered compute | Privacy of prompts flowing to the owner's machine (§9); load on the owner's hardware |
-| **Paid API key** (OpenRouter, aggregator, hosted API) | **the owner's money/quota** — every consumer request bills the owner's key | Real financial exposure; abuse amplification |
+| Local Ollama on the user's GPU (private use) | low for the owner | fully self-operated; nothing leaves the user's control |
+| OpenRouter paid model | potentially high (owner's quota) | external provider processes prompts under the owner's API account |
+| OpenRouter currently-free model | zero / free-tier **today** — can change | still an external provider |
+| Animastor System AI | cost/trust governed by Animastor platform policy | Animastor-operated (platform trust) |
 
-**V1 rule:** sharing is *designed* for self-hosted runtimes. A provider row
-whose endpoint is a known paid aggregator (`openrouter` type or the
-platform's default hosts) may only be shared after an explicit, separate
-confirmation (the analog of `confirm_share=true` in `worker-routes.cjs:158-173`),
-with UI copy stating plainly that consumer requests will consume the owner's
-paid quota. A `metered` hint recorded at policy creation drives this (§12).
+### 7.2 Share + endpoint-origin combinations
 
-### 7.2 Answers to the remaining structural questions
+All three combinations are **possible and legitimate**; they differ only in
+cost risk, trust, and the confirmation/warning burden:
+
+| | **Share + self-hosted** (Ollama/vLLM on owner's GPU) | **Share + external free provider** (currently-free model on OpenRouter etc.) | **Share + external paid provider** |
+|---|---|---|---|
+| Ownership | owner's workspace (never transfers) | owner's workspace (never transfers) | owner's workspace (never transfers) |
+| Operator (trust) | `peer` — the owner's machine; consumers' prompts are processed on the owner's hardware | `external` — third-party provider processes prompts | `external` — third-party provider processes prompts under the owner's API account |
+| Cost risk | `free` (owner's hardware/energy) | `free` **today** — pricing may change at any time; not guaranteed | `metered` — every consumer request draws on the owner's quota |
+| Owner confirmation | plain share confirmation (no cost warning needed) | share confirmation with a **volatility notice**: "free models can become paid at any time; you remain responsible for the endpoint" | **explicit cost confirmation required** (§7.3 flow) |
+| Consumer warning | standard Shared-AI warning (prompts processed outside the consumer's control — on a peer's machine) | standard Shared-AI warning (prompts processed by an external provider) | standard Shared-AI warning + "requests may consume the provider owner's quota" |
+
+Notes:
+
+- The owner of an external-provider share is **not** classifying pricing for
+  the platform's benefit — the declaration only drives the *confirmation*
+  and *warning* UX at share time. Nothing asserts the provider is
+  permanently paid or permanently free.
+- If the owner of a "free" external share later finds the model became
+  paid, the mechanism to react is stopping the share (always available,
+  within one resolver-cache TTL) — not automatic pricing detection.
+
+### 7.3 Owner confirmation when sharing (PROPOSED, future UX/security requirement)
+
+If the owner attempts to share an endpoint whose cost risk is `metered` or
+`unknown`, sharing must require an **explicit, deliberate confirmation** —
+difficult to trigger accidentally (no single-click flows; no confirmation
+inside the same modal as the share action's primary button). Conceptual
+flow:
+
+```
+Share AI Provider
+─────────────────────────────────────────────
+⚠ This provider may incur costs.
+  Other users may send requests using your
+  API account/quota.
+
+  ☐ I understand that this may consume my quota.
+
+  [Confirm sharing]   [Cancel]
+─────────────────────────────────────────────
+```
+
+Requirements:
+
+- The checkbox is separate from the confirm button; the confirm button is
+  disabled until the checkbox is ticked.
+- For `free`-declared external shares, the same flow appears with a
+  **volatility notice** instead of the cost warning (free ≠ free forever).
+- For self-hosted `free` shares, no cost warning is shown.
+- The confirmation is **per share action**, not a one-time global setting.
+- Declared cost risk is recorded on the policy (as UX metadata only — it
+  drives warnings, never billing; no pricing guarantees are made or stored
+  as facts).
+
+### 7.4 Consumer-side trust warning (PROPOSED, future UX)
+
+When a user is about to use a Shared AI resource, they must understand that
+**this is not their private AI resource**. The warning must state the trust
+boundary **accurately** — it must NOT claim that the resource owner
+definitely sees the prompt:
+
+```
+⚠ Shared AI
+─────────────────────────────────────────────
+This request will be processed by an AI resource
+provided by another user or an external provider.
+
+Do not send confidential information unless
+you trust this resource/provider.
+
+[Use Shared AI]   [Cancel]
+─────────────────────────────────────────────
+```
+
+The accurate trust statement is: *the request may be processed by
+infrastructure outside the user's direct control* — a peer's machine, or a
+third-party provider via the owner's API account. What can and cannot be
+claimed:
+
+- ✅ "processed outside your control" — always true for the Shared tier.
+- ✅ "may be logged by the operator of the endpoint/provider" — true in
+  general (self-hosted runtimes log; external providers may log/policy-train).
+- ❌ "the owner will see your prompts" — NOT claimed (the owner's runtime
+  *may* observe requests, but claiming certainty would be inaccurate).
+- ❌ "the platform guarantees privacy of shared requests" — never claimed
+  (standing principle: no promise of complete privacy on shared endpoints).
+
+Presentation: an interstitial confirm at first use of the Shared tier per
+user (remembered choice, re-confirmable), plus a persistent lightweight
+indicator while consuming the Shared tier (V3 transparency, §14.2). The
+consumer can always avoid the Shared tier entirely: a personal provider
+wins first in the resolver, and pool fallback can be disabled (V2 opt-out).
+
+### 7.5 Answers to the remaining structural questions
 
 - **Can one model have multiple endpoints?** Yes — trivially and already
   semantically true (`model` is per-provider metadata; any number of
@@ -422,6 +593,24 @@ paid quota. A `metered` hint recorded at policy creation drives this (§12).
   this is invariant §6.3.3 and is the direct analog of the worker doc's
   "lane priority" rule.
 
+### 7.6 Tier independence: kill switch, sharing, and the system tier
+
+The three tiers are governed independently, and cost/trust properties do
+not leak across them:
+
+- The `system_ai` kill switch governs **only** the System tier (existing,
+  documented behavior — `system-ai.js:6-9`). It never disables a personal
+  provider and never gates the shared pool.
+- `SHARED_AI_ENABLED` governs **only** the Share tier.
+- System AI's cost and trust characteristics are defined by **Animastor
+  platform policy** (admin-configured provider, kill switch, future admin
+  tier policy such as rate limits or premium access) — not by anything an
+  owner or consumer declares.
+- A shared endpoint must never be able to impersonate or shadow the System
+  tier, and vice versa: the resolver stage order (§11.2) is fixed, and the
+  ownership probe (§10) prevents registering Animastor's own system
+  provider as a community resource.
+
 ---
 
 ## 8. PROPOSED — Access and Sharing Policies
@@ -434,6 +623,8 @@ resource, scope widening later):
 | Scope | `public` only (CHECK-enforced) | + `users` (allowlist/friends) | + groups/projects (if ever) |
 | Lifetime | `expires_at` optional; `NULL` = "until stopped"; presets 1h / 4h / until stopped | same | same |
 | Policies per endpoint | **one active** (partial UNIQUE index) | one active (unchanged) | revisit only with real need |
+| Owner cost confirmation | required at policy activation when declared cost risk is `metered`/`unknown` (§7.3); `free` shares need only the plain share confirmation | same (re-confirmation on cost-risk change by the owner) | same |
+| Consumer trust warning | the architecture reserves the Shared-AI warning (§7.4); minimal notice acceptable | full interstitial + opt-out persistence | + tier/operator transparency per response (§14.2) |
 | Stop sharing | policy `revoked_at` set; owner path unaffected; in-flight requests finish | same | same |
 | Feature gate | `SHARED_AI_ENABLED` flag, default **off** | on by default (if healthy) | — |
 
@@ -447,7 +638,13 @@ CREATE TABLE ai_share_policies (
   -- V1: addresses the workspace's provider row (1:1 by PK).
   -- V2: re-addresses ai_endpoints.endpoint_id once endpoints are first-class.
   scope_kind   TEXT NOT NULL CHECK (scope_kind IN ('public')),
-  metered      BOOLEAN NOT NULL DEFAULT FALSE,   -- paid-key endpoint hint (§7.1)
+  -- Owner-DECLARED cost risk at share time (§7.1). UX metadata that drives
+  -- the confirmation/warning flows — NEVER a pricing fact, never billing.
+  -- Architectural concept first: V1 may store it here or derive it from the
+  -- confirmation event log; either satisfies the architecture. No pricing
+  -- APIs, no guarantees, no permanent provider classification.
+  cost_risk    TEXT NOT NULL DEFAULT 'unknown'
+               CHECK (cost_risk IN ('free','metered','unknown')),
   starts_at    BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
   expires_at   BIGINT,           -- NULL = "until manually stopped"
   revoked_at   BIGINT,
@@ -503,21 +700,26 @@ satisfies the *isolation* half structurally; the design adds the
   code path where user B's history could be appended to a request routed
   anywhere.
 
-### 9.2 The real privacy direction: consumer → endpoint owner
+### 9.2 The real privacy direction: consumer → operator of the resource
 
-The genuine risk of sharing runs **the opposite way** from what one might
-assume: the endpoint **is the owner's machine/key**, so the owner (or their
-runtime logs) can observe consumer prompts. This cannot be cryptographically
-prevented while proxying in plaintext to an OpenAI-compatible endpoint; it
-must be handled by policy:
+For shared resources, prompts are processed by infrastructure **outside the
+consumer's direct control**: the endpoint operator's runtime (which may log
+requests), or — when the owner's endpoint is itself a proxy to an external
+provider — that third-party provider. What happens to prompts on that
+infrastructure is beyond Animastor's control and cannot be cryptographically
+prevented while proxying to an OpenAI-compatible endpoint. The design
+therefore treats this as a **trust decision, not a guarantee** (§7.1, §7.4):
+the platform states the boundary honestly, and the consumer chooses.
 
-1. **Consent on both sides.** Sharing is voluntary for the owner; consuming
-   the pool is voluntary for the user (a personal provider always wins
-   first — the pool is only a fallback; users can disable pool fallback in
-   settings, V2).
-2. **Transparency (V3):** a consumer-facing indicator of which tier served a
-   response (`Private` / `Shared` / `System`), and for shared, the model
-   name only — never the owner identity or URL.
+1. **Consent on both sides.** Sharing is voluntary for the owner (with
+   cost-risk confirmation when applicable, §7.3); consuming the pool is
+   voluntary for the user (with the Shared-AI trust warning, §7.4; a
+   personal provider always wins first — the pool is only a fallback; users
+   can disable pool fallback in settings, V2).
+2. **Transparency (V3):** a consumer-facing indicator of **which tier and
+   operator class** served a response (`Private` / `Shared` / `System` /
+   external), and for shared, the model name only — never the owner identity
+   or URL.
 3. **Never mix tiers mid-conversation:** the resolver snapshot is captured
    once per request; a conversation is not silently re-pointed between
    endpoints except after explicit errors, and a tier change is surfaced in
@@ -560,10 +762,11 @@ validation, and by the standing rule that model output is data, never code.
 | Owner credential | Never leaves the server; proxy injects `Authorization: Bearer` per request from the AES-256-GCM envelope; consumers get responses only | unchanged |
 | Key-less local runtimes | V2: relax `api_key_enc NOT NULL` on new endpoint records (empty credential = anonymous local runtime); the proxy then sends no auth header | V2 |
 | Third-party endpoint spoofing | **Ownership probe**: registering a share policy triggers a signed challenge (`X-Animastor-Share-Challenge`) the endpoint must echo/prove, preventing users from registering endpoints they don't control (e.g., pointing at Animastor's own system provider or someone else's API) | V1 (required, see §18 D7) |
+| Cost-risk confirmation | The owner cannot activate a `metered`/`unknown` share policy without the deliberate confirmation flow (§7.3). The policy record stores the **declared** cost risk as UX metadata only — it drives warnings, never billing, and is never a pricing fact | V1 |
 | SSRF | `assertPublicEndpoint` **stays** for V1 sharing: only publicly reachable endpoints may be shared from the cloud deployment. Self-hosted Animastor operators can exempt their LAN (the existing env-based exemption). Outbound-tunnel runtimes (no inbound exposure needed) are the V3 answer for home GPUs | V3 |
-| Kill switch | `system_ai` toggle keeps governing only the system tier (documented in `system-ai.js:6-9`); `SHARED_AI_ENABLED` is a separate, independent flag | unchanged |
-| Abuse / rate limiting | Per-workspace pool request budget in the resolver (coarse, in-process) — same spirit as the existing `express-rate-limit` and GPU quotas `QUOTAS = {MAX_ACTIVE_AUDIO:8,...}` (`runtime-config.js:129-133`) | V2 counters, V3 quotas |
-| Audit | Policy events logged via the existing backend log/journal pattern (worker doc §5.2 precedent — no dedicated audit table in V1) | V3 |
+| Kill switch | `system_ai` toggle keeps governing only the system tier (documented in `system-ai.js:6-9`); `SHARED_AI_ENABLED` is a separate, independent flag; sharing and the kill switch remain orthogonal (§7.6) | unchanged |
+| Abuse / rate limiting | Per-workspace pool request budget in the resolver (coarse, in-process) — same spirit as the existing `express-rate-limit` and GPU quotas `QUOTAS = {MAX_ACTIVE_AUDIO:8,...}` (`runtime-config.js:129-133`). The budget bounds the owner's *cost exposure* as well as pool fairness | V2 counters, V3 quotas |
+| Audit | Policy events logged via the existing backend log/journal pattern (worker doc §5.2 precedent — no dedicated audit table in V1). Events include the **declared** cost risk and whether the cost confirmation was given (§7.3) — evidence of consent, not pricing data | V3 |
 
 ---
 
@@ -584,8 +787,9 @@ request (chat / agent step / prompt)
   → resolveAIProvider(workspace, purpose)
       1. own provider                     → proxy (today's path, untouched)
       2. shared pool: pick active-policy endpoint
-           filter: health ok (§12), not metered-blocked, not expired
-           prefer: least-recently-failed (V1 coarse); capability match (V2)
+           filter: health ok (§12), active unexpired policy,
+                   owner cost-risk confirmation on record (§7.3)
+            prefer: least-recently-failed (V1 coarse); capability match (V2)
       3. system provider                  → proxy
       4. env fallback                     → proxy
       5. else fail closed ('unconfigured')
@@ -607,6 +811,27 @@ No preemption ever: a shared endpoint never cancels the owner's (or anyone's)
 in-flight completion to make room — the same "no preemption" rule as the
 worker doc §6.
 
+### 11.4 Agents are not the trust boundary (PROPOSED)
+
+- An Agent — the VBook import pipeline, or any AI Assistant mode — executes
+  against whatever `resolveAIProvider` returns: **Private**, **Shared**, or
+  **System** AI. The agent itself carries no trust, cost, or ownership
+  property; it is backend code consuming a resolved resource.
+- The **resolved AI Provider/Endpoint is the relevant trust boundary** — for
+  chat and for agent execution alike. When an import runs against the shared
+  pool, the user's book text (large chunks, repeatedly, across many calls)
+  is processed by that resource; the consumer trust warning (§7.4) applies
+  with equal or greater force than for chat.
+- Consequently, cost and trust properties attach to the *resolution result*,
+  never to the agent: an agent execution may be free on one run and metered
+  on the next (different resolved resource), without any change in the agent.
+- Provenance hooks already exist (CURRENT facts): `purpose` rides the
+  resolver snapshot (§2.2) and `agent_conversations.model` records which
+  model served each pipeline conversation (§2.3). The UI should eventually
+  expose **which AI tier/operator served an agent execution** (e.g. in the
+  import progress panel and VBook Agents card) — built on these hooks, the
+  agent layer itself needs no change (V3 transparency, §14.2).
+
 ---
 
 ## 12. PROPOSED — Model Capabilities / Metadata
@@ -624,7 +849,8 @@ to advertise a "premium" model), endpoints need **advertised capabilities**:
 | `vision` (image input) | declared + probe | `/ai/prompt` image flow |
 | `structured output / JSON mode` | declared | parser steps (tolerant today; valuable for stricter models) |
 | `thinking` (`enable_thinking` Qwen-style) | declared | avoids sending unsupported flags (§2.4 workarounds) |
-| `metered` (paid-key) | owner declaration + endpoint-type heuristic (§7.1) | sharing consent UX, pool policy |
+| `cost_risk` (`free` / `metered` / `unknown`) | **owner-declared per share action** (§7.1, §7.3); heuristics may pre-select, never decide | share confirmation flow, consumer warnings |
+| `operator_class` (`self` / `platform` / `peer` / `external`) | derived from how the resource was registered (self-hosted vs provider-based) | trust display, consumer transparency (V3) |
 | `max_concurrent` | owner declaration | consumer-side semaphore (§11.3) |
 | `empty_key_ok` | derived (no credential on record) | key-less local runtimes (V2) |
 
@@ -644,6 +870,22 @@ runtimes (V3) would additionally heartbeat, exactly like GPU workers, and
 the pool-status endpoint would report `available · active` counts in the
 established format (`"{0} available · {1} active"`, and `vbook`/`active_vbook`
 already demonstrates the AI-analog fields in `/worker/counts`).
+
+**Trust-level classification (conceptual, for UI/architecture — not a fourth
+mode).** Alongside the ownership `mode` (`private`/`share`/`system`), the UI
+eventually needs a *trust presentation* dimension:
+
+| Trust level | Meaning | Relation to mode |
+|---|---|---|
+| `Private` | user-controlled resource (the consumer's own provider) | typically mode `private` |
+| `System` | Animastor-controlled resource | mode `system` |
+| `Shared` | community/user-provided resource | a share-policy-active private resource, as consumed by others |
+| `External` | third-party provider processes the request | **orthogonal** — any mode can be externally operated (a `private` OpenRouter provider is Private + External; a shared OpenRouter model is Shared + External) |
+
+This is deliberately **not** merged into the mode enum: mode answers WHO
+OWNS/GOVERNS, trust answers WHO OPERATES/PROCESSES (§7.1). The trust
+presentation is derived (owner + operator class + consumption context), not
+stored as a competing enum.
 
 ---
 
@@ -723,7 +965,7 @@ V3.** The gpu-hub process itself is never extended for LLMs.
 
 | Version | Web | Android |
 |---|---|---|
-| V1 | "Shared AI" section under Settings → AI Provider: owner-side Start/Stop sharing + expiry presets + metered warning; pool status line in the existing "Workers"-card format (`"{0} available · {1} active"` precedent); i18n EN/RU | same, mirrored in `AiProviderSettingsFragment`/new section; strings EN/RU; update `ANDROID_WEB_PARITY.md` |
+| V1 | "Shared AI" section under Settings → AI Provider: owner-side Start/Stop sharing + expiry presets + **cost confirmation when declared cost risk is `metered`/`unknown`** (§7.3); minimal consumer-side **Shared-AI trust notice** when the pool is used (§7.4); pool status line in the existing "Workers"-card format (`"{0} available · {1} active"` precedent); i18n EN/RU | same, mirrored in `AiProviderSettingsFragment`/new section; strings EN/RU; update `ANDROID_WEB_PARITY.md` |
 | V2 | capability display on the provider card; "use community pool" opt-out toggle; system-tier multi-provider admin UI (web-only, as today) | parity for user-facing parts; admin stays web-only |
 | V3 | consumer transparency indicator (which tier served this reply) in `AiAssistantPage` + `AiAssistantFragment`; local-runtime setup guide linking the LLM Connector | parity |
 
@@ -751,17 +993,29 @@ Terminology rules for UI (both clients):
 ### V1 — public spare-capacity sharing (flag-gated, dormant by default)
 
 1. `ai_share_policies` table + migrations (additive only; §8 sketch).
-2. Policy CRUD routes (`/settings/ai/share`), workspace-scoped, metered
-   confirmation for paid endpoints.
+2. Policy CRUD routes (`/settings/ai/share`), workspace-scoped; **owner
+   cost-confirmation gate** when the owner-declared cost risk is
+   `metered`/`unknown` (§7.3) — free shares need only the plain share
+   confirmation.
 3. Resolver stage 2: shared-pool fallback with owner-priority, health cache,
    expiry re-check, per-endpoint semaphore.
 4. Ownership probe for registering a share policy (§10).
-5. `SHARED_AI_ENABLED` flag, default off; kill switch untouched.
-6. Minimal UI both clients (badge + start/stop + presets); no consumer-facing
-   pool UI beyond a status count.
+5. `SHARED_AI_ENABLED` flag, default off; kill switch untouched (§7.6).
+6. Minimal UI both clients: badge + start/stop + presets + cost confirmation
+   when applicable (§7.3); minimal consumer-side Shared-AI trust notice
+   (§7.4); no consumer-facing pool UI beyond a status count.
 7. Tests: policy authz matrix (owner yes / foreign 404 / system unreachable),
    resolver stage order, owner-priority, expiry staleness ≤ TTL, stop-sharing
-   mid-flight, metered confirmation, flag-off = today's behavior exactly.
+   mid-flight, cost-confirmation gate (free passes / metered+unknown blocked
+   until confirmed), flag-off = today's behavior exactly.
+
+**V1 deliberately excludes** (future possibilities only — the architecture
+merely leaves room for them): billing systems; credits; provider price APIs;
+automatic pricing guarantees ("this model is free" as a platform assertion);
+reputation systems; complex trust scores; marketplace logic. What V1 must
+provide is exactly: explicit owner confirmation when cost risk exists, a
+consumer-facing Shared-AI warning, a clear ownership distinction, safe
+proxying, and no credential exposure.
 
 ### V2 — targeted sharing + first-class endpoints
 
@@ -808,7 +1062,11 @@ The three-mode LLM model maps onto them without structural strain:
 
 Hard rule (inherited from the worker doc, normative here too): **no payment,
 metering, or pricing logic in the resolver/proxy hot path, ever.** V1's
-`metered` flag is consent UX metadata, not billing.
+declared `cost_risk` is consent UX metadata, not billing — and the
+independence of cost and trust (§7.1) is what keeps every future business
+model attachable: sharing decisions gate on owner-declared cost risk,
+ownership stays with the three modes, and economics attach only at the
+ledger layer.
 
 ---
 
@@ -847,9 +1105,11 @@ metering, or pricing logic in the resolver/proxy hot path, ever.** V1's
 | Q5 | Should consumers be able to *prefer* a specific shared endpoint (friend's machine) before V2's `users` scope? | No — endpoint addressing by consumers breaks the "consumers are not stakeholders" invariant; wait for V2 scope |
 | Q6 | Interplay of `system_ai` kill switch with the pool when a workspace has no provider? | Independent flags; kill switch never gates personal/share tiers (preserves the documented Phase 4 semantic) |
 | Q7 | Streaming over the pool: passthrough SSE or buffer-then-forward? | Passthrough (existing `data:` delta parser already forwards typed events; buffering would double latency) |
-| Q8 | Data-retention duty of the *owner* runtime logs? | Out of platform control (§9.2) — covered by consent + transparency, stated in the share-flow copy |
+| Q8 | Data-retention duty of the *operator's* runtime logs (owner machine or external provider)? | Out of platform control — prompts are processed on infrastructure outside the consumer's control (§9.2); covered by the honest trust warning + transparency, never by a privacy promise (§7.4) |
 | Q9 | Does `books.visibility` (dormant, `schema.js:142`) get consumed by this model? | No — book visibility and AI resource sharing are orthogonal; leave dormant |
-| Q10 | Multi-model endpoints (one URL serving many models) — one resource or N? | One resource with `model` as a request parameter; capability list may enumerate served models (V2+) |
+| Q10 | Multi-model endpoints (one URL serving many models) — one resource or N? | One resource with `model` as a request parameter; capability list may enumerate served models (V2+). Cost risk may differ **per model** on the same endpoint — another reason `cost_risk` is owner-declared per share action, not per provider (§7.1) |
+| Q11 | Consumer trust warning cadence: per request, per session, or once per resource with "don't ask again"? | V1 reserves the concept only; exact cadence is a V2 UX decision (recommendation: interstitial at first Shared-tier use per user, remembered, re-confirmable) |
+| Q12 | Should the owner's declared cost risk be re-confirmed periodically (e.g. long-lived "until stopped" shares)? | Lean no for V1 (stop-sharing is always one action away); revisit if real-world free→paid drift causes harm reports |
 
 ### Decisions to finalize before any coding
 
@@ -862,22 +1122,29 @@ metering, or pricing logic in the resolver/proxy hot path, ever.** V1's
 | D5 | `expires_at = NULL` allowed ("until stopped") | **Yes**; UI presets 1h / 4h / until stopped |
 | D6 | Stop-sharing semantics: in-flight finishes; new requests reroute within ≤30s | **Yes** |
 | D7 | Ownership probe required before a policy can activate | **Yes for public cloud** (prevent third-party endpoint registration); simplest workable form: verification completion must pass with a challenge marker; accept residual gaps documented in the security review |
-| D8 | Metered (paid-key) sharing allowed but separately confirmed | **Yes** — financial exposure must never be a silent side effect |
+| D8 | **Owner confirmation required when cost risk exists** (`metered`/`unknown`); `free` shares (self-hosted or currently-free models) shareable without cost confirmation; **no permanent paid/free classification of providers** — cost risk is per share action, owner-declared | **Yes** — financial exposure must never be a silent side effect, and pricing must never be assumed permanent (§7.1, §7.3) |
 | D9 | LLM stays out of gpu-hub (separate dispatch via resolver) | **Yes** for chat permanently, for batch agent workloads revisit only if V3 ledger shows queueing need |
 | D10 | Pool requests carry no client-identifying metadata beyond the standard proxy headers | **Yes** — consumer workspace/user identity never sent to shared endpoints |
+| D11 | `cost_risk` (`free`/`metered`/`unknown`) is a conceptual, owner-declared dimension — never a platform pricing assertion, never a production pricing API in V1 | **Yes** — V1 may persist it as policy UX metadata or derive it from the confirmation event log; both satisfy the architecture (§7.1, §8) |
+| D12 | Trust information (operator class: self/platform/peer/external) is a **separate dimension from mode** — mode answers WHO OWNS/GOVERNS, trust answers WHO OPERATES/PROCESSES; the two are never merged into one enum | **Yes** — merging would make "user-owned, externally operated" (already the most common private setup) inexpressible (§7.1, §12) |
+| D13 | A consumer-facing Shared-AI trust warning is required whenever a request is served by the pool; wording states the boundary accurately ("may be processed outside your control") and never claims the owner definitely sees prompts nor guarantees privacy | **Yes** — trust is a consumer decision, not a platform promise (§7.4) |
+| D14 | Agents carry no trust/cost properties; the resolved provider/endpoint is the trust boundary for agent executions too | **Yes** — provenance hooks (`purpose`, `agent_conversations.model`) are the display path (§11.4) |
 
 ---
 
 ## 19. Recommended Next Steps
 
-1. **Socialize the core decision set (D1–D10)**, especially D3 (owner
-   priority by construction), D7 (ownership probe), D8 (metered consent),
-   and D9 (no gpu-hub for LLMs).
+1. **Socialize the core decision set (D1–D14)**, especially D3 (owner
+   priority by construction), D7 (ownership probe), D8 (cost-risk
+   confirmation), D11/D12 (cost and trust as separate dimensions),
+   D13 (consumer trust warning), and D9 (no gpu-hub for LLMs).
 2. **Security review of the share-proxy surface** — extend
    `EXPERIMENTAL_BETA_PERSONAL_AI_PROVIDER_SECURITY_REVIEW.md` with: proxy
    abuse (Animastor as open SSRF relay via shared endpoints), ownership
-   probe design, consumer-request anonymity (D10), prompt-logging exposure
-   copy.
+   probe design, consumer-request anonymity (D10), the cost-vs-trust
+   two-dimension model (D11/D12), and the exact owner-confirmation and
+   consumer-warning copy (§7.3, §7.4) reviewed for accuracy (no privacy
+   promises, no pricing promises).
 3. **Spec the V1 slice** in the house style (like
    `EXPERIMENTAL_BETA_PERSONAL_AI_PROVIDER.md`): table, routes, resolver
    stage, flag, tests — one new table, dormant by default.
@@ -917,5 +1184,19 @@ metering, or pricing logic in the resolver/proxy hot path, ever.** V1's
   shareable resource.
 - **LLM Connector (proposed, V3)** — an outbound-registered local runtime
   (worker-pattern credential + heartbeat) for home GPUs behind NAT.
-- **Metered endpoint** — an endpoint backed by a paid API key; sharing it
-  donates the owner's money and requires explicit confirmation (D8).
+- **Cost risk (proposed)** — an owner-declared property of a share decision:
+  `free` (self-hosted or currently-free model), `metered` (draws on a paid
+  quota/API account), `unknown` (treated as `metered` for confirmation).
+  Answers *"can this consume the owner's money?"* — never a platform pricing
+  assertion, never billing data; "free today" implies nothing about tomorrow.
+- **Trust information / operator class (proposed)** — a property answering
+  *"who operates/processes the request?"*: `self` (owner's machine),
+  `platform` (Animastor), `peer` (another user's machine), `external`
+  (third-party provider). Independent of mode: mode = WHO OWNS/GOVERNS,
+  trust = WHO OPERATES/PROCESSES.
+- **Owner confirmation (proposed)** — the deliberate, checkbox-gated consent
+  required before activating a share whose declared cost risk is
+  `metered`/`unknown` (§7.3).
+- **Shared-AI warning (proposed)** — the consumer-side notice that a request
+  will be processed by infrastructure outside the user's direct control
+  (§7.4); states the boundary honestly, promises nothing.
