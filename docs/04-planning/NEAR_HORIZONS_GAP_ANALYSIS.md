@@ -57,11 +57,11 @@ worker.cjs (ComfyUI + Node.js) — outbound polling /task/next
 
 Key files:
 
-- `gpu-hub/gpu-hub.js` — реестр воркеров в Redis (`animastor:gpu-hub:workers`, TTL 15 мин), beacon, очереди, dedup (`animastor:job:{dispatch_id}:{job_id}`), timeouts (per-job + per-GPU), доставка ошибок на backend с ретраями и фолбэком в Redis (`animastor:error:{job_id}`).
-- `worker/worker/worker.cjs` — beacon каждые 10 с, поллинг задач, загрузка ассетов в `ComfyUI/input`, запуск воркфлоу, ожидание результата (per-job `timeout_ms` с fallback 10 мин / 2 ч для видео), OOM-safe чтение результата с диска, отправка результата/ошибки.
-- `backend/src/runtime/` — `gpu-dispatcher.js` (POST `/task`), `dispatch-engine.js` (lease, re-dispatch), `reconciliation-engine.js` (watchdog), `worker-health.js`, `job-schema.js` (единый контракт job_id, `PROTOCOL_VERSION = 2`).
-- `backend/src/routes/generation-routes.cjs` — `/api/v1/worker/heartbeat`, `/status`, `/counts` (панель воркеров).
-- `backend/src/routes/book/generation-routes.cjs` — `/cancel-worker` (per task/type, чистка lease и hub-очередей).
+- `gpu-hub/gpu-hub.js` — worker registry in Redis (`animastor:gpu-hub:workers`, TTL 15 min), beacon, queues, dedup (`animastor:job:{dispatch_id}:{job_id}`), timeouts (per-job + per-GPU), error delivery to backend with retries and Redis fallback (`animastor:error:{job_id}`).
+- `worker/worker/worker.cjs` — beacon every 10s, task polling, asset loading into `ComfyUI/input`, workflow launch, result waiting (per-job `timeout_ms` with 10 min / 2h video fallback), OOM-safe result reading from disk, result/error sending.
+- `backend/src/runtime/` — `gpu-dispatcher.js` (POST `/task`), `dispatch-engine.js` (lease, re-dispatch), `reconciliation-engine.js` (watchdog), `worker-health.js`, `job-schema.js` (unified job_id contract, `PROTOCOL_VERSION = 2`).
+- `backend/src/routes/generation-routes.cjs` — `/api/v1/worker/heartbeat`, `/status`, `/counts` (worker panel).
+- `backend/src/routes/book/generation-routes.cjs` — `/cancel-worker` (per task/type, lease and hub queue cleanup).
 
 ### §4 — capabilities: foundation exists, models missing 🔶
 
