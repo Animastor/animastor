@@ -1,8 +1,8 @@
 # Forensic: Image Worker «0/9» — orphaned `image=generating` state (no_jobs_sent)
 
-Дата расследования: 2026-08-28
-Книга: `import_1786345731767_1786345734345`
-Сцена: `ch-1bb5123c / sc-45c789c6`, stage=`image`
+Investigation date: 2026-08-28
+Book: `import_1786345731767_1786345734345`
+Scene: `ch-1bb5123c / sc-45c789c6`, stage=`image`
 
 ## Symptom in Production UI
 
@@ -14,54 +14,54 @@
 
 ## Verdict
 
-**Orphaned/ghost image-состояние. Реальной выполняемой задачи НЕТ — но это не глюк UI.**
-UI честно отражает зомби-состояние asset state в backend: строка задачи синтезируется
-legacyTasks()-fallback'ом progress-panel из active-scenes index + asset state `image=generating`.
+**Orphaned/ghost image state. There is NO real executing task — but this is not a UI glitch.**
+The UI honestly reflects the zombie asset state in the backend: the task row is synthesized
+by the legacyTasks()-fallback in progress-panel from the active-scenes index + asset state `image=generating`.
 
 ## Source of Each UI Value
 
 | UI | Source | Reality |
 |---|---|---|
-| «Воркеры изображений: 0» | `/worker/counts` → `image:0 + private_image:0` (`frontends/app/src/pages/GeneratePage.tsx:177,350`) | Реально 0 зарегистрированных image-воркеров (нет heartbeat), не stale |
-| «0/9» | progress-panel: `total=9` = 9 строк `image_units` в PG для `sc-45c789c6` (созданы 2026-08-13 14:35:40 UTC); `ready=0` — нет counter'а `animastor:iu-progress:*` и нет `dirty_unit_ids` (`backend/src/routes/book/iu-progress-utils.cjs:26-39`) | Реально 9 IU, 0 готово |
-| «0%» | `round(0*100/9)` (`backend/src/routes/book/progress-panel.cjs:298-300`) | Следствие 0/9 |
-| «00:00:00» | `started_at: null` у синтезированной задачи + нет клиентской сессии → `timerStartedAt<=0` → elapsed зафиксирован на 0 (`frontends/app/src/state/generateStore.ts:457-459`) | Задача никогда не стартовала в этой сессии |
+| "Image workers: 0" | `/worker/counts` → `image:0 + private_image:0` (`frontends/app/src/pages/GeneratePage.tsx:177,350`) | Actually 0 registered image workers (no heartbeat), not stale |
+| "0/9" | progress-panel: `total=9` = 9 `image_units` rows in PG for `sc-45c789c6` (created 2026-08-13 14:35:40 UTC); `ready=0` — no `animastor:iu-progress:*` counter and no `dirty_unit_ids` (`backend/src/routes/book/iu-progress-utils.cjs:26-39`) | Actually 9 IU, 0 ready |
+| "0%" | `round(0*100/9)` (`backend/src/routes/book/progress-panel.cjs:298-300`) | Consequence of 0/9 |
+| "00:00:00" | `started_at: null` on synthesized task + no client session → `timerStartedAt<=0` → elapsed frozen at 0 (`frontends/app/src/state/generateStore.ts:457-459`) | Task never started in this session |
 
-Почему задача отображается: `generationProgress.listTasks()` вернул 0 реальных задач →
-progress-panel использует `legacyTasks()` (`progress-panel.cjs:339-382`): любой active scene
-с asset state PENDING/GENERATING синтезирует строку с `task_id: null`, `started_at: null`,
+Why the task is displayed: `generationProgress.listTasks()` returned 0 real tasks →
+progress-panel uses `legacyTasks()` (`progress-panel.cjs:339-382`): any active scene
+with asset state PENDING/GENERATING synthesizes a row with `task_id: null`, `started_at: null`,
 `visible: true`, `done: false`.
 
 ## Facts from Runtime (Redis / PG / journal)
 
-- PG `generation_tasks`: строки для image этой сцены НЕТ (только audio 2026-08-25, completed).
-- Lease: нет. Dispatch metadata: нет. Worker: нет. Retry: нет. Stale lease: нет
-  (lease-ключей `animastor:dispatch-lease:*` не существует вообще).
-- Redis `animastor:queue:image`: 8 сиротских job от ДРУГИХ книг; для этой книги job нет.
-- `animastor:iu-in-flight:*`: пусто (TTL 1200 с давно истёк).
-- Asset state hash сцены: `audio=ready, image=generating` (video отсутствует → NEW).
-- Сцена присутствует в `animastor:active-scenes`; scheduler каждый тик:
+- PG `generation_tasks`: no rows for image of this scene (only audio 2026-08-25, completed).
+- Lease: none. Dispatch metadata: none. Worker: none. Retry: none. Stale lease: none
+  (no `animastor:dispatch-lease:*` keys exist at all).
+- Redis `animastor:queue:image`: 8 orphan jobs from OTHER books; no jobs for this book.
+- `animastor:iu-in-flight:*`: empty (TTL 1200s expired long ago).
+- Asset state hash for scene: `audio=ready, image=generating` (video absent → NEW).
+- Scene present in `animastor:active-scenes`; scheduler every tick:
   `Active: 1, Dispatched: 0, Skipped: 1` (no_dispatchable_stages).
-- Второй такой же призрак: `ch-1bb5123c/sc-5f18dd0f` — `image=generating`, тот же
-  `no_jobs_sent` от 2026-08-19 03:55:27 UTC (dispatch `dispatch-1787060532026-orv4uo2o`);
-  не виден в UI, т.к. не в active-index.
-- Дополнительно: в очередях 214 сиротских audio-job и 8 image-job от старых книг — отдельный мусор.
+- Second identical ghost: `ch-1bb5123c/sc-5f18dd0f` — `image=generating`, same
+  `no_jobs_sent` from 2026-08-19 03:55:27 UTC (dispatch `dispatch-1787060532026-orv4uo2o`);
+  not visible in UI because not in active-index.
+- Additionally: 214 orphan audio-jobs and 8 image-jobs from old books in queues — separate debris.
 
 ## Breakage Timeline (scene event-journal, 2026-08-26 UTC)
 
 1. `03:02:55.054` — DISPATCH_STARTED image, `dispatch-1787713375053-7e0e0124a551002a31a8f3158febcee3`.
-   `03:02:55.056` — `INVALID_STATE_CALLBACK: image new→generating rejected` — гонка:
-   конкурентный reset сцены (неатомарный `RESET_SCENE_LUA`, см. ниже) в окне DEL→HSET
-   дал читателю все состояния как NEW. Dispatch #1 сорван.
+   `03:02:55.056` — `INVALID_STATE_CALLBACK: image new→generating rejected` — race condition:
+   concurrent scene reset (non-atomic `RESET_SCENE_LUA`, see below) in the DEL→HSET window
+   gave the reader all states as NEW. Dispatch #1 aborted.
 2. `03:03:00.148` — DISPATCH_CANCELLED #1, reason `force_reset`
-   (per-book флаг `animastor:force-dispatch:{bookId}`, TTL 120 с, выставлен regen'ом другой сцены книги).
+   (per-book flag `animastor:force-dispatch:{bookId}`, TTL 120s, set by regen of another scene in the book).
 3. `03:03:00.149` — DISPATCH_STARTED #2 `dispatch-1787713380147-4fb466dbc506ed58d593f0d4cabbe278`
    → `03:03:00.155` SCENE_PENDING (image) → `03:03:00.156` DISPATCH_CANCELLED: **`no_jobs_sent`**.
 4. `03:03:05.166` — DISPATCH_STARTED #3 `dispatch-1787713385164-b314294528bb7d5ff5ba8879f62ad3a9`
    → `03:03:05.167` IMAGE_DISPATCHED + **SCENE_GENERATING (image→generating)**
    → `03:03:05.173` `INVALID_STATE_CALLBACK: generating→pending rejected`
    → `03:03:05.174` DISPATCH_CANCELLED: **`no_jobs_sent`**.
-5. После этого — ни одной попытки dispatch. Состояние `generating` заморожено навсегда.
+5. After this — no dispatch attempts. The `generating` state frozen forever.
 
 ## Where the Chain Broke
 
@@ -72,67 +72,67 @@ but sent zero GPU jobs, and on cancellation could not roll the state back.
 
 ## Root Cause (Mechanism)
 
-1. **`no_jobs_sent`:** в dispatch #3 все 9 IU были пропущены по fast-path за 7 мс
-   (сетевой сбой исключён — `gpu.send` имеет 30 с timeout × 3 retry): сработали маркеры
-   `animastor:iu-in-flight:*`, оставшиеся от сорванного dispatch #1. Маркеры ставятся ДО
-   `gpu.send` (`backend/src/image/iu-processor.js:190`) и НЕ очищаются ни в
-   `cancelActiveDispatch`, ни в `finalizeDispatch` (`backend/src/runtime/dispatch-engine.js`).
-2. **Невозврат состояния:** `no_jobs_sent` → `finalizeDispatch(cancelled)` корректно убрал
-   lease/quota, но rollback состояния сломан: `backend/src/orchestration/scene-orchestrator.js:528`
-   вызывает `setScenePending`, а переход **generating→pending запрещён FSM**
-   (`backend/src/state/scene-state.js:50-58`) → rejection проглатывается → state остаётся GENERATING.
-3. **Вечный пропуск:** scheduler считает GENERATING = «кто-то работает» →
-   `no_dispatchable_stages` → skip каждый тик (`backend/src/runtime/runtime-scheduler.js:328-333,552-556`).
-4. **Нет recovery-механизма:** `checkStaleDispatchLeases`/`shouldSkipDispatch` работают только
-   при существующем lease — здесь lease нет. Stall-failsafe существует ТОЛЬКО для audio и video
+1. **`no_jobs_sent`:** in dispatch #3 all 9 IU were skipped via fast-path in 7 ms
+   (network failure excluded — `gpu.send` has 30s timeout × 3 retry): the `animastor:iu-in-flight:*`
+   markers from the aborted dispatch #1 were still active. Markers are set BEFORE
+   `gpu.send` (`backend/src/image/iu-processor.js:190`) and are NOT cleared in
+   `cancelActiveDispatch` or `finalizeDispatch` (`backend/src/runtime/dispatch-engine.js`).
+2. **State rollback failure:** `no_jobs_sent` → `finalizeDispatch(cancelled)` correctly removed
+   lease/quota, but state rollback is broken: `backend/src/orchestration/scene-orchestrator.js:528`
+   calls `setScenePending`, but the **generating→pending transition is forbidden by FSM**
+   (`backend/src/state/scene-state.js:50-58`) → rejection swallowed → state remains GENERATING.
+3. **Eternal skip:** scheduler treats GENERATING = "someone is working" →
+   `no_dispatchable_stages` → skip every tick (`backend/src/runtime/runtime-scheduler.js:328-333,552-556`).
+4. **No recovery mechanism:** `checkStaleDispatchLeases`/`shouldSkipDispatch` only work
+   when a lease exists — here there is none. Stall-failsafe exists ONLY for audio and video
    (`checkStalledAudioScenes`/`checkStalledVideoScenes`, `backend/src/runtime/reconciliation-engine.js:287/388`).
-   Для image аналога нет. Reconciliation лишь повторно добавляет сцену в active-index (каждые 60 с),
-   но задиспатчить не может.
+   No equivalent for image. Reconciliation only re-adds the scene to the active-index (every 60s),
+   but cannot dispatch it.
 
 ### Contributing Defects
 
-- **Неатомарный `RESET_SCENE_LUA`** (`backend/src/services/book-diff.cjs:307-310`):
-  `DEL` asset-state hash + пошаговый `HSET` — конкурентный читатель в этом окне видит
-  все состояния как NEW (зафиксировано в журнале dispatch #1).
-- **Per-book force-флаг:** regen одной сцены ставит `animastor:force-dispatch:{bookId}`
-  (TTL 120 с), который scheduler применяет ко ВСЕМ сценам книги — force-reset чужих
-  активных dispatch становится возможным.
+- **Non-atomic `RESET_SCENE_LUA`** (`backend/src/services/book-diff.cjs:307-310`):
+  `DEL` asset-state hash + step-by-step `HSET` — a concurrent reader in this window sees
+  all states as NEW (recorded in dispatch #1 journal).
+- **Per-book force-flag:** regen of one scene sets `animastor:force-dispatch:{bookId}`
+  (TTL 120s), which the scheduler applies to ALL scenes in the book — force-reset of other
+  active dispatches becomes possible.
 
 ## Connection to Recent Lease Fix (37e21c22 / 487bc4a0)
 
 **Not connected — proven:**
 
-- Зависание произошло 2026-08-26 03:03 UTC; фикс задеплоен 2026-08-28 04:19+ UTC.
-- Фикс меняет только liveness-детекцию ПРИ СУЩЕСТВУЮЩЕМ lease (TTL вместо `started_at`).
-  Здесь lease нет вообще — ни `checkStaleDispatchLeases`, ни `shouldSkipDispatch`
-  никогда не срабатывают для этого состояния.
-- Косвенно фикс подтверждает пробел: в нём задокументировано, что «hung jobs ловит
-  stall-failsafe», — а для image stage этот failsafe отсутствует. Это и есть дыра.
+- The hang occurred 2026-08-26 03:03 UTC; fix deployed 2026-08-28 04:19+ UTC.
+- Fix only changes liveness detection WITH EXISTING lease (TTL instead of `started_at`).
+  Here there is no lease at all — neither `checkStaleDispatchLeases` nor `shouldSkipDispatch`
+  ever trigger for this state.
+- Indirectly the fix confirms the gap: it documents that "hung jobs are caught by
+  stall-failsafe" — but for image stage this failsafe is absent. This is the hole.
 
 ## What Needs to Be Fixed
 
-1. **`no_jobs_sent` rollback:** при отмене dispatch после установки GENERATING откатывать
-   состояние FSM-валидным путём `generating→dirty→pending` (сейчас прямой `setScenePending`
-   молча отклоняется FSM).
-2. **Image stall-failsafe** в reconciliation: `image=generating` без lease/metadata/queue-job
-   старше порога → reset в dirty + re-dispatch (аналог checkStalledAudio/VideoScenes).
-3. **Очистка `animastor:iu-in-flight:*`** при `finalizeDispatch(cancelled)` / force-reset —
-   иначе re-dispatch после любого срыва гарантированно попадает в `no_jobs_sent`.
-4. **Атомарность `RESET_SCENE_LUA`:** убрать окно DEL→HSET (например, HSET всех полей +
-   HDEL лишних, либо запись во временный ключ + RENAME).
-5. **Штатное устранение текущего призрака:** повторный «Generate Images» по этой сцене через UI —
-   `resetScenes` → Lua `transitionToPending` явно обрабатывает `generating→pending`
-   (`book-diff.cjs:291-301`) и переотправит. Безопасно.
-6. (гигиена) Очистка сиротских очередей: 214 audio-job + 8 image-job от старых книг.
+1. **`no_jobs_sent` rollback:** on dispatch cancellation after setting GENERATING, roll back
+   state via FSM-valid path `generating→dirty→pending` (currently direct `setScenePending`
+   is silently rejected by FSM).
+2. **Image stall-failsafe** in reconciliation: `image=generating` without lease/metadata/queue-job
+   older than threshold → reset to dirty + re-dispatch (analog of checkStalledAudio/VideoScenes).
+3. **Clear `animastor:iu-in-flight:*`** on `finalizeDispatch(cancelled)` / force-reset —
+   otherwise re-dispatch after any abort guaranteed hits `no_jobs_sent`.
+4. **Atomicity of `RESET_SCENE_LUA`:** eliminate the DEL→HSET window (e.g., HSET all fields +
+   HDEL extras, or write to temp key + RENAME).
+5. **Standard resolution of current ghost:** re-run "Generate Images" for this scene via UI —
+   `resetScenes` → Lua `transitionToPending` explicitly handles `generating→pending`
+   (`book-diff.cjs:291-301`) and re-dispatches. Safe.
+6. (hygiene) Clean orphan queues: 214 audio-jobs + 8 image-jobs from old books.
 
 ## Tests / runtime verification
 
-- Ответ API сверен с UI 1:1: `progress-panel` вернул ровно
+- API response matched UI 1:1: `progress-panel` returned exactly
   `{task_id:null, type:image, scope:whole_book, total:9, ready:0, percent:0, started_at:null, visible:true, done:false}`,
-  `worker/counts` → `image:0, private_image:0, active_image:0` — UI не врёт.
-- Наблюдение вживую: каждый тик scheduler `Active: 1, Dispatched: 0, Skipped: 1` —
-  сцена активно пропускается, dispatch не происходит, lease не создаётся.
-- Полный lifecycle-тест (0/2 → generation → 1/2 → 2/2 → completed) на момент расследования
-  провести невозможно: в системе 0 image-воркеров (heartbeat нет) — любая тестовая генерация
-  ляжет в очередь мёртвым грузом и воспроизведёт тот же симптом. План: подключить image worker →
-  очистить призрака штатным regen'ом → прогнать 1–2 IU.
+  `worker/counts` → `image:0, private_image:0, active_image:0` — UI is not lying.
+- Live observation: every scheduler tick `Active: 1, Dispatched: 0, Skipped: 1` —
+  scene actively skipped, no dispatch occurring, no lease created.
+- Full lifecycle test (0/2 → generation → 1/2 → 2/2 → completed) impossible at time of
+  investigation: 0 image workers in the system (no heartbeat) — any test generation
+  would queue as dead weight and reproduce the same symptom. Plan: connect image worker →
+  clear ghost via standard regen → run 1–2 IU.
