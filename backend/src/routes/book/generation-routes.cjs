@@ -64,6 +64,15 @@ module.exports = function(app, redis, deps) {
                 audio_timeout_minutes: cfg.audio_timeout_minutes,
                 image_timeout_minutes: cfg.image_timeout_minutes,
                 video_timeout_minutes: cfg.video_timeout_minutes,
+                // Parallel / Subagent AI Analysis (Milestone #1) — wire contract
+                // must round-trip these so the Android (f661a922 web parity) /
+                // web client can read back what it wrote and survive an
+                // app-restart round-trip. Without this, the layer-config service
+                // stores the value but the client always sees null and falls
+                // back to sequential/default, so the chosen mode looks "lost"
+                // after a process restart.
+                analysis_mode: cfg.analysis_mode,
+                analysis_parallelism: cfg.analysis_parallelism,
             });
         } catch (err) {
             console.error('[LAYER-CONFIG] GET error:', err.message);
@@ -74,12 +83,13 @@ module.exports = function(app, redis, deps) {
     app.put('/api/v1/book/:bookId/layer-config', async (req, res) => {
         try {
             const { bookId } = req.params;
-            const { audio_enabled, image_enabled, video_enabled, chunk_size, audio_timeout_minutes, image_timeout_minutes, video_timeout_minutes } = req.body || {};
+            const { audio_enabled, image_enabled, video_enabled, chunk_size, audio_timeout_minutes, image_timeout_minutes, video_timeout_minutes, analysis_mode, analysis_parallelism } = req.body || {};
             const cfg = await layerConfig.set(redis, bookId, {
                 audio_enabled, image_enabled, video_enabled,
                 chunk_size, audio_timeout_minutes, image_timeout_minutes, video_timeout_minutes,
+                analysis_mode, analysis_parallelism,
             });
-            log(`[LAYER-CONFIG] book=${bookId} → a=${cfg.audio_enabled} i=${cfg.image_enabled} v=${cfg.video_enabled} cs=${cfg.chunk_size} ato=${cfg.audio_timeout_minutes} ito=${cfg.image_timeout_minutes} vto=${cfg.video_timeout_minutes}`);
+            log(`[LAYER-CONFIG] book=${bookId} → a=${cfg.audio_enabled} i=${cfg.image_enabled} v=${cfg.video_enabled} cs=${cfg.chunk_size} ato=${cfg.audio_timeout_minutes} ito=${cfg.image_timeout_minutes} vto=${cfg.video_timeout_minutes} am=${cfg.analysis_mode} ap=${cfg.analysis_parallelism}`);
             res.json({
                 book_id: bookId,
                 audio_enabled: cfg.audio_enabled,
@@ -89,6 +99,8 @@ module.exports = function(app, redis, deps) {
                 audio_timeout_minutes: cfg.audio_timeout_minutes,
                 image_timeout_minutes: cfg.image_timeout_minutes,
                 video_timeout_minutes: cfg.video_timeout_minutes,
+                analysis_mode: cfg.analysis_mode,
+                analysis_parallelism: cfg.analysis_parallelism,
             });
         } catch (err) {
             console.error('[LAYER-CONFIG] PUT error:', err.message);
