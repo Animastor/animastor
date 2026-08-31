@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { validateBundleObject } = require('../book/bundle-validator.cjs');
 
 module.exports = function(config) {
     // AI assistant profile lives in the AI tree (backend/ai), alongside rules,
@@ -453,6 +454,30 @@ module.exports = function(config) {
         return { result, errors };
     }
 
+    // ── Patch application with bundle-contract validation ──
+    // Pipeline: AI patch → apply ops → validate contract → only a valid
+    // result is returned as candidate canonical state. On violation the
+    // result is withheld (null) so no caller can persist broken JSON;
+    // errors name the failing file/resource so the assistant (or the user)
+    // can issue a corrective patch in the next turn.
+    function applyPatchesValidated(obj, patches) {
+        const { result, errors } = applyPatches(obj, patches);
+        if (errors.length > 0) {
+            return { result: null, errors, validation_errors: [] };
+        }
+        const validation = validateBundleObject(result);
+        if (!validation.valid) {
+            return {
+                result: null,
+                errors: [`Bundle validation failed: ${validation.errors.join('; ')}`],
+                validation_errors: validation.errors,
+            };
+        }
+        return { result, errors, validation_errors: [] };
+    }
+
+    // `applyPatches` is kept exported for tests/legacy callers; AI mutation
+    // routes use `applyPatchesValidated` (see ai-routes.cjs).
     return {
         AI_PROFILE_PATH,
         AI_API_BASE_URL,
@@ -463,6 +488,8 @@ module.exports = function(config) {
         parseAIResponse,
         resolvePath,
         applyPatches,
+        applyPatchesValidated,
+        validateBundleObject,
         toolDefinitions: {
             EDIT_BOOK_TOOL,
             STORYBOARD_TOOL,

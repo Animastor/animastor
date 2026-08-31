@@ -46,6 +46,43 @@ const path = require('path');
 const AdmZip = require('adm-zip');
 
 const config = require('../config/runtime-config');
+const { validateBundleFile } = require('./bundle-validator.cjs');
+
+// Last line of defense before disk: every bundle resource that saveBookBundle
+// is about to write must satisfy the canonical JSON contract. A failure THROWS
+// before the FIRST write — previous valid state on disk stays untouched and
+// callers report the error instead of a successful save.
+function assertBundleFilesWritable(book) {
+    const candidates = [
+        ['manifest.json', book.manifest],
+        ['book.json', book.book ?? {}],
+        ['bible.json', book.bible],
+        ['locations.json', book.locations],
+        ['voices.json', book.voices],
+        ['behavior.json', book.behaviors],
+        ['characters.json', book.characters],
+    ];
+    for (const [filename, data] of candidates) {
+        if (data === undefined || data === null) continue;
+        const check = validateBundleFile(filename, data);
+        if (!check.valid) {
+            throw new Error(`Bundle validation failed (${filename}): ${check.errors.join('; ')}`);
+        }
+    }
+    if (Array.isArray(book.chapters)) {
+        for (let i = 0; i < book.chapters.length; i++) {
+            const chapter = book.chapters[i];
+            const label = `chapters/${chapter?.chapter_id ?? i}.json`;
+            if (chapter === null || typeof chapter !== 'object' || Array.isArray(chapter)) {
+                throw new Error(`Bundle validation failed (${label}): chapter must be an object`);
+            }
+            const check = validateBundleFile('chapter.json', chapter);
+            if (!check.valid) {
+                throw new Error(`Bundle validation failed (${label}): ${check.errors.join('; ')}`);
+            }
+        }
+    }
+}
 
 // ======================================================
 // PATH HELPERS
@@ -376,6 +413,11 @@ function saveBookBundle(book, files) {
         console.log(`[SAVE] Book: ${bookId} (from raw files, canonical format)`);
         return;
     }
+
+    // Object-mode save: validate the complete bundle contract BEFORE the
+    // first writeFileSync (validate → write, never write → discover).
+    // Raw-files mode above is verbatim import content — validated at import.
+    assertBundleFilesWritable(book);
 
     console.log(`[SAVE] Book: ${bookId}, chapters: ${book.chapters?.length}`);
 

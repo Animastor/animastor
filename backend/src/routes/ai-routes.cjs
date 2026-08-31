@@ -422,10 +422,14 @@ module.exports = function(app, redis, deps) {
                     if (tc.function.name === 'edit_book') {
                         try {
                             const args = JSON.parse(tc.function.arguments);
-                            const patchResult = chatEngine.applyPatches(bookData, args.patches || []);
+                            // Validated application: patch → contract validation →
+                            // result. A structurally broken result (e.g. voices.json
+                            // becoming a string instead of an object) is rejected
+                            // here and never reaches the save block below.
+                            const patchResult = chatEngine.applyPatchesValidated(bookData, args.patches || []);
                             if (patchResult.errors.length > 0) {
                                 const errMsg = patchResult.errors.join('; ');
-                                toolResults.push({ tool: 'edit_book', error: errMsg });
+                                toolResults.push({ tool: 'edit_book', error: errMsg, validation_errors: patchResult.validation_errors });
                                 lastEditError = errMsg;
                             } else {
                                 patches = args.patches || [];
@@ -444,8 +448,17 @@ module.exports = function(app, redis, deps) {
             // Save patches if any were applied
             if (patches.length > 0 && bookData) {
                 try {
-                    const patchResult = chatEngine.applyPatches(bookData, patches);
-                    if (patchResult.result) {
+                    // Re-apply with validation (defense in depth): the save block
+                    // is the last gate before disk — an invalid candidate state
+                    // must never be written and must not be reported as applied.
+                    const patchResult = chatEngine.applyPatchesValidated(bookData, patches);
+                    if (patchResult.errors.length > 0) {
+                        // Reject the whole mutation: keep previous canonical state,
+                        // report the failure to the assistant/user, apply nothing.
+                        if (!lastEditError) lastEditError = patchResult.errors.join('; ');
+                        patches = [];
+                        toolResults.push({ tool: 'edit_book', error: lastEditError, validation_errors: patchResult.validation_errors, rejected: true });
+                    } else if (patchResult.result) {
                         if (patchResult.result.chapters?.length > 0) {
                             // Chapters are intact — use saveBookBundle for full multi-file save
                             // (bible → bible.json, locations → locations.json, etc.)
@@ -456,24 +469,34 @@ module.exports = function(app, redis, deps) {
                             // chapter files via saveBookBundle's cleanup logic.
                             const bookDir = lazyBook.getBookDir(bookId);
                             const j = require('path').join;
-                            const write = (name, data) => {
-                                if (data != null) fs.writeFileSync(j(bookDir, name), JSON.stringify(data, null, 2));
-                            };
-                            write('manifest.json', patchResult.result.manifest);
-                            write('book.json', patchResult.result.book);
-                            write('bible.json', patchResult.result.bible);
-                            write('locations.json', patchResult.result.locations);
-                            write('voices.json', patchResult.result.voices);
-                            write('characters.json', patchResult.result.characters);
+                            const validateFile = require('../book/bundle-validator.cjs').validateBundleFile;
+                            const targets = [
+                                ['manifest.json', patchResult.result.manifest],
+                                ['book.json', patchResult.result.book],
+                                ['bible.json', patchResult.result.bible],
+                                ['locations.json', patchResult.result.locations],
+                                ['voices.json', patchResult.result.voices],
+                                ['characters.json', patchResult.result.characters],
+                            ].filter(([, data]) => data != null);
+                            // Validate EVERY file BEFORE the first write — a failing
+                            // file aborts the whole save, previous state stays intact.
+                            for (const [name, data] of targets) {
+                                const fileCheck = validateFile(name, data);
+                                if (!fileCheck.valid) {
+                                    throw new Error(`Bundle validation failed (${fileCheck.errors.join('; ')})`);
+                                }
+                            }
+                            for (const [name, data] of targets) {
+                                fs.writeFileSync(j(bookDir, name), JSON.stringify(data, null, 2));
+                            }
                             log('[AI] Book updated (targeted save — chapters skipped):', patches.length, 'patches applied to', bookId);
                         }
                     }
-                    if (patchResult.errors.length > 0 && !lastEditError) {
-                        lastEditError = patchResult.errors.join('; ');
-                    }
                 } catch (saveErr) {
                     console.error('[AI] Failed to save updated book:', saveErr.message);
-                    lastEditError = saveErr.message;
+                    if (!lastEditError) lastEditError = saveErr.message;
+                    // Nothing was persisted — do not report success.
+                    patches = [];
                 }
             }
 
@@ -500,11 +523,19 @@ module.exports = function(app, redis, deps) {
                 [JSON.stringify(updatedMessages), Date.now(), activeSessionId]
             );
 
+            // Structured validation info for the assistant/API: names the exact
+            // file/resource that failed the bundle contract, so a corrective
+            // patch ("почини voices.json") lands in the very next turn —
+            // the error reply is stored in session history for that purpose.
+            const validationErrors = toolResults
+                .flatMap(tr => tr.validation_errors || []);
+
             res.json({
                 reply: replyText,
                 tool_calls: toolCalls,
                 tool_results: toolResults,
                 patches_applied: patches.length,
+                validation_errors: validationErrors,
                 session_id: activeSessionId,
             });
         } catch (err) {
@@ -844,21 +875,33 @@ module.exports = function(app, redis, deps) {
             const parsed = chatEngine.parseAIResponse(replyText);
             let patches = [];
             let patchedBook = null;
+            let patchErrors = [];
             if (bookData && !isLocked) {
                 patches = parsed.patches;
                 if (patches.length > 0) {
-                    const patchResult = chatEngine.applyPatches(bookData, patches);
+                    // Validated application: on contract violation nothing is
+                    // written — previous canonical state stays on disk.
+                    const patchResult = chatEngine.applyPatchesValidated(bookData, patches);
                     patchedBook = patchResult.result;
-                    if (patchedBook && patchedBook !== bookData) {
+                    patchErrors = patchResult.errors;
+                    if (patchedBook && patchErrors.length === 0) {
                         const bookDir = lazyBook.getBookDir(book_id);
                         const bookPath = require('path').join(bookDir, 'book.json');
                         fs.writeFileSync(bookPath, JSON.stringify(patchedBook, null, 2));
                         log(`[AI PROMPT] Applied ${patches.length} patches to ${book_id}`);
+                    } else if (patchErrors.length > 0) {
+                        patches = [];
+                        log(`[AI PROMPT] Rejected ${patchErrors.length} validation error(s) for ${book_id} — book not modified`);
                     }
                 }
             }
 
-            res.json({ reply: parsed.reply, patches_applied: patches.length, book_updated: !!patchedBook });
+            res.json({
+                reply: parsed.reply,
+                patches_applied: patches.length,
+                book_updated: !!(patchedBook && patchErrors.length === 0),
+                validation_errors: patchErrors,
+            });
         } catch (err) {
             console.error('[AI PROMPT] Error:', err.message);
             if (err.code === 'ENDPOINT_NOT_PUBLIC') {
