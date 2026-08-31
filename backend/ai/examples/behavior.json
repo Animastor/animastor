@@ -1,0 +1,68 @@
+{
+  "anna_smirnova": {
+    "baseline": "composed and measured; sits or stands still, moves deliberately, speaks in a low even voice with precise wording, keeps her eyes on the person she talks to",
+    "quirks": [
+      "straightens the papers on her desk before answering a difficult question",
+      "removes her glasses and holds them loosely when she is thinking",
+      "closes her eyes for a second before making a final decision"
+    ],
+    "reactions": [
+      {
+        "trigger": "is contradicted in public",
+        "reaction": "pauses without changing expression, then answers with one calm, exact sentence that ends the argument"
+      },
+      {
+        "trigger": "is praised",
+        "reaction": "deflects briefly with a small nod and immediately turns the conversation to work"
+      },
+      {
+        "trigger": "hears bad news",
+        "reaction": "freezes for a moment, sets down whatever she is holding, then asks one short clarifying question"
+      }
+    ]
+  },
+  "boris_volkov": {
+    "baseline": "restless and expressive; cannot stay still for long, gestures with his whole arms, shifts his weight, speaks fast and loud, face mirrors every emotion immediately",
+    "quirks": [
+      "paces back and forth while reciting his own verses",
+      "wraps and unwraps his red scarf when he is nervous",
+      "runs a hand through his hair before every bold statement"
+    ],
+    "reactions": [
+      {
+        "trigger": "is praised",
+        "reaction": "lights up instantly, straightens to his full height and talks twice as fast"
+      },
+      {
+        "trigger": "is criticized",
+        "reaction": "flares up defensively, argues back with sweeping gestures, then quickly deflates and becomes sullen and quiet"
+      },
+      {
+        "trigger": "is frightened",
+        "reaction": "backs away, voice breaks into a higher pitch, clutches the nearest object with both hands"
+      }
+    ]
+  },
+  "dmitry_orekhov": {
+    "baseline": "still and economical; makes minimal movements, speaks slowly and quietly with a dry precise tone, watches more than he participates, unhurried even under pressure",
+    "quirks": [
+      "taps his silver cane once, softly, before delivering a verdict-like remark",
+      "lets a thin ironic smile replace an answer when he does not want to speak",
+      "always removes his hat last, even in a hurry"
+    ],
+    "reactions": [
+      {
+        "trigger": "is provoked or insulted",
+        "reaction": "remains perfectly still, answers with one dry short line and a colder smile, never raises his voice"
+      },
+      {
+        "trigger": "is threatened",
+        "reaction": "stops moving entirely, lowers his voice further, and studies the other person the way one studies a solved puzzle"
+      },
+      {
+        "trigger": "sees something genuinely unexpected",
+        "reaction": "a single raised eyebrow is the only visible reaction; he then changes the subject with practiced ease"
+      }
+    ]
+  }
+}
