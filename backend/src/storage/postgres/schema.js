@@ -287,6 +287,40 @@ CREATE TABLE IF NOT EXISTS workers (
 -- not run from SCHEMA_SQL: on a pre-existing legacy workers table the
 -- workspace_id column does not yet exist, and PW-1 is the real migration)
 
+-- ======================================================
+-- Worker share policies (Experimental Beta — SH-1)
+-- ======================================================
+-- V1 of the worker sharing model (worker-sharing-model-design.md §5.1):
+-- a private worker may carry ONE active share_policy without changing its
+-- mode — sharing is a policy (access & capacity exposure), never an
+-- ownership event. The policy exposes the worker's SPARE capacity to the
+-- system pool, and the owner's private lane keeps strict priority (§6.1).
+--
+-- scope_kind CHECK intentionally allows 'public' ONLY in V1 — V2 widens the
+-- CHECK to add 'users' (one-line migration, not a redesign). No quota fields,
+-- no grants, no usage ledger in V1 (§5.2 — deliberately deferred).
+-- expires_at is NULL = "until manually stopped" (D5).
+-- revoked_at doubles as the soft revoke / auto-expiry marker.
+CREATE TABLE IF NOT EXISTS share_policies (
+    policy_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    worker_id    UUID NOT NULL REFERENCES workers(worker_id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    scope_kind   TEXT NOT NULL CHECK (scope_kind IN ('public')),
+    starts_at    BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000),
+    expires_at   BIGINT,
+    revoked_at   BIGINT,
+    note         TEXT,
+    created_by   UUID REFERENCES users(user_id),
+    created_at   BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000)
+);
+
+-- D1: ONE active policy per worker — the partial unique index below is the
+-- enforcement point (it removes all dispatch ambiguity for V1).
+-- NOTE for editors — runMigrations splits SCHEMA_SQL on the semicolon
+-- character, so SQL comments in this block must never contain one.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_share_policies_one_active
+    ON share_policies(worker_id) WHERE revoked_at IS NULL;
+
 -- Reconciliation & recovery log
 CREATE TABLE IF NOT EXISTS reconciliation_events (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -1304,6 +1338,37 @@ async function runMigrations() {
     }
 
     console.log('[PG] Worker registry fail-closed model initialized (private/share/system)');
+
+    // ======================================================
+    // SH-1: Worker share policies (Experimental Beta — V1)
+    // ======================================================
+    // Purely additive migration: one new table, no workers change, no data
+    // backfill. Fresh and long-lived DBs migrate identically (§11). The
+    // migration ships fully dormant — behavior changes only when the
+    // SHARE_FEATURES_ENABLED kill-switch (default OFF) is enabled; rollback
+    // = flip the flag off (policies remain rows; nothing decays).
+    // Idempotent: canonical CREATE TABLE IF NOT EXISTS + partial UNIQUE
+    // index (D1: one active policy per worker).
+    try {
+        await query(`CREATE TABLE IF NOT EXISTS share_policies (
+            policy_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            worker_id    UUID NOT NULL REFERENCES workers(worker_id) ON DELETE CASCADE,
+            workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            scope_kind   TEXT NOT NULL CHECK (scope_kind IN ('public')),
+            starts_at    BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000),
+            expires_at   BIGINT,
+            revoked_at   BIGINT,
+            note         TEXT,
+            created_by   UUID REFERENCES users(user_id),
+            created_at   BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000)
+        )`);
+        await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_share_policies_one_active
+            ON share_policies(worker_id) WHERE revoked_at IS NULL`);
+        console.log('[PG] SH-1: share_policies initialized (one active policy per worker)');
+    } catch (err) {
+        console.error('[PG] SH-1 share_policies migration failed:', err.message);
+        throw err;
+    }
 
     // ======================================================
     // PW-2: Workspace-aware job ownership (Experimental Beta — Phase 2)

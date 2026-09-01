@@ -113,10 +113,49 @@ async function authenticateWorkerMirror(redis, token) {
     if (identity.worker_id !== parsed.workerId) return null;
     if (!identity.worker_type) return null;
     if (identity.mode !== 'system' && !identity.workspace_id) return null;
+    // SH-1: the optional share_policy fact rides the mirror (D4). Fail
+    // closed on any malformed shape and re-check expiry ON READ — a stale
+    // mirror can never extend a policy past its expires_at (§7.2).
+    identity.share_policy = sanitizeSharePolicy(identity.share_policy);
     return identity;
   } catch (_) {
     return null;
   }
+}
+
+/**
+ * SH-1: validate the mirror's optional share_policy payload.
+ *   share_policy: { policy_id, scope_kind: 'public', expires_at: ms|null }
+ * V1 admits public scope only; expiry is re-checked against the local clock
+ * on EVERY auth resolution — an expired (stale) mirror entry is treated as
+ * "no policy" and can never extend sharing (the backend periodic resync +
+ * point updates are the transport; PG is the source of truth).
+ * @returns {object|null}
+ */
+function sanitizeSharePolicy(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  if (typeof raw.policy_id !== 'string' || !raw.policy_id) return null;
+  if (raw.scope_kind !== 'public') return null; // V1: public only
+  if (raw.expires_at != null && typeof raw.expires_at !== 'number') return null;
+  const policy = {
+    policy_id: raw.policy_id,
+    scope_kind: 'public',
+    expires_at: raw.expires_at != null ? Number(raw.expires_at) : null,
+  };
+  return activeSharePolicy(policy);
+}
+
+/**
+ * Expiry re-check on read (§7.2): a policy is active only while
+ * `expires_at` is in the future (or NULL = "until stopped"). Composed with
+ * the kill-switch + private-mode gate by callers — this function is the
+ * single point that can never be fooled by a stale mirror timestamp.
+ * @returns {object|null}
+ */
+function activeSharePolicy(policy, now = Date.now()) {
+  if (!policy) return null;
+  if (policy.expires_at != null && Number(policy.expires_at) <= now) return null;
+  return policy;
 }
 
 /**
@@ -159,9 +198,60 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     // FAIL CLOSED (PW-4): an unset API key DENIES the backend-facing endpoints.
     // Explicit dev-only opt-out for local setups without a key.
     GPU_HUB_ALLOW_OPEN = null,
+    // SH-1 kill-switch (worker sharing V1) — SYNC: backend/src/config/
+    // runtime-config.js shareFeaturesEnabled(). DEFAULT OFF: disabling
+    // returns the system bit-for-bit to pre-sharing behavior — no lane-
+    // priority step-2 pop, no share_policy markers in heartbeats.
+    SHARE_FEATURES_ENABLED = /^(1|true|on)$/i.test(String(process.env.SHARE_FEATURES_ENABLED || '')),
   } = config;
 
   const doFetch = fetchImpl || ((url, options) => fetch(url, options));
+
+  /**
+   * SH-1: effective share policy for an AUTHENTICATED worker identity
+   * (kill-switch + mode + policy checks combined). Null for share/system
+   * modes (their lane IS the system pool already) and whenever the
+   * kill-switch is OFF — the system stays bit-for-bit as before.
+   * @returns {object|null} { policy_id, scope_kind, expires_at } | null
+   */
+  function effectiveSharePolicy(auth) {
+    if (!SHARE_FEATURES_ENABLED) return null;   // kill-switch: today's behavior
+    if (!auth || auth.mode !== 'private') return null;
+    return activeSharePolicy(auth.share_policy);
+  }
+
+  /**
+   * Heartbeat share_policy marker (D3): present ONLY while the kill-switch
+   * is on and the policy is effective — heartbeats of workers without a
+   * policy stay byte-identical to pre-sharing payloads (§7.4).
+   */
+  function sharePolicyMarker(auth) {
+    const p = effectiveSharePolicy(auth);
+    return p ? { policy_id: p.policy_id, scope_kind: p.scope_kind, expires_at: p.expires_at } : null;
+  }
+
+  /**
+   * Claimer lane check for /task/result and /task/error (PW-4). The job's
+   * workspace must match the claimer's lane:
+   *   private lane job   → running workspace == claimer workspace (today);
+   *   system-pool job    → workspace-less; finished normally by its claimer.
+   * SH-1: a private worker's BORROWED claim is identified by the claim-time
+   * `worker_share_policy` snapshot in the running record — the claim stays
+   * finishable even if the policy was stopped or expired mid-job (§6: the
+   * claim is bound to the credential, not the policy). When the snapshot is
+   * absent (kill-switch off / no policy), this reduces EXACTLY to today's
+   * comparison.
+   */
+  function taskLaneMatch(runningInfo, auth) {
+    const jobWs = runningInfo.workspace_id || null;
+    const claimerWs = auth.workspace_id || null;
+    if (jobWs === claimerWs) return true;
+    // Borrowed system-pool claim on a private worker (V1 only).
+    return jobWs === null
+      && (auth.mode || null) === 'private'
+      && !!(runningInfo.worker_share_policy
+            && runningInfo.worker_share_policy.scope_kind === 'public');
+  }
 
   const app = express()
   app.use(cors())
@@ -353,7 +443,7 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
           const data = JSON.parse(running[job_id])
           if (data.worker && data.job_type) {
             const hbKey = `animastor:worker:heartbeat:${data.job_type}:${data.worker}`
-            const hbPayload = JSON.stringify({
+            const hbPayload = {
               type: data.job_type,
               worker_id: data.worker,
               ts: Date.now(),
@@ -362,13 +452,30 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
               // VISIBILITY: scope fields — the backend counts a heartbeat as
               // globally available ONLY when it carries no workspace (system
               // pool). A private worker's heartbeat stays workspace-scoped.
-              workspace_id: data.workspace_id || null,
+              // SH-1: ONLY a borrowed (system-pool) claim on a private worker
+              // re-stamps the WORKER's own workspace so the owner's counts
+              // stay correct; every other case keeps today's task-scoped
+              // value byte-for-byte.
+              workspace_id: (data.worker_mode === 'private'
+                  && data.workspace_id == null
+                  && data.worker_workspace_id != null)
+                ? data.worker_workspace_id
+                : (data.workspace_id || null),
               mode: data.worker_mode || null,
               version: data.worker_version || null,
               image_tag: data.worker_image_tag || null,
               protocol_version: data.worker_protocol_version || null
-            })
-            await redis.set(hbKey, hbPayload, 'EX', 30)
+            }
+            // SH-1 (D3): re-stamp the optional share_policy marker from the
+            // claim-time snapshot. Expiry re-checked on read here too — a
+            // policy that expires mid-job stops feeding the global count
+            // even while its last job is still running. Absent snapshot →
+            // payload byte-identical to today.
+            const sp = data.worker_share_policy;
+            if (sp && sp.scope_kind === 'public' && activeSharePolicy(sp)) {
+              hbPayload.share_policy = { policy_id: sp.policy_id, scope_kind: sp.scope_kind, expires_at: sp.expires_at };
+            }
+            await redis.set(hbKey, JSON.stringify(hbPayload), 'EX', 30)
           }
         } catch (_) {}
       }
@@ -572,9 +679,14 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     // VISIBILITY: the payload carries the registry-derived scope
     // (workspace_id + mode ∈ private|share|system) so the backend separates
     // SYSTEM/SHARE capacity from a workspace's PRIVATE workers.
+    // SH-1 (D3): a policy-active private worker additionally carries the
+    // optional share_policy marker — the backend counts it in BOTH the
+    // owner's private_* bucket and the global pool. Without an active
+    // policy (or with the kill-switch off) the payload is byte-identical
+    // to the pre-sharing shape.
     try {
       const key = `animastor:worker:heartbeat:${workerType}:${workerId}`;
-      const payload = JSON.stringify({
+      const payload = {
         type: workerType,
         worker_id: workerId,
         ts: Date.now(),
@@ -583,8 +695,10 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
         version: version || null,
         image_tag: image_tag || null,
         protocol_version: protocol_version || null
-      });
-      await redis.set(key, payload, 'EX', 30);
+      };
+      const marker = sharePolicyMarker(auth);
+      if (marker) payload.share_policy = marker;
+      await redis.set(key, JSON.stringify(payload), 'EX', 30);
     } catch (_) {}
 
     res.json({ ok: true })
@@ -751,25 +865,48 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     // share/system → the system pool ONLY. Cross-workspace and private-pool
     // access are structurally impossible (the key is never derivable from
     // the client).
+    //
+    // SH-1 (worker sharing V1, §6.1 lane priority — kill-switch gated):
+    //   1. pop queue:{type}:ws:{workspace_id}   (owner's lane — STRICT priority)
+    //   2. if empty → pop queue:{type}          (system pool — spare capacity)
+    // Step 2 exists only when the kill-switch is ON and the worker carries an
+    // effective (expiry-rechecked) public share policy. No new queues: a
+    // worker leaving the pool simply stops popping it — stop-sharing needs
+    // no queue cleanup (D6).
+    const policy = effectiveSharePolicy(auth);
     const popWorkspaceId = auth.mode === 'private' ? auth.workspace_id : null;
     const queueKey = queueKeyFor(workerType, popWorkspaceId)
 
-    const taskRaw = await redis.rpoplpush(
+    let taskRaw = await redis.rpoplpush(
       queueKey,
       "animastor:processing"
     )
+    let fromSystemPool = popWorkspaceId == null; // share/system pop the system pool as their primary lane
+
+    if (!taskRaw && !fromSystemPool && policy) {
+      // SH-1 step 2: spare capacity — borrow from the system pool only after
+      // the owner's own lane is drained.
+      taskRaw = await redis.rpoplpush(
+        queueKeyFor(workerType, null),
+        "animastor:processing"
+      )
+      fromSystemPool = true;
+    }
 
     if (!taskRaw) return res.json({ task: null })
 
     const task = JSON.parse(taskRaw)
 
-    // PW-2 poison-write cross-check: the popped item's workspace must match
-    // the lane this worker may serve (private → its workspace; share/system
-    // → workspace-less jobs only). A mismatch means a poison write —
-    // dead-letter it, never hand it out.
-    const expectedWs = auth.mode === 'private' ? auth.workspace_id : null;
-    if ((task.workspace_id || null) !== expectedWs) {
-      console.error(`🧪 Poison write detected on ${queueKey}: job=${task.job_id} task_ws=${task.workspace_id || 'null'} expected=${expectedWs || 'null'}`);
+    // PW-2 poison-write cross-check: a popped item must match the lane it
+    // came from (private ws lane → the owner's workspace; system pool →
+    // workspace-less jobs only). A mismatch means a poison write —
+    // dead-letter it, never hand it out. SH-1: a policy-active private
+    // worker popping the system pool must receive workspace-less jobs there
+    // — the per-lane expectation is unchanged, just per-queue.
+    const taskWs = task.workspace_id || null;
+    const expectedWs = fromSystemPool ? null : auth.workspace_id;
+    if (taskWs !== expectedWs) {
+      console.error(`🧪 Poison write detected on ${fromSystemPool ? queueKeyFor(workerType, null) : queueKey}: job=${task.job_id} task_ws=${taskWs || 'null'} expected=${expectedWs || 'null'}`);
       await redis.lrem("animastor:processing", 1, taskRaw).catch(() => {});
       await deadLetter(taskRaw, 'poison_workspace_mismatch');
       return res.json({ task: null })
@@ -785,6 +922,18 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
         // VISIBILITY: kept so heartbeat refreshes (sweep/result/error) can
         // re-stamp the scope without re-authenticating.
         worker_mode: auth.mode || null,
+        // SH-1: the WORKER's own workspace scope for heartbeat re-stamps —
+        // a borrowed (system-pool) claim on a private worker keeps the
+        // OWNER's scope in heartbeats so the owner's counts stay correct.
+        worker_workspace_id: auth.workspace_id || null,
+        // SH-1: claim-time snapshot of the active policy (null unless the
+        // kill-switch was on and a public policy was effective). Kept in the
+        // running record so a running claim finishes normally even if the
+        // policy is stopped mid-job — "the claim is bound to the credential,
+        // not the policy" (§6).
+        worker_share_policy: policy
+          ? { policy_id: policy.policy_id, scope_kind: policy.scope_kind, expires_at: policy.expires_at }
+          : null,
         job_type: task.job_type,
         params: task.params,
         assets: task.assets || null,
@@ -804,12 +953,12 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
       })
     )
 
-    console.log(`🚀 ${task.job_id} → ${workerId} (${task.job_type}) build:${task.build_id || "none"} timeout_ms:${task.timeout_ms || "(default)"} mode:${auth.mode} ws:${task.workspace_id || "(system pool)"}`)
+    console.log(`🚀 ${task.job_id} → ${workerId} (${task.job_type}) build:${task.build_id || "none"} timeout_ms:${task.timeout_ms || "(default)"} mode:${auth.mode}${policy ? "+shared" : ""} ws:${task.workspace_id || "(system pool)"}`)
 
     // Mark worker as busy in heartbeat (scope fields per VISIBILITY note).
     try {
       const hbKey = `animastor:worker:heartbeat:${task.job_type}:${workerId}`;
-      const hbPayload = JSON.stringify({
+      const hbPayload = {
         type: task.job_type,
         worker_id: workerId,
         ts: Date.now(),
@@ -820,8 +969,10 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
         version: gpu.version || null,
         image_tag: gpu.image_tag || null,
         protocol_version: gpu.protocol_version || null
-      });
-      await redis.set(hbKey, hbPayload, 'EX', 30);
+      };
+      const marker = sharePolicyMarker(auth);
+      if (marker) hbPayload.share_policy = marker;
+      await redis.set(hbKey, JSON.stringify(hbPayload), 'EX', 30);
     } catch (_) {}
 
     res.json({ task })
@@ -863,8 +1014,13 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     // PW-4 claimer check: the submitter must BE the claimer and the job's
     // workspace must match the claimer's lane (private → its workspace;
     // share/system → workspace-less jobs only).
+    // SH-1: a policy-active private worker's BORROWED claim (system-pool
+    // job: workspace-less + claim-time policy snapshot in the running
+    // record) finishes normally — the claim is bound to the credential, not
+    // the policy (§6). The snapshot can only exist when the pop gate allowed
+    // the borrow, and it survives mid-job stop/expiry by design.
     if (runningInfo.worker !== auth.worker_id ||
-        (runningInfo.workspace_id || null) !== (auth.workspace_id || null)) {
+        !taskLaneMatch(runningInfo, auth)) {
       console.error(`🚫 Result rejected (not claimer): job=${job_id} submitter=${auth.worker_id} claimer=${runningInfo.worker} ws=${auth.workspace_id || 'null'} vs ${runningInfo.workspace_id || 'null'}`);
       return res.status(403).json({ error: "not_task_claimer" })
     }
@@ -902,22 +1058,32 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     }
 
     // Clear busy flag from worker heartbeat (scope fields per VISIBILITY note).
+    // SH-1: keep the WORKER's own scope for borrowed claims and re-stamp the
+    // policy marker (expiry re-checked) — see the sweep refresh note.
     if (runningInfo.worker && runningInfo.job_type) {
       try {
         const hbKey = `animastor:worker:heartbeat:${runningInfo.job_type}:${runningInfo.worker}`;
-        const hbPayload = JSON.stringify({
+        const hbPayload = {
           type: runningInfo.job_type,
           worker_id: runningInfo.worker,
           ts: Date.now(),
           current_job_id: null,
           current_dispatch_id: null,
-          workspace_id: runningInfo.workspace_id || null,
+          workspace_id: (runningInfo.worker_mode === 'private'
+              && runningInfo.workspace_id == null
+              && runningInfo.worker_workspace_id != null)
+            ? runningInfo.worker_workspace_id
+            : (runningInfo.workspace_id || null),
           mode: runningInfo.worker_mode || null,
           version: runningInfo.worker_version || null,
           image_tag: runningInfo.worker_image_tag || null,
           protocol_version: runningInfo.worker_protocol_version || null
-        });
-        await redis.set(hbKey, hbPayload, 'EX', 30);
+        };
+        const sp = runningInfo.worker_share_policy;
+        if (sp && sp.scope_kind === 'public' && activeSharePolicy(sp)) {
+          hbPayload.share_policy = { policy_id: sp.policy_id, scope_kind: sp.scope_kind, expires_at: sp.expires_at };
+        }
+        await redis.set(hbKey, JSON.stringify(hbPayload), 'EX', 30);
       } catch (_) {}
     }
 
@@ -993,9 +1159,11 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
       return res.status(409).json({ error: "stale_or_unknown_dispatch" })
     }
 
-    // PW-4 claimer check (symmetric with /task/result).
+    // PW-4 claimer check (symmetric with /task/result). SH-1: borrowed
+    // (system-pool) claims on private workers finish normally too —
+    // claim bound to the credential, not the policy.
     if (runningInfo.worker !== auth.worker_id ||
-        (runningInfo.workspace_id || null) !== (auth.workspace_id || null)) {
+        !taskLaneMatch(runningInfo, auth)) {
       console.error(`🚫 Error rejected (not claimer): job=${job_id} submitter=${auth.worker_id} claimer=${runningInfo.worker}`);
       return res.status(403).json({ error: "not_task_claimer" })
     }
@@ -1013,19 +1181,27 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     if (runningInfo.worker && runningInfo.job_type) {
       try {
         const hbKey = `animastor:worker:heartbeat:${runningInfo.job_type}:${runningInfo.worker}`;
-        const hbPayload = JSON.stringify({
+        const hbPayload = {
           type: runningInfo.job_type,
           worker_id: runningInfo.worker,
           ts: Date.now(),
           current_job_id: null,
           current_dispatch_id: null,
-          workspace_id: runningInfo.workspace_id || null,
+          workspace_id: (runningInfo.worker_mode === 'private'
+              && runningInfo.workspace_id == null
+              && runningInfo.worker_workspace_id != null)
+            ? runningInfo.worker_workspace_id
+            : (runningInfo.workspace_id || null),
           mode: runningInfo.worker_mode || null,
           version: runningInfo.worker_version || null,
           image_tag: runningInfo.worker_image_tag || null,
           protocol_version: runningInfo.worker_protocol_version || null
-        });
-        await redis.set(hbKey, hbPayload, 'EX', 30);
+        };
+        const sp = runningInfo.worker_share_policy;
+        if (sp && sp.scope_kind === 'public' && activeSharePolicy(sp)) {
+          hbPayload.share_policy = { policy_id: sp.policy_id, scope_kind: sp.scope_kind, expires_at: sp.expires_at };
+        }
+        await redis.set(hbKey, JSON.stringify(hbPayload), 'EX', 30);
       } catch (_) {}
     }
 
@@ -1786,4 +1962,7 @@ module.exports = {
   authenticateWorkerMirror,
   requireWorkerCredential,
   buildHubApp,
+  // SH-1 test/ops surface (worker sharing V1)
+  sanitizeSharePolicy,
+  activeSharePolicy,
 };

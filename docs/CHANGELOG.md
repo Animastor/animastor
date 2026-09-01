@@ -4,6 +4,44 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-09-01
+
+### Added
+
+- **Worker Sharing V1 (SH-1)** — flag-gated sharing of a private worker's
+  spare capacity with the community pool, per
+  `docs/04-planning/worker-sharing-model-design.md` §13.1. Dormant by
+  default: `SHARE_FEATURES_ENABLED=0` (kill-switch, default OFF) keeps the
+  system bit-for-bit identical to pre-sharing behavior.
+  - **Schema**: new `share_policies` table (one ACTIVE policy per worker,
+    partial unique index; `scope_kind CHECK ('public')` in V1 — V2 widens
+    to `users`; optional `expires_at`; `revoked_at` doubles as the
+    auto-expiry marker). Migration SH-1 is purely additive.
+  - **API** (404 while the kill-switch is off): `POST/DELETE/GET
+    /api/v1/workers/:workerId/share` — start (with optional future
+    `expires_at`), stop (idempotent, requires NO queue cleanup) and owner
+    read. Workspace-scoped authorization (`userWorkspaceGuard` +
+    `WHERE workspace_id = $2`): foreign workers 404 indistinctly,
+    workspace-less SYSTEM workers are unreachable; only `mode='private'`
+    workers are policy-addressable. mode NEVER changes — sharing is a
+    policy, not a mode flip.
+  - **Hub**: mirror/beacon identity payload gains an optional
+    `share_policy {policy_id, scope_kind, expires_at}` (PG is the source
+    of truth; mirror is a cache); the pop gains lane-priority step 2 —
+    owner's private lane STRICTLY first, then the system pool as spare
+    capacity (kill-switch + expiry re-checked on every read, so a stale
+    mirror can never extend a policy); borrowed claims finish normally
+    (claim bound to the credential, not the policy); poison-write guard
+    holds per lane.
+  - **Counts (D3)**: `system.*` is normatively a capacity indicator — a
+    policy-active private worker counts in BOTH the owner's `private_*`
+    bucket and the global pool; without an active policy the old
+    invariant ("private never in the global count") holds unchanged.
+  - **Tests**: `backend/tests/worker-share-policy.test.js` — authz matrix,
+    lane priority, expiry re-check, stale-mirror, kill-switch, D3 counts.
+
+---
+
 ## [Unreleased] — 2026-08-27
 
 ### Added

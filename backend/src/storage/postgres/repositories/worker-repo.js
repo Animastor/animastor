@@ -181,11 +181,24 @@ async function listByWorkspace(workspaceId) {
 }
 
 /** All active (non-revoked) workers — for the Redis auth mirror rebuild. */
-async function listActive() {
+async function listActive(now = Date.now()) {
     const { rows } = await query(`
-        SELECT worker_id, workspace_id, name, worker_type, capabilities, mode, token_hash
-        FROM workers WHERE revoked_at IS NULL
-    `);
+        SELECT w.worker_id, w.workspace_id, w.name, w.worker_type, w.capabilities, w.mode, w.token_hash,
+               p.policy_id, p.scope_kind, p.starts_at, p.expires_at
+        FROM workers w
+        LEFT JOIN share_policies p
+            ON p.worker_id = w.worker_id AND p.revoked_at IS NULL
+           AND p.starts_at <= $1 AND (p.expires_at IS NULL OR p.expires_at > $1)
+        WHERE w.revoked_at IS NULL
+    `, [now]);
+    // share_policy is embedded into the mirror identity payload (SH-1 D4):
+    // { policy_id, scope_kind, expires_at } | null. Expiry is RE-CHECKED on
+    // read by every consumer (hub, worker-health) — a stale mirror can never
+    // extend a policy (§7.2). The partial unique index guarantees the LEFT
+    // JOIN can never fan out to more than one row per worker (D1).
+    for (const row of rows) {
+        row.share_policy = sharePolicySnapshot(row);
+    }
     return rows;
 }
 
@@ -314,6 +327,196 @@ async function revokeSystemWorker(workerId) {
     return { revoked: rowCount > 0, tokenHash: rows[0] ? rows[0].token_hash : null };
 }
 
+// ── SHARE POLICIES (Experimental Beta — SH-1, worker sharing V1) ──────────
+// A share policy is an ACCESS POLICY, not ownership: it lets a `private`
+// worker's spare capacity serve the system pool while the owner's private
+// lane keeps strict priority. mode NEVER changes (§3 of
+// worker-sharing-model-design.md). All mutators are workspace-scoped
+// (`WHERE workspace_id = $2`) — system workers are workspace-less and can
+// never match. V1 supports scope 'public' only (V2 widens the CHECK).
+
+const SHARE_POLICY_SCOPES = ['public']; // V1: public only; V2 widens to ('public','users')
+
+/**
+ * Normalize a share_policies row joined next to a worker row into the
+ * share_policy identity payload ({ policy_id, scope_kind, expires_at }) —
+ * the exact shape that rides the auth mirror / beacon registration (D4).
+ * Rows without policy columns (plain worker rows) yield null.
+ */
+function sharePolicySnapshot(row) {
+    if (!row || !row.policy_id) return null;
+    return {
+        policy_id: row.policy_id,
+        worker_id: row.worker_id,
+        scope_kind: row.scope_kind,
+        starts_at: row.starts_at != null ? Number(row.starts_at) : null,
+        expires_at: row.expires_at != null ? Number(row.expires_at) : null,
+    };
+}
+
+/** Public API shape of a policy row (owner view; never secrets). */
+function sharePolicyPublic(row) {
+    return {
+        policy_id: row.policy_id,
+        worker_id: row.worker_id,
+        workspace_id: row.workspace_id,
+        scope_kind: row.scope_kind,
+        starts_at: row.starts_at != null ? Number(row.starts_at) : null,
+        expires_at: row.expires_at != null ? Number(row.expires_at) : null,
+        revoked_at: row.revoked_at != null ? Number(row.revoked_at) : null,
+        note: row.note || null,
+        created_at: row.created_at != null ? Number(row.created_at) : null,
+    };
+}
+
+/**
+ * Start (or refresh) sharing: create the worker's single active share policy.
+ * The worker guard (owned by workspace, mode 'private', not revoked) and the
+ * insert are one INSERT..SELECT statement, so a concurrent revoke/purge
+ * cannot race between check and write. An active-but-EXPIRED policy is first
+ * materialized (revoked_at stamped — the auto-expiry marker) to free the D1
+ * unique slot. A still-active policy yields { conflict: true }.
+ *
+ * NOTE: the stamping runs as a SEPARATE statement — a data-modifying CTE
+ * shares its snapshot with the INSERT, which would not see the stamp and
+ * would trip the unique index. True concurrent starts are still safe: the
+ * partial unique index arbitrates (23505 → conflict).
+ *
+ * All policy activity comparisons use the backend clock (JS `now`), never
+ * PG NOW() — EXTRACT(EPOCH FROM NOW())::bigint ROUNDS to the nearest second
+ * and would place starts_at up to ~500ms in the future, making a fresh
+ * policy read as inactive.
+ *
+ * @param {object} opts
+ * @param {string} opts.workerId
+ * @param {string} opts.workspaceId - server-resolved caller workspace (never body)
+ * @param {number|null} opts.expiresAt - epoch ms or NULL = "until stopped" (D5)
+ * @param {string|null} opts.createdBy - user_id
+ * @returns {Promise<{policy:object}|{conflict:true}|{notFound:true}>}
+ */
+async function startSharePolicy({ workerId, workspaceId, expiresAt = null, createdBy = null }) {
+    if (!workerId || !workspaceId) return { notFound: true };
+    const now = Date.now();
+    if (expiresAt != null && (!Number.isFinite(expiresAt) || expiresAt <= now)) {
+        throw new Error('expiresAt must be a future epoch-ms timestamp or null');
+    }
+    // Auto-expiry materialization: an expired (revoked_at IS NULL,
+    // expires_at <= now) policy still occupies the unique slot — stamp it.
+    await query(`
+        UPDATE share_policies
+        SET revoked_at = $3
+        WHERE worker_id = $1 AND workspace_id = $2 AND revoked_at IS NULL
+          AND expires_at IS NOT NULL AND expires_at <= $3
+    `, [workerId, workspaceId, now]);
+    try {
+        const { rows } = await query(`
+            INSERT INTO share_policies (worker_id, workspace_id, scope_kind, starts_at, expires_at, created_by)
+            SELECT w.worker_id, w.workspace_id, 'public', $3, $4, $5
+            FROM workers w
+            WHERE w.worker_id = $1 AND w.workspace_id = $2
+              AND w.mode = 'private' AND w.revoked_at IS NULL
+            RETURNING policy_id, worker_id, workspace_id, scope_kind, starts_at, expires_at, revoked_at, note, created_at
+        `, [workerId, workspaceId, now, expiresAt, createdBy || null]);
+        if (!rows[0]) return { notFound: true }; // no worker matched (foreign/revoked/wrong mode)
+        return { policy: sharePolicyPublic(rows[0]) };
+    } catch (err) {
+        // 23505 = idx_share_policies_one_active violated: a still-active
+        // (non-expired) policy exists — one active policy per worker (D1).
+        if (err && (err.code === '23505' || String(err.message || '').includes('idx_share_policies_one_active'))) {
+            return { conflict: true };
+        }
+        throw err;
+    }
+}
+
+/**
+ * Stop sharing: soft-revoke the worker's current active policy
+ * (expires_at-agnostic — an expired-but-unstamped row is stamped too).
+ * Idempotent-ish: { stopped: false } when nothing was active. Workspace-
+ * scoped: a foreign worker never matches. Queue cleanup is NOT required
+ * (D6): consumer jobs live in the shared system pool, served by other pool
+ * workers; nothing is dropped, nothing is orphaned.
+ * @returns {Promise<{policy:object}|{stopped:false}|{notFound:true}>}
+ */
+async function stopSharePolicy(workerId, workspaceId) {
+    if (!workerId || !workspaceId) return { notFound: true };
+    const { rows: probe } = await query(`
+        SELECT 1 FROM workers WHERE worker_id = $1 AND workspace_id = $2 LIMIT 1
+    `, [workerId, workspaceId]);
+    if (!probe[0]) return { notFound: true };
+    const { rows } = await query(`
+        UPDATE share_policies
+        SET revoked_at = EXTRACT(EPOCH FROM NOW())::bigint * 1000
+        WHERE worker_id = $1 AND workspace_id = $2 AND revoked_at IS NULL
+        RETURNING policy_id, worker_id, workspace_id, scope_kind, starts_at, expires_at, revoked_at, note, created_at
+    `, [workerId, workspaceId]);
+    if (!rows[0]) return { stopped: false };
+    return { policy: sharePolicyPublic(rows[0]) };
+}
+
+/**
+ * Read the worker's ACTIVE policy for the OWNER (workspace-scoped, §7.3).
+ * Expiry is re-checked against the passed `now` — an expired row is not
+ * active even though revoked_at may still be NULL (read-time re-check).
+ * @returns {Promise<object|null>} public policy shape or null
+ */
+async function getActiveSharePolicy(workerId, workspaceId, now = Date.now()) {
+    if (!workerId || !workspaceId) return null;
+    const { rows } = await query(`
+        SELECT policy_id, worker_id, workspace_id, scope_kind, starts_at, expires_at, revoked_at, note, created_at
+        FROM share_policies
+        WHERE worker_id = $1 AND workspace_id = $2 AND revoked_at IS NULL
+          AND starts_at <= $3
+          AND (expires_at IS NULL OR expires_at > $3)
+        ORDER BY created_at DESC
+        LIMIT 1
+    `, [workerId, workspaceId, now]);
+    return rows[0] ? sharePolicyPublic(rows[0]) : null;
+}
+
+/**
+ * Active (expiry-checked) policy of one worker WITHOUT the workspace scope —
+ * internal use only (mirror point updates), callers are trusted backend code
+ * paths that already resolved the worker server-side.
+ * @returns {Promise<object|null>} { policy_id, worker_id, scope_kind, starts_at, expires_at } | null
+ */
+async function getActiveSharePolicyForWorker(workerId, now = Date.now()) {
+    if (!workerId) return null;
+    const { rows } = await query(`
+        SELECT policy_id, worker_id, scope_kind, starts_at, expires_at
+        FROM share_policies
+        WHERE worker_id = $1 AND revoked_at IS NULL
+          AND starts_at <= $2
+          AND (expires_at IS NULL OR expires_at > $2)
+        ORDER BY created_at DESC
+        LIMIT 1
+    `, [workerId, now]);
+    return rows[0] ? sharePolicySnapshot(rows[0]) : null;
+}
+
+/**
+ * Active worker row WITH its token_hash and (joined, expiry-checked) share
+ * policy — the complete mirror identity for a point update after a policy
+ * event. Null for revoked/unknown workers.
+ */
+async function findActiveByIdWithTokenHash(workerId, now = Date.now()) {
+    if (!workerId) return null;
+    const { rows } = await query(`
+        SELECT w.worker_id, w.workspace_id, w.name, w.worker_type, w.capabilities, w.mode, w.token_hash,
+               p.policy_id, p.scope_kind, p.starts_at, p.expires_at
+        FROM workers w
+        LEFT JOIN share_policies p
+            ON p.worker_id = w.worker_id AND p.revoked_at IS NULL
+           AND p.starts_at <= $2 AND (p.expires_at IS NULL OR p.expires_at > $2)
+        WHERE w.worker_id = $1 AND w.revoked_at IS NULL
+        LIMIT 1
+    `, [workerId, now]);
+    const row = rows[0];
+    if (!row) return null;
+    row.share_policy = sharePolicySnapshot(row);
+    return row;
+}
+
 /** Best-effort liveness mirror from heartbeats (Settings UI). */
 async function touchLastSeen(workerId) {
     try {
@@ -325,6 +528,7 @@ module.exports = {
     TOKEN_PREFIX,
     WORKER_TYPES,
     WORKER_MODES,
+    SHARE_POLICY_SCOPES,
     parseToken,
     generateCredential,
     createWorker,
@@ -341,4 +545,10 @@ module.exports = {
     purgeWorker,
     revokeSystemWorker,
     touchLastSeen,
+    startSharePolicy,
+    stopSharePolicy,
+    getActiveSharePolicy,
+    getActiveSharePolicyForWorker,
+    findActiveByIdWithTokenHash,
+    sharePolicyPublic,
 };

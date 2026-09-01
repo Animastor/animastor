@@ -19,8 +19,29 @@
 //                                       both count as global capacity;
 //   mode 'private' + workspace_id set → PRIVATE worker — visible/countable
 //                                       ONLY for its owning workspace;
+//   mode 'private' + active public share policy (SH-1, D3)
+//                                     → PRIVATE **and** global capacity
+//                                       (double count is the normative D3
+//                                       decision — see below);
 //   anything else (mode missing/unknown, private without workspace)
 //                                     → UNAUTHORIZED — counted NOWHERE.
+//
+// D3 (worker-sharing-model-design.md §7.4): `system.*` is a CAPACITY
+// indicator — "workers currently able to serve the system pool" — NOT a
+// physical inventory. A private worker with an active public share policy
+// genuinely is able to serve the system pool, so it counts in BOTH the
+// owner's private_* bucket and the global pool. Restated invariant:
+// "a private worker WITHOUT an active public policy is never in the global
+// count". Policy-LESS heartbeats are classified exactly as before — the
+// share_policy field is optional (forward/backward compatibility).
+//
+// The marker must come from a hub that ran with the kill-switch ON: the hub
+// only ever writes `share_policy` into heartbeats when SHARE_FEATURES_ENABLED
+// is on and the policy is active — so a disabled switch degrades counts to
+// today's behavior automatically.
+//
+// Expiry is re-checked on read (expires_at carried in the marker): a stale
+// heartbeat cannot extend a policy past its expires_at.
 // A missing/invalid credential never becomes SYSTEM or SHARE: the hub no
 // longer writes scope-less heartbeats, and this module refuses to count
 // them as defense-in-depth.
@@ -91,12 +112,33 @@ async function scanFreshHeartbeats(redis, type) {
 }
 
 /**
+ * SH-1 (D3): is the heartbeat's optional share_policy marker ACTIVE at
+ * read time? Fail closed: malformed marker, non-public scope, an
+ * expires_at in the past (relative to the read — a stale marker can never
+ * extend a policy) or the kill-switch OFF (bit-for-bit today's counting,
+ * §8.7 — stale marker heartbeats left over from a flag flip are ignored)
+ * → not active.
+ */
+function hasActiveSharePolicyMarker(entry, now = Date.now()) {
+    if (config.shareFeaturesEnabled() !== true) return false; // kill-switch
+    const p = entry && entry.share_policy;
+    if (!p || typeof p !== 'object') return false;
+    if (p.scope_kind !== 'public') return false; // V1: public only
+    if (p.expires_at == null) return true;       // NULL = "until stopped"
+    return Number(p.expires_at) > now;           // expiry re-checked on read
+}
+
+/**
  * Global capacity scope: Animastor-operated SYSTEM workers and volunteered
  * SHARE workers. FAIL CLOSED: a heartbeat without an explicit mode is NEVER
  * global capacity — it is UNAUTHORIZED and counted nowhere.
+ * D3: a policy-active PRIVATE worker is able to serve the system pool and
+ * therefore counts as global capacity too (double count with private_*).
  */
-function isSystemScope(entry) {
-    return entry.mode === 'system' || entry.mode === 'share';
+function isSystemScope(entry, now = Date.now()) {
+    if (entry.mode === 'system' || entry.mode === 'share') return true;
+    if (entry.mode === 'private' && hasActiveSharePolicyMarker(entry, now)) return true;
+    return false;
 }
 
 /** PRIVATE scope of exactly one workspace (share/system are never private). */
@@ -116,12 +158,12 @@ function countWhere(entries, pred, busyOnly = false) {
 
 /**
  * Global/system capacity: alive workers serving the common pool.
- * PRIVATE workers of ANY workspace are never counted here —
- * ONLINE ≠ available to everyone.
+ * PRIVATE workers without an active public policy are never counted here —
+ * ONLINE ≠ available to everyone. Policy-active private workers count (D3).
  */
 async function getAliveCount(redis, type) {
     const entries = await scanFreshHeartbeats(redis, type);
-    return countWhere(entries, isSystemScope);
+    return countWhere(entries, (e) => isSystemScope(e, Date.now()));
 }
 
 /** Alive PRIVATE workers of one workspace (never visible to other workspaces). */
@@ -134,7 +176,7 @@ async function getPrivateAliveCount(redis, type, workspaceId) {
 /** Busy (current_job_id set) workers of the system/shared pool. */
 async function getBusyCount(redis, type) {
     const entries = await scanFreshHeartbeats(redis, type);
-    return countWhere(entries, isSystemScope, true);
+    return countWhere(entries, (e) => isSystemScope(e, Date.now()), true);
 }
 
 /** Busy PRIVATE workers of one workspace. */
@@ -146,19 +188,22 @@ async function getPrivateBusyCount(redis, type, workspaceId) {
 
 /**
  * One-pass availability snapshot for a caller (single SCAN per type):
- *   system.*  — the global/shared pool (what every caller may use);
+ *   system.*  — the global/shared pool (what every caller may use); per D3
+ *               this includes policy-active private workers of ANY owner;
  *   private.* — the caller's OWN private workers (null workspace → zeros).
- * Foreign private workers appear in NEITHER bucket.
+ * Foreign private workers appear in the system buckets ONLY when they carry
+ * an active public share policy (D3) — never in this caller's private.*.
  */
 async function getAvailability(redis, workspaceId = null) {
     const out = {
         system: {}, system_busy: {},
         private: {}, private_busy: {},
     };
+    const now = Date.now();
     for (const type of config.WORKER_HEARTBEAT_TYPES) {
         const entries = await scanFreshHeartbeats(redis, type);
-        out.system[type] = countWhere(entries, isSystemScope);
-        out.system_busy[type] = countWhere(entries, isSystemScope, true);
+        out.system[type] = countWhere(entries, (e) => isSystemScope(e, now));
+        out.system_busy[type] = countWhere(entries, (e) => isSystemScope(e, now), true);
         out.private[type] = countWhere(entries, (e) => isPrivateScopeOf(e, workspaceId));
         out.private_busy[type] = countWhere(entries, (e) => isPrivateScopeOf(e, workspaceId), true);
     }
@@ -184,7 +229,8 @@ async function getStatus(redis) {
  */
 async function isAvailable(redis, type, workspaceId = null) {
     const entries = await scanFreshHeartbeats(redis, type);
-    if (countWhere(entries, isSystemScope) > 0) return true;
+    const now = Date.now();
+    if (countWhere(entries, (e) => isSystemScope(e, now)) > 0) return true;
     if (!workspaceId) return false;
     return countWhere(entries, (e) => isPrivateScopeOf(e, workspaceId)) > 0;
 }

@@ -41,13 +41,34 @@ function toAuthenticatedWorker(row) {
     };
 }
 
+/**
+ * Mirror value for one credential. SH-1 (worker sharing V1): the payload
+ * gains an OPTIONAL `share_policy` field — the active-policy fact travels to
+ * the hub the same way `mode` does (D4):
+ *
+ *   share_policy: { policy_id, scope_kind, expires_at } | null
+ *
+ * PG is the ONLY source of truth; this mirror is a cache (point updates on
+ * policy events + periodic resync). expires_at is carried so every consumer
+ * can re-check expiry ON READ — a stale mirror can never extend a policy
+ * (§7.2). Old hub builds ignore the field; workers without a policy keep a
+ * byte-identical value (the field is null, matching the optional contract).
+ */
 function mirrorValue(row) {
+    const sharePolicy = row.share_policy
+        ? {
+            policy_id: row.share_policy.policy_id,
+            scope_kind: row.share_policy.scope_kind,
+            expires_at: row.share_policy.expires_at != null ? Number(row.share_policy.expires_at) : null,
+        }
+        : null;
     return JSON.stringify({
         worker_id: row.worker_id,
         workspace_id: row.workspace_id,
         worker_type: row.worker_type,
         mode: row.mode,
         name: row.name,
+        share_policy: sharePolicy,
     });
 }
 
@@ -139,6 +160,27 @@ async function mirrorDrop(redis, tokenHashes) {
 }
 
 /**
+ * Point update by WORKER id (SH-1): rebuild one worker's mirror entry from
+ * PG — worker identity + its active (expiry-checked) share policy. Called
+ * after a policy event (start/stop sharing) so the hub sees the change
+ * immediately; the periodic resync heals any drift. No-op (heals via resync)
+ * when the worker is revoked/unknown — its credential entry is already gone.
+ * @returns {Promise<boolean>} true when the mirror entry was rewritten
+ */
+async function mirrorPutWorkerById(redis, workerId) {
+    if (!redis || !workerId) return false;
+    try {
+        const row = await workerRepo.findActiveByIdWithTokenHash(workerId);
+        if (!row || !row.token_hash) return false;
+        await redis.hset(WORKER_AUTH_MIRROR_KEY, row.token_hash, mirrorValue(row));
+        return true;
+    } catch (err) {
+        console.warn('[WORKER-AUTH] mirror point update failed (healed by next resync):', err.message);
+        return false;
+    }
+}
+
+/**
  * Start the periodic mirror resync (startup rebuild + interval). Returns a
  * stop function. Non-fatal: failures only log.
  */
@@ -167,6 +209,7 @@ module.exports = {
     syncWorkerAuthMirror,
     mirrorPut,
     mirrorDrop,
+    mirrorPutWorkerById,
     startWorkerAuthMirrorSync,
     toAuthenticatedWorker,
 };

@@ -47,6 +47,22 @@ const config = require('../config/runtime-config');
 const MAX_NAME_LEN = 120;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Kill-switch (SH-1): share-policy routes exist only when the flag is on. */
+function shareFeaturesEnabled() {
+    return config.shareFeaturesEnabled() === true;
+}
+
+/**
+ * Kill-switch OFF → the endpoints answer 404 exactly as if they did not
+ * exist (bit-for-bit pre-sharing behavior, §8.7 of the design doc). The
+ * check runs BEFORE authentication: with the flag off there is no surface
+ * at all — anonymous and authenticated callers see the same dead endpoint.
+ */
+function shareDisabledGuard(res) {
+    res.status(404).json({ error: 'Not found' });
+    return null;
+}
+
 /** Users-only guard; returns the caller's workspace id or answers 401/403. */
 function userWorkspaceGuard(req, res) {
     if (!req.user) {
@@ -242,10 +258,18 @@ module.exports = function(app, redis) {
                 return res.status(404).json({ error: 'Worker not found' });
             }
             await workerAuth.mirrorDrop(redis, [result.previousTokenHash]);
-            await workerAuth.mirrorPut(redis, {
-                ...result.worker,
-                token_hash: workerRepo.parseToken(result.token).secretHash,
-            });
+            // SH-1: rebuild the mirror entry from PG (identity + active share
+            // policy) — a plain mirrorPut with the rotation row would drop the
+            // policy until the next resync.
+            const mirrored = await workerAuth.mirrorPutWorkerById(redis, req.params.workerId);
+            if (!mirrored) {
+                // Defense in depth (non-fatal — the periodic resync heals):
+                // fall back to the direct point update with the new hash.
+                await workerAuth.mirrorPut(redis, {
+                    ...result.worker,
+                    token_hash: workerRepo.parseToken(result.token).secretHash,
+                });
+            }
             res.json({ worker: await publicWorker(redis, result.worker), token: result.token });
         } catch (err) {
             console.error('[WORKERS] rotate failed:', err.message);
@@ -317,6 +341,131 @@ module.exports = function(app, redis) {
         } catch (err) {
             console.error('[WORKERS] purge failed:', err.message);
             res.status(500).json({ error: 'Failed to delete worker' });
+        }
+    });
+
+    // ── SH-1: share policy management (worker sharing V1) ────────────────
+    // Kill-switch-gated (SHARE_FEATURES_ENABLED, default OFF) thin wrappers
+    // over the share_policies table (§7.3 of worker-sharing-model-design.md):
+    //
+    //   POST   /api/v1/workers/:workerId/share — start public sharing
+    //   DELETE /api/v1/workers/:workerId/share — stop sharing
+    //   GET    /api/v1/workers/:workerId/share — current policy (owner view)
+    //
+    // Authorization: workspace-scoped via userWorkspaceGuard + WHERE
+    // workspace_id = $2 SQL predicates — a foreign/unknown worker id 404s
+    // indistinctly (no existence oracle), and workspace-less SYSTEM workers
+    // can never match (the same structural property that protects every
+    // other workspace-scoped route). Only mode='private' workers can carry a
+    // policy (a 'share' worker's lane IS the community pool already; a
+    // policy would be meaningless). Sharing never changes the worker's mode
+    // or ownership (§3): the private lane keeps strict priority.
+    //
+    // Stop sharing requires NO queue cleanup (D6): consumer jobs sit in the
+    // shared system pool, served by other pool workers; running jobs finish
+    // normally (the claim is bound to the credential, not the policy).
+
+    // ── POST start sharing (single active policy; worker-addressed, D7) ──
+    app.post('/api/v1/workers/:workerId/share', async (req, res) => {
+        if (!shareFeaturesEnabled()) return shareDisabledGuard(res);
+        const workspaceId = userWorkspaceGuard(req, res);
+        if (!workspaceId) return;
+        if (!UUID_RE.test(req.params.workerId)) {
+            return res.status(404).json({ error: 'Worker not found' });
+        }
+        // Body: { expires_at?: <epoch ms>|null }. Scope is NOT client-
+        // supplied — V1 is public-only server-side (no spoofing surface).
+        const body = req.body || {};
+        let expiresAt = null;
+        if (body.expires_at !== undefined && body.expires_at !== null) {
+            if (typeof body.expires_at !== 'number' || !Number.isInteger(body.expires_at)) {
+                return res.status(400).json({
+                    error: 'expires_at must be an epoch-milliseconds integer or null',
+                    code: 'invalid_expires_at',
+                });
+            }
+            if (body.expires_at <= Date.now()) {
+                return res.status(400).json({
+                    error: 'expires_at must be in the future',
+                    code: 'expires_at_in_past',
+                });
+            }
+            expiresAt = body.expires_at;
+        }
+        try {
+            const result = await workerRepo.startSharePolicy({
+                workerId: req.params.workerId,
+                workspaceId, // server-resolved — never from the body
+                expiresAt,
+                createdBy: req.user.userId,
+            });
+            if (result.notFound) {
+                // Unknown id, foreign workspace, revoked worker or a
+                // non-private mode — one indistinct answer (no existence
+                // oracle for other workspaces' workers).
+                return res.status(404).json({ error: 'Worker not found' });
+            }
+            if (result.conflict) {
+                // D1: one active policy per worker — stop first (or wait for
+                // the running one to expire).
+                return res.status(409).json({
+                    error: 'Worker is already shared — stop sharing first',
+                    code: 'share_already_active',
+                });
+            }
+            // Identity payload (mirror) gains the policy immediately (D4) —
+            // the hub sees the change on the worker's next claim; the
+            // periodic resync would heal it anyway.
+            await workerAuth.mirrorPutWorkerById(redis, req.params.workerId);
+            res.status(201).json({ sharing: true, policy: result.policy });
+        } catch (err) {
+            console.error('[WORKERS] share start failed:', err.message);
+            res.status(500).json({ error: 'Failed to start sharing' });
+        }
+    });
+
+    // ── DELETE stop sharing (idempotent end-state; no queue cleanup) ─────
+    app.delete('/api/v1/workers/:workerId/share', async (req, res) => {
+        if (!shareFeaturesEnabled()) return shareDisabledGuard(res);
+        const workspaceId = userWorkspaceGuard(req, res);
+        if (!workspaceId) return;
+        if (!UUID_RE.test(req.params.workerId)) {
+            return res.status(404).json({ error: 'Worker not found' });
+        }
+        try {
+            const result = await workerRepo.stopSharePolicy(req.params.workerId, workspaceId);
+            if (result.notFound) {
+                return res.status(404).json({ error: 'Worker not found' });
+            }
+            // Nothing was active → the end state is already achieved.
+            await workerAuth.mirrorPutWorkerById(redis, req.params.workerId);
+            res.json({ sharing: false, stopped: !!result.policy });
+        } catch (err) {
+            console.error('[WORKERS] share stop failed:', err.message);
+            res.status(500).json({ error: 'Failed to stop sharing' });
+        }
+    });
+
+    // ── GET current policy (owner view) ──────────────────────────────────
+    app.get('/api/v1/workers/:workerId/share', async (req, res) => {
+        if (!shareFeaturesEnabled()) return shareDisabledGuard(res);
+        const workspaceId = userWorkspaceGuard(req, res);
+        if (!workspaceId) return;
+        if (!UUID_RE.test(req.params.workerId)) {
+            return res.status(404).json({ error: 'Worker not found' });
+        }
+        try {
+            const row = await workerRepo.findById(req.params.workerId);
+            if (!row || row.workspace_id !== workspaceId) {
+                // Foreign/unknown — one indistinct answer (no existence oracle).
+                return res.status(404).json({ error: 'Worker not found' });
+            }
+            // Expiry re-checked on read: an expired policy is not active.
+            const policy = await workerRepo.getActiveSharePolicy(req.params.workerId, workspaceId);
+            res.json({ sharing: !!policy, policy: policy || null });
+        } catch (err) {
+            console.error('[WORKERS] share read failed:', err.message);
+            res.status(500).json({ error: 'Failed to load sharing state' });
         }
     });
 

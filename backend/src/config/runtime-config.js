@@ -211,6 +211,24 @@ const WORKER_HEARTBEAT_KEY = (type, workerId) => `${WORKER_HEARTBEAT_PREFIX}:${t
 const WORKER_HEARTBEAT_TYPE_PATTERN = (type) => `${WORKER_HEARTBEAT_PREFIX}:${type}:*`;
 
 // ======================================================
+// WORKER SHARING V1 — KILL-SWITCH (SH-1)
+// ======================================================
+// SHARE_FEATURES_ENABLED gates the share-policy routes (§7.3) and — on the
+// gpu-hub side (its own env copy, SYNC comment in gpu-hub/gpu-hub.js) — the
+// lane-priority step-2 pop (§7.2). DEFAULT OFF (§8.7): disabling returns the
+// system bit-for-bit to pre-sharing behavior (routes answer 404 as if the
+// endpoints do not exist; the hub never pops the system pool for private
+// workers; heartbeats never carry the share_policy marker).
+//
+// Read LAZILY on every call (not cached at module load) so the kill-switch
+// can be flipped by changing the env of a running process (and so tests can
+// exercise both states in one run).
+function shareFeaturesEnabled() {
+    const v = process.env.SHARE_FEATURES_ENABLED;
+    return v === '1' || v === 'true' || v === 'on';
+}
+
+// ======================================================
 // GPU HUB
 // ======================================================
 // T9: Единое имя env для API-ключа GPU Hub.
@@ -287,6 +305,9 @@ module.exports = {
     WORKER_HEARTBEAT_TYPES,
     WORKER_HEARTBEAT_KEY,
     WORKER_HEARTBEAT_TYPE_PATTERN,
+
+    // Worker sharing V1 (kill-switch, default OFF)
+    shareFeaturesEnabled,
 
     // GPU Hub
     GPU_HUB_API_KEY,

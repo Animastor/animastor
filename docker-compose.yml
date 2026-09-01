@@ -79,6 +79,10 @@ services:
       # real chunk durations to <scene>.chunk-durations.json before merge
       - AUDIO_CLEANUP_TAIL_ONLY=${AUDIO_CLEANUP_TAIL_ONLY:-}
       - TRACK_CHUNK_DURATIONS=${TRACK_CHUNK_DURATIONS:-}
+      # SH-1 kill-switch (worker sharing V1) — DEFAULT OFF. When off, the
+      # share-policy routes answer 404 and the system behaves exactly as
+      # before. Must match the gpu-hub section value.
+      - SHARE_FEATURES_ENABLED=${SHARE_FEATURES_ENABLED:-0}
     volumes:
       - ./workflow.json:/workflow.json:ro
       - ./data/output:/data/output
@@ -106,6 +110,11 @@ services:
       # S3.4: GPU task hard timeout (ms, must be < min backend dispatch-lease TTL).
       # Default: 600000 = 10 min. Override per-deployment if GPU stop is set longer.
       - GPU_TIMEOUT=${GPU_TIMEOUT:-600000}
+      # SH-1 kill-switch (worker sharing V1) — DEFAULT OFF. Gates the hub's
+      # lane-priority step-2 pop (private worker borrowing the system pool)
+      # and the share_policy heartbeat markers. Must match the backend
+      # section value.
+      - SHARE_FEATURES_ENABLED=${SHARE_FEATURES_ENABLED:-0}
     volumes:
       # Experimental Beta onboarding: hub serves worker.cjs at GET /gpu/worker-source
       # (self-contained file, no secrets — same as worker/worker/worker.cjs).

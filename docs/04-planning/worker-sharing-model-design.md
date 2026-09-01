@@ -1,7 +1,9 @@
 # Worker Sharing Model — Design Document (v2)
 
 > 2026-08-31 · Revision 2 — clarified & simplified before implementation.
-> Research / design only — **no production code or database changes**.
+> 2026-09-01 · **V1 (§13.1) implemented** behind the `SHARE_FEATURES_ENABLED`
+> kill-switch (default OFF — the shipped behavior is bit-for-bit identical to
+> pre-sharing until the flag is enabled).
 > Companion to `shared-workers-feature-report.md` (minimum shared-worker
 > visibility change; separate feature).
 >
@@ -469,18 +471,18 @@ global counts that already exist.
 
 ### 13.1 What to implement first (smallest safe V1)
 
-1. `share_policies` table (§5.1) + migrations.
+1. `share_policies` table (§5.1) + migrations. — **IMPLEMENTED (SH-1)**
 2. Policy read/refresh helper in `worker-repo` (single indexed query:
-   active policy for worker; expiry-checked).
-3. `POST/DELETE/GET /workers/:id/share` routes (§7.3), flag-gated.
+   active policy for worker; expiry-checked). — **IMPLEMENTED**
+3. `POST/DELETE/GET /workers/:id/share` routes (§7.3), flag-gated. — **IMPLEMENTED**
 4. Hub: mirror/beacon carries `share_policy`; pop gains step 2
    (§7.2); heartbeat payload optional field; `worker-health` counts
-   policy-active private workers in the global pool (D3).
-5. Web + Android owner controls (§10) — badge, start/stop, presets.
+   policy-active private workers in the global pool (D3). — **IMPLEMENTED**
+5. Web + Android owner controls (§10) — badge, start/stop, presets. — **NOT YET** (client follow-up; the API is flag-gated and dormant)
 6. Tests: policy CRUD authz matrix (owner yes / foreign 404 / system
    unreachable), hub pop precedence, expiry re-check, mirror staleness
    ≤ TTL, kill-switch off = today's behavior exactly, counts invariant
-   (D3).
+   (D3). — **IMPLEMENTED** (`backend/tests/worker-share-policy.test.js`)
 
 ### 13.2 What explicitly NOT to implement yet
 
@@ -495,6 +497,8 @@ global counts that already exist.
 - Dedicated audit tables (V1 logs via existing patterns).
 - `workers.has_active_share_policy` generated column.
 - Any consumer-facing "who served my book" UI.
+- "Shared with me", notifications, personal grants, groups (§14 — locked
+  V2+ requirements, designed-for but deliberately absent in V1).
 
 ### 13.3 Existing Animastor functionality reused (unchanged)
 
@@ -520,6 +524,71 @@ system workers untouched, and zero dispatch-path changes.
 The D1–D8 table in §12. D3 (counts invariant relaxation) and D4 (mirror
 transport) are the two with real behavioral risk; both need signed-off
 tests before the flag is ever enabled.
+
+---
+
+## 14. V1 Scope Evolution Map & Locked V2 Architectural Requirements
+
+> Fixed 2026-09-01, together with the V1 implementation. These are
+> **architectural boundaries, not tasks**: nothing in this section is
+> implemented now, and nothing V1 does may close these doors.
+
+### 14.1 Scope evolution (the same mechanism, widening audiences)
+
+| Version | Sharing shape | Mechanism |
+|---|---|---|
+| **V1** | private Worker → **public** (everyone) | `share_policies(scope_kind='public')` — implemented |
+| **V2** | private Worker → **specific users** | `scope_kind` CHECK widens to `('public','users')` + `share_policy_grants` (audience rows); one-line migration, not a redesign |
+| **V3** | private Worker → **groups** | `scope_kind` widens further; groups ride the same policy/grant shape |
+
+The V1 design deliberately keeps this seam open: `scope_kind` is a
+CHECK-constrained enum (V2/V3 extend it), the policy is worker-addressed
+with a single active row (D7 — revisit only if V2 needs parallel
+policies), and nothing in the dispatch/claim path ever names an audience.
+
+### 14.2 "Shared with me" — discoverability requirement (V2, normative)
+
+A **personal** share (V2: shared with a specific user) must be
+discoverable by the recipient through MORE than the aggregate community
+list. The following concepts must exist at V2 and must be designable now:
+
+1. **"Shared with me"** — a persistent, per-user list of resources
+   shared with that user. It is a standing view (derivable from
+   grants/policies at any time), NOT a transient notification feed that
+   disappears after reading.
+2. **Notification/event** — a message of the form
+   «пользователь X поделился с вами ресурсом Y» delivered when a share
+   targeting the user begins. The event is the *trigger*; the
+   "Shared with me" list is the *state*.
+3. **Access reason** — every "Shared with me" entry carries WHY the
+   resource is accessible, with exactly three reasons:
+   - `shared by user` (personal share, V2);
+   - `available through group` (group share, V3);
+   - `public` (community pool, V1).
+
+The UI/UX of these concepts is out of scope here; what is locked is that
+V2's API surface must be able to answer, per user: *"which resources are
+shared with me, and why?"*
+
+### 14.3 Resource-agnostic requirement (normative)
+
+The sharing/discoverability mechanism is NOT Workers-specific. The same
+mechanism must remain applicable to **AI Agents, LLM providers, and any
+future shareable resource type**:
+
+- the conceptual seam is
+  `(resource kind, resource id, audience, reason, lifetime)` — never a
+  Workers-only table family or API shape;
+- V1's `share_policies` is the *Workers instance* of that seam; V2's
+  `share_policy_grants`, the "Shared with me" list and notifications are
+  the GENERIC layer; each resource type adds only a thin adapter
+  (eligibility resolution + naming);
+- no V1 construct may hard-code "worker" semantics into the future
+  generic layer (e.g. no heartbeat/queue concepts may leak into grants).
+
+**Not implemented now** (and not blocking V1): notifications, groups,
+personal grants, the "Shared with me" list. §5.2 / §13.2 lists remain
+normative for V1.
 
 ---
 
