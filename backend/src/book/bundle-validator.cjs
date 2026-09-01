@@ -174,6 +174,22 @@ function validateChapters(chapters, errors) {
             if (typeof sid === 'string' && !SCENE_ID_RE.test(sid)) {
                 errors.push(`${sceneLabel}: invalid scene_id "${sid}" (expected: sc-XXXXXXXX)`);
             }
+            // participants must be an array of character_id strings — never a
+            // display name, never a bare string, never a wrapped object
+            // ({"item": [...]} — a model hallucination that previously slipped
+            // through and corrupted the book's canonical state).
+            const participants = scene.participants;
+            if (participants !== undefined && participants !== null) {
+                if (!Array.isArray(participants)) {
+                    errors.push(`${sceneLabel}: participants must be an array of character_id strings (got ${Array.isArray(participants) ? 'array' : typeof participants})`);
+                } else {
+                    participants.forEach((p, pi) => {
+                        if (typeof p !== 'string' || !p.trim()) {
+                            errors.push(`${sceneLabel}/participants[${pi}]: must be a non-empty character_id string`);
+                        }
+                    });
+                }
+            }
             for (const unit of collectSceneUnits(scene)) {
                 if (!UNIT_ID_RE.test(unit.id)) {
                     errors.push(`${sceneLabel}: invalid unit id "${unit.id}" (expected: iu-XXXXXXXX)`);
@@ -210,6 +226,31 @@ function validateBundleObject(book) {
 }
 
 /**
+ * Lightweight per-chapter-file check: only validates scene.participants
+ * structural shape. Unlike validateChapters (used by validateBundleObject),
+ * this does NOT check chapter_id / scene_id regex format — those are
+ * enforced by the full-book path and per-file checks would break existing
+ * fixtures that use short test IDs like "ch-aaa", "sc-111".
+ */
+function validateSceneParticipantsOnly(chapter, errors) {
+    if (!chapter || typeof chapter !== 'object' || Array.isArray(chapter)) return;
+    const label = 'chapter (per-file)';
+    (chapter.scenes || []).forEach((scene, si) => {
+        const participants = scene.participants;
+        if (participants === undefined || participants === null) return;
+        if (!Array.isArray(participants)) {
+            errors.push(`${label}/scenes[${si}]: participants must be an array of character_id strings (got ${Array.isArray(participants) ? 'array' : typeof participants})`);
+        } else {
+            participants.forEach((p, pi) => {
+                if (typeof p !== 'string' || !p.trim()) {
+                    errors.push(`${label}/scenes[${si}]/participants[${pi}]: must be a non-empty character_id string`);
+                }
+            });
+        }
+    });
+}
+
+/**
  * Validate one resource value before it is written to a bundle JSON file.
  * Used by saveBookBundle as a last line of defense right before writeFileSync.
  * @param {string} filename - target file name (e.g. 'voices.json')
@@ -230,6 +271,9 @@ function validateBundleFile(filename, data) {
     else if (name === 'behavior.json') validateBehaviors(data, errors);
     else if (name === 'bible.json') {
         if (data !== null && !isPlainObject(data)) errors.push('bible.json: must be a JSON object');
+    }
+    else if (name === 'chapter.json' || name.startsWith('ch-')) {
+        validateSceneParticipantsOnly(data, errors);
     }
     return { valid: errors.length === 0, errors };
 }

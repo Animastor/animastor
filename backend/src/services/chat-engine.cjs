@@ -23,6 +23,11 @@ module.exports = function(config) {
             'You are an Editor. You can modify scenes, characters, locations, behavior, and book structure.',
             'Use the `edit_book` tool to apply changes. Always confirm changes with the user before applying.',
             '',
+            '## Scene Participants',
+            '`scene.participants` is ALWAYS a JSON array of character_id strings taken from `characters.json` — never display names, never a bare string, never an object like {"item": ...}.',
+            'Example: `["yura", "svetlana"]` — NOT `["Юра", "yura"]` and NOT `{"item": ["yura", "svetlana"]}`.',
+            'When the user asks to fix participants across the whole book, apply the change to EVERY scene in EVERY chapter — do not stop after one scene. List one patch per affected scene.',
+            '',
             '## Character Behavior',
             'Each character can have a Behavior entry in the book data under `behaviors` (keyed by character_id).',
             'Behavior describes HOW a character acts — their mannerisms, habits, and reactions.',
@@ -405,17 +410,78 @@ module.exports = function(config) {
         return { result, errors };
     }
 
+    // ── Deterministic scene-participants guard ─────────
+    // Models frequently produce `scene.participants` in the wrong shape when
+    // editing (e.g. {"item": [...]} — a JSON-Schema `items` hallucination, or
+    // display names ["Юра","yura"] instead of IDs). Left alone, those values
+    // would either corrupt the canonical state ({"item": ...} passed the old
+    // contract check) or leave the user's "IDs only" request half-done.
+    // This normalizer runs over EVERY scene after patches are applied, so a
+    // partial or malformed model patch can never leave the field broken:
+    //   - {"item": x}            → unwrapped to x
+    //   - bare string            → wrapped into an array
+    //   - display name (Юра)     → mapped to its character_id (yura)
+    //   - duplicates             → removed, order preserved
+    function normalizeBookParticipants(book) {
+        if (!book || !Array.isArray(book.chapters)) return book;
+        const lookup = new Map();
+        if (Array.isArray(book.characters)) {
+            for (const ch of book.characters) {
+                if (!ch || typeof ch !== 'object') continue;
+                const id = ch.id;
+                if (typeof id === 'string' && id) {
+                    lookup.set(id.toLowerCase(), id);
+                    if (typeof ch.name === 'string' && ch.name) {
+                        lookup.set(ch.name.toLowerCase(), id);
+                    }
+                }
+            }
+        }
+        const normalizeOne = (value) => {
+            if (value === null || value === undefined) return value;
+            let arr;
+            if (typeof value === 'object' && !Array.isArray(value) && value.item !== undefined) {
+                arr = value.item;
+            } else {
+                arr = value;
+            }
+            if (typeof arr === 'string') arr = [arr];
+            if (!Array.isArray(arr)) return value; // unfixable — left for the validator to reject
+            const out = [];
+            for (const item of arr) {
+                if (typeof item !== 'string') continue;
+                const s = item.trim();
+                if (!s) continue;
+                const resolved = lookup.get(s.toLowerCase()) || s;
+                if (!out.includes(resolved)) out.push(resolved);
+            }
+            return out;
+        };
+        for (const chapter of book.chapters) {
+            if (!chapter || typeof chapter !== 'object' || !Array.isArray(chapter.scenes)) continue;
+            for (const scene of chapter.scenes) {
+                if (scene && typeof scene === 'object' && 'participants' in scene) {
+                    scene.participants = normalizeOne(scene.participants);
+                }
+            }
+        }
+        return book;
+    }
+
     // ── Patch application with bundle-contract validation ──
-    // Pipeline: AI patch → apply ops → validate contract → only a valid
-    // result is returned as candidate canonical state. On violation the
-    // result is withheld (null) so no caller can persist broken JSON;
-    // errors name the failing file/resource so the assistant (or the user)
-    // can issue a corrective patch in the next turn.
+    // Pipeline: AI patch → apply ops → normalize participants → validate
+    // contract → only a valid result is returned as candidate canonical
+    // state. On violation the result is withheld (null) so no caller can
+    // persist broken JSON; errors name the failing file/resource so the
+    // assistant (or the user) can issue a corrective patch in the next turn.
     function applyPatchesValidated(obj, patches) {
         const { result, errors } = applyPatches(obj, patches);
         if (errors.length > 0) {
             return { result: null, errors, validation_errors: [] };
         }
+        // Deterministic guard: unwrap {"item": x}, map names → character_id,
+        // dedupe — across ALL scenes, not just the ones the model patched.
+        normalizeBookParticipants(result);
         const validation = validateBundleObject(result);
         if (!validation.valid) {
             return {
@@ -440,6 +506,7 @@ module.exports = function(config) {
         resolvePath,
         applyPatches,
         applyPatchesValidated,
+        normalizeBookParticipants,
         validateBundleObject,
         toolDefinitions: {
             EDIT_BOOK_TOOL,
