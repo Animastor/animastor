@@ -35,8 +35,8 @@ interface AssistantModeDef {
 
 const MODES: AssistantModeDef[] = [
   { id: 'conversation', titleKey: 'ai_mode_conversation', descKey: 'ai_mode_conversation_desc', Icon: IconSparkle },
-  { id: 'import', titleKey: 'ai_mode_import', descKey: 'ai_mode_import_desc', Icon: IconDownload },
   { id: 'edit', titleKey: 'ai_mode_edit', descKey: 'ai_mode_edit_desc', Icon: IconEdit },
+  { id: 'import', titleKey: 'ai_mode_import', descKey: 'ai_mode_import_desc', Icon: IconDownload },
   { id: 'director', titleKey: 'ai_mode_director', descKey: 'ai_mode_director_desc', Icon: IconMap },
   { id: 'extraction', titleKey: 'ai_mode_extraction', descKey: 'ai_mode_extraction_desc', Icon: IconFile },
   { id: 'validation', titleKey: 'ai_mode_validation', descKey: 'ai_mode_validation_desc', Icon: IconCheck },
@@ -529,5 +529,8 @@ function buildToolResultMessage(res: AiChatResponse): string {
   parts.push(...errors.map((t) => `⚠️ ${t.tool}: ${t.error}`));
   parts.push(...successes.map((t) =>
     t.applied != null && t.applied > 0 ? `✅ ${t.tool}: ${t.applied} change(s) applied` : `✅ ${t.tool}: ${t.result ?? 'done'}`));
-  return parts.length ? parts.join('\n') : '🤖 Tool executed.';
+  // No patches, no tool results, no visible reply — the model produced
+  // nothing usable (e.g. all tokens spent on reasoning). Honest retry hint
+  // instead of the old misleading 'Tool executed.' ghost message.
+  return parts.length ? parts.join('\n') : t('ai_no_result');
 }
