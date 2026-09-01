@@ -163,8 +163,17 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
             chip.backgroundTintList = ColorStateList.valueOf(if (isActive) activeBg else inactiveBg)
             chip.setTextColor(if (isActive) activeFg else inactiveFg)
             chip.iconTint = ColorStateList.valueOf(if (isActive) activeFg else inactiveFg)
-            chip.setOnClickListener {
-                switchMode(mode)
+            if (mode.soon) {
+                // Future feature: visible but dimmed + non-interactive —
+                // must never send a request. Parity: web chip--mode-soon.
+                chip.isEnabled = false
+                chip.alpha = 0.45f
+                chip.text = getString(mode.titleRes) + " · " + getString(R.string.ai_mode_soon)
+                chip.setOnClickListener(null)
+            } else {
+                chip.setOnClickListener {
+                    switchMode(mode)
+                }
             }
             container.addView(chip)
         }
@@ -281,6 +290,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
     }
 
     private fun switchMode(mode: AssistantMode) {
+        if (mode.soon) return // future feature — chip disabled, never sends a request
         if (currentMode == mode) return
         currentMode = mode
         buildModeChips()

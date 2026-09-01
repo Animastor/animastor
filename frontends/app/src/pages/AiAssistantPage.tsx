@@ -31,15 +31,19 @@ interface AssistantModeDef {
   titleKey: 'ai_mode_conversation' | 'ai_mode_import' | 'ai_mode_edit' | 'ai_mode_director' | 'ai_mode_extraction' | 'ai_mode_validation';
   descKey: 'ai_mode_conversation_desc' | 'ai_mode_import_desc' | 'ai_mode_edit_desc' | 'ai_mode_director_desc' | 'ai_mode_extraction_desc' | 'ai_mode_validation_desc';
   Icon: (p: IconProps) => JSX.Element;
+  // Future feature: chip stays visible but dimmed + disabled — clicking it
+  // must never send a request (the backend no longer exposes handler-less
+  // tools for these modes). Parity: Android AssistantMode.soon.
+  soon?: boolean;
 }
 
 const MODES: AssistantModeDef[] = [
   { id: 'conversation', titleKey: 'ai_mode_conversation', descKey: 'ai_mode_conversation_desc', Icon: IconSparkle },
   { id: 'edit', titleKey: 'ai_mode_edit', descKey: 'ai_mode_edit_desc', Icon: IconEdit },
-  { id: 'import', titleKey: 'ai_mode_import', descKey: 'ai_mode_import_desc', Icon: IconDownload },
-  { id: 'director', titleKey: 'ai_mode_director', descKey: 'ai_mode_director_desc', Icon: IconMap },
-  { id: 'extraction', titleKey: 'ai_mode_extraction', descKey: 'ai_mode_extraction_desc', Icon: IconFile },
-  { id: 'validation', titleKey: 'ai_mode_validation', descKey: 'ai_mode_validation_desc', Icon: IconCheck },
+  { id: 'import', titleKey: 'ai_mode_import', descKey: 'ai_mode_import_desc', Icon: IconDownload, soon: true },
+  { id: 'director', titleKey: 'ai_mode_director', descKey: 'ai_mode_director_desc', Icon: IconMap, soon: true },
+  { id: 'extraction', titleKey: 'ai_mode_extraction', descKey: 'ai_mode_extraction_desc', Icon: IconFile, soon: true },
+  { id: 'validation', titleKey: 'ai_mode_validation', descKey: 'ai_mode_validation_desc', Icon: IconCheck, soon: true },
 ];
 
 // Resolved at render time so language switches apply (module-scope t() would go stale).
@@ -211,6 +215,7 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
   };
 
   const switchMode = (m: AssistantModeDef) => {
+    if (m.soon) return; // future feature — chip is disabled, never sends a request
     if (mode === m.id) return;
     setMode(m.id);
     setMessages((prev) => [...prev, {
@@ -374,11 +379,15 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
           {MODES.map((m) => (
             <button
               key={m.id}
-              class={'chip chip--mode' + (mode === m.id ? ' chip--mode-active' : '')}
+              class={'chip chip--mode' + (mode === m.id ? ' chip--mode-active' : '') + (m.soon ? ' chip--mode-soon' : '')}
               onClick={() => switchMode(m)}
+              disabled={m.soon}
+              title={m.soon ? `${t(m.titleKey)} — ${t('ai_mode_soon')}` : undefined}
+              aria-disabled={m.soon || undefined}
             >
               <m.Icon width={18} height={18} />
               <span>{t(m.titleKey)}</span>
+              {m.soon && <span class="chip--mode-soon__badge">{t('ai_mode_soon')}</span>}
             </button>
           ))}
         </div>

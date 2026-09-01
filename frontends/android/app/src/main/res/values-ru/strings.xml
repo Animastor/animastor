@@ -322,6 +322,7 @@
     <string name="ai_placeholder">Я понял ваш запрос. Эта функция скоро появится!</string>
     <string name="ai_error">Ошибка: %1$s</string>
     <string name="ai_no_result">Ассистент не вернул результат. Попробуйте повторить запрос.</string>
+    <string name="ai_mode_soon">В разработке</string>
     <string name="ai_download_book">Скачать vbook</string>
 
     <string name="action_back">Назад</string>

@@ -2161,6 +2161,19 @@ button { font: inherit; color: inherit; }
   font-size: 0.8125rem; font-weight: 500; flex-shrink: 0; cursor: pointer;
 }
 .chip--mode-active { background: var(--primary); color: var(--on-primary); }
+/* Future feature modes (Director / Import / Extract / Validate): visible but
+   dimmed + non-interactive, with a 'В разработке' badge and tooltip. */
+.chip--mode-soon {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.chip--mode-soon:active { transform: none; }
+.chip--mode-soon__badge {
+  font-size: 0.625rem; font-weight: 400;
+  opacity: 0.9;
+  white-space: nowrap;
+  margin-left: 0.125rem;
+}
 
 /* Message list */
 .ai-list {
