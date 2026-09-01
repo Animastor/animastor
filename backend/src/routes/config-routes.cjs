@@ -10,10 +10,11 @@
 // constant — the client contract ({ limits: {...} }) stays unchanged.
 
 const { IMAGE_PROMPT_MAX_CHARS } = require('../services/agent-prompts');
+const config = require('../config/runtime-config');
 
 module.exports = function(app) {
     // ======================================================
-    // GET APP CONFIG — limits for the editors
+    // GET APP CONFIG — limits for the editors + client feature flags
     // ======================================================
     app.get('/api/v1/config', (req, res) => {
         res.json({
@@ -21,6 +22,13 @@ module.exports = function(app) {
                 // Max chars for a frame prompt (image.prompt / video.action) —
                 // matches the save-boundary validation in core-routes.cjs.
                 image_prompt_max_chars: IMAGE_PROMPT_MAX_CHARS,
+            },
+            // SH-2 UI kill-switch mirror: the client reads this ONCE per app
+            // load and hides/disables every sharing UI element when false.
+            // The share API routes stay independently gated by the same env
+            // (defense in depth — the flag is convenience, not security).
+            features: {
+                share: config.shareFeaturesEnabled() === true,
             },
         });
     });

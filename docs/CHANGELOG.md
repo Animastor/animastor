@@ -77,6 +77,25 @@ All notable changes to Animastor are documented here.
     lifecycle, authz matrix, policy-lane pop precedence, poison guards,
     orphan requeue, dispatch routing, kill-switch dormancy, route order,
     lookup, event contract.
+  - **UI/UX** (SH-2 frontend layer — web Preact app): three-tab Workers
+    management view (My Workers / Shared with me / Community) rendered
+    only when `features.share=true` from `GET /api/v1/config`; when
+    kill-switch is off the section is the unchanged pre-SH-1 worker
+    manager (zero share requests). Owner controls: Sharing modal (Off →
+    Public / Specific users, optional expiry via datetime-local, exact-
+    username lookup recipient staging before start, per-user add/remove,
+    stop sharing). Shared with me: server-derived personal grant list with
+    `access_reason` ("Shared by \<username\>"), expiry, online status;
+    badge counter reflects unseen personal shares this session (session-
+    only seen marker, never the source of truth for access). Community:
+    shared system-pool capacity per D3 (no browsable public-worker
+    directory — V1/V2 design). Notification adapter: `onShareNotice`
+    subscribe seam + `syncSharedWithMe` state-diff emitter (ready for a
+    future inbox/SSE transport). Config: `GET /api/v1/config` exposes
+    `features.share` (lazy, env-mirrored) so the client never probes V2
+    endpoints when the flag is off. Types + pure helpers in
+    `sharing.ts` + `shareNotifications.ts` (217 vitest, 5 config-route
+    tests pass).
 
 ---
 

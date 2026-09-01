@@ -620,6 +620,83 @@ the "Shared with me" list, and the event contract are the Workers
 instance of the resource-agnostic seam. §5.2 / §13.2 lists remain
 normative for the current scope.
 
+### 14.4 SH-2 UX/UI layer (normative, implemented)
+
+The frontend sharing layer is built **strictly on top of the existing
+V2 backend** (§14.1–§14.3). The backend remains the single source of
+truth: the UI never fabricates grants, policies, or expiry; every
+mutation re-reads `GET /workers/:id/share` (owner) or
+`GET /workers/shared-with-me` (recipient) and replaces local state
+wholesale.
+
+**Three views** — the Workers settings section is split into:
+
+- **My Workers** — `GET /workers` (existing); each private non-revoked
+  worker row gains a `Sharing` button. The active policy mode (Public /
+  Users) is shown as an inline badge derived from the owner-read
+  `GET /workers/:id/share`. Identity/mode are never editable.
+- **Shared with me** — `GET /workers/shared-with-me` (§14.2); each
+  entry renders the access reason ("Shared by \<username\>"), expiry,
+  and online status. A "Shared by Ivan" label is always visible.
+  Revoked/expired entries stop arriving (server truth). Worker
+  availability is implicit (policy-lane dispatch serves the recipient's
+  jobs automatically) — no fake "open" action is rendered (the backend
+  does not support per-recipient job submission).
+- **Community** — shared system-pool capacity (`GET /worker/counts`
+  system fields per D3). Deliberately **no browsable public-worker
+  directory** (V1/V2 design: public sharing = spare capacity, not an
+  inventory). Empty state when all system counts are 0.
+
+**Owner sharing modal** — the `SharingModal` component manages the
+full lifecycle of a share policy:
+
+- **Off → Public**: radio selection; optional `expires_at`
+  (`datetime-local` input → epoch-ms); start via `POST /share { scope:'public', expires_at? }`.
+- **Off → Specific users**: recipient staging list (exact-username
+  lookup via `GET /users/lookup?username=`); recipients are named
+  BEFORE start (`POST /share { scope:'users', users:[…], expires_at? }`)
+  so the policy never creates an empty audience (backend 400). Post-
+  start: add/remove recipients via `POST/DELETE /share/users`.
+- **Stop sharing** — confirmation dialog → `DELETE /share`; all
+  recipients lose access instantly (server re-read confirms).
+
+**Notification adapter** — minimal seam:
+
+- `onShareNotice(fn)` / `emitShareNotice(n)` — future transport
+  (SSE/WS/inbox) attaches here; currently unused.
+- State-derived notices: `syncSharedWithMe(prev, next)` diffs the
+  server list and emits one notice per newly-appeared `worker_id` after
+  the initial sync (first load seeds the badge without toasts).
+- Toast rendering: `tf('share_notification', username, workerName)`.
+
+**Badge / counter** — `sharedUnreadCount` signal: entries in the
+current shared-with-me list the user has not yet viewed this session
+(`markSharedSeen`). The server is the source of truth for the total
+(`sharedWithMeCount`); the seen-marker is session-only UI sugar.
+
+**Kill-switch** — `GET /api/v1/config` exposes `features.share`
+(lazy, env-mirrored). When `false`: no share tabs are rendered, no V2
+API is called, the section is the unchanged pre-SH-1 manager. When the
+probe fails (500/timeout): fail CLOSED (same as off).
+
+**Error handling** — every share-flow `ApiError` is mapped to an i18n
+key via `shareErrorKey()`:
+- 400 `Unknown user(s)` → `share_err_unknown_user`
+- 400 `yourself` → `share_err_self_grant`
+- 409 `already shared` → `share_err_already_active`
+- 409 `no active users sharing` → `share_err_no_users_policy`
+- 403 `Guests` → `share_err_forbidden`
+
+**Pure helpers** (no DOM, vitest-covered): `shareModeOf()`,
+`isPolicyExpired()`, `normalizeUsername()`, `datetimeLocalToEpoch()`,
+`diffSharedWorkers()`, `canBeShared()`, `sharedByLabel()`. All in
+`frontends/app/src/features/workers/sharing.ts`.
+
+**Explicitly NOT implemented**: Groups, Projects, group membership,
+team directory, marketplace, credits, quotas, fuzzy/phonetic username
+search, email-based lookup, social directory, user recommendations.
+These belong to V3 (§13.2).
+
 ---
 
 ## Appendix — Glossary

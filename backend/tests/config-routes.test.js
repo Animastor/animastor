@@ -11,6 +11,7 @@ const { expect } = require('chai');
 const express = require('express');
 
 const { IMAGE_PROMPT_MAX_CHARS } = require('../src/services/agent-prompts');
+const config = require('../src/config/runtime-config');
 const configRoutes = require('../src/routes/config-routes.cjs');
 
 /** Boot the real config route on an ephemeral port (no supertest dep). */
@@ -29,6 +30,7 @@ function startConfigServer() {
 
 describe('GET /api/v1/config', () => {
     let srv;
+    const prevFlag = process.env.SHARE_FEATURES_ENABLED;
 
     before(async () => {
         srv = await startConfigServer();
@@ -36,6 +38,9 @@ describe('GET /api/v1/config', () => {
 
     after(async () => {
         await srv.close();
+        // Restore the ambient flag for other tests in the same process.
+        if (prevFlag === undefined) delete process.env.SHARE_FEATURES_ENABLED;
+        else process.env.SHARE_FEATURES_ENABLED = prevFlag;
     });
 
     it('returns 200 with a limits object', async () => {
@@ -59,5 +64,21 @@ describe('GET /api/v1/config', () => {
         // Documented contract: the editors (Android + web) enforce this same
         // value and the server rejects over-limit saves in core-routes.cjs.
         expect(body.limits.image_prompt_max_chars).to.equal(2000);
+    });
+
+    // ── SH-2 UI kill-switch mirror ────────────────────────────────────────
+    it('exposes features.share mirroring SHARE_FEATURES_ENABLED (on)', async () => {
+        process.env.SHARE_FEATURES_ENABLED = '1';
+        const res = await fetch(`${srv.base}/api/v1/config`);
+        const body = await res.json();
+        expect(body.features).to.deep.equal({ share: true });
+    });
+
+    it('exposes features.share=false when the kill-switch is off (default)', async () => {
+        delete process.env.SHARE_FEATURES_ENABLED;
+        const res = await fetch(`${srv.base}/api/v1/config`);
+        const body = await res.json();
+        expect(body.features).to.deep.equal({ share: false });
+        expect(config.shareFeaturesEnabled()).to.equal(false);
     });
 });

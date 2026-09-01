@@ -1237,6 +1237,20 @@ button { font: inherit; color: inherit; }
 .worker__row-main { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
 .worker__name { font-size: 0.9375rem; font-weight: 600; color: var(--text); }
 .worker__row-meta { font-size: 0.75rem; color: var(--text-2); display: flex; gap: 0.35rem; flex-wrap: wrap; }
+
+/* ── Worker Sharing V2 (SH-2) — badge + access reason ────────────────── */
+.share__badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.15rem; height: 1.15rem; padding: 0 0.35rem;
+  margin-left: 0.4rem;
+  font-size: 0.6875rem; font-weight: 700; line-height: 1;
+  border-radius: var(--radius-pill);
+  color: var(--on-primary); background: var(--primary);
+}
+.share__badge--muted { color: var(--text-2); background: var(--surface); border: 1px solid var(--outline-2); }
+.share__badge--inline { margin-left: 0; align-self: center; }
+.share__reason-row { align-items: center; }
+.share__reason { font-weight: 600; color: var(--text); }
 .worker__status { font-size: 0.75rem; font-weight: 700; padding: 0.1rem 0.5rem; border-radius: var(--radius-pill); }
 .worker__status--online { color: #0a7d33; background: rgba(46, 196, 105, 0.16); }
 .worker__status--offline { color: var(--text-2); background: var(--surface); border: 1px solid var(--outline-2); }

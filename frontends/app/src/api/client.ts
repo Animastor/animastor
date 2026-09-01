@@ -81,6 +81,10 @@ export async function patchJson<T>(path: string, body: unknown): Promise<T> {
   return request<T>(path, { method: 'PATCH', body: JSON.stringify(body) });
 }
 export async function deleteJson<T>(path: string): Promise<T> { return request<T>(path, { method: 'DELETE' }); }
+// DELETE with a JSON body (SH-2: DELETE /workers/:id/share/users { username }).
+export async function deleteJsonBody<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, { method: 'DELETE', body: JSON.stringify(body) });
+}
 
 // Streaming Blob download: reads the body in chunks and assembles a Blob,
 // so large audio/video can be written into mediaCache progressively.

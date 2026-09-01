@@ -15,6 +15,7 @@ import { useState, useCallback, useEffect } from 'preact/hooks';
 import { getJson, postJson, deleteJson, ApiError } from '../../api/client';
 import type { StrKey } from '../../app/i18n';
 import { t, tf } from '../../app/i18n';
+import { authMe } from '../../state/authStore';
 import { Modal, toast } from '../../lib/ui';
 import {
   type PrivateWorker,
@@ -22,6 +23,12 @@ import {
   statusClass, statusKey, formatLastSeen, buildSetupContract,
   renderEnvBlock, OFFLINE_TROUBLESHOOT_KEYS,
 } from './privateWorkers';
+import { SharingModal, SharedWithMeView, CommunityView } from './WorkerSharingUI';
+import {
+  type SharedWithMeWorker,
+  probeShareFeature, shareFeatureEnabled, fetchSharedWithMe, fetchShareState, shareModeOf, canBeShared,
+} from './sharing';
+import { sharedWithMeCount, sharedUnreadCount, syncSharedWithMe, markSharedSeen, onShareNotice } from './shareNotifications';
 import {
   type SetupProfile, type SetupMethod, type SetupWorkflow, type SetupInstructions,
   type SetupWorkerDetail, type WizardState, type DeploymentCapability,
@@ -49,15 +56,82 @@ export function PrivateWorkersSection() {
   // transient state only, cleared on close).
   const [rotated, setRotated] = useState<{ token: string; worker: PrivateWorker } | null>(null);
 
+  // ── SH-2 sharing layer (kill-switch aware) ────────────────────────────
+  // The capability probe runs once; when SHARE_FEATURES_ENABLED is off the
+  // tabs below never render and NO V2 endpoint is ever called — the UI is
+  // bit-for-bit the pre-SH-1 worker manager.
+  const [tab, setTab] = useState<'my' | 'shared' | 'community'>('my');
+  const [shared, setShared] = useState<SharedWithMeWorker[] | null>(null);
+  const [sharedLoading, setSharedLoading] = useState(false);
+  const [sharedError, setSharedError] = useState('');
+  // Per-own-worker sharing mode for row badges (server truth, re-read).
+  const [shareStates, setShareStates] = useState<Record<string, 'off' | 'public' | 'users'>>({});
+  const [sharingFor, setSharingFor] = useState<PrivateWorker | null>(null);
+
+  const shareOn = shareFeatureEnabled.value === true;
+  const authed = !!authMe.value.authenticated;
+
   const load = useCallback(async () => {
     setError('');
     try {
       const res = await getJson<{ workers: PrivateWorker[] }>('/workers');
       setWorkers(res.workers);
+      // Row badges: read the active policy per private worker (a personal
+      // list is small — bounded N parallel reads, all owner-scoped).
+      if (shareFeatureEnabled.value === true) {
+        const entries = await Promise.all(res.workers
+          .filter(canBeShared)
+          .map(async (w) => {
+            try {
+              const s = await fetchShareState(w.worker_id);
+              return [w.worker_id, shareModeOf(s.policy)] as const;
+            } catch { return [w.worker_id, 'off'] as const; }
+          }));
+        setShareStates(Object.fromEntries(entries));
+      } else {
+        setShareStates({});
+      }
     } catch (e) {
       setError(humanError(e));
     }
   }, []);
+
+  // "Shared with me" — ALWAYS a fresh server read (never a cached grant):
+  // revocation and expiry simply stop the entry from arriving.
+  const loadShared = useCallback(async (markSeen: boolean) => {
+    if (shareFeatureEnabled.value !== true || !authMe.value.authenticated) return;
+    setSharedLoading(true); setSharedError('');
+    try {
+      const list = await fetchSharedWithMe();
+      setShared((prev) => {
+        syncSharedWithMe(prev ?? [], list);
+        return list;
+      });
+      if (markSeen) markSharedSeen(list);
+    } catch (e) {
+      setSharedError(humanError(e));
+      setShared([]);
+    } finally {
+      setSharedLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void probeShareFeature().then((on) => { if (on) void loadShared(false); });
+  }, [loadShared]);
+
+  // Notification seam: until a real transport exists, notices are derived
+  // from the state diff (syncSharedWithMe) — rendered as toasts here.
+  useEffect(() => (
+    onShareNotice((n) => {
+      toast(tf('share_notification', n.actor_username ?? '—', n.worker_name ?? '—'), 4000);
+    })
+  ), []);
+
+  const onTab = useCallback((next: 'my' | 'shared' | 'community') => {
+    setTab(next);
+    if (next === 'shared') void loadShared(true);
+  }, [loadShared]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -116,11 +190,63 @@ export function PrivateWorkersSection() {
           <h3 class="card__title">{t('worker_mgmt_title')}</h3>
           <p class="card__hint card__hint--wrap">{t('worker_mgmt_desc')}</p>
 
-          <button class="btn btn--block" onClick={() => setWizardOpen(true)} disabled={busy}>
-            {t('worker_add')}
-          </button>
+          {/* ── SH-2: three views (My / Shared with me / Community) ──
+              Rendered ONLY when the kill-switch is on; when off the section
+              is the unchanged pre-SH-1 manager (kill-switch requirement). */}
+          {shareOn && (
+            <div class="seg seg--block" role="tablist" aria-label={t('share_btn')}>
+              <button
+                role="tab" aria-selected={tab === 'my'}
+                class={'seg__btn' + (tab === 'my' ? ' seg__btn--active' : '')}
+                onClick={() => onTab('my')}
+              >{t('share_tab_my')}</button>
+              <button
+                role="tab" aria-selected={tab === 'shared'}
+                class={'seg__btn' + (tab === 'shared' ? ' seg__btn--active' : '')}
+                onClick={() => onTab('shared')}
+              >
+                {t('share_tab_shared_with_me')}
+                {sharedUnreadCount.value > 0 && (
+                  <span class="share__badge" aria-label={t('share_badge_title')}>{sharedUnreadCount.value}</span>
+                )}
+                {sharedWithMeCount.value > 0 && sharedUnreadCount.value === 0 && (
+                  <span class="share__badge share__badge--muted">{sharedWithMeCount.value}</span>
+                )}
+              </button>
+              <button
+                role="tab" aria-selected={tab === 'community'}
+                class={'seg__btn' + (tab === 'community' ? ' seg__btn--active' : '')}
+                onClick={() => onTab('community')}
+              >{t('share_tab_community')}</button>
+            </div>
+          )}
 
-          {!workers ? (
+          {shareOn && tab === 'shared' && (
+            <div class="card card--stack">
+              <h3 class="card__title">{t('share_swm_title')}</h3>
+              {!authed && <p class="card__hint card__hint--wrap">{t('share_login_required')}</p>}
+              <SharedWithMeView
+                entries={shared ?? []}
+                loading={sharedLoading}
+                error={sharedError}
+              />
+            </div>
+          )}
+
+          {shareOn && tab === 'community' && (
+            <div class="card card--stack">
+              <h3 class="card__title">{t('share_community_title')}</h3>
+              <CommunityView />
+            </div>
+          )}
+
+          {(tab === 'my' || !shareOn) && (
+            <button class="btn btn--block" onClick={() => setWizardOpen(true)} disabled={busy}>
+              {t('worker_add')}
+            </button>
+          )}
+
+          {(!shareOn || tab === 'my') && (!workers ? (
             <p class="card__hint">{t('play_loading')}</p>
           ) : workers.length === 0 ? (
             <p class="card__hint">{t('worker_empty')}</p>
@@ -136,6 +262,16 @@ export function PrivateWorkersSection() {
                     <span>{t(w.worker_type === 'audio' ? 'layer_audio' : w.worker_type === 'image' ? 'layer_image' : 'layer_video')}</span>
                     <span>·</span>
                     <span>{t('worker_last_seen')} {formatLastSeen(w.last_seen)}</span>
+                    {/* SH-2: server-truth sharing badge on the owner's row. */}
+                    {shareOn && shareStates[w.worker_id] && shareStates[w.worker_id] !== 'off' && (
+                      <span>·</span>
+                    )}
+                    {shareOn && shareStates[w.worker_id] === 'public' && (
+                      <span class="share__badge share__badge--inline">{t('share_public_badge')}</span>
+                    )}
+                    {shareOn && shareStates[w.worker_id] === 'users' && (
+                      <span class="share__badge share__badge--inline">{t('share_users_badge')}</span>
+                    )}
                   </div>
                   {w.status === 'OFFLINE' && (
                     <details class="worker__trouble">
@@ -152,6 +288,13 @@ export function PrivateWorkersSection() {
                     <button class="btn btn--outlined" disabled={busy} onClick={() => setDetailsFor(w)}>
                       {t('worker_details_title')}
                     </button>
+                    {/* SH-2: owner sharing controls — private, non-revoked
+                        workers only (ownership/mode are never editable here). */}
+                    {shareOn && canBeShared(w) && (
+                      <button class="btn btn--outlined" disabled={busy} onClick={() => setSharingFor(w)}>
+                        {t('share_btn')}
+                      </button>
+                    )}
                     {w.status !== 'REVOKED' && (
                       <>
                         <button class="btn btn--outlined" disabled={busy} onClick={() => void onRotate(w)}>
@@ -174,7 +317,7 @@ export function PrivateWorkersSection() {
                 </div>
               ))}
             </div>
-          )}
+          ))}
 
           {error && <p class="settings-page__error">{error}</p>}
         </div>
@@ -188,6 +331,14 @@ export function PrivateWorkersSection() {
 
       {detailsFor && (
         <WorkerDetailsModal worker={detailsFor} onClose={() => setDetailsFor(null)} />
+      )}
+
+      {sharingFor && (
+        <SharingModal
+          worker={sharingFor}
+          onClose={() => setSharingFor(null)}
+          onChanged={() => { void load(); }}
+        />
       )}
 
       {rotated && looksLikeWorkerToken(rotated.token) && (
