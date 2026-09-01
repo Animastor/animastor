@@ -411,6 +411,7 @@ CREATE INDEX IF NOT EXISTS idx_scene_assets_hash ON scene_assets(book_id, scene_
 CREATE TABLE IF NOT EXISTS ai_chat_sessions (
     id              TEXT PRIMARY KEY,
     book_id         TEXT NOT NULL,
+    title           TEXT NOT NULL DEFAULT 'Chat',
     mode            TEXT NOT NULL DEFAULT 'chat',
     messages        JSONB NOT NULL DEFAULT '[]'::jsonb,
     context         JSONB DEFAULT '{}'::jsonb,
@@ -421,42 +422,10 @@ CREATE TABLE IF NOT EXISTS ai_chat_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_book ON ai_chat_sessions(book_id);
 
--- Chat sessions (grouping of messages into user conversations)
-CREATE TABLE IF NOT EXISTS chat_sessions (
-    session_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id         UUID REFERENCES users(user_id),
-    book_id         TEXT NOT NULL,
-    title           TEXT NOT NULL DEFAULT 'Chat',
-    topic_id        TEXT NOT NULL DEFAULT 'book',
-    mode            TEXT NOT NULL DEFAULT 'conversation',
-    message_count   INTEGER NOT NULL DEFAULT 0,
-    created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
-    updated_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
-);
-
-CREATE INDEX IF NOT EXISTS idx_chat_sessions_book ON chat_sessions(book_id);
-CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated ON chat_sessions(updated_at DESC);
-
--- Chat messages (assistant + user, per session / scene / topic)
-CREATE TABLE IF NOT EXISTS chat_messages (
-    id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    session_id      UUID REFERENCES chat_sessions(session_id) ON DELETE CASCADE,
-    book_id         TEXT NOT NULL,
-    scene_id        TEXT,
-    character_id    TEXT,
-    topic           TEXT,
-    role            TEXT NOT NULL CHECK(role IN ('user','assistant','system')),
-    message         TEXT NOT NULL,
-    metadata        JSONB,
-    created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
-);
-
-CREATE INDEX IF NOT EXISTS idx_chat_book ON chat_messages(book_id);
-CREATE INDEX IF NOT EXISTS idx_chat_scene ON chat_messages(book_id, scene_id);
-CREATE INDEX IF NOT EXISTS idx_chat_character ON chat_messages(book_id, character_id);
-CREATE INDEX IF NOT EXISTS idx_chat_topic ON chat_messages(book_id, topic);
-CREATE INDEX IF NOT EXISTS idx_chat_time ON chat_messages(book_id, created_at);
+-- Legacy chat tables (chat_sessions / chat_messages) were removed: no code
+-- has read them for a long time (the chat lives in ai_chat_sessions;
+-- agent cancel messages were written to a table nobody read). runMigrations
+-- drops them below for existing deployments.
 
 -- Book events (persistent, append-only history of book evolution)
 CREATE TABLE IF NOT EXISTS book_events (
@@ -572,10 +541,10 @@ async function runMigrations() {
         { table: 'scenes', column: 'build_id', type: 'TEXT' },
         { table: 'image_units', column: 'start_ms', type: 'BIGINT DEFAULT 0' },
         { table: 'image_units', column: 'end_ms', type: 'BIGINT DEFAULT 0' },
-        { table: 'chat_messages', column: 'session_id', type: 'UUID' },
         { table: 'agent_sessions', column: 'knowledge_base', type: 'JSONB' },
         { table: 'agent_sessions', column: 'window_data', type: 'JSONB' },
         { table: 'ai_chat_sessions', column: 'topic_id', type: "TEXT NOT NULL DEFAULT 'book'" },
+        { table: 'ai_chat_sessions', column: 'title', type: "TEXT NOT NULL DEFAULT 'Chat'" },
     ];
 
     for (const { table, column, type } of columnAdditions) {
@@ -587,12 +556,22 @@ async function runMigrations() {
         }
     }
 
+    // Legacy chat tables removal: chat_messages/chat_sessions have been dead
+    // for a long time (chat state lives in ai_chat_sessions). Drop them so
+    // existing deployments converge; CREATE for them is gone above.
+    for (const legacyTable of ['chat_messages', 'chat_sessions']) {
+        try {
+            await query(`DROP TABLE IF EXISTS ${legacyTable} CASCADE`);
+        } catch (err) {
+            console.error(`[PG] Failed to drop legacy table ${legacyTable}: ${err.message}`);
+        }
+    }
+
     // Drop FK constraints if they were created by an earlier version of this
     // migration. We removed the FKs to match other book-keyed tables
     // (asset_states, cache_entries, scene_assets) that allow orphan references
     // for flexibility — the application layer guarantees book existence.
     const fkDrops = [
-        { table: 'chat_messages', constraint: 'chat_messages_book_id_fkey' },
         { table: 'scenes', constraint: 'scenes_book_id_fkey' },
     ];
     for (const { table, constraint } of fkDrops) {
@@ -605,7 +584,6 @@ async function runMigrations() {
 
     await query(`CREATE INDEX IF NOT EXISTS idx_scenes_hash ON scenes(book_id, scene_hash)`);
     await query(`CREATE INDEX IF NOT EXISTS idx_scenes_build ON scenes(build_id)`);
-    await query(`CREATE INDEX IF NOT EXISTS idx_chat_session ON chat_messages(session_id)`);
 
     // Make step_id nullable in agent_conversations for the new unified pipeline
     // (old schema had step_id NOT NULL, new pipeline inserts without step_id)

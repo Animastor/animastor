@@ -53,6 +53,25 @@ module.exports = function(app, redis, deps) {
 
     const AI_FETCH_TIMEOUT_MS = 180_000; // 3 minutes — AI providers need time for large book contexts
 
+    // ── Token budget & thinking policy ─────────────────
+    // Tool-carrying requests use a HIGH max_tokens: reasoning models
+    // (deepseek-v4-flash, qwen3) count reasoning tokens against max_tokens,
+    // so a 4096 cap can be fully consumed by reasoning before any
+    // content/tool_call is produced (observed: finish_reason=length,
+    // reasoning_tokens=4096, empty content → "Tool executed" ghost reply).
+    // Tool-less conversation gets a small budget and no thinking — faster,
+    // cheaper replies.
+    const MAX_TOKENS_WITH_TOOLS = 16384;
+    const MAX_TOKENS_PLAIN = 4096;
+
+    function aiRequestBodyExtras(tools) {
+        const hasTools = Array.isArray(tools) && tools.length > 0;
+        return {
+            max_tokens: hasTools ? MAX_TOKENS_WITH_TOOLS : MAX_TOKENS_PLAIN,
+            enable_thinking: hasTools, // reasoning only for tool/edit work
+        };
+    }
+
     // ── Hermesian tool call parser ──────────────────────
     // Qwen3-32B (reasoning model) sometimes outputs tool_call as text in content
     // instead of using the structured tool_calls field. This parser extracts those.
@@ -156,13 +175,16 @@ module.exports = function(app, redis, deps) {
     }
 
     // ======================================================
-    // LIST SESSIONS
+    // LIST SESSIONS (metadata only — messages live behind /messages)
     // ======================================================
     app.get('/api/v1/ai/sessions', async (req, res) => {
         try {
             const { book_id } = req.query;
             const sessions = await storage.postgres.query(
-                'SELECT * FROM ai_chat_sessions WHERE book_id = $1 ORDER BY created_at DESC',
+                `SELECT id, book_id, mode, topic_id, created_at, updated_at,
+                        COALESCE(title, '') AS title,
+                        jsonb_array_length(messages) AS message_count
+                 FROM ai_chat_sessions WHERE book_id = $1 ORDER BY created_at DESC`,
                 [book_id]
             );
             res.json({ sessions: sessions.rows });
@@ -189,6 +211,49 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
+    // RENAME SESSION (PATCH) — Android parity: BackendApi.kt PATCHes
+    // { title } (BackendApi.kt:78). The route never existed → silent 404.
+    // ======================================================
+    app.patch('/api/v1/ai/sessions/:id', async (req, res) => {
+        try {
+            const { title } = req.body || {};
+            if (typeof title !== 'string' || !title.trim()) {
+                return res.status(400).json({ error: 'title required' });
+            }
+            const result = await storage.postgres.query(
+                'UPDATE ai_chat_sessions SET title = $1, updated_at = $2 WHERE id = $3 RETURNING id',
+                [title.trim().slice(0, 200), Date.now(), req.params.id]
+            );
+            if (!result.rows.length) return res.status(404).json({ error: 'Session not found' });
+            log('[AI] Session renamed:', req.params.id);
+            res.json({ session_id: req.params.id, title: title.trim(), renamed: true });
+        } catch (err) {
+            console.error('[AI SESSION RENAME] Error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // DELETE SESSION — Android parity (BackendApi.kt:84) and web parity
+    // (AiAssistantPage deleteSession). Both clients called this route when
+    // it did not exist → silent 404, chats never deleted server-side.
+    // ======================================================
+    app.delete('/api/v1/ai/sessions/:id', async (req, res) => {
+        try {
+            const result = await storage.postgres.query(
+                'DELETE FROM ai_chat_sessions WHERE id = $1 RETURNING id',
+                [req.params.id]
+            );
+            if (!result.rows.length) return res.status(404).json({ error: 'Session not found' });
+            log('[AI] Session deleted:', req.params.id);
+            res.json({ session_id: req.params.id, deleted: true });
+        } catch (err) {
+            console.error('[AI SESSION DELETE] Error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
     // GET SESSION MESSAGES (from ai_chat_sessions.messages JSON)
     // ======================================================
     app.get('/api/v1/ai/sessions/:id/messages', async (req, res) => {
@@ -208,6 +273,7 @@ module.exports = function(app, redis, deps) {
                 session_id: session.id,
                 role: m.role || 'user',
                 message: m.content || m.message || '',
+                error: !!m.error,
                 created_at: m.timestamp || Date.now(),
             }));
             res.json({ messages: formatted });
@@ -222,22 +288,23 @@ module.exports = function(app, redis, deps) {
     // ======================================================
     app.post('/api/v1/ai/sessions', async (req, res) => {
         try {
-            const { book_id, mode, topic_id } = req.body || {};
+            const { book_id, title, mode, topic_id } = req.body || {};
             const scopedBookId = req.scopedBookId || book_id || null;
             if (!scopedBookId) return res.status(400).json({ error: 'book_id required' });
 
             const id = `ai-session-${Date.now()}-${++sessionIdCounter}`;
+            const cleanTitle = (typeof title === 'string' && title.trim()) ? title.trim().slice(0, 200) : 'Chat';
             const session = {
-                id, book_id: scopedBookId, mode: mode || 'chat',
+                id, book_id: scopedBookId, title: cleanTitle, mode: mode || 'chat',
                 topic_id: topic_id || 'book',
                 messages: [], created_at: Date.now(), updated_at: Date.now(),
                 context: null, locked: false,
             };
 
              await storage.postgres.query(
-                `INSERT INTO ai_chat_sessions (id, book_id, mode, topic_id, messages, created_at, updated_at, context, locked)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                [session.id, session.book_id, session.mode, session.topic_id,
+                `INSERT INTO ai_chat_sessions (id, book_id, title, mode, topic_id, messages, created_at, updated_at, context, locked)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                [session.id, session.book_id, session.title, session.mode, session.topic_id,
                  JSON.stringify(session.messages),
                  session.created_at, session.updated_at,
                  session.context === null ? null : JSON.stringify(session.context), session.locked]
@@ -255,6 +322,12 @@ module.exports = function(app, redis, deps) {
     // CHAT (non-streaming)
     // ======================================================
     app.post('/api/v1/ai/chat', async (req, res) => {
+        // Hoisted so the catch block can persist the failed turn (user
+        // message + error explanation) into the session history — without
+        // this the 504 explanation never reached the UI after a reload
+        // (messages live in PG: ai_chat_sessions.messages).
+        let activeSessionId = null;
+        let userContent = '';
         try {
             const { session_id, message, messages, book_id, system, mode, scene_id, topic_id } = req.body || {};
 
@@ -269,7 +342,7 @@ module.exports = function(app, redis, deps) {
             const scopedBookId = req.scopedBookId || book_id || null;
 
             // Auto-create session if session_id not provided
-            let activeSessionId = session_id;
+            activeSessionId = session_id;
             if (!activeSessionId) {
                 if (!scopedBookId) {
                     return res.status(400).json({ error: 'book_id required when no session_id' });
@@ -335,7 +408,6 @@ module.exports = function(app, redis, deps) {
 
             // Build API messages for AI call
             let apiMessages;
-            let userContent;
 
             if (hasMessagesArray) {
                 // Frontend format: full history in `messages` array, `system` as system prompt
@@ -365,8 +437,7 @@ module.exports = function(app, redis, deps) {
                     messages: apiMessages,
                     tools: tools.length > 0 ? tools : undefined,
                     tool_choice: tools.length > 0 ? 'auto' : undefined,
-                    max_tokens: 4096,
-                    enable_thinking: true,
+                    ...aiRequestBodyExtras(tools),
                 }),
                 signal: controller.signal,
                 validatePublic: ai.validatePublic,
@@ -511,6 +582,14 @@ module.exports = function(app, redis, deps) {
                 }
             }
 
+            // No content AND no tool calls — the model produced nothing usable
+            // (e.g. a reasoning model burned the whole max_tokens budget on
+            // reasoning). Report it honestly instead of returning an empty
+            // reply that UIs render as a fake "tool executed" message.
+            if (!replyText && toolCalls.length === 0) {
+                replyText = '⚠️ The assistant returned no result. Please try again.';
+            }
+
             // Update session messages: merge with stored history
             const updatedMessages = [
                 ...storedMessages,
@@ -544,380 +623,30 @@ module.exports = function(app, redis, deps) {
                 return res.status(502).json({ error: err.message });
             }
             if (err.name === 'AbortError' || err.code === 'ABORT_ERR') {
-                return res.status(504).json({ error: 'AI не ответил за отведённое время. Попробуйте отправить более короткий запрос или повторить позже.', code: 'ai_timeout' });
-            }
-            res.status(500).json({ error: err.message });
-        }
-    });
-
-    // ======================================================
-    // STREAMING CHAT
-    // ======================================================
-    app.post('/api/v1/ai/chat/stream', async (req, res) => {
-        try {
-            const { session_id, message, book_id } = req.body || {};
-            if (!session_id || !message) return res.status(400).json({ error: 'session_id and message required' });
-
-            const result = await storage.postgres.query(
-                'SELECT * FROM ai_chat_sessions WHERE id = $1', [session_id]
-            );
-            if (!result.rows.length) return res.status(404).json({ error: 'Session not found' });
-
-            const session = result.rows[0];
-            const messages = typeof session.messages === 'string' ? JSON.parse(session.messages) : session.messages || [];
-            // The AUTHORIZED book — set by aiBookGuard (see /ai/chat).
-            const bookId = req.scopedBookId || book_id || session.book_id;
-
-            let bookData = null;
-            try { bookData = book.loadBook(bookId) || lazyBook.loadDraftBook(bookId); } catch (_) {}
-
-            const isLocked = bookData?.manifest?.locked === true;
-            const mode = session.mode || 'chat';
-            const tools = chatEngine.getToolsForMode(mode, bookId, isLocked);
-
-            let systemPrompt = chatEngine.loadSystemPrompt();
-            const bookContext = chatEngine.buildBookContext(bookData);
-            if (bookContext) systemPrompt += '\n\n' + bookContext;
-
-            const apiMessages = [
-                { role: 'system', content: systemPrompt },
-                ...(messages.slice(-20).map(m => ({ role: m.role, content: m.content }))),
-                { role: 'user', content: message },
-            ];
-
-            const ai = await resolveChatAI(bookId);
-            if (!ai.apiKey) {
-                return res.status(503).json({
-                    error: 'AI is currently unavailable. No AI provider is configured or system AI is disabled.',
-                    code: 'ai_unavailable',
-                });
-            }
-
-            // Set up SSE response
-            res.setHeader('Content-Type', 'text/event-stream');
-            res.setHeader('Cache-Control', 'no-cache');
-            res.setHeader('Connection', 'keep-alive');
-
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), AI_FETCH_TIMEOUT_MS);
-            const aiResponse = await safeFetch(`${ai.baseUrl}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ai.apiKey}` },
-                body: JSON.stringify({
-                    model: ai.model,
-                    messages: apiMessages,
-                    tools: tools.length > 0 ? tools : undefined,
-                    tool_choice: tools.length > 0 ? 'auto' : undefined,
-                    max_tokens: 4096,
-                    enable_thinking: true,
-                    stream: true,
-                }),
-                signal: controller.signal,
-                validatePublic: ai.validatePublic,
-            });
-            clearTimeout(timeout);
-
-            if (!aiResponse.ok) {
-                const errText = await aiResponse.text();
-                console.error('[AI] Streaming API error:', aiResponse.status, errText);
-                res.write(`data: ${JSON.stringify({ error: `AI API error: ${aiResponse.status}` })}\n\n`);
-                res.end();
-                return;
-            }
-
-            const reader = aiResponse.body.getReader();
-            const decoder = new TextDecoder();
-            let fullContent = '';
-            let toolCallBuffer = '';
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split('\n').filter(l => l.startsWith('data: '));
-
-                for (const line of lines) {
-                    const data = line.slice(6).trim();
-                    if (data === '[DONE]') continue;
-
-                    try {
-                        const parsed = JSON.parse(data);
-                        const delta = parsed.choices?.[0]?.delta;
-                        if (delta?.content) {
-                            // Strip AI chain-of-thought reasoning blocks from streamed chunks
-                            const cleaned = delta.content.replace(/<think>[\s\S]*?<\/think>/g, '');
-                            if (cleaned) {
-                                fullContent += cleaned;
-                                res.write(`data: ${JSON.stringify({ type: 'content', content: cleaned })}\n\n`);
-                            }
-                        }
-                        if (delta?.tool_calls) {
-                            for (const tc of delta.tool_calls) {
-                                if (tc.function?.name) toolCallBuffer += JSON.stringify(tc) + '\n';
-                                if (tc.function?.arguments) toolCallBuffer += tc.function.arguments;
-                            }
-                        }
-                    } catch (e) {
-                        // Skip non-JSON lines
+                // Persist the failed turn (user message + explanation) so the
+                // explanation survives a reload and is visible in session
+                // history. Best-effort: a PG hiccup must not mask the 504.
+                try {
+                    if (activeSessionId) {
+                        const stored = await storage.postgres.query(
+                            'SELECT messages FROM ai_chat_sessions WHERE id = $1', [activeSessionId]
+                        );
+                        const msgs = typeof stored.rows[0]?.messages === 'string'
+                            ? JSON.parse(stored.rows[0].messages) : stored.rows[0]?.messages || [];
+                        msgs.push({ role: 'user', content: userContent, timestamp: Date.now() });
+                        msgs.push({
+                            role: 'assistant',
+                            content: '⚠️ AI не ответил за отведённое время. Попробуйте отправить более короткий запрос или повторить позже.',
+                            error: true, timestamp: Date.now(),
+                        });
+                        await storage.postgres.query(
+                            'UPDATE ai_chat_sessions SET messages = $1, updated_at = $2 WHERE id = $3',
+                            [JSON.stringify(msgs), Date.now(), activeSessionId]
+                        );
                     }
+                } catch (persistErr) {
+                    console.error('[AI CHAT] Failed to persist timeout turn:', persistErr.message);
                 }
-            }
-
-            res.write(`data: ${JSON.stringify({ type: 'done', content: fullContent })}\n\n`);
-            res.end();
-
-            // Save to session
-            const updatedMessages = [...messages,
-                { role: 'user', content: message, timestamp: Date.now() },
-                { role: 'assistant', content: fullContent, timestamp: Date.now() },
-            ];
-
-            await storage.postgres.query(
-                'UPDATE ai_chat_sessions SET messages = $1, updated_at = $2 WHERE id = $3',
-                [JSON.stringify(updatedMessages), Date.now(), session_id]
-            );
-        } catch (err) {
-            console.error('[AI STREAM] Error:', err.message);
-            if (err.code === 'ENDPOINT_NOT_PUBLIC') {
-                if (!res.headersSent) return res.status(502).json({ error: err.message });
-                res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
-                res.end();
-                return;
-            }
-            if (err.name === 'AbortError' || err.code === 'ABORT_ERR') {
-                const timeoutMsg = 'AI не ответил за отведённое время. Попробуйте отправить более короткий запрос или повторить позже.';
-                if (!res.headersSent) return res.status(504).json({ error: timeoutMsg, code: 'ai_timeout' });
-                res.write(`data: ${JSON.stringify({ error: timeoutMsg, code: 'ai_timeout' })}\n\n`);
-                res.end();
-                return;
-            }
-            if (!res.headersSent) return res.status(500).json({ error: err.message });
-            res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
-            res.end();
-        }
-    });
-
-    // ======================================================
-    // MODE SWITCH
-    // ======================================================
-    app.post('/api/v1/ai/modeswitch', async (req, res) => {
-        try {
-            const { session_id, new_mode } = req.body || {};
-            if (!session_id || !new_mode) return res.status(400).json({ error: 'session_id and new_mode required' });
-
-            const validModes = ['chat', 'edit', 'director', 'import', 'analyze', 'validate'];
-            if (!validModes.includes(new_mode)) {
-                return res.status(400).json({ error: `Invalid mode: ${new_mode}. Valid: ${validModes.join(', ')}` });
-            }
-
-            await storage.postgres.query(
-                'UPDATE ai_chat_sessions SET mode = $1, updated_at = $2 WHERE id = $3',
-                [new_mode, Date.now(), session_id]
-            );
-
-            log('[AI] Mode switched:', session_id, '→', new_mode);
-            res.json({ session_id, mode: new_mode, switched: true });
-        } catch (err) {
-            console.error('[AI MODE SWITCH] Error:', err.message);
-            res.status(500).json({ error: err.message });
-        }
-    });
-
-    // ======================================================
-    // LOCK TOGGLE
-    // ======================================================
-    app.post('/api/v1/ai/lock', async (req, res) => {
-        try {
-            const { locked } = req.body || {};
-            // The AUTHORIZED book — set by aiBookGuard (book write endpoint).
-            const bookId = req.scopedBookId || (req.body && req.body.book_id) || null;
-            if (!bookId) return res.status(400).json({ error: 'book_id required' });
-
-            const bookData = book.loadBook(bookId) || lazyBook.loadDraftBook(bookId);
-            if (!bookData) return res.status(404).json({ error: 'Book not found' });
-
-            if (locked !== undefined) bookData.manifest.locked = locked;
-            else bookData.manifest.locked = !bookData.manifest.locked;
-
-            const finalLocked = bookData.manifest.locked;
-            const bookDir = lazyBook.getBookDir(bookId);
-            const bookPath = require('path').join(bookDir, 'book.json');
-            fs.writeFileSync(bookPath, JSON.stringify(bookData, null, 2));
-
-            log(`[AI] Book ${bookId} ${finalLocked ? 'locked' : 'unlocked'}`);
-            res.json({ book_id: bookId, locked: finalLocked });
-        } catch (err) {
-            console.error('[AI LOCK] Error:', err.message);
-            res.status(500).json({ error: err.message });
-        }
-    });
-
-    // ======================================================
-    // MODE ROUTER (by session mode)
-    // ======================================================
-    app.post('/api/v1/ai/mode-router', async (req, res) => {
-        try {
-            const { session_id, message } = req.body || {};
-            if (!session_id || !message) return res.status(400).json({ error: 'session_id and message required' });
-
-            const result = await storage.postgres.query(
-                'SELECT * FROM ai_chat_sessions WHERE id = $1', [session_id]
-            );
-            if (!result.rows.length) return res.status(404).json({ error: 'Session not found' });
-
-            const session = result.rows[0];
-            const mode = session.mode || 'chat';
-
-            // Route to appropriate handler based on mode
-            switch (mode) {
-                case 'edit':
-                case 'director':
-                case 'import':
-                case 'analyze':
-                    return res.redirect(307, '/api/v1/ai/chat');
-
-                case 'validate': {
-                    const bookId = session.book_id;
-                    const bookData = book.loadBook(bookId);
-                    if (!bookData) return res.status(404).json({ error: 'Book not found' });
-
-                    const validationResult = {
-                        valid: true,
-                        checks: {
-                            has_manifest: !!bookData.manifest,
-                            has_chapters: (bookData.chapters?.length || 0) > 0,
-                            has_scenes: (bookData.chapters || []).some(ch => (ch.scenes?.length || 0) > 0),
-                            has_characters: (bookData.characters?.length || 0) > 0,
-                            has_locations: (bookData.locations?.length || 0) > 0,
-                        },
-                    };
-
-                    const missingFields = Object.entries(validationResult.checks)
-                        .filter(([, v]) => !v)
-                        .map(([k]) => k.replace('has_', ''));
-
-                    validationResult.valid = missingFields.length === 0;
-                    validationResult.missing = missingFields;
-                    validationResult.message = missingFields.length > 0
-                        ? `Missing: ${missingFields.join(', ')}`
-                        : 'All checks passed';
-
-                    return res.json({ mode, result: validationResult });
-                }
-
-                default:
-                    return res.redirect(307, '/api/v1/ai/chat');
-            }
-        } catch (err) {
-            console.error('[AI MODE ROUTER] Error:', err.message);
-            res.status(500).json({ error: err.message });
-        }
-    });
-
-    // ======================================================
-    // PROMPT ENDPOINT (direct chat by book)
-    // ======================================================
-    app.post('/api/v1/ai/prompt', async (req, res) => {
-        try {
-            const { prompt, image_base64 } = req.body || {};
-            // The AUTHORIZED book — set by aiBookGuard. Never re-derive a
-            // different one from the body (cross-tenant provider/data/write).
-            const book_id = req.scopedBookId || (req.body && req.body.book_id) || null;
-            if (!book_id || !prompt) return res.status(400).json({ error: 'book_id and prompt required' });
-
-            let bookData = null;
-            try { bookData = book.loadBook(book_id) || lazyBook.loadDraftBook(book_id); } catch (_) {}
-
-            const isLocked = bookData?.manifest?.locked === true;
-            const tools = chatEngine.getToolsForMode(isLocked ? 'chat' : 'edit', book_id, isLocked);
-
-            let systemPrompt = chatEngine.loadSystemPrompt();
-            if (bookData) {
-                systemPrompt += '\n\n' + chatEngine.buildBookContext(bookData);
-            }
-
-            const apiMessages = [{ role: 'system', content: systemPrompt }, { role: 'user', content: prompt }];
-
-            if (image_base64) {
-                apiMessages.push({
-                    role: 'user',
-                    content: [{ type: 'image_url', image_url: { url: `data:image/png;base64,${image_base64}` } }],
-                });
-            }
-
-            const ai = await resolveChatAI(book_id);
-            if (!ai.apiKey) return aiUnavailable(res);
-
-            // Same timeout contract as chat/stream: a hung provider must not
-            // hold the request thread indefinitely.
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), AI_FETCH_TIMEOUT_MS);
-            const response = await safeFetch(`${ai.baseUrl}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ai.apiKey}` },
-                body: JSON.stringify({
-                    model: ai.model,
-                    messages: apiMessages,
-                    tools: tools.length > 0 ? tools : undefined,
-                    tool_choice: tools.length > 0 ? 'auto' : undefined,
-                    max_tokens: 4096,
-                    enable_thinking: true,
-                }),
-                signal: controller.signal,
-                validatePublic: ai.validatePublic,
-            });
-            clearTimeout(timeout);
-
-            if (!response.ok) {
-                const errText = await response.text();
-                return res.status(502).json({ error: `AI API error: ${response.status}` });
-            }
-
-            const aiResponse = await response.json();
-            let replyText = aiResponse.choices?.[0]?.message?.content || '';
-            // Strip thinking blocks (internal reasoning, not for the UI)
-            replyText = replyText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-
-            // Parse patches from response. Declare parsed before the
-            // conditional so the reply text is available even when the book
-            // is locked or unknown (previously parsed was block-scoped).
-            const parsed = chatEngine.parseAIResponse(replyText);
-            let patches = [];
-            let patchedBook = null;
-            let patchErrors = [];
-            if (bookData && !isLocked) {
-                patches = parsed.patches;
-                if (patches.length > 0) {
-                    // Validated application: on contract violation nothing is
-                    // written — previous canonical state stays on disk.
-                    const patchResult = chatEngine.applyPatchesValidated(bookData, patches);
-                    patchedBook = patchResult.result;
-                    patchErrors = patchResult.errors;
-                    if (patchedBook && patchErrors.length === 0) {
-                        const bookDir = lazyBook.getBookDir(book_id);
-                        const bookPath = require('path').join(bookDir, 'book.json');
-                        fs.writeFileSync(bookPath, JSON.stringify(patchedBook, null, 2));
-                        log(`[AI PROMPT] Applied ${patches.length} patches to ${book_id}`);
-                    } else if (patchErrors.length > 0) {
-                        patches = [];
-                        log(`[AI PROMPT] Rejected ${patchErrors.length} validation error(s) for ${book_id} — book not modified`);
-                    }
-                }
-            }
-
-            res.json({
-                reply: parsed.reply,
-                patches_applied: patches.length,
-                book_updated: !!(patchedBook && patchErrors.length === 0),
-                validation_errors: patchErrors,
-            });
-        } catch (err) {
-            console.error('[AI PROMPT] Error:', err.message);
-            if (err.code === 'ENDPOINT_NOT_PUBLIC') {
-                return res.status(502).json({ error: err.message });
-            }
-            if (err.name === 'AbortError' || err.code === 'ABORT_ERR') {
                 return res.status(504).json({ error: 'AI не ответил за отведённое время. Попробуйте отправить более короткий запрос или повторить позже.', code: 'ai_timeout' });
             }
             res.status(500).json({ error: err.message });

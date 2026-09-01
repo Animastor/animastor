@@ -13,8 +13,8 @@
 //       (endpoint/key/model override), global behaviour intact outside;
 //   7.  ai-service.checkAIHealth: per-provider cache isolation;
 //   8.  guest workspace purge cascades the provider row away;
-//   9.  /api/v1/ai/chat + /ai/prompt use the workspace provider endpoint;
-//   10. /ai/prompt parsed.reply regression (workspace/locked absences).
+//   9.  /api/v1/ai/chat uses the workspace provider endpoint;
+//   10. reply regression (workspace/locked absences).
 //
 // HTTP fetch is stubbed with a recording mock — the suite never touches a
 // real LLM API.
@@ -309,7 +309,7 @@ describe('Workspace AI Provider', () => {
     });
 
     // 9 + 10 ── HTTP routes ──────────────────────────────────────────────
-    describe('routes: /api/v1/ai/chat + /ai/prompt', () => {
+    describe('routes: /api/v1/ai/chat', () => {
         const config = require('../src/config/runtime-config');
         const chatEngine = require('../src/services/chat-engine.cjs')(config);
         const registerAiRoutes = require('../src/routes/ai-routes.cjs');
@@ -350,9 +350,9 @@ describe('Workspace AI Provider', () => {
 
         after(() => server && server.close());
 
-        it('/ai/prompt uses the workspace provider endpoint/key and returns parsed.reply without a book', async function() {
+        it('/ai/chat uses the workspace provider endpoint/key and returns the reply without a book', async function() {
             this.timeout(10000);
-            const bookId = `wspai-${stamp}-promptbook`;
+            const bookId = `wspai-${stamp}-chatbook`;
             await query(`INSERT INTO books (book_id, workspace_id) VALUES ($1, $2)`, [bookId, bookWorkspaceId]);
             await workspaceAi.upsertProvider(bookWorkspaceId, { endpoint: 'https://route.example/v1', apiKey: 'sk-route', model: 'route-model' });
 
@@ -360,15 +360,15 @@ describe('Workspace AI Provider', () => {
                 choices: [{ message: { content: 'just-a-reply' } }],
             }));
 
-            const res = await fetch(`http://localhost:${port}/api/v1/ai/prompt`, {
+            const res = await fetch(`http://localhost:${port}/api/v1/ai/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ book_id: bookId, prompt: 'hello' }),
+                body: JSON.stringify({ book_id: bookId, message: 'hello' }),
             });
             expect(res.status).to.equal(200);
             const body = await res.json();
 
-            // parsed.reply regression: reply present even though the book has
+            // reply regression: reply present even though the book has
             // no loadable bookData (previously threw ReferenceError).
             expect(body.reply).to.equal('just-a-reply');
             expect(body.patches_applied).to.equal(0);

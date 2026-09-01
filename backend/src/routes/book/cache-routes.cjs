@@ -72,7 +72,7 @@ module.exports = function registerCacheRoutes(app, ctx) {
             // ── Clean PG tables — each with individual try/catch so one
             //    failure doesn't block the rest. Only generated/cache tables are
             //    cleared — book identity data (book_source, book_snapshots),
-            //    user chat history (chat_messages, chat_sessions) and event logs
+            //    user chat history (ai_chat_sessions) and event logs
             //    (book_events) are preserved so the book stays loadable and
             //    dedup works on re-import.
             const pgTables = [
@@ -95,9 +95,8 @@ module.exports = function registerCacheRoutes(app, ctx) {
                 'character_aliases',
                 'storyboard_elements',
                 'audio_layers',
-                // NOTE: 'books', 'book_source', 'book_snapshots',
-                // 'chat_messages', 'chat_sessions', 'book_events' are NOT deleted
-                // on cache clear — they are book identity data, not generated cache.
+                // NOTE: 'books', 'book_source', 'book_snapshots', 'book_events'
+                // are NOT deleted on cache clear — they are book identity data.
             ];
             for (const table of pgTables) {
                 try {

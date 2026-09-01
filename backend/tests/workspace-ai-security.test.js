@@ -8,7 +8,7 @@
 //                 use, book data disclosure and book write;
 //   2.2 HIGH      SSRF via user-controlled AI endpoint;
 //   2.3 MEDIUM    "Test Connection" of a saved provider hits the wrong base URL;
-//   2.4 MEDIUM    /ai/prompt has no timeout.
+//   2.4 MEDIUM    chat has no timeout.
 //
 // Security regression matrix:
 //   Workspace A → own book → own provider           PASS (provider A used)
@@ -18,7 +18,7 @@
 //   private endpoint (169.254.169.254 / 127.0.0.1 / RFC1918 / ::1)  DENY
 //   public OpenAI-compatible endpoint               ALLOW
 //   saved custom endpoint test                      uses saved endpoint+key+model
-//   /ai/prompt hung endpoint                        times out (504)
+//   chat hung endpoint                              times out (504)
 //
 // Real-PG HTTP suite: production authContext + auth routes + the exact
 // guard wiring from backend.cjs. DNS is stubbed (the SSRF guard resolves the
@@ -242,10 +242,10 @@ describe('Workspace AI security regression', () => {
                 choices: [{ message: { content: 'reply-for-A' } }],
             }));
 
-            const res = await fetch(`${base}/api/v1/ai/prompt`, {
+            const res = await fetch(`${base}/api/v1/ai/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Cookie: attacker.cookie },
-                body: JSON.stringify({ book_id: bookA, prompt: 'hi' }),
+                body: JSON.stringify({ book_id: bookA, message: 'hi' }),
             });
             expect(res.status).to.equal(200);
             expect((await res.json()).reply).to.equal('reply-for-A');
@@ -257,10 +257,10 @@ describe('Workspace AI security regression', () => {
 
         it('Workspace A → victim book in body: 403 (fail closed)', async () => {
             installFetchMock((call) => okJsonResponse({ choices: [{ message: { content: 'x' } }] }));
-            const res = await fetch(`${base}/api/v1/ai/prompt`, {
+            const res = await fetch(`${base}/api/v1/ai/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Cookie: attacker.cookie },
-                body: JSON.stringify({ book_id: bookB, prompt: 'hi' }),
+                body: JSON.stringify({ book_id: bookB, message: 'hi' }),
             });
             expect(res.status).to.equal(403);
             expect(fetchCalls).to.have.length(0); // victim provider never contacted
@@ -268,10 +268,10 @@ describe('Workspace AI security regression', () => {
 
         it('Workspace A → victim book via query: 403', async () => {
             installFetchMock((call) => okJsonResponse({ choices: [{ message: { content: 'x' } }] }));
-            const res = await fetch(`${base}/api/v1/ai/prompt?book_id=${encodeURIComponent(bookB)}`, {
+            const res = await fetch(`${base}/api/v1/ai/chat?book_id=${encodeURIComponent(bookB)}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Cookie: attacker.cookie },
-                body: JSON.stringify({ prompt: 'hi' }),
+                body: JSON.stringify({ message: 'hi' }),
             });
             expect(res.status).to.equal(403);
             expect(fetchCalls).to.have.length(0);
@@ -279,10 +279,10 @@ describe('Workspace AI security regression', () => {
 
         it('query/body book mismatch (authorized A, body B): 400 — never operate on B', async () => {
             installFetchMock((call) => okJsonResponse({ choices: [{ message: { content: 'x' } }] }));
-            const res = await fetch(`${base}/api/v1/ai/prompt?book_id=${encodeURIComponent(bookA)}`, {
+            const res = await fetch(`${base}/api/v1/ai/chat?book_id=${encodeURIComponent(bookA)}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Cookie: attacker.cookie },
-                body: JSON.stringify({ book_id: bookB, prompt: 'hi' }),
+                body: JSON.stringify({ book_id: bookB, message: 'hi' }),
             });
             expect(res.status).to.equal(400);
             const body = await res.json();
@@ -291,26 +291,42 @@ describe('Workspace AI security regression', () => {
             expect(fetchCalls).to.have.length(0);
         });
 
-        it('query/body mismatch on /ai/lock (book write): 400', async () => {
-            const res = await fetch(`${base}/api/v1/ai/lock?book_id=${encodeURIComponent(bookA)}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Cookie: attacker.cookie },
-                body: JSON.stringify({ book_id: bookB, locked: true }),
-            });
-            expect(res.status).to.equal(400);
-            expect((await res.json()).code).to.equal('book_id_mismatch');
+        it('session delete is scoped by the book guard: victim session → 400/403, never deleted', async () => {
+            // DELETE /ai/sessions/:id resolves the book from the session row.
+            // A session of another workspace must not be deletable.
+            const victimSessionId = `wsaisec-${stamp}-victim-del`;
+            await query(
+                `INSERT INTO ai_chat_sessions (id, book_id, mode, topic_id, messages, created_at, updated_at, context, locked)
+                 VALUES ($1, $2, 'chat', 'book', '[]', $3, $3, NULL, false)`,
+                [victimSessionId, bookB, Date.now()]
+            );
+            try {
+                const res = await fetch(`${base}/api/v1/ai/sessions/${encodeURIComponent(victimSessionId)}`, {
+                    method: 'DELETE',
+                    headers: { Cookie: attacker.cookie },
+                });
+                expect([403, 400]).to.include(res.status);
+                const still = await query('SELECT id FROM ai_chat_sessions WHERE id = $1', [victimSessionId]);
+                expect(still.rows).to.have.length(1);
+            } finally {
+                await query(`DELETE FROM ai_chat_sessions WHERE id = $1`, [victimSessionId]);
+            }
         });
 
-        it('/ai/lock on own book operates on the scoped book id (no 500)', async () => {
-            // book.loadBook is stubbed to null in this app → 404 "Book not
-            // found". A regression where the handler re-read `book_id` from
-            // the body (now undefined after the scoped-book fix) would 500.
-            const res = await fetch(`${base}/api/v1/ai/lock`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Cookie: attacker.cookie },
-                body: JSON.stringify({ book_id: bookA, locked: true }),
+        it('DELETE own session removes the row (200)', async () => {
+            const ownSessionId = `wsaisec-${stamp}-own-del`;
+            await query(
+                `INSERT INTO ai_chat_sessions (id, book_id, mode, topic_id, messages, created_at, updated_at, context, locked)
+                 VALUES ($1, $2, 'chat', 'book', '[]', $3, $3, NULL, false)`,
+                [ownSessionId, bookA, Date.now()]
+            );
+            const res = await fetch(`${base}/api/v1/ai/sessions/${encodeURIComponent(ownSessionId)}`, {
+                method: 'DELETE',
+                headers: { Cookie: attacker.cookie },
             });
-            expect(res.status).to.equal(404);
+            expect(res.status).to.equal(200);
+            const gone = await query('SELECT id FROM ai_chat_sessions WHERE id = $1', [ownSessionId]);
+            expect(gone.rows).to.have.length(0);
         });
 
         it('Workspace A cannot read victim book (book guard)', async () => {
@@ -462,7 +478,7 @@ describe('Workspace AI security regression', () => {
             expect(fetchCalls[0].url).to.equal('https://api.openai.com/v1/chat/completions');
         });
 
-        it('/ai/prompt with a private saved endpoint is refused (502, no SSRF fetch)', async () => {
+        it('/ai/chat with a private saved endpoint is refused (502, no SSRF fetch)', async () => {
             // Force a private workspace provider, as if a DNS-rebinding domain
             // flipped to an internal address after being saved. Restored in
             // `finally` so later tests always see the real attacker provider.
@@ -471,10 +487,10 @@ describe('Workspace AI security regression', () => {
                 endpoint: 'http://169.254.169.254/v1', apiKey: 'sk-private', model: 'm',
             });
             try {
-                const res = await fetch(`${base}/api/v1/ai/prompt`, {
+                const res = await fetch(`${base}/api/v1/ai/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', Cookie: attacker.cookie },
-                    body: JSON.stringify({ book_id: bookA, prompt: 'hi' }),
+                    body: JSON.stringify({ book_id: bookA, message: 'hi' }),
                 });
                 expect(res.status).to.equal(502);
                 expect((await res.json()).error).to.match(/not allowed/i);
@@ -552,10 +568,10 @@ describe('Workspace AI security regression', () => {
     });
 
     // ══════════════════════════════════════════════════════════════════
-    // 2.4 — /ai/prompt timeout (MEDIUM)
+    // 2.4 — chat timeout (MEDIUM)
     // ══════════════════════════════════════════════════════════════════
 
-    describe('/ai/prompt timeout', () => {
+    describe('chat timeout', () => {
         it('attaches a timeout signal and answers 504 when the provider hangs/aborts', async () => {
             setDns(['93.184.216.34']);
             installFetchMock((call) => {
@@ -568,10 +584,10 @@ describe('Workspace AI security regression', () => {
                 throw err;
             });
 
-            const res = await fetch(`${base}/api/v1/ai/prompt`, {
+            const res = await fetch(`${base}/api/v1/ai/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Cookie: attacker.cookie },
-                body: JSON.stringify({ book_id: bookA, prompt: 'hi' }),
+                body: JSON.stringify({ book_id: bookA, message: 'hi' }),
             });
             expect(res.status).to.equal(504);
             const body = await res.json();

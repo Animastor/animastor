@@ -816,8 +816,6 @@ module.exports = function(app, redis, deps) {
                 'output_manifests',
                 'cache_entries',
                 'book_source',
-                'chat_messages',
-                'chat_sessions',
                 'agent_sessions',
                 'book_generation_sessions',
                 'generation_cancellations',

@@ -274,15 +274,6 @@ async function bootstrapWithAgentInner(bookId, draft, progress, publishProgress,
                     });
                 }
             } catch (_) {}
-            // Сохраняем в PG chat_messages, чтобы сообщение было в истории чата
-            try {
-                const chatRepo = require('../../storage/postgres/repositories/chat-repo');
-                await chatRepo.appendMessage(bookId, {
-                    role: 'system',
-                    topic: 'vbook',
-                    message: '✗ Отменено',
-                });
-            } catch (_) {}
             _progress({ stage: 'done', message: '✗ Генерация VBook остановлена пользователем' });
         }
         throw err;
@@ -793,15 +784,6 @@ async function _bootstrapNextWindowInner(bookId, progress, publishProgress, redi
                         message: '✗ Отменено',
                     });
                 }
-            } catch (_) {}
-            // Сохраняем в PG chat_messages, чтобы сообщение было в истории чата
-            try {
-                const chatRepo = require('../../storage/postgres/repositories/chat-repo');
-                await chatRepo.appendMessage(bookId, {
-                    role: 'system',
-                    topic: 'vbook',
-                    message: '✗ Отменено',
-                });
             } catch (_) {}
             _progress({ stage: 'done', message: '✗ Генерация VBook остановлена пользователем' });
         }

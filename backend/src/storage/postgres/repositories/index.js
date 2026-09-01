@@ -3,7 +3,6 @@ module.exports = {
     task: require('./task-repo'),
     iu: require('./iu-repo'),
     sceneAssets: require('./scene-assets-repo'),
-    chat: require('./chat-repo'),
     events: require('./events-repo'),
     genSession: require('./gen-session-repo'),
     bookSource: require('./book-source-repo'),

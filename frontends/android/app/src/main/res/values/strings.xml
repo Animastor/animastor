@@ -71,6 +71,7 @@
     <string name="ai_download_book">Download vbook</string>
     <string name="ai_placeholder">I understand your request. This feature is coming soon!</string>
     <string name="ai_error">Error: %1$s</string>
+    <string name="ai_no_result">The assistant returned no result. Please try again.</string>
     <string name="ai_speaking">Listening...</string>
     <string name="ai_permission_required">Microphone permission required</string>
 

@@ -653,9 +653,23 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
 
             } catch (e: Exception) {
                 if (currentSessionId != sessionAtSend || !isAdded) return@launch
+                // Surface the backend's explanation (e.g. 504 ai_timeout body:
+                // {"error": "AI не ответил за отведённое время…", "code": ...})
+                // instead of the bare 'HTTP 504 Gateway Timeout' HttpException
+                // text. (Web parity: api/client.ts parses the error body.)
+                val detailedMessage = if (e is retrofit2.HttpException) {
+                    val bodyText = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
+                    bodyText?.let { raw ->
+                        runCatching { org.json.JSONObject(raw).optString("error") }
+                            .getOrNull()
+                            ?.takeIf { it.isNotBlank() }
+                    } ?: e.message()
+                } else {
+                    e.message ?: "unknown"
+                }
                 messages.add(
                     ChatMessage(
-                        text = getString(R.string.ai_error, e.message ?: "unknown"),
+                        text = getString(R.string.ai_error, detailedMessage),
                         isUser = false
                     )
                 )
@@ -763,7 +777,11 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 else "✅ ${it.tool}: ${it.result ?: "done"}"
             })
         }
-        return if (parts.isEmpty()) "🤖 Tool executed." else parts.joinToString("\n")
+        // No patches, no tool results — the model produced nothing usable
+        // (e.g. reasoning consumed the whole token budget). Honest retry hint
+        // instead of the old misleading 'Tool executed.' ghost message.
+        // (Web parity: AiAssistantPage.buildToolResultMessage / ai_no_result.)
+        return if (parts.isEmpty()) getString(R.string.ai_no_result) else parts.joinToString("\n")
     }
 
     private fun scrollToBottom() {

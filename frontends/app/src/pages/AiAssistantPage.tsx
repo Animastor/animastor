@@ -235,7 +235,11 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
 
     const pos = positionSignal.value;
     try {
-      const AI_CHAT_TIMEOUT_MS = 180_000; // 3 min — matches backend AI_FETCH_TIMEOUT_MS
+      // MUST be LONGER than the backend AI_FETCH_TIMEOUT_MS (180s): the
+      // backend aborts its own AI request at 180s and returns 504 with a
+      // user-facing explanation. A client timeout of exactly 180s races the
+      // server and shows a bare 'Request timeout' instead of that message.
+      const AI_CHAT_TIMEOUT_MS = 190_000;
       const res = await postJson<AiChatResponse>('/ai/chat', {
         messages: apiMessagesRef.current,
         book_id: bid || null,
