@@ -160,8 +160,9 @@ describe('orchestration stabilization: protocol contract', () => {
             path.join(__dirname, '../../worker/worker/worker.cjs'), 'utf8'
         );
 
-        // gpu-hub принимает timeout_ms из body и кладёт его в очередь (task)
-        expect(hubSource).to.match(/timeout_ms\s*}/);
+        // gpu-hub принимает timeout_ms из body и кладёт его в очередь (task).
+        // SH-2: policy_id joined the /task destructure after timeout_ms.
+        expect(hubSource).to.match(/timeout_ms,\s*\n\s*policy_id\s*\n\s*}/);
         expect(hubSource).to.match(/timeout_ms: timeout_ms/);
 
         // worker уважает per-job timeout из задачи вместо короткого дефолта

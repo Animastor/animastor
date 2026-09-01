@@ -238,6 +238,10 @@ require('./routes/admin-routes.cjs')(app, redis);
 // Phase 1). Users only; workspace always resolved server-side.
 require('./routes/worker-routes.cjs')(app, redis);
 
+// User lookup (Experimental Beta — SH-2, worker sharing V2): minimal
+// exact-username recipient picker behind the same kill-switch.
+require('./routes/users-routes.cjs')(app);
+
 // Private worker SETUP CONTRACT (Phase 3) — the unified UI-safe contract for
 // Web and Android: profiles, installation methods, artifacts, workflows,
 // instructions, worker setup status, installation plan. Additive layer; the

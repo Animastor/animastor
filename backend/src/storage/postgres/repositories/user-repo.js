@@ -72,6 +72,27 @@ async function findById(userId) {
 }
 
 /**
+ * Batch lookup by exact usernames (share-recipient resolution, V2 sharing).
+ * The routes NEVER accept user_ids from the body — recipients are resolved
+ * from usernames server-side, so a grant can only target an existing user.
+ * Unknown names are simply absent from the result.
+ * @param {string[]} usernames
+ * @returns {Promise<object[]>} matching user rows ({user_id, username, display_name} kept small)
+ */
+async function findByUsernames(usernames) {
+    const names = (Array.isArray(usernames) ? usernames : [])
+        .map((u) => normalizeUsername(u))
+        .filter(Boolean)
+        .slice(0, 50); // hard cap — recipients are added one POST at a time
+    if (names.length === 0) return [];
+    const result = await query(
+        `SELECT user_id, username, display_name FROM users WHERE username = ANY($1::text[])`,
+        [names]
+    );
+    return result.rows;
+}
+
+/**
  * Find a user by email.
  * @param {string} email
  * @returns {Promise<object|null>}
@@ -123,6 +144,7 @@ async function updateUser(userId, updates) {
 module.exports = {
     createUser,
     findByUsername,
+    findByUsernames,
     findById,
     findByEmail,
     updateUser,

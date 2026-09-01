@@ -484,11 +484,32 @@ global counts that already exist.
    ≤ TTL, kill-switch off = today's behavior exactly, counts invariant
    (D3). — **IMPLEMENTED** (`backend/tests/worker-share-policy.test.js`)
 
+### 13.1b V2 (personal sharing) — implemented alongside V1
+
+7. `share_policy_grants` table (audience rows for users scope);
+   `scope_kind` CHECK widened to `('public','users')` (SH-2
+   migration). — **IMPLEMENTED**
+8. Grant CRUD: `POST/DELETE/GET /share/users` routes, `POST /share`
+   extended with `scope` + `users` fields; `DELETE /share` drains the
+   users-policy lane on stop. — **IMPLEMENTED**
+9. Per-policy queue `queue:{type}:policy:{id}` — dispatcher stamps
+   `policy_id` on routed tasks; hub pops the policy lane as spare
+   capacity (never the system pool for users-scoped workers). Poison
+   guards per lane (policy_id mismatch → dead-letter). — **IMPLEMENTED**
+10. "Shared with me" endpoint (`GET /api/v1/workers/shared-with-me`)
+    registered before `/:workerId` (no param capture). Returns
+    `access_reason.shared_by` for each entry. — **IMPLEMENTED**
+11. User lookup (`GET /api/v1/users/lookup?username=<exact>`) — exact
+    match only, authenticated users, no sensitive fields. — **IMPLEMENTED**
+12. Minimal event contract (`share-events.js`) — structured `[SHARE-EVENT]`
+    log + sink; one event per newly granted recipient. — **IMPLEMENTED**
+13. Tests: full grant lifecycle, hub policy-lane pop, poison guards,
+    orphan requeue to policy lane, dispatch routing, kill-switch
+    dormancy, shared-with-me route order. — **IMPLEMENTED**
+    (`backend/tests/worker-share-grants.test.js`)
+
 ### 13.2 What explicitly NOT to implement yet
 
-- `share_policy_grants`, `users`/friends scope (V2).
-- Per-policy queues `queue:{type}:policy:{id}` (V2 — only needed once a
-  policy has its own audience to quarantine).
 - groups, projects (V3 possibilities — no tables, no fields, no enum
   values).
 - `share_usage` ledger, quotas, dashboards, reputation (V3
@@ -497,8 +518,9 @@ global counts that already exist.
 - Dedicated audit tables (V1 logs via existing patterns).
 - `workers.has_active_share_policy` generated column.
 - Any consumer-facing "who served my book" UI.
-- "Shared with me", notifications, personal grants, groups (§14 — locked
-  V2+ requirements, designed-for but deliberately absent in V1).
+- V3+ "available through group" access reason; notification delivery
+  subsystem (the V2 event seam — `[SHARE-EVENT]` log + sink — is the
+  emission point; a real inbox/feed consumer is future work).
 
 ### 13.3 Existing Animastor functionality reused (unchanged)
 
@@ -538,13 +560,15 @@ tests before the flag is ever enabled.
 | Version | Sharing shape | Mechanism |
 |---|---|---|
 | **V1** | private Worker → **public** (everyone) | `share_policies(scope_kind='public')` — implemented |
-| **V2** | private Worker → **specific users** | `scope_kind` CHECK widens to `('public','users')` + `share_policy_grants` (audience rows); one-line migration, not a redesign |
+| **V2** | private Worker → **specific users** | `scope_kind` CHECK widens to `('public','users')` + `share_policy_grants` (audience rows); one-line migration, not a redesign — **IMPLEMENTED (SH-2)** |
 | **V3** | private Worker → **groups** | `scope_kind` widens further; groups ride the same policy/grant shape |
 
 The V1 design deliberately keeps this seam open: `scope_kind` is a
 CHECK-constrained enum (V2/V3 extend it), the policy is worker-addressed
 with a single active row (D7 — revisit only if V2 needs parallel
 policies), and nothing in the dispatch/claim path ever names an audience.
+V2 exercised the seam: the CHECK now admits `users` and personal grants
+ride the same single-active-policy shape.
 
 ### 14.2 "Shared with me" — discoverability requirement (V2, normative)
 
@@ -555,20 +579,23 @@ list. The following concepts must exist at V2 and must be designable now:
 1. **"Shared with me"** — a persistent, per-user list of resources
    shared with that user. It is a standing view (derivable from
    grants/policies at any time), NOT a transient notification feed that
-   disappears after reading.
+   disappears after reading. — **IMPLEMENTED** (`GET
+   /api/v1/workers/shared-with-me`)
 2. **Notification/event** — a message of the form
    «пользователь X поделился с вами ресурсом Y» delivered when a share
    targeting the user begins. The event is the *trigger*; the
-   "Shared with me" list is the *state*.
+   "Shared with me" list is the *state*. — **event contract IMPLEMENTED**
+   (`share-events.js`); delivery to an inbox/feed is future work (sink
+   seam is in place).
 3. **Access reason** — every "Shared with me" entry carries WHY the
    resource is accessible, with exactly three reasons:
-   - `shared by user` (personal share, V2);
-   - `available through group` (group share, V3);
-   - `public` (community pool, V1).
+   - `shared by user` (personal share, V2) — **IMPLEMENTED**;
+   - `available through group` (group share, V3) — future;
+   - `public` (community pool, V1) — future (V1 has no personal list).
 
 The UI/UX of these concepts is out of scope here; what is locked is that
 V2's API surface must be able to answer, per user: *"which resources are
-shared with me, and why?"*
+shared with me, and why?"* — it can (list + access_reason).
 
 ### 14.3 Resource-agnostic requirement (normative)
 
@@ -586,9 +613,12 @@ future shareable resource type**:
 - no V1 construct may hard-code "worker" semantics into the future
   generic layer (e.g. no heartbeat/queue concepts may leak into grants).
 
-**Not implemented now** (and not blocking V1): notifications, groups,
-personal grants, the "Shared with me" list. §5.2 / §13.2 lists remain
-normative for V1.
+**Not implemented yet** (and not blocking V1/V2): groups, notifications
+delivery (the event sink seam exists), the V3 grant adapter seam. V2
+implemented the generic layer proof-of-concept: `share_policy_grants`,
+the "Shared with me" list, and the event contract are the Workers
+instance of the resource-agnostic seam. §5.2 / §13.2 lists remain
+normative for the current scope.
 
 ---
 

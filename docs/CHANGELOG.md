@@ -40,6 +40,44 @@ All notable changes to Animastor are documented here.
   - **Tests**: `backend/tests/worker-share-policy.test.js` — authz matrix,
     lane priority, expiry re-check, stale-mirror, kill-switch, D3 counts.
 
+- **Worker Sharing V2 (SH-2)** — personal sharing: a private worker's
+  spare capacity routed to specific registered users, alongside the V1
+  public pool behind the same `SHARE_FEATURES_ENABLED` kill-switch
+  (default OFF). V1 is unchanged when the flag is off.
+  - **Schema** (SH-2 migration, additive): `scope_kind` CHECK widened to
+    `('public','users')`; new `share_policy_grants` table — one row per
+    (policy, user), partial unique index, `workspace_id` denormalized for
+    the workspace-scoped guard. Grants die with their policy (stop =
+    hard DELETE; stop/restart starts a FRESH audience).
+  - **API** (404 while the kill-switch is off): `POST /share` now accepts
+    `scope` (`public`|`users`) + `users`; `POST/DELETE/GET
+    /share/users` manage recipients (unknown username → 400, self-grant
+    → 400, duplicates idempotent); `GET /api/v1/workers/shared-with-me`
+    (registered before `/:workerId`) lists personal grants with
+    `access_reason.shared_by`; `GET /api/v1/users/lookup?username=<exact>`
+    — exact match, authenticated only, public projection. Stopping a
+    users policy drains its lane back into the public pool (markers
+    stripped).
+  - **Hub**: per-policy lane `queue:{type}:policy:{id}`. A users-scoped
+    worker pops owner lane first, then ITS policy lane — never the
+    system pool (no public leak). `POST /task` accepts the
+    backend-authored `policy_id` stamp (XOR with `workspace_id`); poison
+    guards are per-lane (foreign policy_id in a lane → dead-letter);
+    orphan sweep requeues policy-lane tasks to their own lane. Users
+    markers ride the heartbeat but never count toward public global
+    capacity.
+  - **Dispatch**: `sendUnified` routes book jobs to the grant's policy
+    lane when the workspace has no private worker and the owner holds a
+    personal grant; `policy_id` is backend-authored only (client value
+    stripped/overwritten).
+  - **Events**: minimal contract (`share-events.js`) — structured
+    `[SHARE-EVENT]` log + sink; one `worker.shared_with_user` event per
+    newly granted recipient.
+  - **Tests**: `backend/tests/worker-share-grants.test.js` — grant
+    lifecycle, authz matrix, policy-lane pop precedence, poison guards,
+    orphan requeue, dispatch routing, kill-switch dormancy, route order,
+    lookup, event contract.
+
 ---
 
 ## [Unreleased] — 2026-08-27

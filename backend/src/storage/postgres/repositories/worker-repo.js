@@ -327,15 +327,17 @@ async function revokeSystemWorker(workerId) {
     return { revoked: rowCount > 0, tokenHash: rows[0] ? rows[0].token_hash : null };
 }
 
-// ── SHARE POLICIES (Experimental Beta — SH-1, worker sharing V1) ──────────
+// ── SHARE POLICIES (Experimental Beta — SH-1, worker sharing V1/V2) ───────
 // A share policy is an ACCESS POLICY, not ownership: it lets a `private`
-// worker's spare capacity serve the system pool while the owner's private
+// worker's spare capacity serve an audience while the owner's private
 // lane keeps strict priority. mode NEVER changes (§3 of
 // worker-sharing-model-design.md). All mutators are workspace-scoped
 // (`WHERE workspace_id = $2`) — system workers are workspace-less and can
-// never match. V1 supports scope 'public' only (V2 widens the CHECK).
+// never match. V1 supported scope 'public' only; V2 (SH-2) adds 'users'
+// (personal grants — the policy's audience rows live in
+// share_policy_grants). Groups/projects remain V3.
 
-const SHARE_POLICY_SCOPES = ['public']; // V1: public only; V2 widens to ('public','users')
+const SHARE_POLICY_SCOPES = ['public', 'users'];
 
 /**
  * Normalize a share_policies row joined next to a worker row into the
@@ -390,12 +392,14 @@ function sharePolicyPublic(row) {
  * @param {object} opts
  * @param {string} opts.workerId
  * @param {string} opts.workspaceId - server-resolved caller workspace (never body)
+ * @param {string} [opts.scope] - 'public' (V1) | 'users' (V2 personal grants)
  * @param {number|null} opts.expiresAt - epoch ms or NULL = "until stopped" (D5)
  * @param {string|null} opts.createdBy - user_id
  * @returns {Promise<{policy:object}|{conflict:true}|{notFound:true}>}
  */
-async function startSharePolicy({ workerId, workspaceId, expiresAt = null, createdBy = null }) {
+async function startSharePolicy({ workerId, workspaceId, scope = 'public', expiresAt = null, createdBy = null }) {
     if (!workerId || !workspaceId) return { notFound: true };
+    if (!SHARE_POLICY_SCOPES.includes(scope)) throw new Error(`scope must be one of: ${SHARE_POLICY_SCOPES.join(', ')}`);
     const now = Date.now();
     if (expiresAt != null && (!Number.isFinite(expiresAt) || expiresAt <= now)) {
         throw new Error('expiresAt must be a future epoch-ms timestamp or null');
@@ -411,12 +415,12 @@ async function startSharePolicy({ workerId, workspaceId, expiresAt = null, creat
     try {
         const { rows } = await query(`
             INSERT INTO share_policies (worker_id, workspace_id, scope_kind, starts_at, expires_at, created_by)
-            SELECT w.worker_id, w.workspace_id, 'public', $3, $4, $5
+            SELECT w.worker_id, w.workspace_id, $6, $3, $4, $5
             FROM workers w
             WHERE w.worker_id = $1 AND w.workspace_id = $2
               AND w.mode = 'private' AND w.revoked_at IS NULL
             RETURNING policy_id, worker_id, workspace_id, scope_kind, starts_at, expires_at, revoked_at, note, created_at
-        `, [workerId, workspaceId, now, expiresAt, createdBy || null]);
+        `, [workerId, workspaceId, now, expiresAt, createdBy || null, scope]);
         if (!rows[0]) return { notFound: true }; // no worker matched (foreign/revoked/wrong mode)
         return { policy: sharePolicyPublic(rows[0]) };
     } catch (err) {
@@ -434,24 +438,33 @@ async function startSharePolicy({ workerId, workspaceId, expiresAt = null, creat
  * (expires_at-agnostic — an expired-but-unstamped row is stamped too).
  * Idempotent-ish: { stopped: false } when nothing was active. Workspace-
  * scoped: a foreign worker never matches. Queue cleanup is NOT required
- * (D6): consumer jobs live in the shared system pool, served by other pool
- * workers; nothing is dropped, nothing is orphaned.
- * @returns {Promise<{policy:object}|{stopped:false}|{notFound:true}>}
+ * for PUBLIC policies (D6): consumer jobs live in the shared system pool,
+ * served by other pool workers. A USERS policy stops popping its OWN
+ * policy lane, so the route layer drains that lane into the public pool
+ * (workerType is returned for exactly that).
+ * @returns {Promise<{policy:object, workerType:string}|{stopped:false}|{notFound:true}>}
  */
 async function stopSharePolicy(workerId, workspaceId) {
     if (!workerId || !workspaceId) return { notFound: true };
     const { rows: probe } = await query(`
-        SELECT 1 FROM workers WHERE worker_id = $1 AND workspace_id = $2 LIMIT 1
+        SELECT worker_type FROM workers WHERE worker_id = $1 AND workspace_id = $2 LIMIT 1
     `, [workerId, workspaceId]);
     if (!probe[0]) return { notFound: true };
+    const workerType = probe[0].worker_type;
     const { rows } = await query(`
         UPDATE share_policies
         SET revoked_at = EXTRACT(EPOCH FROM NOW())::bigint * 1000
         WHERE worker_id = $1 AND workspace_id = $2 AND revoked_at IS NULL
         RETURNING policy_id, worker_id, workspace_id, scope_kind, starts_at, expires_at, revoked_at, note, created_at
     `, [workerId, workspaceId]);
-    if (!rows[0]) return { stopped: false };
-    return { policy: sharePolicyPublic(rows[0]) };
+    if (!rows[0]) return { stopped: false, workerType };
+    // SH-2 (directory semantic): the audience is NOT persistent state — the
+    // grant rows die with the policy they reference (stop/restart always
+    // starts a FRESH audience; §14.3 "grants are dead with their policy").
+    // A dangling grant would otherwise silently reappear in the recipient's
+    // directory the next time this worker starts ANY users policy.
+    await query(`DELETE FROM share_policy_grants WHERE policy_id = $1`, [rows[0].policy_id]);
+    return { policy: sharePolicyPublic(rows[0]), workerType };
 }
 
 /**
@@ -492,6 +505,220 @@ async function getActiveSharePolicyForWorker(workerId, now = Date.now()) {
         LIMIT 1
     `, [workerId, now]);
     return rows[0] ? sharePolicySnapshot(rows[0]) : null;
+}
+
+// ── PERSONAL GRANTS (Experimental Beta — SH-2, worker sharing V2) ─────────
+// The audience of a scope_kind='users' policy. One grant row unambiguously
+// means: "this user may use this shared Worker" (§14.2). Grants exist only
+// while their policy is active (FK ON DELETE CASCADE + revoked policies are
+// filtered by every read). Workspace-scoped exactly like policies.
+
+/** Public API shape of a grant row (never secrets). */
+function shareGrantPublic(row) {
+    return {
+        grant_id: row.grant_id,
+        policy_id: row.policy_id,
+        user_id: row.user_id,
+        username: row.username || null,
+        display_name: row.display_name || null,
+        created_at: row.created_at != null ? Number(row.created_at) : null,
+    };
+}
+
+/**
+ * Grant personal access to users under the worker's ACTIVE USERS policy
+ * (SH-2). Idempotent per (policy, user) via ON CONFLICT DO NOTHING (U1).
+ * The whole write is one INSERT..SELECT against the active policy, so a
+ * concurrent policy stop/expiry cannot grant against a dead policy, and the
+ * workspace predicate makes foreign workers structurally unreachable.
+ *
+ * @param {object} opts
+ * @param {string} opts.workerId
+ * @param {string} opts.workspaceId - server-resolved owner workspace
+ * @param {string[]} opts.userIds - resolved recipient user ids
+ * @param {string|null} [opts.createdBy] - granting user_id
+ * @returns {Promise<{grants:object[], addedUserIds:string[]}|{notFound:true}>}
+ *   grants = the policy's FULL grant list after the insert (owner view);
+ *   addedUserIds = recipients whose grant row was newly created (events).
+ */
+async function addShareGrants({ workerId, workspaceId, userIds, createdBy = null }) {
+    if (!workerId || !workspaceId || !Array.isArray(userIds) || userIds.length === 0) {
+        return { notFound: true };
+    }
+    const now = Date.now();
+    const { rows } = await query(`
+        INSERT INTO share_policy_grants (policy_id, workspace_id, user_id, created_by)
+        SELECT p.policy_id, p.workspace_id, u.user_id, $5
+        FROM share_policies p
+        JOIN users u ON u.user_id = ANY($3::uuid[])
+        WHERE p.worker_id = $1 AND p.workspace_id = $2
+          AND p.scope_kind = 'users' AND p.revoked_at IS NULL
+          AND p.starts_at <= $4
+          AND (p.expires_at IS NULL OR p.expires_at > $4)
+          AND EXISTS (
+              SELECT 1 FROM workers w
+              WHERE w.worker_id = $1 AND w.workspace_id = $2
+                AND w.mode = 'private' AND w.revoked_at IS NULL
+          )
+        ON CONFLICT (policy_id, user_id) DO NOTHING
+        RETURNING grant_id, policy_id, user_id, created_at
+    `, [workerId, workspaceId, userIds, now, createdBy || null]);
+    // The EXISTS guard makes the whole statement a no-op when the worker is
+    // foreign/revoked/non-private OR no users matched — the caller separates
+    // those outcomes with its prior owner/policy checks.
+    const grants = await listShareGrants(workerId, workspaceId);
+    if (grants === null) return { notFound: true };
+    return { grants, addedUserIds: rows.map((r) => r.user_id) };
+}
+
+/**
+ * Revoke one personal grant (soft: the row is deleted; re-granting later
+ * creates a fresh row). Workspace-scoped via the policy's worker.
+ * @returns {Promise<{removed:boolean}|{notFound:true}>}
+ */
+async function revokeShareGrant(workerId, workspaceId, userId) {
+    if (!workerId || !workspaceId || !userId) return { notFound: true };
+    const { rowCount } = await query(`
+        DELETE FROM share_policy_grants g
+        USING share_policies p
+        WHERE g.policy_id = p.policy_id
+          AND p.worker_id = $1 AND p.workspace_id = $2
+          AND g.user_id = $3
+    `, [workerId, workspaceId, userId]);
+    return { removed: rowCount > 0 };
+}
+
+/**
+ * List the recipients of the worker's ACTIVE USERS policy (owner view).
+ * Null when the worker is foreign/unknown (caller answers 404); [] when no
+ * users policy is active.
+ * @returns {Promise<object[]|null>}
+ */
+async function listShareGrants(workerId, workspaceId) {
+    if (!workerId || !workspaceId) return null;
+    const { rows: probe } = await query(`
+        SELECT 1 FROM workers WHERE worker_id = $1 AND workspace_id = $2 LIMIT 1
+    `, [workerId, workspaceId]);
+    if (!probe[0]) return null;
+    const now = Date.now();
+    const { rows } = await query(`
+        SELECT g.grant_id, g.policy_id, g.user_id, g.created_at,
+               u.username, u.display_name
+        FROM share_policy_grants g
+        JOIN share_policies p ON p.policy_id = g.policy_id
+        JOIN users u ON u.user_id = g.user_id
+        WHERE p.worker_id = $1 AND p.workspace_id = $2
+          AND p.scope_kind = 'users' AND p.revoked_at IS NULL
+          AND p.starts_at <= $3
+          AND (p.expires_at IS NULL OR p.expires_at > $3)
+        ORDER BY g.created_at ASC
+    `, [workerId, workspaceId, now]);
+    return rows.map(shareGrantPublic);
+}
+
+/**
+ * "Shared with me" (V2): workers the given user may use through a personal
+ * grant on an ACTIVE users policy. Never includes public-pool-only workers
+ * and never includes the caller's own workers unless explicitly granted
+ * (grants to the owner are rejected at the route layer anyway).
+ * @param {string} userId - server-resolved caller user_id
+ * @returns {Promise<object[]>} entries with access reason (§14.2)
+ */
+async function listSharedWithMe(userId, now = Date.now()) {
+    if (!userId) return [];
+    const { rows } = await query(`
+        SELECT w.worker_id, w.name, w.worker_type, w.capabilities, w.mode,
+               w.workspace_id AS owner_workspace_id,
+               w.revoked_at, w.last_seen, w.created_at,
+               p.policy_id, p.starts_at AS policy_starts_at, p.expires_at AS policy_expires_at,
+               g.created_at AS granted_at,
+               owner_u.username AS shared_by_username,
+               owner_u.display_name AS shared_by_display_name,
+               owner_ws.name AS owner_workspace_name
+        FROM share_policy_grants g
+        JOIN share_policies p ON p.policy_id = g.policy_id
+        JOIN workers w ON w.worker_id = p.worker_id
+        LEFT JOIN workspaces owner_ws ON owner_ws.id = w.workspace_id
+        LEFT JOIN users owner_u ON owner_u.user_id = owner_ws.owner_user_id
+        WHERE g.user_id = $1
+          AND p.scope_kind = 'users' AND p.revoked_at IS NULL
+          AND p.starts_at <= $2
+          AND (p.expires_at IS NULL OR p.expires_at > $2)
+          AND w.revoked_at IS NULL
+          AND w.mode = 'private'
+        ORDER BY g.created_at DESC
+    `, [userId, now]);
+    return rows.map((row) => ({
+        worker_id: row.worker_id,
+        name: row.name,
+        worker_type: row.worker_type,
+        capabilities: row.capabilities || null,
+        owner_workspace_id: row.owner_workspace_id,
+        revoked_at: row.revoked_at != null ? Number(row.revoked_at) : null,
+        last_seen: row.last_seen != null ? Number(row.last_seen) : null,
+        created_at: row.created_at != null ? Number(row.created_at) : null,
+        granted_at: row.granted_at != null ? Number(row.granted_at) : null,
+        share_policy: {
+            policy_id: row.policy_id,
+            scope_kind: 'users',
+            starts_at: row.policy_starts_at != null ? Number(row.policy_starts_at) : null,
+            expires_at: row.policy_expires_at != null ? Number(row.policy_expires_at) : null,
+        },
+        // Access reason (§14.2): exactly why this resource is listed.
+        access_reason: {
+            kind: 'shared_by_user',
+            shared_by: row.shared_by_username || null,
+            shared_by_display_name: row.shared_by_display_name || null,
+            owner_workspace_name: row.owner_workspace_name || null,
+        },
+    }));
+}
+
+/**
+ * Does ANY active users policy of the given worker already carry a grant
+ * for this user? Pure authorization check (no workspace guard — the caller
+ * resolves the user's own request context).
+ * @returns {Promise<boolean>}
+ */
+async function hasGrantForUser(workerId, userId, now = Date.now()) {
+    if (!workerId || !userId) return false;
+    const { rows } = await query(`
+        SELECT 1
+        FROM share_policy_grants g
+        JOIN share_policies p ON p.policy_id = g.policy_id
+        WHERE p.worker_id = $1 AND g.user_id = $2
+          AND p.scope_kind = 'users' AND p.revoked_at IS NULL
+          AND p.starts_at <= $3
+          AND (p.expires_at IS NULL OR p.expires_at > $3)
+        LIMIT 1
+    `, [workerId, userId, now]);
+    return rows.length > 0;
+}
+
+/**
+ * V2 dispatch routing (flag-gated callers only): the active USERS policy of
+ * a worker that carries a grant for this workspace's OWNER USER. The owner
+ * user_id is resolved by the caller (books.workspace → workspaces.owner).
+ * Returns the policy snapshot for the per-policy lane key, or null.
+ * @returns {Promise<object|null>} { policy_id, scope_kind, expires_at } | null
+ */
+async function findGrantPolicyForRouting(workspaceId, ownerUserId, workerType, now = Date.now()) {
+    if (!workspaceId || !ownerUserId || !WORKER_TYPES.includes(workerType)) return null;
+    const { rows } = await query(`
+        SELECT p.policy_id, p.scope_kind, p.expires_at
+        FROM share_policy_grants g
+        JOIN share_policies p ON p.policy_id = g.policy_id
+        JOIN workers w ON w.worker_id = p.worker_id
+        JOIN workspaces ws ON ws.id = $1
+        WHERE g.user_id = $2
+          AND ws.owner_user_id = $2
+          AND w.worker_type = $3 AND w.mode = 'private' AND w.revoked_at IS NULL
+          AND p.scope_kind = 'users' AND p.revoked_at IS NULL
+          AND p.starts_at <= $4
+          AND (p.expires_at IS NULL OR p.expires_at > $4)
+        LIMIT 1
+    `, [workspaceId, ownerUserId, workerType, now]);
+    return rows[0] || null;
 }
 
 /**
@@ -549,6 +776,13 @@ module.exports = {
     stopSharePolicy,
     getActiveSharePolicy,
     getActiveSharePolicyForWorker,
+    shareGrantPublic,
+    addShareGrants,
+    revokeShareGrant,
+    listShareGrants,
+    listSharedWithMe,
+    hasGrantForUser,
+    findGrantPolicyForRouting,
     findActiveByIdWithTokenHash,
     sharePolicyPublic,
 };

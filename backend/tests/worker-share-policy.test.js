@@ -119,10 +119,20 @@ describe('Share policies — schema & repo invariants', () => {
         expect(idx.rows[0].indexdef).to.include('revoked_at IS NULL');
     });
 
-    it('V1 CHECK: scope_kind accepts public only', async () => {
-        const err = await query(`
+    it('scope CHECK (V2): accepts public and users; rejects anything else', async () => {
+        // V2 widened the enum to ('public','users') — the planned one-line
+        // migration (§14.1). Anything else (groups = V3) still fails closed.
+        const ok = await query(`
             INSERT INTO share_policies (worker_id, workspace_id, scope_kind)
             VALUES ($1, $2, 'users')
+        `, [workerId, wsId]).then(() => true, () => false);
+        expect(ok).to.equal(true);
+        // Clean up the users row so the one-active-policy invariant stays
+        // intact for the rest of this describe.
+        await query(`DELETE FROM share_policies WHERE worker_id = $1 AND scope_kind = 'users'`, [workerId]);
+        const err = await query(`
+            INSERT INTO share_policies (worker_id, workspace_id, scope_kind)
+            VALUES ($1, $2, 'groups')
         `, [workerId, wsId]).then(() => null, (e) => e);
         expect(err).to.exist;
         expect(err.message).to.include('scope_kind');
@@ -577,12 +587,18 @@ describe('Share policies — gpu-hub lane priority & borrow gate', () => {
         expect(identity.share_policy).to.equal(null);
     });
 
-    it('malformed / non-public policy payload in the mirror fails closed (no borrow)', async function () {
+    it('malformed policy payload in the mirror fails closed (no borrow)', async function () {
         const h = this.h = await startHub();
-        await registerWorker(h, { sharePolicy: { policy_id: 'pol-1', scope_kind: 'users', expires_at: null } });
+        // Garbage scope (groups = V3) is sanitized to "no policy" — fail closed.
+        await registerWorker(h, { sharePolicy: { policy_id: 'pol-1', scope_kind: 'groups', expires_at: null } });
         await h.redis.lpush(SYSTEM_QUEUE, JSON.stringify(hubTask('consumer-job-1', null)));
         expect(await popNext(h)).to.deep.equal({ task: null });
         expect(await h.redis.llen(SYSTEM_QUEUE)).to.equal(1);
+        // A users-scope policy (V2) is VALID identity — but it must NEVER
+        // borrow from the public system pool either (its audience lane is
+        // separate; covered by worker-share-grants.test.js).
+        const identity = await hub.authenticateWorkerMirror(h.redis, h.token);
+        expect(identity.share_policy).to.equal(null);
     });
 
     it('mirror staleness: the hub follows the MIRROR, not PG — borrow starts only after the mirror update (D4)', async function () {

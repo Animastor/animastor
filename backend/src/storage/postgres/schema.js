@@ -305,7 +305,7 @@ CREATE TABLE IF NOT EXISTS share_policies (
     policy_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     worker_id    UUID NOT NULL REFERENCES workers(worker_id) ON DELETE CASCADE,
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    scope_kind   TEXT NOT NULL CHECK (scope_kind IN ('public')),
+    scope_kind   TEXT NOT NULL CHECK (scope_kind IN ('public','users')),
     starts_at    BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000),
     expires_at   BIGINT,
     revoked_at   BIGINT,
@@ -313,6 +313,33 @@ CREATE TABLE IF NOT EXISTS share_policies (
     created_by   UUID REFERENCES users(user_id),
     created_at   BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000)
 );
+
+-- SH-2 (V2): personal grants — the audience of a scope_kind='users' policy.
+-- One grant unambiguously means "this user may use this shared Worker".
+-- Users-only in V2 (groups/projects are V3): no target_kind column. The
+-- generic seam (resource kind → policy → audience) stays resource-agnostic
+-- at the code layer and the table is the Workers instance of that seam (§14.3).
+-- workspace_id is denormalized from the policy's worker row for the same
+-- workspace-scoped SQL guard used everywhere else. Row-consistency with the
+-- policy (same workspace) is enforced by the INSERT..SELECT guards in
+-- worker-repo because PG CHECK cannot use subqueries.
+CREATE TABLE IF NOT EXISTS share_policy_grants (
+    grant_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    policy_id   UUID NOT NULL REFERENCES share_policies(policy_id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id     UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    created_by  UUID REFERENCES users(user_id),
+    created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000)
+);
+
+CREATE INDEX IF NOT EXISTS idx_share_policy_grants_policy
+    ON share_policy_grants(policy_id);
+CREATE INDEX IF NOT EXISTS idx_share_policy_grants_user
+    ON share_policy_grants(user_id);
+-- U1: unique user + policy — a duplicate grant can never create a second
+-- access path (ON CONFLICT DO NOTHING on the insert and revoke deletes the row).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_share_policy_grants_unique
+    ON share_policy_grants(policy_id, user_id);
 
 -- D1: ONE active policy per worker — the partial unique index below is the
 -- enforcement point (it removes all dispatch ambiguity for V1).
@@ -1367,6 +1394,43 @@ async function runMigrations() {
         console.log('[PG] SH-1: share_policies initialized (one active policy per worker)');
     } catch (err) {
         console.error('[PG] SH-1 share_policies migration failed:', err.message);
+        throw err;
+    }
+
+    // ======================================================
+    // SH-2: Personal grants (worker sharing V2)
+    // ======================================================
+    // V2 widens the policy scope enum (public → public+users) and adds the
+    // audience table (§14.1 of worker-sharing-model-design.md). Idempotent:
+    // fresh DBs already carry the final shape from SCHEMA_SQL; long-lived
+    // DBs get the constraint swap + new table. Kill-switch discipline is
+    // unchanged — schema lands dormant, behavior flips with
+    // SHARE_FEATURES_ENABLED.
+    try {
+        await query(`ALTER TABLE share_policies
+            DROP CONSTRAINT IF EXISTS share_policies_scope_kind_check`);
+        await query(`ALTER TABLE share_policies
+            ADD CONSTRAINT share_policies_scope_kind_check
+            CHECK (scope_kind IN ('public','users'))`);
+        await query(`CREATE TABLE IF NOT EXISTS share_policy_grants (
+            grant_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            policy_id   UUID NOT NULL REFERENCES share_policies(policy_id) ON DELETE CASCADE,
+            workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            user_id     UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+            created_by  UUID REFERENCES users(user_id),
+            created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000)
+        )`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_share_policy_grants_policy
+            ON share_policy_grants(policy_id)`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_share_policy_grants_user
+            ON share_policy_grants(user_id)`);
+        // U1: unique user + policy — a duplicate grant can never create a
+        // second access path.
+        await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_share_policy_grants_unique
+            ON share_policy_grants(policy_id, user_id)`);
+        console.log('[PG] SH-2: share_policy_grants initialized (personal grants, users scope)');
+    } catch (err) {
+        console.error('[PG] SH-2 share_policy_grants migration failed:', err.message);
         throw err;
     }
 

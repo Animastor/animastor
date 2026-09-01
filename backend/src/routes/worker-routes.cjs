@@ -41,6 +41,8 @@
 const workerRepo = require('../storage/postgres/repositories/worker-repo');
 const workerAuth = require('../services/worker-auth');
 const workspaceRepo = require('../storage/postgres/repositories/workspace-repo');
+const userRepo = require('../storage/postgres/repositories/user-repo');
+const shareEvents = require('../services/share-events');
 const { requireWorkerAuth } = require('../middleware/worker-auth-middleware');
 const config = require('../config/runtime-config');
 
@@ -125,6 +127,41 @@ async function publicWorker(redis, row) {
         revoked_at: row.revoked_at != null ? Number(row.revoked_at) : null,
         created_at: row.created_at != null ? Number(row.created_at) : null,
     };
+}
+
+/**
+ * SH-2: drain a stopped users-policy lane into the public pool.
+ * A users policy owns queue:{type}:policy:{id} — when sharing stops, only
+ * that policy's worker could pop it, and it no longer does. Left in place
+ * the queued jobs would strand until each dispatch lease expires (15-30
+ * min); draining moves them to the system pool where they keep flowing to
+ * public capacity — exactly where the scheduler's re-dispatch would have
+ * sent them anyway. The stale policy_id marker is stripped so no consumer
+ * (e.g. the hub's orphan requeue) can ever route the task back to the dead
+ * lane. Each entry moves exactly once (RPOPLPUSH is atomic): an entry a
+ * pool worker claims mid-drain simply runs with the inert marker; an entry
+ * still queued is removed and re-pushed clean. Best-effort, non-fatal — the
+ * dispatch-lease re-dispatch is the backstop.
+ */
+async function drainPolicyLane(redis, workerType, policyId) {
+    const src = `animastor:queue:${workerType}:policy:${policyId}`;
+    const dst = `animastor:queue:${workerType}`;
+    try {
+        for (let i = 0; i < 10000; i++) {
+            const raw = await redis.rpoplpush(src, dst);
+            if (!raw) break;
+            try {
+                const task = JSON.parse(raw);
+                if (task && task.policy_id !== undefined) {
+                    const removed = await redis.lrem(dst, 1, raw);
+                    if (removed > 0) {
+                        delete task.policy_id;
+                        await redis.lpush(dst, JSON.stringify(task));
+                    }
+                }
+            } catch (_) { /* unparseable entry — move it verbatim, it dead-letters as poison */ }
+        }
+    } catch (_) { /* non-fatal — the lease-expiry re-dispatch is the backstop */ }
 }
 
 module.exports = function(app, redis) {
@@ -223,7 +260,29 @@ module.exports = function(app, redis) {
         }
     });
 
+    // ── SH-2: "Shared with me" (V2 discoverability, §14.2) ───────────────
+    // A standing per-user list (state derived from grants/policies at read
+    // time), NOT a transient notification feed and NOT the community pool:
+    // only workers the caller may use through a PERSONAL grant. Each entry
+    // carries its access reason ("Shared by <username>"). Registered before
+    // the /:workerId detail route so the parametrized path cannot swallow it.
+    app.get('/api/v1/workers/shared-with-me', async (req, res) => {
+        if (!shareFeaturesEnabled()) return shareDisabledGuard(res);
+        const workspaceId = userWorkspaceGuard(req, res);
+        if (!workspaceId) return;
+        try {
+            const workers = await workerRepo.listSharedWithMe(req.user.userId);
+            res.json({ workers });
+        } catch (err) {
+            console.error('[WORKERS] shared-with-me failed:', err.message);
+            res.status(500).json({ error: 'Failed to load shared workers' });
+        }
+    });
+
     // ── GET one worker detail (caller's workspace only) ─────────────────
+    // NOTE (route order): /api/v1/workers/shared-with-me is registered
+    // BEFORE this handler — Express matches in registration order and this
+    // parametrized path would otherwise swallow it.
     app.get('/api/v1/workers/:workerId', async (req, res) => {
         const workspaceId = userWorkspaceGuard(req, res);
         if (!workspaceId) return;
@@ -285,9 +344,26 @@ module.exports = function(app, redis) {
             return res.status(404).json({ error: 'Worker not found' });
         }
         try {
+            // SH-2: a revoked worker with an active USERS policy leaves a
+            // policy lane only it could pop — capture the policy for the
+            // drain BEFORE the revoke (the policy row survives the soft
+            // delete, but the worker no longer pops anything).
+            let activeUsersPolicy = null;
+            if (shareFeaturesEnabled()) {
+                try {
+                    const p = await workerRepo.getActiveSharePolicyForWorker(req.params.workerId);
+                    if (p && p.scope_kind === 'users') activeUsersPolicy = p;
+                } catch (_) { /* non-fatal */ }
+            }
             const { revoked, tokenHash } = await workerRepo.revokeWorker(req.params.workerId, workspaceId);
             if (!revoked) {
                 return res.status(404).json({ error: 'Worker not found' });
+            }
+            if (activeUsersPolicy) {
+                const row = await workerRepo.findById(req.params.workerId);
+                if (row && row.worker_type) {
+                    await drainPolicyLane(redis, row.worker_type, activeUsersPolicy.policy_id);
+                }
             }
             await workerAuth.mirrorDrop(redis, [tokenHash]);
             res.json({ revoked: true });
@@ -366,6 +442,12 @@ module.exports = function(app, redis) {
     // normally (the claim is bound to the credential, not the policy).
 
     // ── POST start sharing (single active policy; worker-addressed, D7) ──
+    // V1: start PUBLIC sharing (body { expires_at? }) — unchanged shape.
+    // V2 (SH-2): start USERS sharing by naming recipients: body { users:
+    // [username,...], expires_at? }. The scope is derived server-side from
+    // the presence of `users` (or an explicit `scope` field that must agree)
+    // — it is never free-form. Recipients resolve server-side from
+    // usernames; client-supplied user_ids are never a source of truth.
     app.post('/api/v1/workers/:workerId/share', async (req, res) => {
         if (!shareFeaturesEnabled()) return shareDisabledGuard(res);
         const workspaceId = userWorkspaceGuard(req, res);
@@ -373,9 +455,15 @@ module.exports = function(app, redis) {
         if (!UUID_RE.test(req.params.workerId)) {
             return res.status(404).json({ error: 'Worker not found' });
         }
-        // Body: { expires_at?: <epoch ms>|null }. Scope is NOT client-
-        // supplied — V1 is public-only server-side (no spoofing surface).
         const body = req.body || {};
+        // Explicit scope, when present, must agree with the `users` field.
+        if (body.scope !== undefined && body.scope !== null
+            && !workerRepo.SHARE_POLICY_SCOPES.includes(body.scope)) {
+            return res.status(400).json({
+                error: `scope must be one of: ${workerRepo.SHARE_POLICY_SCOPES.join(', ')}`,
+                code: 'invalid_scope',
+            });
+        }
         let expiresAt = null;
         if (body.expires_at !== undefined && body.expires_at !== null) {
             if (typeof body.expires_at !== 'number' || !Number.isInteger(body.expires_at)) {
@@ -392,17 +480,78 @@ module.exports = function(app, redis) {
             }
             expiresAt = body.expires_at;
         }
+        // SH-2: recipients by username. Absent → public sharing (V1 shape);
+        // present → personal sharing (a users policy without recipients is
+        // meaningless and is rejected rather than silently created).
+        let scope = 'public';
+        let usernames = null;
+        const hasUsers = body.users !== undefined && body.users !== null;
+        if (hasUsers) {
+            if (!Array.isArray(body.users) || body.users.length === 0
+                || body.users.some((u) => typeof u !== 'string' || !u.trim())
+                || body.users.length > 50) {
+                return res.status(400).json({
+                    error: 'users must be a non-empty array of usernames (max 50 per request)',
+                    code: 'invalid_users',
+                });
+            }
+            usernames = [...new Set(body.users.map((u) => u.trim()))];
+            scope = 'users';
+        }
+        if (body.scope === 'users' && !hasUsers) {
+            return res.status(400).json({
+                error: "scope 'users' requires a non-empty users array",
+                code: 'invalid_users',
+            });
+        }
+        if (body.scope === 'public' && hasUsers) {
+            return res.status(400).json({
+                error: "scope 'public' does not take a users array",
+                code: 'invalid_scope',
+            });
+        }
         try {
+            // Probe first: name for the event payloads + the indistinct
+            // foreign/unknown 404 (same predicate as every worker route).
+            const workerRow = await workerRepo.findById(req.params.workerId);
+            if (!workerRow || workerRow.workspace_id !== workspaceId) {
+                return res.status(404).json({ error: 'Worker not found' });
+            }
+            // V2: resolve recipients BEFORE creating the policy — unknown
+            // usernames are rejected up-front (no policy is created).
+            let resolvedUsers = null;
+            if (scope === 'users') {
+                resolvedUsers = await userRepo.findByUsernames(usernames);
+                if (resolvedUsers.length !== usernames.length) {
+                    const found = new Set(resolvedUsers.map((u) => u.username));
+                    const unknown = usernames.filter((u) => !found.has(u));
+                    return res.status(400).json({
+                        error: `Unknown user(s): ${unknown.join(', ')}`,
+                        code: 'unknown_user',
+                        unknown_users: unknown,
+                    });
+                }
+                // The owner cannot be their own recipient: a personal grant
+                // to the owning workspace is a no-op by definition (the
+                // owner's access rides the private lane, never a grant).
+                if (resolvedUsers.some((u) => u.user_id === req.user.userId)) {
+                    return res.status(400).json({
+                        error: 'Cannot share with yourself',
+                        code: 'self_grant_forbidden',
+                    });
+                }
+            }
             const result = await workerRepo.startSharePolicy({
                 workerId: req.params.workerId,
                 workspaceId, // server-resolved — never from the body
+                scope,
                 expiresAt,
                 createdBy: req.user.userId,
             });
             if (result.notFound) {
-                // Unknown id, foreign workspace, revoked worker or a
-                // non-private mode — one indistinct answer (no existence
-                // oracle for other workspaces' workers).
+                // Revoked worker or non-private mode — the same indistinct
+                // answer as a foreign id (the probe above already answered
+                // for foreign/unknown).
                 return res.status(404).json({ error: 'Worker not found' });
             }
             if (result.conflict) {
@@ -413,18 +562,57 @@ module.exports = function(app, redis) {
                     code: 'share_already_active',
                 });
             }
+            // SH-2: seed the audience of a users policy. addShareGrants is
+            // guarded by the same workspace/active-policy predicates, so a
+            // policy that died between the two statements simply grants
+            // nothing (empty audience — the owner deletes the policy).
+            let grants = [];
+            if (scope === 'users') {
+                const grantResult = await workerRepo.addShareGrants({
+                    workerId: req.params.workerId,
+                    workspaceId,
+                    userIds: resolvedUsers.map((u) => u.user_id),
+                    createdBy: req.user.userId,
+                });
+                grants = grantResult.grants || [];
+                // Minimal notification/event seam (§15): one event per newly
+                // granted recipient — enough for «<username> поделился с вами
+                // Worker <worker name>». Non-fatal by contract.
+                const actor = { user_id: req.user.userId, username: req.user.username };
+                const added = new Set(grantResult.addedUserIds || []);
+                for (const u of resolvedUsers) {
+                    if (!added.has(u.user_id)) continue; // duplicate grant — no new access, no event
+                    shareEvents.emitShareEvent(shareEvents.buildWorkerSharedWithUserEvent({
+                        workerId: req.params.workerId,
+                        workerName: workerRow.name,
+                        recipient: u,
+                        actor,
+                    }));
+                }
+            }
             // Identity payload (mirror) gains the policy immediately (D4) —
             // the hub sees the change on the worker's next claim; the
             // periodic resync would heal it anyway.
             await workerAuth.mirrorPutWorkerById(redis, req.params.workerId);
-            res.status(201).json({ sharing: true, policy: result.policy });
+            res.status(201).json({
+                sharing: true,
+                policy: result.policy,
+                ...(scope === 'users' ? { grants } : {}),
+            });
         } catch (err) {
             console.error('[WORKERS] share start failed:', err.message);
             res.status(500).json({ error: 'Failed to start sharing' });
         }
     });
 
-    // ── DELETE stop sharing (idempotent end-state; no queue cleanup) ─────
+    // ── DELETE stop sharing (idempotent end-state) ────────────────────────
+    // PUBLIC policies need NO queue cleanup (D6): their consumer jobs sit in
+    // the shared system pool and other pool workers serve them.
+    // USERS policies own a per-policy lane (queue:{type}:policy:{id}) — when
+    // sharing stops, that lane would strand its queued jobs (only this
+    // worker could ever pop it, and it no longer pops). The lane is drained
+    // back into the public pool so the jobs stay servable (best-effort).
+    // Running jobs always finish normally (claim bound to the credential).
     app.delete('/api/v1/workers/:workerId/share', async (req, res) => {
         if (!shareFeaturesEnabled()) return shareDisabledGuard(res);
         const workspaceId = userWorkspaceGuard(req, res);
@@ -436,6 +624,9 @@ module.exports = function(app, redis) {
             const result = await workerRepo.stopSharePolicy(req.params.workerId, workspaceId);
             if (result.notFound) {
                 return res.status(404).json({ error: 'Worker not found' });
+            }
+            if (result.policy && result.policy.scope_kind === 'users' && result.workerType) {
+                await drainPolicyLane(redis, result.workerType, result.policy.policy_id);
             }
             // Nothing was active → the end state is already achieved.
             await workerAuth.mirrorPutWorkerById(redis, req.params.workerId);
@@ -462,10 +653,160 @@ module.exports = function(app, redis) {
             }
             // Expiry re-checked on read: an expired policy is not active.
             const policy = await workerRepo.getActiveSharePolicy(req.params.workerId, workspaceId);
-            res.json({ sharing: !!policy, policy: policy || null });
+            // SH-2: the audience rides along for users policies.
+            const grants = policy && policy.scope_kind === 'users'
+                ? (await workerRepo.listShareGrants(req.params.workerId, workspaceId)) || []
+                : [];
+            res.json({ sharing: !!policy, policy: policy || null, grants });
         } catch (err) {
             console.error('[WORKERS] share read failed:', err.message);
             res.status(500).json({ error: 'Failed to load sharing state' });
+        }
+    });
+
+    // ── SH-2: personal grant management (recipients of a users policy) ────
+    //   GET    /api/v1/workers/:workerId/share/users — list recipients
+    //   POST   /api/v1/workers/:workerId/share/users — add recipient(s)
+    //   DELETE /api/v1/workers/:workerId/share/users — revoke one recipient
+    // The active policy is addressed THROUGH the worker (worker-addressed,
+    // D7 — one active policy per worker). workspace_id / owner identity are
+    // ALWAYS server-resolved from the session + worker row; the request body
+    // never contributes identity. Foreign/unknown workers 404 indistinctly.
+
+    app.get('/api/v1/workers/:workerId/share/users', async (req, res) => {
+        if (!shareFeaturesEnabled()) return shareDisabledGuard(res);
+        const workspaceId = userWorkspaceGuard(req, res);
+        if (!workspaceId) return;
+        if (!UUID_RE.test(req.params.workerId)) {
+            return res.status(404).json({ error: 'Worker not found' });
+        }
+        try {
+            const grants = await workerRepo.listShareGrants(req.params.workerId, workspaceId);
+            if (grants === null) {
+                return res.status(404).json({ error: 'Worker not found' });
+            }
+            res.json({ grants });
+        } catch (err) {
+            console.error('[WORKERS] share users list failed:', err.message);
+            res.status(500).json({ error: 'Failed to list share recipients' });
+        }
+    });
+
+    app.post('/api/v1/workers/:workerId/share/users', async (req, res) => {
+        if (!shareFeaturesEnabled()) return shareDisabledGuard(res);
+        const workspaceId = userWorkspaceGuard(req, res);
+        if (!workspaceId) return;
+        if (!UUID_RE.test(req.params.workerId)) {
+            return res.status(404).json({ error: 'Worker not found' });
+        }
+        const body = req.body || {};
+        if (!Array.isArray(body.users) || body.users.length === 0
+            || body.users.some((u) => typeof u !== 'string' || !u.trim())
+            || body.users.length > 50) {
+            return res.status(400).json({
+                error: 'users must be a non-empty array of usernames (max 50 per request)',
+                code: 'invalid_users',
+            });
+        }
+        const usernames = [...new Set(body.users.map((u) => u.trim()))];
+        try {
+            // Indistinct ownership probe FIRST (foreign/unknown → 404), then
+            // the recipients resolve server-side from usernames (existing
+            // users only — no arbitrary search, exact match).
+            const workerRow = await workerRepo.findById(req.params.workerId);
+            if (!workerRow || workerRow.workspace_id !== workspaceId) {
+                return res.status(404).json({ error: 'Worker not found' });
+            }
+            const resolvedUsers = await userRepo.findByUsernames(usernames);
+            if (resolvedUsers.length !== usernames.length) {
+                const found = new Set(resolvedUsers.map((u) => u.username));
+                const unknown = usernames.filter((u) => !found.has(u));
+                return res.status(400).json({
+                    error: `Unknown user(s): ${unknown.join(', ')}`,
+                    code: 'unknown_user',
+                    unknown_users: unknown,
+                });
+            }
+            if (resolvedUsers.some((u) => u.user_id === req.user.userId)) {
+                return res.status(400).json({
+                    error: 'Cannot share with yourself',
+                    code: 'self_grant_forbidden',
+                });
+            }
+            // Owner check: the caller must own the worker (the guard inside
+            // listShareGrants would answer null for a foreign row) AND a
+            // users policy must be active (otherwise there is no audience to
+            // extend — starting sharing is the separate POST /share call).
+            const policy = await workerRepo.getActiveSharePolicy(req.params.workerId, workspaceId);
+            if (!policy || policy.scope_kind !== 'users') {
+                return res.status(409).json({
+                    error: 'Worker has no active users sharing — start sharing with users first',
+                    code: 'no_active_users_policy',
+                });
+            }
+            const grantResult = await workerRepo.addShareGrants({
+                workerId: req.params.workerId,
+                workspaceId,
+                userIds: resolvedUsers.map((u) => u.user_id),
+                createdBy: req.user.userId,
+            });
+            if (grantResult.notFound) {
+                return res.status(404).json({ error: 'Worker not found' });
+            }
+            // Events for NEWLY granted recipients only (duplicate grants add
+            // no access and emit nothing).
+            const actor = { user_id: req.user.userId, username: req.user.username };
+            const added = new Set(grantResult.addedUserIds || []);
+            for (const u of resolvedUsers) {
+                if (!added.has(u.user_id)) continue;
+                shareEvents.emitShareEvent(shareEvents.buildWorkerSharedWithUserEvent({
+                    workerId: req.params.workerId,
+                    workerName: workerRow.name,
+                    recipient: u,
+                    actor,
+                }));
+            }
+            res.status(201).json({ grants: grantResult.grants });
+        } catch (err) {
+            console.error('[WORKERS] share users add failed:', err.message);
+            res.status(500).json({ error: 'Failed to add share recipients' });
+        }
+    });
+
+    app.delete('/api/v1/workers/:workerId/share/users', async (req, res) => {
+        if (!shareFeaturesEnabled()) return shareDisabledGuard(res);
+        const workspaceId = userWorkspaceGuard(req, res);
+        if (!workspaceId) return;
+        if (!UUID_RE.test(req.params.workerId)) {
+            return res.status(404).json({ error: 'Worker not found' });
+        }
+        const body = req.body || {};
+        if (typeof body.username !== 'string' || !body.username.trim()) {
+            return res.status(400).json({
+                error: 'username is required',
+                code: 'invalid_username',
+            });
+        }
+        try {
+            // Indistinct ownership probe FIRST — a foreign worker gets the
+            // same 404 as an unknown one (no existence oracle).
+            const workerRow = await workerRepo.findById(req.params.workerId);
+            if (!workerRow || workerRow.workspace_id !== workspaceId) {
+                return res.status(404).json({ error: 'Worker not found' });
+            }
+            const target = await userRepo.findByUsername(body.username.trim());
+            if (!target) {
+                return res.status(404).json({ error: 'User not found', code: 'unknown_user' });
+            }
+            const result = await workerRepo.revokeShareGrant(req.params.workerId, workspaceId, target.user_id);
+            if (result.notFound) {
+                return res.status(404).json({ error: 'Worker not found' });
+            }
+            // The end state is "no grant" either way (idempotent revoke).
+            res.json({ revoked: result.removed });
+        } catch (err) {
+            console.error('[WORKERS] share users revoke failed:', err.message);
+            res.status(500).json({ error: 'Failed to revoke share recipient' });
         }
     });
 

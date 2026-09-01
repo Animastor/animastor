@@ -124,22 +124,25 @@ async function authenticateWorkerMirror(redis, token) {
 }
 
 /**
- * SH-1: validate the mirror's optional share_policy payload.
- *   share_policy: { policy_id, scope_kind: 'public', expires_at: ms|null }
- * V1 admits public scope only; expiry is re-checked against the local clock
- * on EVERY auth resolution — an expired (stale) mirror entry is treated as
- * "no policy" and can never extend sharing (the backend periodic resync +
- * point updates are the transport; PG is the source of truth).
+ * SH-1/SH-2: validate the mirror's optional share_policy payload.
+ *   share_policy: { policy_id, scope_kind: 'public'|'users', expires_at: ms|null }
+ * V2 admits BOTH scopes (public = spare capacity for the system pool;
+ * users = spare capacity for the policy's own granted audience lane).
+ * Any other shape/scope fails closed; expiry is re-checked against the
+ * local clock on EVERY auth resolution — an expired (stale) mirror entry
+ * is treated as "no policy" and can never extend sharing (the backend
+ * periodic resync + point updates are the transport; PG is the source of
+ * truth).
  * @returns {object|null}
  */
 function sanitizeSharePolicy(raw) {
   if (!raw || typeof raw !== 'object') return null;
   if (typeof raw.policy_id !== 'string' || !raw.policy_id) return null;
-  if (raw.scope_kind !== 'public') return null; // V1: public only
+  if (raw.scope_kind !== 'public' && raw.scope_kind !== 'users') return null;
   if (raw.expires_at != null && typeof raw.expires_at !== 'number') return null;
   const policy = {
     policy_id: raw.policy_id,
-    scope_kind: 'public',
+    scope_kind: raw.scope_kind,
     expires_at: raw.expires_at != null ? Number(raw.expires_at) : null,
   };
   return activeSharePolicy(policy);
@@ -208,10 +211,12 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   const doFetch = fetchImpl || ((url, options) => fetch(url, options));
 
   /**
-   * SH-1: effective share policy for an AUTHENTICATED worker identity
+   * SH-1/SH-2: effective share policy for an AUTHENTICATED worker identity
    * (kill-switch + mode + policy checks combined). Null for share/system
    * modes (their lane IS the system pool already) and whenever the
-   * kill-switch is OFF — the system stays bit-for-bit as before.
+   * kill-switch is OFF — the system stays bit-for-bit as before. A 'public'
+   * policy borrows from the system pool; a 'users' policy borrows from its
+   * own audience lane (never the system pool).
    * @returns {object|null} { policy_id, scope_kind, expires_at } | null
    */
   function effectiveSharePolicy(auth) {
@@ -235,22 +240,25 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
    * workspace must match the claimer's lane:
    *   private lane job   → running workspace == claimer workspace (today);
    *   system-pool job    → workspace-less; finished normally by its claimer.
-   * SH-1: a private worker's BORROWED claim is identified by the claim-time
-   * `worker_share_policy` snapshot in the running record — the claim stays
-   * finishable even if the policy was stopped or expired mid-job (§6: the
-   * claim is bound to the credential, not the policy). When the snapshot is
-   * absent (kill-switch off / no policy), this reduces EXACTLY to today's
+   * SH-1/SH-2: a private worker's BORROWED claim is identified by the
+   * claim-time `worker_share_policy` snapshot in the running record — the
+   * claim stays finishable even if the policy was stopped or expired mid-job
+   * (§6: the claim is bound to the credential, not the policy). V1 borrowed
+   * claims are public-pool (workspace-less) jobs; SH-2 users claims are
+   * policy-lane (also workspace-less) jobs — both carry the snapshot, so a
+   * single presence check covers them. When the snapshot is absent
+   * (kill-switch off / no policy), this reduces EXACTLY to today's
    * comparison.
    */
   function taskLaneMatch(runningInfo, auth) {
     const jobWs = runningInfo.workspace_id || null;
     const claimerWs = auth.workspace_id || null;
     if (jobWs === claimerWs) return true;
-    // Borrowed system-pool claim on a private worker (V1 only).
+    // Borrowed claim on a private worker (public borrow V1 or users-lane V2).
     return jobWs === null
       && (auth.mode || null) === 'private'
       && !!(runningInfo.worker_share_policy
-            && runningInfo.worker_share_policy.scope_kind === 'public');
+            && runningInfo.worker_share_policy.policy_id);
   }
 
   const app = express()
@@ -333,6 +341,15 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     return workspaceId
       ? `animastor:queue:${type}:ws:${workspaceId}`
       : `animastor:queue:${type}`;
+  }
+
+  // SH-2 (V2): a users-scoped policy has its OWN audience lane — only the
+  // granting worker ever pops it, and a revoked/expired policy simply stops
+  // being popped (the backend drains the lane on stop; the dispatch-lease
+  // re-dispatch is the backstop). Key is derived exclusively from the
+  // credential-resolved policy (never from client input).
+  function policyQueueKeyFor(type, policyId) {
+    return `animastor:queue:${type}:policy:${policyId}`;
   }
 
   /** Discover all queue keys (system + workspace) via SCAN — never hardcode. */
@@ -466,13 +483,15 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
               image_tag: data.worker_image_tag || null,
               protocol_version: data.worker_protocol_version || null
             }
-            // SH-1 (D3): re-stamp the optional share_policy marker from the
-            // claim-time snapshot. Expiry re-checked on read here too — a
-            // policy that expires mid-job stops feeding the global count
+            // SH-1/SH-2 (D3): re-stamp the optional share_policy marker from
+            // the claim-time snapshot. Expiry re-checked on read here too —
+            // a policy that expires mid-job stops feeding the global count
             // even while its last job is still running. Absent snapshot →
-            // payload byte-identical to today.
+            // payload byte-identical to today. (A 'users' marker rides along
+            // too; worker-health only counts PUBLIC markers as global
+            // capacity — a users-shared worker never serves the public pool.)
             const sp = data.worker_share_policy;
-            if (sp && sp.scope_kind === 'public' && activeSharePolicy(sp)) {
+            if (sp && activeSharePolicy(sp)) {
               hbPayload.share_policy = { policy_id: sp.policy_id, scope_kind: sp.scope_kind, expires_at: sp.expires_at };
             }
             await redis.set(hbKey, JSON.stringify(hbPayload), 'EX', 30)
@@ -610,8 +629,13 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
         continue;
       }
 
-      // Requeue to the task's OWN queue — workspace-scoped or system pool.
-      const queueKey = queueKeyFor(task.job_type || 'image', task.workspace_id || null);
+      // Requeue to the task's OWN queue — workspace-scoped, system pool, or
+      // (SH-2) the users-policy lane the backend routed it into (the
+      // policy_id stamp survives the crash; a dead policy's lane is drained
+      // by the backend and backstopped by the dispatch-lease re-dispatch).
+      const queueKey = task.policy_id
+        ? policyQueueKeyFor(task.job_type || 'image', task.policy_id)
+        : queueKeyFor(task.job_type || 'image', task.workspace_id || null);
       task.orphan_requeues = requeues + 1;
       try {
         await redis.lpush(queueKey, JSON.stringify(task));
@@ -723,12 +747,13 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
       scene_id,
       stage,
       workspace_id,
-      timeout_ms
+      timeout_ms,
+      policy_id
     } = req.body
 
     const type = job_type || "image"
 
-    console.log("📥 Task:", job_id, type, "build:", build_id, "timeout_ms:", timeout_ms || "(default)", "workspace:", workspace_id || "(system pool)")
+    console.log("📥 Task:", job_id, type, "build:", build_id, "timeout_ms:", timeout_ms || "(default)", "workspace:", workspace_id || "(system pool)", policy_id ? `policy:${policy_id}` : "")
 
     // SYNC: backend/src/runtime/job-schema.js (PROTOCOL_VERSION)
     if (protocol_version !== PROTOCOL_VERSION) {
@@ -746,6 +771,18 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     if (workspace_id !== undefined && workspace_id !== null) {
       if (typeof workspace_id !== 'string' || !WORKSPACE_ID_RE.test(workspace_id)) {
         return res.status(400).json({ error: "invalid_workspace_id" })
+      }
+    }
+    // SH-2 (V2): policy_id is the backend-authored users-policy lane stamp.
+    // Shape-validated UUID; must never coexist with workspace_id (a job is
+    // either the owner's ws-lane job or a policy-lane job, never both — the
+    // backend dispatcher enforces the same rule at send time).
+    if (policy_id !== undefined && policy_id !== null) {
+      if (typeof policy_id !== 'string' || !WORKSPACE_ID_RE.test(policy_id)) {
+        return res.status(400).json({ error: "invalid_policy_id" })
+      }
+      if (workspace_id) {
+        return res.status(400).json({ error: "invalid_policy_routing" })
       }
     }
 
@@ -775,7 +812,7 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     }
 
     await redis.lpush(
-      queueKeyFor(type, workspace_id || null),
+      policy_id ? policyQueueKeyFor(type, policy_id) : queueKeyFor(type, workspace_id || null),
       JSON.stringify({
         job_id,
         params,
@@ -792,6 +829,12 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
         // PW-2: server-derived ownership anchor (backend-authored; null =
         // system pool job — never set from any worker-facing input).
         workspace_id: workspace_id || null,
+        // SH-2: the backend-authored policy-lane stamp (users sharing V2).
+        // Null on every ws-lane and plain system-pool task — present ONLY on
+        // tasks the backend routed into queue:{type}:policy:{id} (drained
+        // tasks are re-pushed with the marker stripped, so this field always
+        // means "belongs to a policy lane").
+        policy_id: policy_id || null,
         // Per-job timeout, переданный backend'ом (layer-config per-type timeout).
         // Без проброса per-job timeout падал бы на GPU_TIMEOUT_MS (10 мин по
         // умолчанию) — нормальная долгая видео-генерация (20-60+ мин) убивалась
@@ -868,11 +911,15 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     //
     // SH-1 (worker sharing V1, §6.1 lane priority — kill-switch gated):
     //   1. pop queue:{type}:ws:{workspace_id}   (owner's lane — STRICT priority)
-    //   2. if empty → pop queue:{type}          (system pool — spare capacity)
-    // Step 2 exists only when the kill-switch is ON and the worker carries an
-    // effective (expiry-rechecked) public share policy. No new queues: a
-    // worker leaving the pool simply stops popping it — stop-sharing needs
-    // no queue cleanup (D6).
+    //   2. if empty → spare capacity lane of the active policy:
+    //        public → queue:{type}               (the shared system pool)
+    //        users  → queue:{type}:policy:{id}   (SH-2: the granted audience)
+    // Step 2 exists only when the kill-switch is ON and the worker carries
+    // an effective (expiry-rechecked) share policy. A USERS policy never
+    // touches the system pool — its spare capacity serves ONLY its granted
+    // audience (no public leak). No per-policy cleanup on revoke: the
+    // backend drains the lane (stop path) and the claim is bound to the
+    // credential, not the policy (§6).
     const policy = effectiveSharePolicy(auth);
     const popWorkspaceId = auth.mode === 'private' ? auth.workspace_id : null;
     const queueKey = queueKeyFor(workerType, popWorkspaceId)
@@ -881,16 +928,23 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
       queueKey,
       "animastor:processing"
     )
-    let fromSystemPool = popWorkspaceId == null; // share/system pop the system pool as their primary lane
+    // Lane bookkeeping for the poison cross-check below:
+    //   'ws'     — the popper's own workspace lane (owner jobs);
+    //   'system' — the public pool (share/system primary, public-policy spare);
+    //   'policy' — SH-2 users-policy audience lane (workspace-less jobs
+    //              stamped with the policy id by the backend dispatcher).
+    let lane = popWorkspaceId != null ? 'ws' : 'system';
 
-    if (!taskRaw && !fromSystemPool && policy) {
-      // SH-1 step 2: spare capacity — borrow from the system pool only after
-      // the owner's own lane is drained.
+    if (!taskRaw && lane === 'ws' && policy) {
+      // Step 2: spare capacity — borrow only after the owner's lane drains.
+      const borrowQueue = policy.scope_kind === 'users'
+        ? policyQueueKeyFor(workerType, policy.policy_id)
+        : queueKeyFor(workerType, null)
       taskRaw = await redis.rpoplpush(
-        queueKeyFor(workerType, null),
+        borrowQueue,
         "animastor:processing"
       )
-      fromSystemPool = true;
+      if (taskRaw) lane = policy.scope_kind === 'users' ? 'policy' : 'system';
     }
 
     if (!taskRaw) return res.json({ task: null })
@@ -898,17 +952,24 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     const task = JSON.parse(taskRaw)
 
     // PW-2 poison-write cross-check: a popped item must match the lane it
-    // came from (private ws lane → the owner's workspace; system pool →
-    // workspace-less jobs only). A mismatch means a poison write —
-    // dead-letter it, never hand it out. SH-1: a policy-active private
-    // worker popping the system pool must receive workspace-less jobs there
-    // — the per-lane expectation is unchanged, just per-queue.
+    // came from. ws lane → the owner's workspace stamp; system pool →
+    // workspace-less, unstamped jobs; SH-2 policy lane → workspace-less
+    // jobs stamped with EXACTLY this worker's active policy id (a foreign
+    // policy's task in this lane is a poison write — dead-letter, never
+    // hand it out).
     const taskWs = task.workspace_id || null;
-    const expectedWs = fromSystemPool ? null : auth.workspace_id;
-    if (taskWs !== expectedWs) {
-      console.error(`🧪 Poison write detected on ${fromSystemPool ? queueKeyFor(workerType, null) : queueKey}: job=${task.job_id} task_ws=${taskWs || 'null'} expected=${expectedWs || 'null'}`);
+    let laneOk;
+    if (lane === 'ws') {
+      laneOk = taskWs === auth.workspace_id;
+    } else if (lane === 'system') {
+      laneOk = taskWs === null && !task.policy_id;
+    } else {
+      laneOk = taskWs === null && task.policy_id === policy.policy_id;
+    }
+    if (!laneOk) {
+      console.error(`🧪 Poison write detected on ${lane} lane: job=${task.job_id} task_ws=${taskWs || 'null'} task_policy=${task.policy_id || 'null'} lane_policy=${lane === 'policy' ? policy.policy_id : 'null'}`);
       await redis.lrem("animastor:processing", 1, taskRaw).catch(() => {});
-      await deadLetter(taskRaw, 'poison_workspace_mismatch');
+      await deadLetter(taskRaw, lane === 'policy' ? 'poison_policy_mismatch' : 'poison_workspace_mismatch');
       return res.json({ task: null })
     }
 
@@ -1080,7 +1141,7 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
           protocol_version: runningInfo.worker_protocol_version || null
         };
         const sp = runningInfo.worker_share_policy;
-        if (sp && sp.scope_kind === 'public' && activeSharePolicy(sp)) {
+        if (sp && activeSharePolicy(sp)) {
           hbPayload.share_policy = { policy_id: sp.policy_id, scope_kind: sp.scope_kind, expires_at: sp.expires_at };
         }
         await redis.set(hbKey, JSON.stringify(hbPayload), 'EX', 30);
@@ -1198,7 +1259,7 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
           protocol_version: runningInfo.worker_protocol_version || null
         };
         const sp = runningInfo.worker_share_policy;
-        if (sp && sp.scope_kind === 'public' && activeSharePolicy(sp)) {
+        if (sp && activeSharePolicy(sp)) {
           hbPayload.share_policy = { policy_id: sp.policy_id, scope_kind: sp.scope_kind, expires_at: sp.expires_at };
         }
         await redis.set(hbKey, JSON.stringify(hbPayload), 'EX', 30);

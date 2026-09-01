@@ -27,8 +27,10 @@ const stats = {
 
 const WORKSPACE_CACHE_TTL_MS = 60_000;      // book → workspace
 const ROUTING_CACHE_TTL_MS = 30_000;        // (workspace,type) → has private worker
+const GRANT_CACHE_TTL_MS = 30_000;           // (workspace,type) → users-policy lane (V2)
 const workspaceCache = new Map();
 const routingCache = new Map();
+const grantCache = new Map();
 
 function cacheGet(cache, key, ttlMs) {
     const hit = cache.get(key);
@@ -78,10 +80,42 @@ async function workspaceHasPrivateWorker(workspaceId, workerType) {
     return has;
 }
 
+/**
+ * SH-2 (worker sharing V2): resolve the workspace's OWNER user, then find an
+ * active users-scoped policy whose worker (private, of the job type, not
+ * revoked) carries a personal grant for that user. Result: the policy lane
+ * the job must be enqueued into (queue:{type}:policy:{id}), or null for the
+ * system pool. Kill-switch OFF → always null (bit-for-bit V1-off behavior).
+ * Resolutions degrade to the system pool on any error (availability).
+ * @returns {Promise<object|null>} { policy_id, scope_kind, expires_at } | null
+ */
+async function workspaceGrantPolicyLane(workspaceId, workerType) {
+    if (!workspaceId) return null;
+    if (config.shareFeaturesEnabled() !== true) return null;
+    const key = `grant:${workspaceId}:${workerType}`;
+    const cached = cacheGet(grantCache, key, GRANT_CACHE_TTL_MS);
+    if (cached !== undefined) return cached;
+    let lane = null;
+    try {
+        const workerRepo = require('../storage/postgres/repositories/worker-repo');
+        const workspaceRepo = require('../storage/postgres/repositories/workspace-repo');
+        const ws = await workspaceRepo.findById(workspaceId);
+        if (ws && ws.owner_user_id) {
+            lane = await workerRepo.findGrantPolicyForRouting(workspaceId, ws.owner_user_id, workerType);
+        }
+    } catch (err) {
+        warn(`users-policy routing check failed for ws=${workspaceId} type=${workerType}: ${err.message} — using system pool`);
+        lane = null;
+    }
+    grantCache.set(key, { value: lane, ts: Date.now() });
+    return lane;
+}
+
 /** Test hook: drop resolution caches. */
 function clearRoutingCaches() {
     workspaceCache.clear();
     routingCache.clear();
+    grantCache.clear();
 }
 
 /**
@@ -122,17 +156,29 @@ async function sendUnified(taskSpec) {
         ?? config.GPU_TIMEOUT_MS
         ?? 600_000;
 
-    // PW-2: server-derived workspace routing. workspace_id is ONLY ever set
-    // here (book → workspace → active private worker of the type). Callers
-    // cannot inject it: any client-supplied value is overwritten.
+    // PW-2 + SH-2: server-derived routing. workspace_id is ONLY ever set
+    // here (book → workspace → active private worker of the type — the
+    // owner's exclusive lane, always first). V2: when the workspace has NO
+    // own private worker, a personal users-share grant routes the job to
+    // the grant's policy lane instead of the public system pool; every
+    // other case keeps flowing to the operator pool (backward compat).
+    // Callers cannot inject either value: client-supplied fields are
+    // always overwritten.
     let workspaceId = null;
+    let policyLane = null;
     const bookWorkspace = await resolveWorkspaceForBook(parsed.bookId);
     if (bookWorkspace && await workspaceHasPrivateWorker(bookWorkspace, taskSpec.job_type)) {
         workspaceId = bookWorkspace;
+    } else if (bookWorkspace) {
+        const lane = await workspaceGrantPolicyLane(bookWorkspace, taskSpec.job_type);
+        if (lane && lane.policy_id) policyLane = lane;
     }
 
     const payload = {
         ...taskSpec,
+        // SH-2: policy_id is backend-authored ONLY — a client-supplied value
+        // is stripped here and re-stamped below from the server-resolved lane.
+        policy_id: undefined,
         timeout_ms: timeoutMs,
         build_id: taskSpec.build_id || "default",
         protocol_version: PROTOCOL_VERSION,
@@ -141,6 +187,11 @@ async function sendUnified(taskSpec) {
         scene_id: parsed.sceneId,
         stage: jobSchema.STAGE_BY_KIND[parsed.kind],
         workspace_id: workspaceId,
+        // SH-2: backend-authored policy-lane stamp — a task enqueued into
+        // queue:{type}:policy:{id} carries the policy id so the hub can
+        // poison-check the pop and orphan-requeue to the right lane. Never
+        // present on ws-lane or system-pool tasks.
+        ...(policyLane ? { policy_id: policyLane.policy_id } : {}),
     };
 
     // T9: Include GPU_HUB_API_KEY header for authenticated requests
@@ -165,7 +216,7 @@ async function sendUnified(taskSpec) {
 
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-            log(`Task sent: ${payload.job_id} (${payload.job_type}), build: ${payload.build_id}, dispatch: ${payload.dispatch_id}, ws: ${workspaceId || '(system pool)'}`);
+            log(`Task sent: ${payload.job_id} (${payload.job_type}), build: ${payload.build_id}, dispatch: ${payload.dispatch_id}, ws: ${workspaceId || (policyLane ? `policy:${policyLane.policy_id}` : '(system pool)')}`);
             switch (payload.job_type) {
                 case 'audio': stats.audio_jobs_started++; break;
                 case 'image': stats.image_jobs_started++; break;
@@ -185,4 +236,4 @@ async function send(job_id, workflow, type, build_id, dispatch_id) {
     return sendUnified({ job_id, params: workflow, job_type: type, build_id, dispatch_id });
 }
 
-module.exports = { send, sendUnified, resolveWorkspaceForBook, workspaceHasPrivateWorker, clearRoutingCaches };
+module.exports = { send, sendUnified, resolveWorkspaceForBook, workspaceHasPrivateWorker, workspaceGrantPolicyLane, clearRoutingCaches };
