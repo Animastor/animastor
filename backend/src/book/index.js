@@ -13,7 +13,7 @@
 //     book.json
 //     bible.json            (optional)
 //     characters.json       (optional)
-//     behavior.json         (optional, per-character behavior — keyed by character_id)
+//     behavior.json         (always present — per-character behavior keyed by character_id, starts as {})
 //     chapters/
 //       ch-XXXXXXXX.json    (one per chapter, Cover is first)
 //
@@ -485,14 +485,11 @@ function saveBookBundle(book, files) {
         fs.unlinkSync(voPath);
     }
 
-    // Save behavior.json separately (optional, per-character behavior)
+    // Save behavior.json — always persists (created as {} during book creation).
+    // Empty object is kept on disk so the AI-agent can always discover and
+    // populate it via edit_book without needing to create the file first.
     const bhPath = path.join(bookDir, 'behavior.json');
-    const hasBehaviors = book.behaviors && Object.keys(book.behaviors).length > 0;
-    if (hasBehaviors) {
-        fs.writeFileSync(bhPath, JSON.stringify(book.behaviors, null, 2));
-    } else if (fs.existsSync(bhPath)) {
-        fs.unlinkSync(bhPath);
-    }
+    fs.writeFileSync(bhPath, JSON.stringify(book.behaviors || {}, null, 2));
 
     // Save characters.json (optional)
     const charPath = path.join(bookDir, 'characters.json');

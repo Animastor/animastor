@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const { BookState, SceneStatus } = require('./constants');
-const { getBookDir, getChapterDir, getBookMetaPath, getCharactersPath, getMentionsPath, getBiblePath, getLocationsPath, getVoicesPath, chapterId, sceneId, unitId } = require('./paths');
+const { getBookDir, getChapterDir, getBookMetaPath, getCharactersPath, getMentionsPath, getBiblePath, getLocationsPath, getVoicesPath, getBehaviorPath, chapterId, sceneId, unitId } = require('./paths');
 const { detectLanguage } = require('./parser');
 const { findCanonicalCharacter, isGenericCharacter, isPlaceholderCharacter, hasRealAppearance } = require('../../utils/character-identity');
 const { sanitizeParticipants, findCanonicalId, canonicalizeMixedScriptId, isFantasySnakeToken, sanitizeEnvironment } = require('../../utils/snake-guard');
@@ -362,6 +362,16 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     // Save bible.json without locations and narrator
     const { locations: _bibleLocs, narrator: _bibleNarrator, ...bibleWithoutExtra } = bible;
     fs.writeFileSync(getBiblePath(bookDir), JSON.stringify(bibleWithoutExtra, null, 2));
+
+    // Create behavior.json on first window if it does not exist yet.
+    // Starts as an empty object — behavior entries are added later by the
+    // user (Editor tab) or by the AI-agent via edit_book tool.
+    if (isFirstWindow) {
+        const bhPath = getBehaviorPath(bookDir);
+        if (!fs.existsSync(bhPath)) {
+            fs.writeFileSync(bhPath, JSON.stringify({}, null, 2));
+        }
+    }
 
     const chDir = getChapterDir(bookDir);
     if (!fs.existsSync(chDir)) fs.mkdirSync(chDir, { recursive: true });

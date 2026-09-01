@@ -19,7 +19,45 @@ module.exports = function(config) {
     const MODE_PROMPTS = {
         conversation: 'You are a creative assistant in Conversational mode. Answer questions, discuss ideas, explain concepts, and brainstorm. Do NOT make any changes to the book — this is a read-only discussion.',
         import: 'You are an Import specialist. Convert arbitrary text into Animastor book structure. Analyze the text and automatically determine chapters, scenes, and units. If a book is already open, decide whether the text is a new chapter, continuation of current chapter, or extension of current scene. If no book is open, create a new book with manifest, metadata, chapters, scenes, and units. The user must NOT manually mark chapters/scenes/units — determine the structure from content. Always produce a valid Animastor book JSON.',
-        edit: 'You are an Editor. You can modify scenes, characters, locations, objects, and book structure. Use the `edit_book` tool to apply changes. Always confirm changes with the user before applying.',
+        edit: [
+            'You are an Editor. You can modify scenes, characters, locations, behavior, and book structure.',
+            'Use the `edit_book` tool to apply changes. Always confirm changes with the user before applying.',
+            '',
+            '## Character Behavior',
+            'Each character can have a Behavior entry in the book data under `behaviors` (keyed by character_id).',
+            'Behavior describes HOW a character acts — their mannerisms, habits, and reactions.',
+            '',
+            'Behavior schema:',
+            '```json',
+            '{',
+            '  "<character_id>": {',
+            '    "baseline": "How the character normally behaves — characteristic manner of movement, expressions, gestures, posture, speech patterns.",',
+            '    "quirks": ["Repeated characteristic habit or mannerism."],',
+            '    "reactions": [',
+            '      {',
+            '        "trigger": "A situation or emotional state.",',
+            '        "reaction": "The observable behavioral response."',
+            '      }',
+            '    ]',
+            '  }',
+            '}',
+            '```',
+            '',
+            'Field meanings:',
+            '- **baseline**: how the character behaves NORMALLY — characteristic manner of movement, expressions, gestures, posture, speech rhythm.',
+            '- **quirks**: recurring habits or mannerisms specific to this character (one string per entry).',
+            '- **reactions**: trigger→reaction patterns. `trigger` = situation or state; `reaction` = observable behavioral response.',
+            '',
+            'When the user asks to create or modify character behavior:',
+            '1. Find the character by character_id from `characters` in the book data.',
+            '2. Study the character passport (appearance, clothes, description) to understand their personality.',
+            '3. Create behavior that matches the character personality — distinct, specific, believable.',
+            '4. Use `edit_book` to write to `/behaviors/{character_id}` with the full behavior object.',
+            '5. Do NOT create a new character. Do NOT modify passport or voice unless asked.',
+            '',
+            'Example user request: "Придумай поведение для Юры и Светланы."',
+            'Agent action: find characters Yuri and Svetlana, analyze passports, write individualized baseline/quirks/reactions via edit_book.',
+        ].join('\n'),
         director: 'You are a Film Director. Advise on camera angles, composition, lighting, mood, and atmosphere for scenes. You can write into storyboard_elements for the current scene. Think visually and cinematically.',
         extraction: 'You are an Extraction specialist. Extract structured entities from the text such as characters, objects, locations, and key terms.',
         validation: 'You are a Validation specialist. Check book JSON for correctness, completeness, and integrity. Verify required fields, cross-references, scene links, and data consistency. Return a list of violations with severity levels.',
@@ -57,7 +95,8 @@ module.exports = function(config) {
                 const resolvedChapterId = chapterId || (sceneId
                     ? chIdOf(chapters.find(c => c.scenes?.some(s => s.scene_id === sceneId)))
                     : null);
-                if (!resolvedChapterId) return positionContext;
+                if (!resolvedChapterId) { positionContext = ''; }
+                else {
                 const ch = chapters.find(c => chIdOf(c) === resolvedChapterId);
                 const isSpecial = ch?.type === 'cover' || ch?.type === 'prologue';
                 const chTitle = ch?.chapter_title || '';
@@ -97,6 +136,7 @@ module.exports = function(config) {
                 if (scName) parts.push(scName);
                 if (unitDesc) parts.push(unitDesc);
                 positionContext = parts.join(' / ');
+                }
             } catch (_) {
                 // Silent fallback — position context is optional
             }
@@ -193,7 +233,7 @@ module.exports = function(config) {
         type: 'function',
         function: {
             name: 'edit_book',
-            description: 'Apply changes to the current book. Call this when the user asks to edit the book content (title, author, characters, scenes, text, etc.). Do NOT call if the book is locked.',
+            description: 'Apply changes to the current book. Call this when the user asks to edit the book content (title, author, characters, scenes, text, behavior, etc.). Supports writing to /behaviors/{character_id} for character behavior. Do NOT call if the book is locked.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -204,7 +244,7 @@ module.exports = function(config) {
                             type: 'object',
                             properties: {
                                 op: { type: 'string', enum: ['replace', 'add', 'remove'], description: 'Operation type' },
-                                path: { type: 'string', description: 'JSON path like /book/title, /chapters/0/scenes/1/units/0/text' },
+                                path: { type: 'string', description: 'JSON path like /book/title, /chapters/0/scenes/1/units/0/text, /behaviors/character_id/baseline' },
                                 value: { description: 'New value (for replace/add)' },
                             },
                             required: ['op', 'path'],
@@ -216,105 +256,16 @@ module.exports = function(config) {
         },
     };
 
-    const STORYBOARD_TOOL = {
-        type: 'function',
-        function: {
-            name: 'write_storyboard',
-            description: 'Write storyboard elements for a scene. Use this in Director mode to set camera angles, composition, lighting, and transitions for each unit.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    scene_id: { type: 'string', description: 'The scene id to update' },
-                    elements: {
-                        type: 'array',
-                        description: 'List of storyboard elements, one per unit',
-                        items: {
-                            type: 'object',
-                            properties: {
-                                unit_id: { type: 'string', description: 'Unit id within the scene' },
-                                camera_angle: { type: 'string', enum: ['wide', 'medium', 'closeup', 'birds_eye', 'low_angle', 'dutch'], description: 'Camera angle for this unit' },
-                                composition: { type: 'string', description: 'Visual composition description' },
-                                lighting: { type: 'string', description: 'Lighting description for this unit' },
-                                background: { type: 'string', description: 'Background / environment description' },
-                                transition: { type: 'string', enum: ['cut', 'fade', 'dissolve', 'wipe'], description: 'Transition from previous unit' },
-                            },
-                            required: ['unit_id', 'camera_angle'],
-                        },
-                    },
-                },
-                required: ['scene_id', 'elements'],
-            },
-        },
-    };
-
-    const IMPORT_BOOK_TOOL = {
-        type: 'function',
-        function: {
-            name: 'import_book',
-            description: 'Import arbitrary text into the book structure. Creates or extends the book with auto-detected chapters, scenes, and units.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    book: {
-                        type: 'object',
-                        description: 'Complete book JSON with manifest, metadata, chapters, characters, and locations',
-                        properties: {
-                            manifest: { type: 'object', description: 'Book manifest with version and timestamps' },
-                            metadata: { type: 'object', description: 'Book metadata: title, author, description, language' },
-                            chapters: { type: 'array', description: 'Array of chapters', items: { type: 'object' } },
-                            characters: { type: 'array', items: { type: 'object' } },
-                            locations: { type: 'array', items: { type: 'object' } },
-                        },
-                    },
-                },
-                required: ['book'],
-            },
-        },
-    };
-
-    const EXTRACT_ENTITIES_TOOL = {
-        type: 'function',
-        function: {
-            name: 'extract_entities',
-            description: 'Analyze text and extract characters, locations, objects, relationships, and plot facts.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    text: { type: 'string', description: 'Text to analyze' },
-                    existing_characters: { type: 'array', items: { type: 'string' }, description: 'Known character names' },
-                    existing_locations: { type: 'array', items: { type: 'string' }, description: 'Known location names' },
-                },
-                required: ['text'],
-            },
-        },
-    };
-
-    const VALIDATE_BOOK_TOOL = {
-        type: 'function',
-        function: {
-            name: 'validate_book',
-            description: 'Validate book integrity — check for missing fields, inconsistent references, and structural issues.',
-            parameters: { type: 'object', properties: {} },
-        },
-    };
-
     // ── Mode-specific tool selection ──────────────────
+    // Only 'edit' carries a tool (EDIT_BOOK_TOOL — the one with a real
+    // backend handler). Every other mode is text-only: the remaining tool
+    // definitions (storyboard / import_book / extract_entities /
+    // validate_book) never had handlers (ai-routes.cjs replies
+    // 'Tool executed (no handler)'), so exposing them only taught models to
+    // burn tokens on calls that did nothing.
     function getToolsForMode(mode, bookId, isLocked) {
-        switch (mode) {
-            case 'edit':
-                return isLocked ? [] : [EDIT_BOOK_TOOL];
-            case 'director':
-                return [STORYBOARD_TOOL];
-            case 'import':
-                return [IMPORT_BOOK_TOOL];
-            case 'analyze':
-                return [EXTRACT_ENTITIES_TOOL];
-            case 'validate':
-                return [VALIDATE_BOOK_TOOL];
-            case 'chat':
-            default:
-                return [EDIT_BOOK_TOOL, STORYBOARD_TOOL, EXTRACT_ENTITIES_TOOL, VALIDATE_BOOK_TOOL];
-        }
+        if (mode === 'edit' && !isLocked) return [EDIT_BOOK_TOOL];
+        return [];
     }
 
     // ── AI response parsing ───────────────────────────
@@ -492,10 +443,6 @@ module.exports = function(config) {
         validateBundleObject,
         toolDefinitions: {
             EDIT_BOOK_TOOL,
-            STORYBOARD_TOOL,
-            IMPORT_BOOK_TOOL,
-            EXTRACT_ENTITIES_TOOL,
-            VALIDATE_BOOK_TOOL,
         },
     };
 };

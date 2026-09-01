@@ -265,7 +265,7 @@ describe('BEHAVIOR CRUD ROUTES — manual Behavior editor', () => {
     // ======================================================
     // DELETE — remove behavior / character
     // ======================================================
-    it('DELETE removes the whole behavior entry; the file is unlinked when empty', () => {
+    it('DELETE removes the whole behavior entry; the file stays as {} when empty', () => {
         invoke(BEH_POST, { bookId }, { character_id: 'hero', baseline: 'a' });
         invoke(BEH_POST, { bookId }, { character_id: 'sidekick', baseline: 'b' });
 
@@ -274,7 +274,8 @@ describe('BEHAVIOR CRUD ROUTES — manual Behavior editor', () => {
         expect(loadedBehaviors().sidekick.baseline).to.equal('b');
 
         invoke(BEH_DEL, { bookId, characterId: 'sidekick' });
-        expect(fs.existsSync(path.join(bookDir, 'behavior.json'))).to.equal(false);
+        // behavior.json persists as empty {} (always present after book creation)
+        expect(fs.existsSync(path.join(bookDir, 'behavior.json'))).to.equal(true);
         expect(loadedBehaviors()).to.deep.equal({});
     });
 
