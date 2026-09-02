@@ -86,10 +86,22 @@ function safeClose(ws, code, reason) {
     try { ws.close(code, reason); } catch (_) {}
 }
 
-/** Redact a ws close reason so reasons never carry secrets. */
+/**
+ * Redact a ws close reason so reasons never carry secrets or structure.
+ * The `ws` library delivers close reasons as Buffers — convert before
+ * sanitizing, otherwise every reason (including the server's own codes like
+ * heartbeat_timeout/replaced) would degrade to 'unknown' and diagnostics die.
+ * Control characters (newlines included) are replaced BEFORE the length cap —
+ * a client-supplied close frame reason must never be able to forge additional
+ * log lines (log injection).
+ */
 function logReason(reason) {
-    if (!reason || typeof reason !== 'string') return 'unknown';
-    return reason.slice(0, 64);
+    if (reason == null) return 'unknown';
+    const text = typeof reason === 'string'
+        ? reason
+        : Buffer.isBuffer(reason) ? reason.toString('utf8') : String(reason);
+    if (!text) return 'unknown';
+    return text.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 64);
 }
 
 function jsonStringify(obj) {
@@ -276,6 +288,15 @@ function createWsHandler({ redis, logger = console, options = {} } = {}) {
             return;
         }
 
+        // The auth window may have expired (or the peer disconnected) while
+        // the credential was being resolved — a socket that is no longer
+        // open must NEVER enter the live-session map (a stale entry would
+        // fake liveness: isLive=true / PG online with no real peer).
+        if (session.ws.readyState !== 1) {
+            safeClose(session.ws, CLOSE.policyViolation, REASONS.authFailed);
+            return;
+        }
+
         session.connectorId = authRow.connector_id;
         session.workspaceId = authRow.workspace_id;
 
@@ -314,8 +335,10 @@ function createWsHandler({ redis, logger = console, options = {} } = {}) {
 
         // Heartbeat timeout: any message resets it; silence past the window
         // closes the socket (and the close handler marks the connector offline).
+        // 1008 = Policy Violation (liveness requirement) — same semantics as
+        // the auth window; 1000 "normal" would misreport a dead peer.
         session.heartbeatTimer = setTimeout(() => {
-            safeClose(session.ws, CLOSE.normal, REASONS.heartbeatTimeout);
+            safeClose(session.ws, CLOSE.policyViolation, REASONS.heartbeatTimeout);
         }, cfg.heartbeatTimeoutMs);
         if (session.heartbeatTimer && session.heartbeatTimer.unref) session.heartbeatTimer.unref();
     }
@@ -328,7 +351,7 @@ function createWsHandler({ redis, logger = console, options = {} } = {}) {
         // Reset the liveness timer — any well-formed message proves liveness.
         if (session.heartbeatTimer) clearTimeout(session.heartbeatTimer);
         session.heartbeatTimer = setTimeout(() => {
-            safeClose(session.ws, CLOSE.normal, REASONS.heartbeatTimeout);
+            safeClose(session.ws, CLOSE.policyViolation, REASONS.heartbeatTimeout);
         }, cfg.heartbeatTimeoutMs);
         if (session.heartbeatTimer && session.heartbeatTimer.unref) session.heartbeatTimer.unref();
     }
@@ -676,7 +699,7 @@ function createAiConnectorRoutes({ redis, logger = console } = {}) {
                 // revoked connector must not look alive for up to TTL.
                 const evicted = registry.evict(req.params.connectorId, CLOSE.policyViolation, REASONS.revoked);
                 if (redis) {
-                    try { await redis.del(`animastor:ai-connector:hb:${req.params.connectorId}`); } catch (_) {}
+                    try { await redis.del(REDIS_HB_KEY(req.params.connectorId)); } catch (_) {}
                 }
                 if (evicted) {
                     logger.info(`[AI-CONNECTOR] revoked → live session evicted for ${req.params.connectorId}`);

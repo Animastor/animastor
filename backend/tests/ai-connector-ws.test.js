@@ -78,7 +78,7 @@ async function captureConsole(fn) {
 
 function startWsServer(options = {}) {
     const redis = createMockRedis();
-    const logger = {
+    const logger = options.logger || {
         info: () => {},
         warn: (m) => console.warn(m),
         error: () => {},
@@ -431,7 +431,7 @@ describe('LLM Connector WebSocket foundation (LAC-2)', () => {
 
     // ── 6. heartbeat timeout ──────────────────────────────────────────────
 
-    it('heartbeat timeout → server closes the socket and marks the connector offline', async function () {
+    it('heartbeat timeout → close 1008 (heartbeat_timeout) + PG offline + Redis hb key deleted', async function () {
         this.timeout(10000);
         const { connector, token } = await createActivatedConnector(wsA, 'ws-hb-timeout');
         const ws = await connect(timeoutSrv.url);
@@ -439,14 +439,20 @@ describe('LLM Connector WebSocket foundation (LAC-2)', () => {
         send(ws, HELLO(token));
         await nextMessage(ws); // ready
         expect((await rawRow(connector.connector_id)).status).to.equal('online');
+        // Liveness mirror exists while the session is live (created by hello).
+        expect(await timeoutSrv.redis.get(`animastor:ai-connector:hb:${connector.connector_id}`)).to.not.be.null;
 
         // No heartbeat — the 250ms liveness window expires server-side.
         const res = await closed;
-        expect(res.code).to.equal(1000);
+        // Liveness/policy timeout is a POLICY VIOLATION (1008), never 1000:
+        // 1000 "normal" would misreport a dead peer as a clean goodbye.
+        expect(res.code).to.equal(1008);
         expect(res.reason).to.equal('heartbeat_timeout');
         await new Promise((r) => setTimeout(r, 30));
 
+        // Close handler marks PG offline and clears the Redis liveness mirror.
         expect((await rawRow(connector.connector_id)).status).to.equal('offline');
+        expect(await timeoutSrv.redis.get(`animastor:ai-connector:hb:${connector.connector_id}`)).to.be.null;
         await query(`DELETE FROM ai_connectors WHERE connector_id = $1`, [connector.connector_id]);
     });
 
@@ -649,6 +655,57 @@ describe('LLM Connector WebSocket foundation (LAC-2)', () => {
         send(ws, HELLO(token)); // duplicate hello — protocol violation
         const res = await closed;
         expect(res.code).to.equal(1008);
+        await query(`DELETE FROM ai_connectors WHERE connector_id = $1`, [connector.connector_id]);
+    });
+
+    it('client close-frame reason is sanitized — no log injection via control characters', async function () {
+        this.timeout(10000);
+        // Dedicated server whose logger CAPTURES info lines (the shared main
+        // server discards them) — the close line must be assertable as-is.
+        const logLines = [];
+        const logSrv = await startWsServer({
+            heartbeatTimeoutMs: 60000,
+            logger: { info: (m) => logLines.push(String(m)), warn: () => {}, error: () => {} },
+        });
+        try {
+            const { connector, token } = await createActivatedConnector(wsA, 'ws-loginj');
+            const ws = await connect(logSrv.url);
+            const closed = nextClose(ws);
+            send(ws, HELLO(token));
+            await nextMessage(ws);
+            ws.close(1000, 'legit\n[AI-CONNECTOR] FORGED line\rmalicious');
+            await closed;
+            await new Promise((r) => setTimeout(r, 50));
+
+            // The forged content may appear only inside the single sanitized
+            // 'session closed' line (control chars replaced by spaces) —
+            // never as a separate/forged log line, never with raw control
+            // characters.
+            const containing = logLines.filter((t) => t.includes('FORGED line'));
+            expect(containing.length).to.equal(1);
+            expect(containing[0]).to.include('session closed');
+            expect(containing[0]).to.not.match(/[\n\r\u0000-\u001f\u007f]/);
+            await query(`DELETE FROM ai_connectors WHERE connector_id = $1`, [connector.connector_id]);
+        } finally {
+            await logSrv.close();
+        }
+    });
+
+    it('socket closed during auth (peer gone before credential resolution) → NO stale live session, PG stays offline', async function () {
+        this.timeout(10000);
+        const { connector, token } = await createActivatedConnector(wsA, 'ws-deadauth');
+        // Force a non-online base state: without the guard, the dead session's
+        // hello would still write status=online (stale liveness).
+        await query(`UPDATE ai_connectors SET status = 'offline' WHERE connector_id = $1`, [connector.connector_id]);
+
+        const ws = await connect(main.url);
+        send(ws, HELLO(token));
+        ws.close(); // peer vanishes immediately after hello
+
+        await new Promise((r) => setTimeout(r, 150)); // let resolution + close settle
+        const registry = require('../src/services/ai-connector/registry');
+        expect(registry.isLive(connector.connector_id)).to.be.false;
+        expect((await rawRow(connector.connector_id)).status).to.equal('offline');
         await query(`DELETE FROM ai_connectors WHERE connector_id = $1`, [connector.connector_id]);
     });
 });
