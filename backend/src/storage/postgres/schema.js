@@ -348,6 +348,49 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_share_policy_grants_unique
 CREATE UNIQUE INDEX IF NOT EXISTS idx_share_policies_one_active
     ON share_policies(worker_id) WHERE revoked_at IS NULL;
 
+-- ======================================================
+-- Local AI Connector registry (LAC-1 — Local AI Connector V1 Phase 1)
+-- ======================================================
+-- Durable source of truth for local AI connector identity and credentials
+-- (docs/04-planning/local-ai-connector-v1.md §8). V1 = PRIVATE LOCAL AI ONLY.
+-- Credential contract — the worker wrk.* house pattern reconciled to the
+-- sharing doc §13/§17 llmc.* family (AD-1):
+--   persistent credential   llmc.<connector_id_b64url>.<secret_b64url>
+--   registration token      llmcreg.<connector_id_b64url>.<secret_b64url>
+-- The DB stores ONLY SHA-256 hashes (token_hash / reg_token_hash) — plaintext
+-- is disclosed exactly once and never persisted. The registration token is
+-- NOT a second credential namespace: it is a one-time bootstrap token that
+-- the atomic exchange (ai-connector-repo activateConnector) invalidates the
+-- moment the persistent credential is issued (AD-3, exactly-once).
+-- status: 'pending' = registered, waiting for first connect (activation
+-- creates the persistent credential and flips it to 'online').
+-- Connector ≠ Provider (AD-2): N rows per workspace — the singleton
+-- workspace_ai_providers row is the consumer binding, not this table.
+-- LLM inference never rides gpu-hub (AD-9) — this registry is backend-only.
+CREATE TABLE IF NOT EXISTS ai_connectors (
+    connector_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id    UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    runtime_type    TEXT NOT NULL DEFAULT 'openai-compatible'
+                    CHECK(runtime_type IN ('ollama','vllm','llamacpp','lmstudio','openai-compatible')),
+    status          TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','online','offline')),
+    -- persistent llmc.* credential hash — NULL until activation
+    token_hash      TEXT UNIQUE,
+    -- one-time registration token hash — NULL after activation (AD-3)
+    reg_token_hash  TEXT UNIQUE,
+    reg_expires_at  BIGINT,
+    token_prefix    TEXT,
+    last_seen       BIGINT,
+    models          JSONB,
+    capabilities    JSONB,
+    runtime_meta    JSONB,
+    revoked_at      BIGINT,
+    created_by      UUID REFERENCES users(user_id),
+    created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_connectors_workspace ON ai_connectors(workspace_id);
+
 -- Reconciliation & recovery log
 CREATE TABLE IF NOT EXISTS reconciliation_events (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -1431,6 +1474,42 @@ async function runMigrations() {
         console.log('[PG] SH-2: share_policy_grants initialized (personal grants, users scope)');
     } catch (err) {
         console.error('[PG] SH-2 share_policy_grants migration failed:', err.message);
+        throw err;
+    }
+
+    // ======================================================
+    // LAC-1: Local AI Connector registry (Local AI Connector V1 — Phase 1)
+    // ======================================================
+    // Purely additive migration: one new table (shape per
+    // local-ai-connector-v1.md §8). Fresh and long-lived DBs migrate
+    // identically. No worker/gpu-hub change (AD-9) — the connector lives on
+    // the resolver seam. Credentials: hash-only, `llmc.*` persistent +
+    // one-time `llmcreg.*` bootstrap (AD-1/AD-3).
+    try {
+        await query(`CREATE TABLE IF NOT EXISTS ai_connectors (
+            connector_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            workspace_id    UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            name            TEXT NOT NULL,
+            runtime_type    TEXT NOT NULL DEFAULT 'openai-compatible'
+                            CHECK(runtime_type IN ('ollama','vllm','llamacpp','lmstudio','openai-compatible')),
+            status          TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','online','offline')),
+            token_hash      TEXT UNIQUE,
+            reg_token_hash  TEXT UNIQUE,
+            reg_expires_at  BIGINT,
+            token_prefix    TEXT,
+            last_seen       BIGINT,
+            models          JSONB,
+            capabilities    JSONB,
+            runtime_meta    JSONB,
+            revoked_at      BIGINT,
+            created_by      UUID REFERENCES users(user_id),
+            created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000)
+        )`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_ai_connectors_workspace
+            ON ai_connectors(workspace_id)`);
+        console.log('[PG] LAC-1: ai_connectors initialized (hash-only llmc.* credentials)');
+    } catch (err) {
+        console.error('[PG] LAC-1 ai_connectors migration failed:', err.message);
         throw err;
     }
 

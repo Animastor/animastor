@@ -9,4 +9,5 @@ module.exports = {
     generationCancel: require('./generation-cancel-repo'),
     user: require('./user-repo'),
     workspace: require('./workspace-repo'),
+    aiConnector: require('./ai-connector-repo'),
 };
