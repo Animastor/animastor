@@ -70,6 +70,15 @@
     <color name="cinema_accent_dim">#A6833E</color>
     <color name="cinema_on_accent">#12110F</color>
 
+    <!-- Access-mode badges on the worker card + details dialog (web parity
+         with .worker__badge / .worker__badge__private / __public). Private
+         is the light golden tint (cinema_accent mixed 50% white) so the
+         dark on-accent text reads; Public is the editor Waveform tool blue
+         (the exact paint of lib/waveform.tsx / WaveformView.kt, not a
+         new color). -->
+    <color name="worker_badge_private_bg">#E4D0AC</color>
+    <color name="worker_badge_public_bg">#90CAF9</color>
+
     <color name="cinema_error">#CF6679</color>
     <color name="cinema_cancel">#E55353</color>
     <color name="cinema_success">#6B9E6B</color>

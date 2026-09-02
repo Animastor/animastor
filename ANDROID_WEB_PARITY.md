@@ -15,7 +15,7 @@ Web commits audited (Worker Sharing UX layer series):
 |---|---|---|
 | `5cb3b4b5` | Worker Sharing V2 UI (SH-2) — tabs, sharing modal, shared-with-me, community, kill-switch | **ANDROID GAP → FIXED** — full parity: kill-switch probe (GET /config → `features.share`, read ONCE, fail CLOSED), three tabs (My Workers / Shared with me / Community, `.seg` pattern), per-row access badge (Private/Public/Users) LEFT of the status pill, owner Sharing modal (off → public/users radio, staged recipients via exact-username lookup, expiry presets 1h/4h/until stopped, recipient add/remove on an active users policy, stop-with-confirm), "Shared with me" rows (§14.2 "Shared by X" reason + expiry + online pill, 90s window), Community = system-pool counts (D3 capacity indicator, empty state at 0) |
 | `d48d1fd0` | SharingModal onStart stuck in loading — always settle busy flag | **PARITY** — every Android mutation settles `busy` in `finally` (same rule) |
-| `d0097df4` / `8bf3a13c` | Private/Public access badge on the worker card + details dialog | **ANDROID GAP → FIXED** — `item_private_worker` gains the `workerAccess` badge; the details dialog renders the same access badge pair |
+| `d0097df4` / `8bf3a13c` | Private/Public access badge on the worker card + details dialog; lighter golden Private tint (#E4D0AC); Public = Waveform blue (#90CAF9) | **ANDROID GAP → FIXED** — `item_private_worker` gains the `workerAccess` badge; the details dialog renders the same access badge pair; `worker_badge_private_bg` (#E4D0AC) and `worker_badge_public_bg` (#90CAF9) match the web palette, dark `cinema_on_accent` text |
 | `57b1e26c` | Physical worker union for UI counts (D3-safe) — `available_*` fields on `/worker/counts`; GeneratePage chips use the union with raw-sum fallback | **ANDROID GAP → FIXED** — `WorkerCounts` gains `available_audio/image/video` (+ `_active_*`); GenerateFragment audio/image/video chips use `available_* ?: system + private` (web parity, mixed-version robustness) |
 
 **Backend contract (unchanged, shared with Web):** the flag-gated V2 surface —
@@ -36,8 +36,10 @@ set §10 of the design document prescribes; everything else is 1:1.
 - `repository/PrivateWorkerModels.kt` — SH-2 wire models (SharePolicy, ShareGrant, ShareStateResponse, SharedWithMeWorker, AccessReason, LookupUser, request types)
 - `repository/AppConfig.kt` — `features.share` kill-switch mirror
 - `repository/BackendApi.kt` — 7 share endpoints (incl. DELETE-with-body via `@HTTP`)
+- `repository/WorkerCounts.kt` — `available_*` fields (web parity `57b1e26c`)
 - `ui/WorkerSharingHelpers.kt` (NEW) — pure helpers: mode derivation, expiry re-check, sharedBy label, status window, username validation, duplicate check, D7 row eligibility, expiry presets/format, state diff, error mapping (no Android framework calls)
 - `ui/PrivateWorkersFragment.kt` — tabs, per-row badge + Sharing button, Sharing modal (off/public/users views, stop confirmation), SharedWithMe + Community rendering, kill-switch probe
+- `ui/GenerateFragment.kt` — audio/image/video chips use `available_* ?: system + private` (web parity `57b1e26c`, mixed-version robustness)
 - `res/layout/fragment_private_workers.xml` — segmented share tabs (GONE when the flag is off)
 - `res/layout/item_private_worker.xml` — access badge + Sharing button
 - `res/values/strings.xml`, `res/values-ru/strings.xml` — en/ru strings (web i18n `share_*` parity)
@@ -368,8 +370,11 @@ the «воркер» wording from the start. EN dictionary unchanged (web parity
 | `PlayerGateTest` | 16 | All passing |
 | `BetaSettingsHelpersTest` | 15 | All passing |
 | `WorkerSetupHelpersTest` (checkpoint 2) | 31 | All passing |
-| `AnalysisProgressTest` (NEW — checkpoint 3) | 21 | All passing |
-| **Android unit tests total** | **97** | **All passing** |
+| `AnalysisProgressTest` (checkpoint 3) | 21 | All passing |
+| `WorkerSharingHelpersTest` (NEW — checkpoint 4) | 17 | All passing |
+| `ResourceInvalidationsTest` (pre-existing) | 6 | All passing |
+| `ResilientReloaderTest` (pre-existing) | 8 | All passing |
+| **Android unit tests total** | **128** | **All passing** |
 | Web vitest | 136 (web suite at `f661a922`) | Untouched in checkpoint 3 |
 | Android compileDebugKotlin | — | BUILD SUCCESSFUL |
 | Android assembleDebug | — | BUILD SUCCESSFUL (`app-debug.apk`) |

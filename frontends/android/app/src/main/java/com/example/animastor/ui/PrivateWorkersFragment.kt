@@ -428,28 +428,30 @@ class PrivateWorkersFragment : Fragment(R.layout.fragment_private_workers) {
         // SH-2 access-mode badge (web parity: .worker__badge) — immediately
         // LEFT of the status pill. Private (default) vs Public/Users sharing.
         // Never rendered from local belief — shareStates is server truth.
+        // Visual: solid pale pill + dark on-accent text (same as web:
+        // Private #E4D0AC, Public #90CAF9, text cinema_on_accent).
         val mode = if (shareOn) shareStates[w.worker_id] else WorkerSharingHelpers.MODE_OFF
-        if (mode != null && mode != WorkerSharingHelpers.MODE_OFF) {
-            val isPublic = mode == WorkerSharingHelpers.MODE_PUBLIC
-            access.text = getString(if (isPublic) R.string.share_public_badge else R.string.share_users_badge)
-            val accent = if (isPublic) ctx.getColor(R.color.cinema_success)
-                else MaterialColors.getColor(access, com.google.android.material.R.attr.colorPrimary)
-            access.setTextColor(accent)
-            access.background = GradientDrawable().apply {
-                cornerRadius = 10 * resources.displayMetrics.density
-                setStroke((1 * resources.displayMetrics.density).toInt(), accent)
+        val isPublic = mode == WorkerSharingHelpers.MODE_PUBLIC
+        val isUsers = mode == WorkerSharingHelpers.MODE_USERS
+        access.text = getString(
+            when {
+                isPublic -> R.string.share_public_badge
+                isUsers -> R.string.share_users_badge
+                else -> R.string.worker_access_private
             }
-            access.visibility = View.VISIBLE
-        } else {
-            access.text = getString(R.string.worker_access_private)
-            val muted = MaterialColors.getColor(access, com.google.android.material.R.attr.colorOnSurfaceVariant)
-            access.setTextColor(muted)
-            access.background = GradientDrawable().apply {
-                cornerRadius = 10 * resources.displayMetrics.density
-                setStroke((1 * resources.displayMetrics.density).toInt(), muted)
+        )
+        val bg = ctx.getColor(
+            when {
+                isPublic -> R.color.worker_badge_public_bg
+                else -> R.color.worker_badge_private_bg
             }
-            access.visibility = View.VISIBLE
+        )
+        access.setTextColor(ctx.getColor(R.color.cinema_on_accent))
+        access.background = GradientDrawable().apply {
+            cornerRadius = 10 * resources.displayMetrics.density
+            setColor(bg)
         }
+        access.visibility = View.VISIBLE
 
         val typeLabel = typeLabel(w.worker_type)
         meta.text = "$typeLabel \u00B7 ${getString(R.string.worker_last_seen)} ${BetaSettingsHelpers.formatLastSeen(w.last_seen)}"
@@ -598,12 +600,16 @@ class PrivateWorkersFragment : Fragment(R.layout.fragment_private_workers) {
             accessView.text = getString(
                 if (isPublic) R.string.share_public_badge else R.string.worker_access_private
             )
-            val accent = if (isPublic) activity.getColor(R.color.cinema_success)
-                else MaterialColors.getColor(accessView, com.google.android.material.R.attr.colorOnSurfaceVariant)
-            accessView.setTextColor(accent)
+            // Web parity: solid pale pill + dark on-accent text
+            // (Private #E4D0AC, Public #90CAF9).
+            val bg = activity.getColor(
+                if (isPublic) R.color.worker_badge_public_bg
+                else R.color.worker_badge_private_bg
+            )
+            accessView.setTextColor(activity.getColor(R.color.cinema_on_accent))
             accessView.background = GradientDrawable().apply {
                 cornerRadius = 10 * resources.displayMetrics.density
-                setStroke(dp(1), accent)
+                setColor(bg)
             }
         }
         renderAccessBadge()
