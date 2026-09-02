@@ -76,6 +76,10 @@ export function SharingModal({ worker, onClose, onChanged }: {
       await afterChange();
     } catch (e) {
       setError(toErrorText(e));
+    } finally {
+      // busy MUST always settle — a stuck «Загрузка…» button is worse than
+      // any error text (same rule as onStop below).
+      setBusy(false);
     }
   }, [busy, worker.worker_id, afterChange]);
 
