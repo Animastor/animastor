@@ -119,6 +119,14 @@ All notable changes to Animastor are documented here.
   so a policy-active private worker is counted ONCE for its owner
   instead of double-counted across the overlapping D3 buckets. Mixed-
   version fallback (raw sum) keeps old backends working.
+- **Android share-notification adapter** — `ui/ShareNotifications.kt`
+  mirrors the web's `shareNotifications.ts` (SH-2 UX §5/§6): session-
+  only unread badge (`syncSharedWithMe` seeds, `markSharedSeen` clears
+  on tab open), state-derived notice transport seam (`onShareNotice` /
+  `emitShareNotice` — a future SSE/WS/inbox plugs in here). The
+  "Shared with me" tab label shows `(N)` inline; each new grant raises
+  a localized toast «X поделился воркером "Y" с вами». Backend state
+  stays the single source of truth — the seen marker is session sugar.
 
 ---
 

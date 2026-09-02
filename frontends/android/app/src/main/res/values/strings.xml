@@ -656,6 +656,7 @@
     <string name="share_swm_empty">Nobody has shared a Worker with you yet.</string>
     <string name="share_swm_hint">When another user grants you access, the Worker appears here.</string>
     <string name="share_shared_by">Shared by %1$s</string>
+    <string name="share_notification">%1$s shared Worker \"%2$s\" with you</string>
     <string name="share_community_empty">No public Workers are currently available.</string>
     <string name="share_community_hint">Public workers contributed by the community appear here.</string>
     <!-- Errors -->

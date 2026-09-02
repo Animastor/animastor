@@ -116,6 +116,19 @@ class PrivateWorkersFragment : Fragment(R.layout.fragment_private_workers) {
                 b.shareTabs.visibility = View.VISIBLE
                 selectTab(TAB_MY)
                 loadSharedWithMe(markSeen = false)
+                // SH-2 §6: toast renderer for state-derived share notices
+                // (web parity: onShareNotice). A future SSE/WS/inbox transport
+                // plugs in by calling ShareNotifications.emitShareNotice
+                // directly; until then, toasts fire on each new grant that
+                // survives the diff.
+                ShareNotifications.onShareNotice { n ->
+                    if (!isAdded) return@onShareNotice
+                    val who = n.actor_username ?: "—"
+                    val what = n.worker_name ?: "—"
+                    // web parity: tf('share_notification', username, workerName)
+                    val msg = getString(R.string.share_notification, who, what)
+                    Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
+                }
             } else {
                 b.shareTabs.visibility = View.GONE
             }
@@ -146,7 +159,6 @@ class PrivateWorkersFragment : Fragment(R.layout.fragment_private_workers) {
             b.addWorkerButton.visibility = View.VISIBLE
         }
     }
-
     private fun openSetupCenter() {
         if (busy) return
         val fragment = WorkerSetupWizardFragment()
@@ -218,13 +230,35 @@ class PrivateWorkersFragment : Fragment(R.layout.fragment_private_workers) {
             try {
                 val list = RetrofitClient.api.sharedWithMe().workers
                 if (!isAdded) return@launch
+                val prev = sharedWithMe
                 sharedWithMe = list
+                // SH-2 §6: session-only badge + notice derivation (web parity
+                // syncSharedWithMe). Initial sync seeds the badge without
+                // toasting; later syncs raise one notice per new worker_id.
+                val fresh = ShareNotifications.syncSharedWithMe(prev, list)
+                renderShareTabLabel()
+                if (markSeen) ShareNotifications.markSharedSeen(list)
                 if (tab == TAB_SHARED) renderSharedWithMe()
             } catch (e: Throwable) {
                 if (!isAdded || tab != TAB_SHARED) return@launch
                 sharedWithMe = emptyList()
                 renderSharedWithMe(humanError(e))
             }
+        }
+    }
+
+    /** Render the «Shared with me» tab label with the current badge marker
+     *  (web parity: .share__badge on the tab button). Unread first, then
+     *  muted total, otherwise bare label. */
+    private fun renderShareTabLabel() {
+        val b = binding ?: return
+        val base = getString(R.string.share_tab_shared_with_me)
+        b.tabSharedButton.text = when {
+            ShareNotifications.sharedUnreadCount > 0 ->
+                "$base (${ShareNotifications.sharedUnreadCount})"
+            ShareNotifications.sharedWithMeCount > 0 ->
+                "$base (${ShareNotifications.sharedWithMeCount})"
+            else -> base
         }
     }
 

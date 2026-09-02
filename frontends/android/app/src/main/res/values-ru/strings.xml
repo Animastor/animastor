@@ -632,6 +632,7 @@
     <string name="share_swm_empty">Никто пока не поделился с вами воркером.</string>
     <string name="share_swm_hint">Когда другой пользователь откроет вам доступ, воркер появится здесь.</string>
     <string name="share_shared_by">Поделился: %1$s</string>
+    <string name="share_notification">%1$s поделился воркером «%2$s» с вами</string>
     <string name="share_community_empty">Сейчас нет доступных публичных воркеров.</string>
     <string name="share_community_hint">Публичные воркеры участников сообщества появятся здесь.</string>
     <!-- Errors -->

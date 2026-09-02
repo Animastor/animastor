@@ -16,6 +16,7 @@ Web commits audited (Worker Sharing UX layer series):
 | `5cb3b4b5` | Worker Sharing V2 UI (SH-2) — tabs, sharing modal, shared-with-me, community, kill-switch | **ANDROID GAP → FIXED** — full parity: kill-switch probe (GET /config → `features.share`, read ONCE, fail CLOSED), three tabs (My Workers / Shared with me / Community, `.seg` pattern), per-row access badge (Private/Public/Users) LEFT of the status pill, owner Sharing modal (off → public/users radio, staged recipients via exact-username lookup, expiry presets 1h/4h/until stopped, recipient add/remove on an active users policy, stop-with-confirm), "Shared with me" rows (§14.2 "Shared by X" reason + expiry + online pill, 90s window), Community = system-pool counts (D3 capacity indicator, empty state at 0) |
 | `d48d1fd0` | SharingModal onStart stuck in loading — always settle busy flag | **PARITY** — every Android mutation settles `busy` in `finally` (same rule) |
 | `d0097df4` / `8bf3a13c` | Private/Public access badge on the worker card + details dialog; lighter golden Private tint (#E4D0AC); Public = Waveform blue (#90CAF9) | **ANDROID GAP → FIXED** — `item_private_worker` gains the `workerAccess` badge; the details dialog renders the same access badge pair; `worker_badge_private_bg` (#E4D0AC) and `worker_badge_public_bg` (#90CAF9) match the web palette, dark `cinema_on_accent` text |
+| `5cb3b4b5` (cont.) | `shareNotifications.ts` — session-only unread badge + state-derived notices + `onShareNotice` transport seam | **ANDROID GAP → FIXED** — `ui/ShareNotifications.kt` mirrors the helpers: `syncSharedWithMe` (initial sync seeds, no toasts; later syncs raise one notice per new worker_id), `markSharedSeen` (clears the unread badge on tab open), `onShareNotice` / `emitShareNotice` subscribe seam; the "Shared with me" tab label shows the unread count (`(N)`) inline, toasts render the localized «X поделился воркером "Y" с вами» on each new grant |
 | `57b1e26c` | Physical worker union for UI counts (D3-safe) — `available_*` fields on `/worker/counts`; GeneratePage chips use the union with raw-sum fallback | **ANDROID GAP → FIXED** — `WorkerCounts` gains `available_audio/image/video` (+ `_active_*`); GenerateFragment audio/image/video chips use `available_* ?: system + private` (web parity, mixed-version robustness) |
 
 **Backend contract (unchanged, shared with Web):** the flag-gated V2 surface —
@@ -38,12 +39,14 @@ set §10 of the design document prescribes; everything else is 1:1.
 - `repository/BackendApi.kt` — 7 share endpoints (incl. DELETE-with-body via `@HTTP`)
 - `repository/WorkerCounts.kt` — `available_*` fields (web parity `57b1e26c`)
 - `ui/WorkerSharingHelpers.kt` (NEW) — pure helpers: mode derivation, expiry re-check, sharedBy label, status window, username validation, duplicate check, D7 row eligibility, expiry presets/format, state diff, error mapping (no Android framework calls)
-- `ui/PrivateWorkersFragment.kt` — tabs, per-row badge + Sharing button, Sharing modal (off/public/users views, stop confirmation), SharedWithMe + Community rendering, kill-switch probe
+- `ui/ShareNotifications.kt` (NEW) — share-notification adapter (web parity `shareNotifications.ts`): `syncSharedWithMe` + `markSharedSeen` (session-only badge), `onShareNotice` / `emitShareNotice` transport seam
+- `ui/PrivateWorkersFragment.kt` — tabs (with inline `(N)` unread badge on "Shared with me"), per-row badge + Sharing button, Sharing modal (off/public/users views, stop confirmation), SharedWithMe + Community rendering, kill-switch probe, toast renderer for state-derived notices
 - `ui/GenerateFragment.kt` — audio/image/video chips use `available_* ?: system + private` (web parity `57b1e26c`, mixed-version robustness)
 - `res/layout/fragment_private_workers.xml` — segmented share tabs (GONE when the flag is off)
 - `res/layout/item_private_worker.xml` — access badge + Sharing button
 - `res/values/strings.xml`, `res/values-ru/strings.xml` — en/ru strings (web i18n `share_*` parity)
 - `test/.../WorkerSharingHelpersTest.kt` (NEW) — 17 JVM tests mirroring `sharing.test.ts` fixtures
+- `test/.../ShareNotificationsTest.kt` (NEW) — 8 JVM tests mirroring `shareNotifications.test.ts` fixtures
 
 ## Checkpoint 3 — Parallel AI Analysis (Milestone #2, web `f661a922`)
 
@@ -372,9 +375,10 @@ the «воркер» wording from the start. EN dictionary unchanged (web parity
 | `WorkerSetupHelpersTest` (checkpoint 2) | 31 | All passing |
 | `AnalysisProgressTest` (checkpoint 3) | 21 | All passing |
 | `WorkerSharingHelpersTest` (NEW — checkpoint 4) | 17 | All passing |
+| `ShareNotificationsTest` (NEW — checkpoint 4) | 8 | All passing |
 | `ResourceInvalidationsTest` (pre-existing) | 6 | All passing |
 | `ResilientReloaderTest` (pre-existing) | 8 | All passing |
-| **Android unit tests total** | **128** | **All passing** |
+| **Android unit tests total** | **136** | **All passing** |
 | Web vitest | 136 (web suite at `f661a922`) | Untouched in checkpoint 3 |
 | Android compileDebugKotlin | — | BUILD SUCCESSFUL |
 | Android assembleDebug | — | BUILD SUCCESSFUL (`app-debug.apk`) |
