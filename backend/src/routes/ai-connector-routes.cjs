@@ -4,11 +4,12 @@ const crypto = require('crypto');
 const aiConnectorRepo = require('../storage/postgres/repositories/ai-connector-repo');
 const registry = require('../services/ai-connector/registry');
 const discovery = require('../services/ai-connector/discovery');
+const transport = require('../services/ai-connector/transport');
 
 // ======================================================
-// LAC — Local AI Connector V1 (Phase 1+2+2.5+3)
-// (docs/04-planning/local-ai-connector-v1.md §4, §7, §8, §8.1, §10, §12,
-//  AD-1..AD-5, AD-7)
+// LAC — Local AI Connector V1 (Phase 1+2+2.5+3+4)
+// (docs/04-planning/local-ai-connector-v1.md §4, §5, §7, §8, §8.1, §10,
+//  §12, AD-1..AD-5, AD-7)
 // ======================================================
 //
 // PART A — WS Foundation (Phase 2). Endpoint:
@@ -31,6 +32,22 @@ const discovery = require('../services/ai-connector/discovery');
 //                                                 heartbeat models[]); error
 //                                                 codes from a fixed sanitized
 //                                                 allowlist (discovery service).
+//
+// Phase 4 — non-streaming inference (§4 Phase-4 note, §5, §9):
+//   S→C chat.request { request_id, model, messages, params, timeout_ms }
+//                     — sent ONLY by the transport service (validated,
+//                       cloud-generated request_id, never carries a URL)
+//   C→S chat.response { request_id, model, content, finish_reason, usage }
+//   C→S chat.error    { request_id, code, message }   — allowlisted codes only
+//   S→C chat.cancel   { request_id }              — the authoritative cloud
+//                        timer expiring (§5); the connector aborts its
+//                        local fetch, frees the slot, sends nothing back.
+// The route accepts chat.response / chat.error from an AUTHENTICATED
+// session and delegates to the transport service (validation,
+// request-id correlation, sanitized settling). chat.request /
+// chat.cancel from the connector are NOT part of the C→S surface — they
+// fall through to the unknown-type branch and are ignored (the endpoint
+// is not a proxy).
 // There is deliberately NO url field on any frame: the connector fetches only
 // its own locally-configured base URL — a client can never point the runtime
 // call anywhere else (AD-5).
@@ -437,6 +454,21 @@ function createWsHandler({ redis, logger = console, options = {} } = {}) {
             handleModelsList(session, msg).catch(() => {});
             return;
         }
+        if (msg.type === 'chat.response' || msg.type === 'chat.error') {
+            // Phase 4: a reply to a transport-owned chat.request. Validation,
+            // request-id correlation and sanitized settling live in the
+            // transport service — the route only binds the session identity
+            // (a reply settles only the request sent on THIS session).
+            // Any well-formed message proves liveness; a malformed or
+            // hostile chat reply NEVER breaks the session (it is dropped
+            // sanitized, the connection stays up).
+            resetLivenessTimer(session);
+            touchRedisHb(session.connectorId).catch(() => {});
+            try {
+                transport.handleConnectorFrame(session, msg, { logger });
+            } catch (_) { /* never let a frame crash the route */ }
+            return;
+        }
         // Unknown message type: ignore safely. The endpoint is not a proxy —
         // anything outside the documented surface simply does not exist.
         // The type value is client-controlled and never logged (a credential
@@ -482,6 +514,10 @@ function createWsHandler({ redis, logger = console, options = {} } = {}) {
                 // immediately (failPendingFor is a no-op when this session
                 // did not own the pending refresh).
                 discovery.failPendingFor(session);
+                // Phase 4: pending inference on a dying session fails fast
+                // with session_closed — never left waiting for the timeout
+                // (no-op when this session owned no pending requests).
+                transport.failPendingFor(session);
                 // Mark offline only if this session was STILL the registered live
                 // session (a replacement session must not be clobbered offline).
                 if (wasActive) {

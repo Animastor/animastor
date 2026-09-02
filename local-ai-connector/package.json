@@ -1,7 +1,7 @@
 {
   "name": "animastor-ai-connector",
   "version": "0.1.0",
-  "description": "Local AI Connector — outbound bridge between an Animastor workspace and a local OpenAI-compatible runtime (Ollama / vLLM / llama.cpp / LM Studio). V1: registration, heartbeat, model discovery. No inference, no proxy surface.",
+  "description": "Local AI Connector — outbound bridge between an Animastor workspace and a local OpenAI-compatible runtime (Ollama / vLLM / llama.cpp / LM Studio). V1: registration, heartbeat, model discovery, non-streaming inference. No streaming, no proxy surface.",
   "main": "index.cjs",
   "bin": {
     "animastor-ai-connector": "index.cjs"

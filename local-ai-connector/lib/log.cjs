@@ -4,9 +4,11 @@
 // Never stores prompts, messages, or model responses. Safe fields only:
 // { ts, op, model, status, error_code, duration_ms, bytes }. Size-capped
 // ring buffer; no content ever enters this log by design.
+// Status values: ok | error | cancelled (the AD-6 record shape).
 // ======================================================
 
 const MAX_RECORDS = 500;
+const STATUSES = ['ok', 'error', 'cancelled'];
 
 const records = [];
 
@@ -19,7 +21,7 @@ function recordOp(fields = {}) {
         ts: new Date().toISOString(),
         op: typeof fields.op === 'string' ? fields.op.slice(0, 64) : 'unknown',
         model: typeof fields.model === 'string' ? fields.model.slice(0, 128) : undefined,
-        status: fields.status === 'ok' || fields.status === 'error' ? fields.status : 'unknown',
+        status: STATUSES.includes(fields.status) ? fields.status : 'unknown',
         error_code: typeof fields.error_code === 'string' ? fields.error_code.slice(0, 64) : undefined,
         duration_ms: typeof fields.duration_ms === 'number' ? Math.max(0, Math.round(fields.duration_ms)) : undefined,
         bytes: typeof fields.bytes === 'number' ? Math.max(0, Math.round(fields.bytes)) : undefined,

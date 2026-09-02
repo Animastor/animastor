@@ -1,5 +1,6 @@
 // ======================================================
-// Connector WS session (LAC-3 — hello/ready, heartbeat, models discovery)
+// Connector WS session (LAC-3/LAC-4 — hello/ready, heartbeat, discovery,
+// non-streaming inference)
 // ======================================================
 // Outbound session against the Animastor connector endpoint:
 //
@@ -9,24 +10,45 @@
 //   C→S heartbeat   { models[], runtime_ok, runtime{type} }  — cadence from ready
 //   S→C models.refresh {}                    → connector fetches locally:
 //                                              GET {base}/v1/models (adapter)
-//   C→S models.list { models[] | error_code }
+//   C→S models.list  { models[] | error_code }
+//   S→C chat.request { request_id, model, messages, params, timeout_ms }
+//                                              → connector fetches locally:
+//                                              POST {base}/v1/chat/completions
+//                                                (adapter; stream:false ONLY)
+//   C→S chat.response { request_id, model, content, finish_reason, usage }
+//   C→S chat.error    { request_id, code, message }
+//   S→C chat.cancel   { request_id }           → abort the local fetch, free
+//                                                the slot, send NOTHING
 //
 // Invariants:
 //   - NO automatic probes (AD-7): discovery runs ONLY on explicit
 //     models.refresh, plus a TTL-cached re-check for heartbeat facts
-//     (default 30 s, §7). No discovery at startup, no inference, no
-//     chat/completions — the adapter surface has no such operation.
+//     (default 30 s, §7). Inference runs ONLY on explicit chat.request.
 //   - The runtime base URL is LOCAL CONFIG ONLY. Frames from the cloud are
-//     read for `type` (+ heartbeat facts on ready) and NOTHING else — there
-//     is no field a cloud could use to point the runtime call elsewhere.
+//     read for `type` and their documented fields and NOTHING else —
+//     there is no field a cloud could use to point the runtime call
+//     elsewhere (AD-5). chat.request carries no url; any url-like extra
+//     fields are dropped at the validation seam (lib/chat.cjs).
+//   - Phase 4 inference is ALWAYS non-streaming: the adapter hardcodes
+//     stream:false; chat.delta does not exist in this session.
+//   - Concurrency: at most LIMITS.maxConcurrentRequests (default 2, §4)
+//     local runtime requests at once; overflow answers busy immediately.
+//   - request_id uniqueness: a request_id is executed at most ONCE per
+//     session lifecycle (in-flight OR completed ids are rejected
+//     invalid_request — no re-execution, ever).
+//   - Every limit is enforced HERE, not trusted from the cloud (§4
+//     Phase-4 note); violation → sanitized chat.error, session survives.
 //   - One in-flight discovery at a time; extra refreshes coalesce (no
 //     fan-out against the local runtime even under a hostile server).
+//   - Local logging is METADATA-ONLY (AD-6): request_id, model, status,
+//     error_code, duration — never prompts, never responses.
 //   - Reconnects with exponential backoff + jitter; the credential is NEVER
 //     logged (logger callers only ever pass metadata).
 // ======================================================
 
 const adapters = require('./runtime-adapters/index.cjs');
 const opLog = require('./log.cjs');
+const chat = require('./chat.cjs');
 
 const DEFAULTS = {
     heartbeatIntervalMs: 15 * 1000,   // fallback if ready omits the cadence
@@ -34,6 +56,7 @@ const DEFAULTS = {
     reconnectBaseMs: 1000,
     reconnectMaxMs: 30 * 1000,
     discoveryTimeoutMs: 8 * 1000,
+    maxConcurrentRequests: chat.LIMITS.maxConcurrentRequests, // §4 default 2
 };
 
 function defaultWebSocketImpl() {
@@ -57,6 +80,7 @@ function clampInterval(ms) {
  * @param {object} [opts.logger] - { info, warn, error }
  * @param {Function} [opts.WebSocketImpl] - injectable ws implementation
  * @param {object} [opts.hooks] - { onReady, onModelsList } (metadata only)
+ * @param {number} [opts.maxConcurrentRequests] - §4 semaphore (default 2)
  */
 function createConnectorSession({
     config,
@@ -64,13 +88,15 @@ function createConnectorSession({
     WebSocketImpl = null,
     hooks = {},
     heartbeatCacheTtlMs = null,
+    maxConcurrentRequests = null,
 } = {}) {
     const WS = WebSocketImpl || defaultWebSocketImpl();
-    const discover = adapters.getAdapter(config.runtimeType);
-    if (!discover) {
+    const adapter = adapters.getAdapter(config.runtimeType);
+    if (!adapter) {
         throw new Error(`no runtime adapter for type ${config.runtimeType}`);
     }
     const cacheTtl = Math.max(0, Number(heartbeatCacheTtlMs) || DEFAULTS.heartbeatCacheTtlMs);
+    const maxConcurrent = Math.max(1, Number(maxConcurrentRequests) || DEFAULTS.maxConcurrentRequests);
 
     const state = {
         phase: 'idle', // idle | connecting | ready | stopped
@@ -82,6 +108,12 @@ function createConnectorSession({
         // Discovery facts cache (§7): models + last runtime reachability.
         cache: { models: [], runtimeOk: null, lastDiscoveryAt: 0 },
         discoveryInFlight: false,
+        // Phase 4 inference state (ephemeral, in-memory only):
+        //   inflight: request_id → { controller, model, startedAt, cancelledByCloud }
+        //   seenIds: every request_id executed (or rejected as duplicate)
+        //     in THIS session lifecycle — at-most-once execution (§4).
+        chatInflight: new Map(),
+        chatSeenIds: new Set(),
         stopped: false,
     };
 
@@ -161,6 +193,153 @@ function createConnectorSession({
     function requestDiscovery() {
         if (state.phase !== 'ready') return;
         runDiscovery('refresh');
+    }
+
+    // ── Phase 4: non-streaming inference (chat.request → adapter) ──────
+
+    /** Sanitized chat.error frame (fixed allowlist codes only, §4). */
+    function sendChatError(requestId, code) {
+        send({
+            type: 'chat.error',
+            request_id: requestId,
+            code,
+            message: chat.errorMessages[code] || chat.errorMessages.runtime_error,
+        });
+    }
+
+    /** Remember a request_id for at-most-once execution (bounded set). */
+    function rememberRequestId(requestId) {
+        state.chatSeenIds.add(requestId);
+        if (state.chatSeenIds.size > chat.LIMITS.maxSeenRequestIds) {
+            const oldest = state.chatSeenIds.values().next().value;
+            state.chatSeenIds.delete(oldest);
+        }
+    }
+
+    /**
+     * One chat.request → ONE non-streaming local runtime call. All limits
+     * are enforced HERE (lib/chat.cjs) — never trusted from the cloud.
+     * Concurrency: §4 semaphore (default 2) → busy. Duplicate request_id
+     * (in-flight or already executed this session) → invalid_request,
+     * never re-executed. The adapter owns the inference timeout; chat.cancel
+     * aborts the local fetch via the entry's AbortController.
+     */
+    function runChatRequest(msg) {
+        if (state.phase !== 'ready') return;
+        const v = chat.validateChatRequest(msg);
+        if (!v.ok) {
+            // Un-correlatable frames (bad request_id) are dropped silently;
+            // correlatable ones get a sanitized chat.error. Either way the
+            // id is remembered — a rejected request_id never executes later.
+            if (v.requestId) {
+                rememberRequestId(v.requestId);
+                sendChatError(v.requestId, v.code);
+            }
+            return;
+        }
+        const { requestId, model, messages, maxTokens, temperature, timeoutMs } = v.request;
+
+        // At-most-once per session lifecycle (§4 Phase-4 note).
+        if (state.chatSeenIds.has(requestId) || state.chatInflight.has(requestId)) {
+            sendChatError(requestId, 'invalid_request');
+            return;
+        }
+        // §4 concurrency semaphore — overflow answers busy immediately.
+        if (state.chatInflight.size >= maxConcurrent) {
+            rememberRequestId(requestId);
+            sendChatError(requestId, 'busy');
+            return;
+        }
+        rememberRequestId(requestId);
+
+        const entry = {
+            controller: new AbortController(),
+            model,
+            startedAt: Date.now(),
+            cancelledByCloud: false,
+        };
+        state.chatInflight.set(requestId, entry);
+
+        adapter.chatCompletion({
+            baseUrl: config.baseUrl,
+            model,
+            messages,
+            maxTokens,
+            temperature,
+            timeoutMs,
+            signal: entry.controller.signal,
+        }).then((result) => {
+            // Already settled (e.g. session stopped) — nothing to do.
+            if (!state.chatInflight.has(requestId)) return;
+            state.chatInflight.delete(requestId);
+            const durationMs = Date.now() - entry.startedAt;
+
+            if (result.ok) {
+                const frame = {
+                    type: 'chat.response',
+                    request_id: requestId,
+                    model,
+                    content: result.content,
+                };
+                if (result.finishReason) frame.finish_reason = result.finishReason;
+                if (result.usage) frame.usage = result.usage;
+                const serialized = JSON.stringify(frame);
+                // Frame guard: a response that would not fit the cloud's
+                // inbound frame cap fails with a sanitized error instead of
+                // killing the session (§4 Phase-4 note).
+                if (Buffer.byteLength(serialized) > chat.LIMITS.maxResponseFrameBytes) {
+                    sendChatError(requestId, 'response_too_large');
+                    opLog.recordOp({ op: 'chat_completion', model, status: 'error', error_code: 'response_too_large', duration_ms: durationMs });
+                    return;
+                }
+                send(frame);
+                opLog.recordOp({ op: 'chat_completion', model, status: 'ok', duration_ms: durationMs, bytes: result.rawBytes });
+                logger.info(`[AI-CONNECTOR] chat ok (model ${model}, ${durationMs}ms)`);
+                return;
+            }
+
+            // Failure paths — sanitized codes only, never runtime detail.
+            if (result.code === 'cancelled' && entry.cancelledByCloud) {
+                // Cloud-initiated cancel: the terminal state IS the cancel —
+                // nothing is sent back (§5); slot freed; session stays up.
+                opLog.recordOp({ op: 'chat_completion', model, status: 'cancelled', duration_ms: durationMs });
+                logger.info(`[AI-CONNECTOR] chat cancelled (model ${model}, ${durationMs}ms)`);
+                return;
+            }
+            sendChatError(requestId, result.code);
+            opLog.recordOp({ op: 'chat_completion', model, status: 'error', error_code: result.code, duration_ms: durationMs });
+            logger.warn(`[AI-CONNECTOR] chat failed: ${result.code} (${durationMs}ms)`);
+        }).catch(() => {
+            // Safety net: the adapter resolves instead of rejecting; if it
+            // ever throws, fail sanitized and free the slot.
+            if (!state.chatInflight.has(requestId)) return;
+            state.chatInflight.delete(requestId);
+            sendChatError(requestId, 'runtime_error');
+            opLog.recordOp({ op: 'chat_completion', model, status: 'error', error_code: 'runtime_error', duration_ms: Date.now() - entry.startedAt });
+        });
+    }
+
+    /**
+     * chat.cancel (S→C, §5): find the request by request_id, abort the
+     * underlying local HTTP fetch, free the slot. Unknown/finished ids are
+     * ignored silently; the WS session is NEVER closed by a cancel.
+     */
+    function handleChatCancel(msg) {
+        const requestId = chat.validateChatCancel(msg);
+        if (!requestId) return; // malformed — ignore safely
+        const entry = state.chatInflight.get(requestId);
+        if (!entry) return; // unknown, late or already finished — ignore
+        entry.cancelledByCloud = true;
+        entry.controller.abort();
+        // Settling happens in runChatRequest's promise chain (slot freed,
+        // status cancelled in the metadata log, NO frame back).
+    }
+
+    /** Abort every in-flight inference (socket died / session stopped). */
+    function abortAllInflight() {
+        for (const entry of state.chatInflight.values()) {
+            try { entry.controller.abort(); } catch (_) {}
+        }
     }
 
     /**
@@ -251,6 +430,19 @@ function createConnectorSession({
             requestDiscovery();
             return;
         }
+        if (msg.type === 'chat.request') {
+            // Phase 4 inference. lib/chat.cjs reads request_id/model/
+            // messages/params/timeout_ms and NOTHING else — any url/base_url/
+            // endpoint/identity fields a hostile server attaches are dropped
+            // at the seam; the runtime call always goes to the LOCAL base
+            // URL, POST /v1/chat/completions, stream:false (AD-5).
+            runChatRequest(msg);
+            return;
+        }
+        if (msg.type === 'chat.cancel') {
+            handleChatCancel(msg);
+            return;
+        }
         // Unknown types are ignored safely — the protocol surface is fixed.
     }
 
@@ -282,6 +474,12 @@ function createConnectorSession({
         });
         ws.on('close', () => {
             if (state.heartbeatTimer) { clearInterval(state.heartbeatTimer); state.heartbeatTimer = null; }
+            // In-flight inference dies with the socket: abort the local
+            // fetches (no frames can be sent anyway). The seen-ids set and
+            // inflight map are reset — request_id lifecycle is per session.
+            abortAllInflight();
+            state.chatInflight.clear();
+            state.chatSeenIds.clear();
             if (!state.stopped) scheduleReconnect();
         });
     }
@@ -295,6 +493,9 @@ function createConnectorSession({
             state.stopped = true;
             state.phase = 'stopped';
             clearTimers();
+            abortAllInflight();
+            state.chatInflight.clear();
+            state.chatSeenIds.clear();
             if (state.ws) {
                 try { state.ws.close(1000, 'client_stop'); } catch (_) {}
             }

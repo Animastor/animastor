@@ -10,6 +10,12 @@
 //
 // V1: one `openai-compatible` adapter covers all four runtimes (§6) —
 // `runtime_type` is a UI label, not a behavioral branch on the cloud side.
+//
+// Operation surface (finite and enumerable, §10.1):
+//   GET  {base}/v1/models            — discovery (Phase 3, explicit only)
+//   POST {base}/v1/chat/completions — non-streaming inference (Phase 4)
+// Nothing else. No arbitrary path, no arbitrary method, no URL from any
+// frame ever reaches this seam.
 // ======================================================
 
 const openaiCompatible = require('./openai-compatible.cjs');
@@ -28,7 +34,7 @@ const ADAPTER_FOR_RUNTIME = {
 /**
  * Resolve the adapter for a runtime type. Unknown types fail closed —
  * the connector refuses to run against a runtime it cannot classify.
- * @returns {Function|null} discoverModels implementation or null
+ * @returns {object|null} the openai-compatible adapter or null
  */
 function getAdapter(runtimeType) {
     return ADAPTER_FOR_RUNTIME[runtimeType] ? openaiCompatible : null;
@@ -38,6 +44,8 @@ module.exports = {
     RUNTIME_TYPES,
     getAdapter,
     discoverModels: openaiCompatible.discoverModels,
+    chatCompletion: openaiCompatible.chatCompletion,
     normalizeOpenAiModels: openaiCompatible.normalizeOpenAiModels,
+    normalizeOpenAiChatCompletion: openaiCompatible.normalizeOpenAiChatCompletion,
     isLoopbackBase: openaiCompatible.isLoopbackBase,
 };
