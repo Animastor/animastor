@@ -286,6 +286,10 @@ describe('Share policy routes — authz matrix & kill-switch', () => {
         aliceWorkerId = (await cw.json()).worker.worker_id;
     });
 
+    before(function () {
+        delete process.env.SHARE_FEATURES_ENABLED;
+    });
+
     after(async function () {
         this.timeout(30000);
         if (server) server.close();

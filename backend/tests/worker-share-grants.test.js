@@ -375,6 +375,10 @@ describe('Share grants — routes authz & lifecycle', () => {
         aliceWorkerId = cw.body.worker.worker_id;
     });
 
+    before(function () {
+        delete process.env.SHARE_FEATURES_ENABLED;
+    });
+
     after(async function () {
         this.timeout(30000);
         if (server) server.close();
