@@ -378,6 +378,18 @@ async function startServer() {
         console.warn('[WORKER-AUTH] mirror sync setup failed (non-fatal):', err.message);
     }
 
+    // LAC-2: Local AI Connector WebSocket endpoint (Phase 2 — WS Foundation).
+    // Must be attached before the listen callback (the upgrade event fires
+    // after listen, but the listener must be registered before it).
+    let aiConnectorWs = null;
+    try {
+        const { createWsHandler } = require('./routes/ai-connector-routes.cjs');
+        aiConnectorWs = createWsHandler({ redis, logger: console });
+        log('[STARTUP] Local AI Connector WS handler created');
+    } catch (err) {
+        console.warn('[STARTUP] Local AI Connector WS setup failed (non-fatal):', err.message);
+    }
+
     // Start server
     const server = app.listen(PORT, () => {
         log(`[STARTUP] Backend server running on port ${PORT}`);
@@ -471,6 +483,15 @@ async function startServer() {
         });
     });
 
+    // LAC-2: Attach the WebSocket upgrade handler to the HTTP server.
+    // Must happen after server.listen() returns — the server object must
+    // exist. The upgrade event listener is safe to attach at any point
+    // after the server is created; events only arrive after listen.
+    if (aiConnectorWs) {
+        aiConnectorWs.attachUpgrade(server);
+        log('[STARTUP] Local AI Connector WS upgrade handler attached');
+    }
+
     // Graceful shutdown (S3.1, 2026-07-19)
     // SIGTERM  — Kubernetes/docker stop.  Cancel dispatches, stop loop,
     //            close HTTP server, close Redis & PG. Hard timeout 10s.
@@ -518,6 +539,17 @@ async function startServer() {
                 log(`[SHUTDOWN] Cancelled ${leases.length} active dispatches`);
             } catch (leaseErr) {
                 console.warn(`[SHUTDOWN] Lease inspection failed: ${leaseErr.message}`);
+            }
+
+            // 2.5 Close all live Local AI Connector WS sessions (marks each
+            // connector offline; sockets get a server_shutdown close).
+            try {
+                if (aiConnectorWs) {
+                    aiConnectorWs.shutdown();
+                    log('[SHUTDOWN] Local AI Connector WS sessions closed');
+                }
+            } catch (wsErr) {
+                console.warn(`[SHUTDOWN] AI Connector WS shutdown failed: ${wsErr.message}`);
             }
 
             // 3. Stop accepting new HTTP connections

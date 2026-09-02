@@ -272,6 +272,24 @@ Rules:
   `model_not_found`, `context_length`, `runtime_error`, `busy`) —
   mirroring `sanitizeTestError` discipline (`workspace-ai-provider.js:491`).
 
+**Phase-2 implementation note (WS Foundation, 2026-09-02):** the WS
+endpoint `GET /api/v1/ai-connector/ws` authenticates `hello` with the
+**persistent `llmc.*` credential only** (`{ protocol_version, credential }`).
+The one-time `reg_token` (llmcreg.*) branch of `hello` — the atomic
+activation exchange of §8.1 — is deliberately **not wired in the WS
+foundation**: `ready` carries no credential-issuance field today
+(`{ connector_id, heartbeat_interval_ms, server_time }` only), so an
+activation over WS would strand the connector without its persistent
+credential. The `reg_token` exchange lands with the registration/auth
+phase (route file `ai-connector-routes.cjs`; §15 Phase 2), where the
+newly minted `llmc.*` is disclosed once. Unknown message types are ignored
+safely; malformed frames and auth/protocol violations close the socket;
+incoming frames are capped (64 KB); a single live session per connector is
+enforced (`replaced` close code 4000); PG `status/last_seen` are the
+durable state (online while connected, offline on disconnect/heartbeat
+timeout, writes throttled to ~1/min) with the Redis TTL key
+`animastor:ai-connector:hb:<id>` as a liveness mirror (§7, §8.1.5).
+
 **Phase 5 streaming:** `chat.delta` from the connector → the backend
 re-emits OpenAI-style SSE frames → the existing SSE client
 (`client.ts:147`). The wire format Cloud↔Connector is the simplified own
