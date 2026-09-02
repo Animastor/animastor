@@ -15,6 +15,7 @@ import { useState, useCallback, useEffect } from 'preact/hooks';
 import { getJson, postJson, deleteJson, ApiError } from '../../api/client';
 import type { StrKey } from '../../app/i18n';
 import { t, tf } from '../../app/i18n';
+import { IconAdd } from '../../app/icons';
 import { authMe } from '../../state/authStore';
 import { Modal, toast } from '../../lib/ui';
 import {
@@ -58,8 +59,8 @@ export function PrivateWorkersSection() {
 
   // ── SH-2 sharing layer (kill-switch aware) ────────────────────────────
   // The capability probe runs once; when SHARE_FEATURES_ENABLED is off the
-  // tabs below never render and NO V2 endpoint is ever called — the UI is
-  // bit-for-bit the pre-SH-1 worker manager.
+  // tabs below never render and NO V2 endpoint is ever called (every row
+  // then simply renders its true Private badge — nothing can be shared).
   const [tab, setTab] = useState<'my' | 'shared' | 'community'>('my');
   const [shared, setShared] = useState<SharedWithMeWorker[] | null>(null);
   const [sharedLoading, setSharedLoading] = useState(false);
@@ -190,9 +191,16 @@ export function PrivateWorkersSection() {
           <h3 class="card__title">{t('worker_mgmt_title')}</h3>
           <p class="card__hint card__hint--wrap">{t('worker_mgmt_desc')}</p>
 
+          {/* «Добавить воркер» always sits ABOVE the three section selectors
+              (Мои воркеры / Поделились со мной / Community). */}
+          <button class="btn btn--block" onClick={() => setWizardOpen(true)} disabled={busy}>
+            <IconAdd width={18} height={18} /> {t('worker_add')}
+          </button>
+
           {/* ── SH-2: three views (My / Shared with me / Community) ──
-              Rendered ONLY when the kill-switch is on; when off the section
-              is the unchanged pre-SH-1 manager (kill-switch requirement). */}
+              Rendered ONLY when the kill-switch is on (no V2 endpoint is
+              ever called while it is off; rows then render their Private
+              badge — nothing can be shared). */}
           {shareOn && (
             <div class="seg seg--block" role="tablist" aria-label={t('share_btn')}>
               <button
@@ -240,13 +248,7 @@ export function PrivateWorkersSection() {
             </div>
           )}
 
-          {(tab === 'my' || !shareOn) && (
-            <button class="btn btn--block" onClick={() => setWizardOpen(true)} disabled={busy}>
-              {t('worker_add')}
-            </button>
-          )}
-
-          {(!shareOn || tab === 'my') && (!workers ? (
+          {(tab === 'my' || !shareOn) && (!workers ? (
             <p class="card__hint">{t('play_loading')}</p>
           ) : workers.length === 0 ? (
             <p class="card__hint">{t('worker_empty')}</p>
@@ -256,22 +258,22 @@ export function PrivateWorkersSection() {
                 <div class="worker__row" key={w.worker_id}>
                   <div class="worker__row-main">
                     <span class="worker__name">{w.name}</span>
-                    <span class={'worker__status ' + statusClass(w.status)}>{t(statusKey(w.status))}</span>
+                    {/* Access-mode badge (Private/Public) sits immediately to
+                        the LEFT of the Online/Offline status pill. */}
+                    <span class="worker__row-badges">
+                      <span
+                        class={'worker__badge ' + (shareStates[w.worker_id] === 'public' ? 'worker__badge--public' : 'worker__badge--private')}
+                        aria-label={t(shareStates[w.worker_id] === 'public' ? 'worker_access_public' : 'worker_access_private')}
+                      >
+                        {shareStates[w.worker_id] === 'public' ? t('share_public_badge') : t('worker_access_private')}
+                      </span>
+                      <span class={'worker__status ' + statusClass(w.status)}>{t(statusKey(w.status))}</span>
+                    </span>
                   </div>
                   <div class="worker__row-meta">
                     <span>{t(w.worker_type === 'audio' ? 'layer_audio' : w.worker_type === 'image' ? 'layer_image' : 'layer_video')}</span>
                     <span>·</span>
                     <span>{t('worker_last_seen')} {formatLastSeen(w.last_seen)}</span>
-                    {/* SH-2: server-truth sharing badge on the owner's row. */}
-                    {shareOn && shareStates[w.worker_id] && shareStates[w.worker_id] !== 'off' && (
-                      <span>·</span>
-                    )}
-                    {shareOn && shareStates[w.worker_id] === 'public' && (
-                      <span class="share__badge share__badge--inline">{t('share_public_badge')}</span>
-                    )}
-                    {shareOn && shareStates[w.worker_id] === 'users' && (
-                      <span class="share__badge share__badge--inline">{t('share_users_badge')}</span>
-                    )}
                   </div>
                   {w.status === 'OFFLINE' && (
                     <details class="worker__trouble">

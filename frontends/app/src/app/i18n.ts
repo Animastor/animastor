@@ -130,7 +130,8 @@ const dict = {
     worker_counts_my_private: 'Мой приватный',
     worker_vbook: 'VBook',
     // Private Worker Management (Experimental Beta — Phase 3)
-    worker_mgmt_title: 'Приватные воркеры',
+    // «Воркеры» — the page holds My / Shared with me / Community, not only private.
+    worker_mgmt_title: 'Воркеры',
     worker_mgmt_desc: 'Приватный воркер обрабатывает задачи только вашего рабочего пространства. Подключите свой GPU (локальный или внешний) к GPU Hub Animastor.',
     worker_add: 'Добавить воркер',
     worker_empty: 'Воркеров пока нет. Нажмите «Добавить воркер», чтобы создать credential и подключить GPU.',
@@ -233,6 +234,10 @@ const dict = {
     share_badge_shared: 'Shared',
     share_public_badge: 'Public',
     share_users_badge: 'Users',
+    // Access-mode badge on the worker card (Private = not shared; Public =
+    // active public sharing; Specific users stays under the sharing state).
+    worker_access_private: 'Private',
+    worker_access_public: 'Public',
     // Errors
     share_err_forbidden: 'Доступ запрещён',
     share_err_already_active: 'Sharing уже включён — сначала остановите его',
@@ -841,7 +846,7 @@ const dict = {
     worker_counts_my_private: 'My private',
     worker_vbook: 'VBook',
     // Private Worker Management (Experimental Beta — Phase 3)
-    worker_mgmt_title: 'Private Workers',
+    worker_mgmt_title: 'Workers',
     worker_mgmt_desc: 'A private worker processes only your workspace jobs. Connect your own GPU (local or external) to the Animastor GPU Hub.',
     worker_add: 'Add Worker',
     worker_empty: 'No workers yet. Press “Add Worker” to issue a credential and connect a GPU.',
@@ -944,6 +949,10 @@ const dict = {
     share_badge_shared: 'Shared',
     share_public_badge: 'Public',
     share_users_badge: 'Users',
+    // Access-mode badge on the worker card (Private = not shared; Public =
+    // active public sharing; Specific users stays under the sharing state).
+    worker_access_private: 'Private',
+    worker_access_public: 'Public',
     // Errors
     share_err_forbidden: 'Access forbidden',
     share_err_already_active: 'Sharing is already active — stop it first',
