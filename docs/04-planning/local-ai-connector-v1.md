@@ -1,11 +1,18 @@
 # Local AI Connector — Technical Audit and V1 Specification
 
-> 2026-09-02 · Research / architecture only — **no production code, no schema
-> migrations, no API, no Web/Android changes**. Companion to
-> `llm-agent-resource-sharing-model.md` (the LLM sharing design; its §13
-> and §15/V3 already reserve an "LLM Connector" with an `llmc.*` credential
-> family) and to `EXPERIMENTAL_BETA_PERSONAL_AI_PROVIDER.md` (the private
-> tier this builds on).
+> 2026-09-02 · Revision 2 (finalization pass) · Research / architecture
+> only — **no production code, no schema migrations, no API, no
+> Web/Android changes**. Companion to `llm-agent-resource-sharing-model.md`
+> (the LLM sharing design; its §13 and §15/V3 already reserve an "LLM
+> Connector" with an `llmc.*` credential family) and to
+> `EXPERIMENTAL_BETA_PERSONAL_AI_PROVIDER.md` (the private tier this
+> builds on).
+>
+> Revision 2 fixes: credential namespace reconciled to `llmc.*` (AD-1);
+> Connector ≠ Provider invariant (AD-2); atomic single-use registration
+> exchange (AD-3); security model split chat/agent/tool/patch (AD-4,
+> AD-5); metadata-only local logging (AD-6); no automatic model-loading
+> probes (AD-7). Normative decision register: §17.
 >
 > V1 scope, fixed: **PRIVATE LOCAL AI ONLY.** The user connects their own
 > local LLM runtime (Ollama / vLLM / llama.cpp / LM Studio) to cloud
@@ -38,7 +45,7 @@ Two audit facts that shape the plan:
    therefore Phase 5 greenfield work, not "forward the existing SSE".
 2. **The name "connector" is taken**: `connector-routes.cjs` serves ComfyUI
    workflow connectors (Prompt Profiles). In code/DB use the
-   `ai-connector` / `aic.*` vocabulary; in UI use "Local AI" — the
+   `ai-connector` / `llmc.*` vocabulary; in UI use "Local AI" — the
    terminology hazard is documented in the sharing doc §3.
 
 ---
@@ -145,16 +152,19 @@ Key decisions:
    docker-compose). A new route `GET /api/v1/ai-connector/ws` on the
    backend server; nginx gains `location /api/v1/ai-connector/` with
    upgrade headers.
-2. **Connector identity = `aic.<connector_id>.<secret>` credential** — an
+2. **Connector identity = `llmc.<connector_id>.<secret>` credential** — an
    exact copy of the `wrk.*` contract: hash-only in PG, one-time
    disclosure, rotate/revoke. Workspace binding as workers have it: FK +
-   identity only from the credential.
+   identity only from the credential. The prefix `llmc.*` is **reconciled
+   with the sharing doc §17** (AD-1) — one credential namespace for the
+   connector, reused unchanged when LLM Sharing lands; no second namespace
+   for the same entity is ever created.
 3. **Two-phase credential:** a one-time **registration token** (created in
    the UI, TTL ≤ 15 min, single-use, hash-only) which the connector
-   exchanges on first connect for the persistent `aic.*` credential.
-   Differs from workers (where the token is issued together with the row)
-   because an LAC token is pasted into a terminal — the exposure window is
-   wider.
+   exchanges on first connect for the persistent `llmc.*` credential.
+   The exchange is **atomic and exactly-once** (AD-3, §8.1). Differs from
+   workers (where the token is issued together with the row) because an
+   LAC token is pasted into a terminal — the exposure window is wider.
 4. **The runtime adapter is an allowlist, not a proxy.** The cloud sends
    only `{model, messages, params, stream}`. **The runtime base URL never
    comes from the cloud** — it lives in the connector's local config
@@ -168,6 +178,45 @@ Key decisions:
    doc invariant §6.3.5, is preserved). Connector and provider remain
    separate entities — a connector can exist offline while the user has
    not selected it as their provider.
+
+### 3.1 Invariant — Connector ≠ Provider (normative, AD-2)
+
+**Connector = a connected local runtime / compute resource.
+Provider = the Animastor-selected route for using AI.** Two entities,
+two lifecycles, never conflated:
+
+```
+Workspace
+├── Local Connector A → Ollama → Qwen3      (online · 3 models · NOT selected)
+├── Local Connector B → vLLM → Llama-70B    (offline · registered)
+└── Provider selection → Connector A, model "qwen3:32b"
+    (the single workspace_ai_providers row)
+```
+
+Normative consequences for V1:
+
+- A Connector exists, connects, goes online/offline and reports any
+  number of models **regardless of whether it is currently selected as
+  the Provider**. Selection is a separate, explicit act.
+- Storage split: `ai_connectors` rows are **N per workspace** (several
+  machines/runtimes allowed); `workspace_ai_providers` remains the
+  **singleton consumer binding** (PK = `workspace_id`). A `local-ai`
+  binding row carries `connector_id` + free-text `model` — nothing else
+  changes structurally.
+- Selecting / switching = one UPDATE on the provider row; the resolver
+  cache invalidates as today (≤ 30 s). Deregistering a selected
+  connector leaves the binding pointing at a dead `connector_id` →
+  requests fail closed with "Local AI is offline" until the user
+  re-binds (no silent fallback, §9).
+- Capabilities / models / health facts belong to the **Connector**; the
+  Provider binding only references them. The UI shows both truths:
+  "Ollama · Qwen3 32B · Online" is a connector fact; "AI Provider:
+  Local AI" is the binding fact.
+- **V1 boundary:** no multi-provider system, no provider-list UI; the
+  dormant `GET /settings/ai/providers` stays dormant. This split is the
+  V1-safe subset of the sharing doc's V2 direction ("the provider becomes
+  a pure consumer binding" — sharing doc §1/§15-V2): it fixes the
+  vocabulary without implementing V2.
 
 ---
 
@@ -192,9 +241,11 @@ Key decisions:
 
 ```
 C→S  hello        { protocol_version, reg_token | credential }
+                   -- reg_token = llmcreg.* (one-time) | credential = llmc.*
 S→C  ready        { connector_id, heartbeat_interval_ms, server_time }
 C→S  heartbeat    { models[], capabilities{tools,vision,context},
-                    latency_ms, runtime{type, version} }     — every 10-15 s
+                    runtime_ok, latency_ms, runtime{type, version} }
+                   — every 10-15 s; latency_ms from real traffic only (AD-7)
 S→C  models.refresh {}                                        — on demand (UI)
 C→S  models.list  { models[] }
 
@@ -275,16 +326,25 @@ completion model until the heartbeat proves more.
   TTL key (`animastor:ai-connector:hb:<id>`, TTL ~45 s), refreshed by
   heartbeat; WS close → immediate offline. PG `last_seen` is a coarse
   persistent trace (workers pattern: Redis primary, PG ~1/min).
-- **Models list**: from the latest `heartbeat.models` / `models.list`;
-  `models.refresh` on demand when the user opens the picker.
-- **Capabilities**: heartbeat-advertised per model where the runtime
-  supports it (Ollama capabilities, vLLM metadata), else connector-level
-  defaults + first-call probing (V1.1).
-- **Latency**: connector self-measures a tiny completion on startup and
-  includes `latency_ms` in heartbeats; UI shows it as a quality hint.
-- **Health check**: "Test connection" = one `chat.request` with
-  `max_tokens:1` through the live WS — the direct analog of
-  `testConnection` / `checkAIHealth`.
+- **Runtime health** (heartbeat): the WS session is alive (implicit) and
+  the runtime is reachable — `GET {base}/v1/models` answered. This check
+  is cheap, loads no model, locally cached ~30 s; reported as
+  `runtime_ok`.
+- **Model availability**: a model discovered via `/v1/models` /
+  `heartbeat.models` counts as *available* (discovered). This does **not**
+  imply loaded or warm — cold-load state is learned only from real
+  request timing.
+- **Inference latency**: measured only over **real** `chat.request`
+  completions (rolling value reported as `latency_ms`; null until the
+  first real request). **No automatic completion probes at startup or on
+  heartbeat** (AD-7) — a probe would cold-load a multi-GB model just to
+  produce a health number. Latency as a UI hint appears only once real
+  traffic exists.
+- **Health check ("Test connection")**: **explicit and user-initiated**
+  only — one `chat.request` with `max_tokens:1` through the live WS (the
+  `testConnection` / `checkAIHealth` analog). The UI warns it may trigger
+  a cold model load and take tens of seconds. Never scheduled, never
+  heartbeat-driven.
 
 ---
 
@@ -302,7 +362,7 @@ ai_connectors
                     'openai-compatible')          -- UI label only
   status            TEXT ('pending'|'online'|'offline')
                     -- pending = registered, waiting for first connect
-  token_hash        TEXT UNIQUE                  -- persistent aic.* credential
+  token_hash        TEXT UNIQUE                  -- persistent llmc.* credential
                                                   -- (NULL until activation)
   reg_token_hash    TEXT                         -- one-time registration
                                                   -- (NULL after activation)
@@ -330,7 +390,61 @@ of live WS sessions, so a connector going offline fails fast with a clear
 "Local AI is offline" error rather than a stale-cache hallucination.
 
 Credentials: hash-only storage, plaintext disclosed exactly once — the
-workers contract verbatim.
+workers contract verbatim. Namespace: `llmc.*` (AD-1).
+
+### 8.1 Registration token — atomic exchange (normative, AD-3)
+
+**Exactly-once activation.** One registration token activates at most one
+connector session, ever. The exchange is a single serialized DB
+transaction; two connector processes racing with the same token produce
+exactly one active credential and one loser.
+
+Transaction shape (conceptual — no code):
+
+```
+BEGIN (row-level lock on the connector row: SELECT … FOR UPDATE)
+  1. locate row by reg_token_hash  (timing-safe compare, as workers do)
+  2. validate: reg_token_hash IS NOT NULL
+              AND reg_expires_at > now()
+              AND revoked_at IS NULL
+              AND status = 'pending'
+  3. invalidate: reg_token_hash := NULL, reg_expires_at := NULL
+  4. activate:  token_hash := SHA-256(new llmc.* secret)
+                token_prefix := mask, status := 'online'
+  5. issue:     plaintext llmc.<connector_id>.<secret> returned once
+COMMIT
+```
+
+Race-condition protection, layer by layer:
+
+1. **`SELECT … FOR UPDATE` on the row** — the second concurrent exchanger
+   blocks on the row lock; when the first transaction commits, the loser
+   re-reads the row and finds `reg_token_hash IS NULL` → fails with
+   `registration_already_used`. PG row locks serialize the critical
+   section; no application-level mutex needed for a single backend.
+2. **Fail-closed validation order** — expiry and revocation are checked
+   *inside* the lock, immediately before mutation, so a token expiring
+   mid-race cannot be revived by the loser.
+3. **Hash-only storage** — both racers present the same plaintext, but
+   activation state lives only in the row the lock guards; there is no
+   secondary state to desynchronize.
+4. **Single backend (V1)** — the in-process WS registry plus the row lock
+   cover the whole state space. **If the backend ever scales
+   horizontally**, the WS handshake must route (or the registry must
+   delegate) so that exchange and live-session registration consult the
+   same PG row lock — the row lock *is* the cross-instance primitive; no
+   Redis flag may become authoritative (PG-only truth, the worker-mirror
+   doctrine).
+5. **Stale-session sweep** — a second *live WS session* presenting the
+   same persistent `llmc.*` credential after activation: the registry
+   closes the older session when a newer one authenticates (single
+   live session per connector_id; last-writer-wins, the older socket gets
+   a `replaced` close code). This prevents two live sessions from one
+   credential regardless of how it was obtained.
+
+After activation the registration token is dead by construction
+(hash nulled inside the committed transaction) — replay attempts fail at
+step 2 and are logged (rate-limited per workspace).
 
 ---
 
@@ -352,8 +466,9 @@ untouched.
 2. `resolveChatAI` (`ai-routes.cjs:31-44`): the same branch for the chat
    fetch inside the route.
 3. `testConnection` (`workspace-ai-provider.js:512`): for local-ai — a
-   `chat.request{max_tokens:1}` through the live WS, reusing the probe
-   semantics of `checkAIHealth`.
+   **user-initiated** `chat.request{max_tokens:1}` through the live WS
+   (the `checkAIHealth` probe semantics; may cold-load the model — the UI
+   warns, AD-7). Never invoked automatically by the backend or connector.
 
 The agent pipeline (`ai-caller` → `ai-service.callAI`) is **covered
 automatically — zero changes in `agent/*`**. The once-per-pipeline
@@ -369,17 +484,72 @@ and the sharing doc §9.2.3 "never mix tiers mid-conversation".
 
 ## 10. Security — Threat Model
 
+### 10.1 Layered security model (normative, AD-4/AD-5)
+
+**Master invariant:** the Connector executes only the operations the
+Local AI Connector protocol explicitly defines. It is **not** a universal
+remote proxy and receives **no** arbitrary access to the local machine —
+no filesystem paths, no shell, no arbitrary URLs, no "run this for me"
+extension point. The protocol surface is finite and enumerable: `hello`,
+`heartbeat`, `models.list`, `chat.request → chat.delta/chat.response/
+chat.error`, `chat.cancel`. Anything not in that list does not exist.
+
+Responses are **data, never instructions** (the standing repo rule).
+Protection is layered per response class, and each layer is independent —
+**agent patch validation does NOT backstop plain chat responses, and no
+layer relies on the connector being trusted**:
+
+| Response class | Path after the connector | Server-side protection (independent layers) |
+|---|---|---|
+| **Plain chat response** | `/ai/chat` → `reply` string to the user | Rendered as text/data in the clients. No server-side "validation" of prose is possible or claimed — the honest model: a malicious connector can return **any text**, including social-engineering content. Mitigation is transport trust (the user's own machine, §10.2) + the clients never execute response content. Tool calls *inside* a chat response go through the tool row below. |
+| **Agent response** (import pipeline) | `ai-caller` → `parseJsonResponse` | JSON parsing + structure checks in the pipeline; a malformed/hostile response fails the step (fail-closed), retries per `STEP_RETRIES`, never silently accepted. |
+| **Tool call** (chat tools) | `extractToolCallsFromContent` / tool schema | Tool schemas are **fixed Animastor code** (`chat-engine.cjs`); a connector can at most produce calls for pre-declared tools — it cannot define new tools or invoke undeclared capabilities. |
+| **Patch / action** (book edits) | `applyPatchesValidated` (JSON-Patch + bundle contract) | Every patch validated server-side against the bundle contract **before any write**; a hostile connector cannot write arbitrary state into a book. This layer guards *writes only* — it is not a chat-content filter. |
+
+Consequence for the threat table: "server-side patch validation"
+protects **patch/action** rows only. Plain chat text from a compromised
+connector reaches the user's screen as-is (minus `<think>` stripping) —
+this residual risk is owned by §10.2 (the connector runs on the user's
+own machine) and is the same trust model as any local runtime.
+
+### 10.2 Threat table
+
 | Threat | Mitigation |
 |---|---|
-| **Stolen registration token** | TTL ≤ 15 min, single-use (hash removed at exchange), workspace-bound, shown once. Worst case: an attacker's connector attaches to *your* workspace — detectable as "unexpected connector online", fixable by revoke. Grants no access to others' data. |
-| **Stolen connector credential** (`aic.*`) | The attacker can impersonate your connector and intercept your prompts/responses (prompt leakage) or substitute replies. Grants **no**: access to workspace B (identity fail-closed, the `worker-auth.js` pattern verbatim), key material, or book writes (tool patches validated server-side — `applyPatchesValidated`). Mitigations: rotate/revoke (copy of the worker routes), UI "Connector active since…" + alert on fingerprint change (client-generated pubkey hash in hello, optional V1.1). |
+| **Stolen registration token** (`llmcreg.*`) | TTL ≤ 15 min, single-use with **atomic exactly-once exchange** (§8.1), workspace-bound, shown once. Worst case: an attacker's connector activates on *your* workspace first — detectable as "unexpected connector online", curable by revoke. Grants no access to others' data. |
+| **Stolen connector credential** (`llmc.*`) | The attacker can impersonate your connector and intercept your prompts/responses (prompt leakage) or substitute replies — including arbitrary chat text (§10.1, chat row). Grants **no**: access to workspace B (identity fail-closed, the `worker-auth.js` pattern verbatim), key material, or book writes (patch layer, §10.1). Mitigations: rotate/revoke (copy of the worker routes), UI "Connector active since…" + alert on fingerprint change (client-generated pubkey hash in hello, optional V1.1), single-live-session rule (§8.1.5). |
 | **Connector spoofing (MITM)** | TLS mandatory — the connector only connects to `wss://` on the registered domain; self-signed certificates rejected. |
 | **Cross-workspace access** | `workspace_id` never from body/query; derived from the credential (the `worker-auth-middleware.js` invariant, copied verbatim). The WS session binds to connector_id; the registry hands out a connection only after `provider.connector_workspace == caller_workspace`. |
 | **SSRF** | The cloud **never** fetches any address associated with a connector; `assertPublicEndpoint` is untouched and not weakened — the cloud→localhost path simply does not exist. Connector→runtime: one fixed `--base-url` from local config. |
-| **Connector as universal proxy** | Structural defense: `chat.request` has **no URL field**. The adapter knows only `POST {base}/v1/chat/completions` and `GET {base}/v1/models`; no arbitrary paths, no redirect-following on runtime calls. A second runtime means a second connector instance. This is the main V1 architectural commitment; it must not be eroded "for convenience". |
-| **Malicious cloud → user LAN** | A compromised cloud can send arbitrary prompts into the local model (prompt injection into replies — but replies pass server-side patch validation) and read responses. It cannot reach other LAN hosts/ports (allowlist above) or execute code (chat is the only operation). The adapter defaults to loopback-only base URLs and refuses non-loopback unless `--allow-lan` is explicitly set. |
-| **Prompt/data leakage** | Honest model per sharing doc §7.4/§9.2: the local runtime and connector see the user's prompts (their own machine — operator class `self`). Under future sharing the operator becomes `peer` and the consumer warning is mandatory. The connector must log requests locally with a disk-space cap. No privacy promises in UI. |
+| **Connector as universal proxy / arbitrary local execution** | Structural defense (master invariant, §10.1): `chat.request` has **no URL field**; the adapter knows only `POST {base}/v1/chat/completions` and `GET {base}/v1/models`; no arbitrary paths, no redirect-following on runtime calls, no filesystem/shell surface at all. A second runtime means a second connector instance. This commitment must not be eroded "for convenience". |
+| **Malicious cloud → user LAN** | A compromised cloud can send prompts into the local model and read responses (trust boundary stated honestly, §10.1 chat row). It cannot reach other LAN hosts/ports (allowlist above) or execute code — the protocol has no operation beyond chat completion. The adapter defaults to loopback-only base URLs and refuses non-loopback unless `--allow-lan` is explicitly set. |
+| **Prompt/data leakage** | Honest model per sharing doc §7.4/§9.2: the local runtime and connector see the user's prompts (their own machine — operator class `self`). Under future sharing the operator becomes `peer` and the consumer warning is mandatory. Local logging is **metadata-only by default** (§10.3). No privacy promises in UI. |
 | **Registration flooding** | Rate limit on the registration route (existing `express-rate-limit` pattern, `backend.cjs:68`); at most one pending registration per workspace. |
+| **Token replay after activation** | Dead by construction — hash nulled inside the committed exchange transaction (§8.1); replay attempts fail validation and are rate-limited per workspace. |
+
+### 10.3 Local request logging (normative, AD-6)
+
+**Default: metadata-only.** The connector stores **no** prompts, messages,
+or model responses on disk by default — they may contain the user's
+private content, and a connector log must never become a second copy of
+the user's conversations.
+
+Metadata-only log record (safe fields only):
+
+```
+request_id, model, duration_ms, status (ok|error|cancelled),
+error_code, stream (bool), timestamp
+```
+
+- Written locally, size-capped (rotate at a fixed small bound, e.g. a few
+  hundred records) — diagnostics without content.
+- **Verbose/full logging (prompts + responses) must satisfy all of:**
+  explicitly enabled by a local CLI flag (`--log-requests`), off by
+  default, a printed warning that prompts/responses will be stored in
+  plaintext, and a hard size cap. Never enabled remotely — the cloud
+  **cannot** turn it on via the protocol (no such message exists).
+- This resolves the earlier "local request log with cap" wording: the cap
+  applies to metadata; content logging is opt-in-only.
 
 ---
 
@@ -408,8 +578,9 @@ and the sharing doc §9.2.3 "never mix tiers mid-conversation".
 - **New distributable**: `local-ai-connector/` (Node ≥18, zero-dep besides
   `ws`) — the process the user runs: config (base-url, runtime type,
   server URL), reconnect with backoff, allowlist adapter, heartbeat
-  sender, local request log. Install shape: `npx animastor-ai-connector
-  --token <reg_token>` mirroring the worker one-command bootstrap.
+  sender, **metadata-only request log** (AD-6). Install shape:
+  `npx animastor-ai-connector --token <reg_token>` mirroring the worker
+  one-command bootstrap.
 - Web: `LocalAISection` in Settings + the connection wizard + model picker.
 
 **Do not touch:**
@@ -420,20 +591,22 @@ and the sharing doc §9.2.3 "never mix tiers mid-conversation".
   `resolveAIProvider` signature and cache semantics.
 - Android client in V1 (backend + Web UI only; see §13).
 
-**Decisions required BEFORE implementation:**
+**Decisions BEFORE implementation — final status (normative register: §17):**
 1. WS termination in the backend monolith vs a dedicated service —
-   recommendation: backend monolith (single deploy, single auth boundary).
-2. Credential family: new `aic.*` prefix vs reusing `wrk.*` —
-   recommendation: new prefix (disjoint identity namespaces, like
-   sessions vs guests vs workers).
+   **resolved (AD-8)**: backend monolith (single deploy, single auth
+   boundary).
+2. Credential family — **resolved (AD-1)**: `llmc.*` persistent /
+   `llmcreg.*` registration, reconciled with the sharing doc (§13 table,
+   §17, glossary). No second namespace for the same entity; the earlier
+   `aic.*` proposal is dropped.
 3. Relaxing `api_key_enc NOT NULL` for local-ai rows vs a marker value —
-   recommendation: marker value (no schema constraint change in V1).
+   **resolved (AD-11)**: marker value (no schema constraint change in V1).
 4. Whether the registration token lives in `ai_connectors.reg_token_hash`
-   or a separate short-lived table — recommendation: same row (simpler
-   lifecycle; hash nulled at activation).
-5. Multi-connector per workspace in V1 — recommendation: allow N rows but
-   only one active provider binding (the singleton PK stays on the
-   provider side).
+   or a separate short-lived table — **resolved (AD-3)**: same row,
+   claimed inside the atomic exchange transaction (§8.1).
+5. Multi-connector per workspace in V1 — **resolved (AD-2)**: allow N
+   connector rows, but only one active provider binding (the singleton PK
+   stays on the provider side).
 
 ---
 
@@ -449,7 +622,7 @@ backend.cjs                                ├─ reconnect/backoff
     ├─ POST   /ai-connector/registrations  │    POST {base}/v1/chat/completions
     ├─ POST   /ai-connector/exchange       │    GET  {base}/v1/models
     ├─ GET    /ai-connector/ws  (WS)       ├─ heartbeat sender (models+caps)
-    ├─ GET    /ai-connector/status         └─ local request log (capped)
+    ├─ GET    /ai-connector/status         └─ metadata-only log (AD-6)
     ├─ GET    /ai-connector/models
     ├─ POST   /ai-connector/:id/rotate     Ollama / vLLM / llama.cpp /
     ├─ DELETE /ai-connector/:id            LM Studio on 127.0.0.1
@@ -505,6 +678,16 @@ Owner → Private Local AI → Share spare capacity → Shared AI Pool
   (V2 of the sharing doc): ownership, capabilities JSONB, health state —
   column-for-column compatible with the doc's §12 table
   (`workers.capabilities` precedent).
+- **Credential namespace (AD-1):** the connector uses `llmc.*` — the same
+  family the sharing doc reserves for its V3 LLM Connector (§13
+  worker-mechanism table, §17, glossary: "an outbound-registered local
+  runtime (worker-pattern credential + heartbeat) for home GPUs behind
+  NAT"). One namespace for one entity across private (V1) and shared
+  (V3) use; the sharing doc's alternative ("or reuse of the `wrk.*`
+  envelope", §17) is declined — identity namespaces stay disjoint
+  (sessions / guests / workers / llm-connectors). No edit to the sharing
+  doc is required: it offered both options; this document fixes the
+  choice.
 
 **The bridge to the sharing doc is one resolver stage** (its §6.2/§11.2):
 today's chain stays steps 1/3/4/5; the shared pool becomes stage 2,
@@ -528,17 +711,24 @@ this V1 — the connector merely must not foreclose it.
 
 ### Phase 2 — Registration & Auth
 - Create: `ai-connector-repo.js` (credential lifecycle, clone of
-  worker-repo); `backend/src/routes/ai-connector-routes.cjs`
-  (registration create → one-time token; exchange over WS hello).
+  worker-repo; `llmc.*` + `llmcreg.*` families per AD-1);
+  `backend/src/routes/ai-connector-routes.cjs`
+  (registration create → one-time token; atomic exchange over WS hello
+  per §8.1).
+- Concurrency test is mandatory: two simultaneous exchanges with the same
+  registration token → exactly one winner, one clean
+  `registration_already_used` loser; replay after activation fails.
 - Wire: `backend/src/backend.cjs` (route require, after
   `settings-ai-routes.cjs:230`).
 - Tests: `backend/tests/ai-connector-auth.test.js` (fail-closed matrix,
-  exchange, revoke, rotate — clone of `fail-closed-worker-auth.test.js`).
+  atomic exchange, revoke, rotate — clone of
+  `fail-closed-worker-auth.test.js`).
 
 ### Phase 3 — Runtime Discovery
 - Connector distributable skeleton: `local-ai-connector/`
-  (hello/ready, heartbeat with models + capabilities,
-  `GET {base}/v1/models`, reconnect backoff, loopback enforcement).
+  (hello/ready, heartbeat with models + capabilities + `runtime_ok`,
+  `GET {base}/v1/models`, reconnect backoff, loopback enforcement,
+  **metadata-only logging** per AD-6, **no automatic probes** per AD-7).
 - Cloud: status/models routes reading registry + PG.
 
 ### Phase 4 — Inference (non-streaming)
@@ -569,7 +759,8 @@ this V1 — the connector merely must not foreclose it.
 
 ### Phase 7 — Production Hardening
 - Rate limits on registration; connector fingerprint alert; latency
-  surface; local log capping; `DONT_DO` / parity docs update;
+  surface (real-traffic stats only, AD-7); verbose-log opt-in with
+  warning + size cap (AD-6); `DONT_DO` / parity docs update;
   Android parity (deferred, see §13); load test of the WS path;
   security review pass (extend
   `EXPERIMENTAL_BETA_PERSONAL_AI_PROVIDER_SECURITY_REVIEW.md`).
@@ -587,25 +778,52 @@ this V1 — the connector merely must not foreclose it.
 3. **Multi-provider selection** — V1 keeps the workspace singleton row;
    switching between cloud and local AI is a provider_type flip. The
    dormant multi-provider list endpoint exists, but V1 does not widen the
-   singleton (deliberate; matches the sharing doc V2 boundary).
-4. **`aic.*` vs `llmc.*`** — the sharing doc §17 names `llmc.*` as the V3
-   credential family. `aic.*` is chosen here for the disjoint-namespace
-   rule; must be reconciled in the sharing doc before Phase 2 (cosmetic,
-   but better settled early).
-5. **WS through nginx** — upgrade config is trivial but must be tested
+   singleton (deliberate; matches the sharing doc V2 boundary — the
+   Connector ≠ Provider split, AD-2, is what keeps this boundary clean
+   when V2 arrives).
+4. **WS through nginx** — upgrade config is trivial but must be tested
    against the current `Connection ""` default; failure mode is a silent
    200-without-upgrade.
-6. **Tool-calling through local models** — many local models are weak at
+5. **Tool-calling through local models** — many local models are weak at
    Qwen-style tool syntax; chat degrades gracefully (existing extraction
    workarounds), but the UI should not promise tool parity until
    capabilities prove it.
-7. **Guest workspaces** — recommend registered users only (sharing doc
+6. **Guest workspaces** — recommend registered users only (sharing doc
    Q1 analog): guests are ephemeral; binding a long-lived connector to
    them is incoherent.
+7. **Horizontal backend scaling** — V1 assumes a single backend instance
+   (consistent with today's in-process resolver cache and registry). If
+   the deployment ever scales out, the WS registry must become
+   instance-aware and the atomic exchange (§8.1.4) must keep PG row locks
+   as the only serialization point. Not a V1 work item — recorded as a
+   boundary condition.
 
 ---
 
-## 17. Final V1 Architecture (ASCII)
+## 17. Architecture Decisions — V1 Final
+
+Normative register. Each decision is final for V1 unless a later
+revision of this document supersedes it; the sharing doc remains the
+companion authority for anything sharing-related.
+
+| # | Decision | Rationale / where |
+|---|---|---|
+| **AD-1** | **Credential namespace = `llmc.*`** (persistent credential) + `llmcreg.*` (one-time registration token). Reconciled with `llm-agent-resource-sharing-model.md` §13/§17/glossary, which reserve `llmc.*` for the LLM Connector. One namespace for one entity — reused unchanged when LLM Sharing lands. The earlier `aic.*` proposal is dropped. | §3, §8, §14 |
+| **AD-2** | **Connector ≠ Provider.** Connector = connected local runtime (N per workspace, own lifecycle, online/offline, models). Provider = the singleton `workspace_ai_providers` binding that *references* one connector + model. V1 adds no multi-provider system; the split only fixes the boundary the sharing doc's V2 will need. | §3.1 |
+| **AD-3** | **Registration token: atomic, exactly-once exchange.** Single PG transaction with `SELECT … FOR UPDATE`: validate → invalidate reg hash → activate `llmc.*` → commit. Racing processes produce one winner, one loser (`registration_already_used`). Reg-token hash lives in the connector row; single live WS session per connector (older session closed with `replaced`). | §8.1 |
+| **AD-4** | **Layered response security, chat ≠ agent ≠ tool ≠ patch.** Master invariant: the connector executes only protocol-defined operations; it is not a remote proxy and has no arbitrary local-machine access. Agent patch validation protects patches only — plain chat responses are data rendered to the user; no layer claims otherwise. | §10.1 |
+| **AD-5** | **Allowlist adapter, not proxy.** Cloud never sends a URL; the adapter knows exactly two paths (`POST {base}/v1/chat/completions`, `GET {base}/v1/models`); `--base-url` is local-config-only, loopback default, `--allow-lan` explicit. No filesystem/shell/arbitrary-path surface exists in the protocol. | §3.4, §10.1 |
+| **AD-6** | **Local logging: metadata-only by default** (request_id, model, duration, status, error code, stream, timestamp; size-capped). Full prompt/response logging only via an explicit local flag, with a printed warning and a hard cap; never remotely enableable — the protocol has no such message. | §10.3 |
+| **AD-7** | **No automatic inference probes.** Health = WS alive + `GET /v1/models` reachable (loads no model). Latency measured only over real requests; latency hint appears after first real traffic. "Test connection" (a `max_tokens:1` completion) is user-initiated only, with a cold-load warning. | §7, §9 |
+| **AD-8** | **WS terminates in the backend monolith** (not gpu-hub, not a new service). nginx gains one upgrade location. V1 assumes a single backend instance; horizontal scaling requires PG-row-lock-backed registry coordination (boundary condition, not V1 work). | §3, §16.7 |
+| **AD-9** | **LLM inference never rides gpu-hub** (inherited D9). The connector rides the `resolveAIProvider` seam; the worker stack is untouched. | §2.4, §15 |
+| **AD-10** | **V1 = PRIVATE LOCAL AI ONLY.** No sharing, credits, billing, community pool, marketplace, Android implementation, or production code in this revision. Nothing in the schema or protocol carries sharing state; the sharing bridge is one future resolver stage (§14). | §14, §15 |
+| **AD-11** | **`api_key_enc` for `local-ai` provider rows: marker value**, no NOT NULL relaxation in V1 (the empty-key blocker from sharing doc §4 is thus resolved without a schema-constraint change). | §8, §11.3 |
+| **AD-12** | **Fail-closed offline semantics:** a selected connector that is offline yields an explicit "Local AI is offline" error; never a silent fallback to system/env AI (resolver predictability + sharing doc §9.2.3 no-tier-mixing). | §9 |
+
+---
+
+## 18. Final V1 Architecture (ASCII)
 
 ```
                     ANIMASTOR CLOUD
@@ -629,12 +847,14 @@ this V1 — the connector merely must not foreclose it.
 │  ┌──────────────┐  allowlist adapter  ┌────────────────┐ │
 │  │ reconnect,   │────────────────────►│ Ollama / vLLM  │ │
 │  │ heartbeat,   │  POST /v1/chat/      │ llama.cpp /    │ │
-│  │ local log    │  completions        │ LM Studio      │ │
+│  │ meta-log     │  completions        │ LM Studio      │ │
 │  └──────────────┘  GET /v1/models     └────────────────┘ │
 │                          127.0.0.1 only                   │
 └───────────────────────────────────────────────────────────┘
 
 V1: PRIVATE LOCAL AI ONLY — no sharing, no credits, no pool.
+Connector ≠ Provider (AD-2): connectors are resources; the provider
+row binds one. Decisions register: §17 (AD-1…AD-12).
 V2+ bridge (sharing doc §6.2): connector endpoint → ai_endpoints
 row → share policy → pool resolver stage 2. Owner traffic never
 traverses the pool.
