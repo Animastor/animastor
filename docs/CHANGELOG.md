@@ -96,6 +96,22 @@ All notable changes to Animastor are documented here.
     endpoints when the flag is off. Types + pure helpers in
     `sharing.ts` + `shareNotifications.ts` (217 vitest, 5 config-route
     tests pass).
+  - **Android parity** (SH-2 client, 2026-09-02 — `ANDROID_WEB_PARITY.md`
+    checkpoint 4): kill-switch probe (GET /config → `features.share`,
+    read once, fail CLOSED), three-tab Workers section (My Workers /
+    Shared with me / Community), per-row access badge (Private / Public /
+    Users) with the same badge pair in the details dialog, owner Sharing
+    modal (Off → Public / Specific users radio, exact-username lookup
+    recipient staging before start, expiry presets 1h / 4h / until
+    stopped per §10, per-user add/remove on an active users policy, stop
+    with confirmation), "Shared with me" rows ("Shared by \<username\>" +
+    expiry + 90s online window), Community = system-pool counts per D3
+    (empty state at 0). Wire models in `PrivateWorkerModels.kt`, 7 new
+    endpoints in `BackendApi.kt`, pure helpers in `ui/WorkerSharingHelpers.kt`
+    (17 JVM tests mirroring `sharing.test.ts`); strings EN/RU. The
+    backend is the single source of truth — every mutation re-reads the
+    canonical owner/recipient view; no V2 endpoint is called when the
+    kill-switch is off.
 
 ---
 

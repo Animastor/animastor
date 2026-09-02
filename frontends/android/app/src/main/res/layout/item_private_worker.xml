@@ -6,7 +6,9 @@
     android:paddingTop="12dp"
     android:paddingBottom="12dp">
 
-    <!-- Name + status pill -->
+    <!-- Name + access badge + status pill. The access badge (web parity:
+         .worker__row-badges — Private/Public/Users, SH-2) sits immediately
+         to the LEFT of the Online/Offline status pill. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -21,6 +23,18 @@
             android:textSize="14sp"
             android:textStyle="bold"
             android:textColor="?attr/colorOnSurface" />
+
+        <TextView
+            android:id="@+id/workerAccess"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp"
+            android:layout_marginEnd="6dp" />
 
         <TextView
             android:id="@+id/workerStatus"
@@ -57,9 +71,11 @@
         android:lineSpacingMultiplier="1.3"
         android:visibility="gone" />
 
-    <!-- Details / Rotate / Revoke / Delete (web parity 8117efc3: Details for
-         every worker; Rotate+Revoke only while active; Delete only revoked;
-         the status pill above is the SINGLE status badge — no duplicate label) -->
+    <!-- Details / Sharing / Rotate / Revoke / Delete (web parity 8117efc3 +
+         SH-2: Details for every worker; Sharing for private non-revoked
+         workers when the kill-switch is on; Rotate+Revoke only while active;
+         Delete only revoked; the status pill above is the SINGLE status
+         badge — no duplicate label) -->
     <LinearLayout
         android:id="@+id/workerActions"
         android:layout_width="match_parent"
@@ -74,6 +90,16 @@
             android:layout_weight="1"
             android:layout_marginEnd="8dp"
             android:text="@string/worker_details_title"
+            style="@style/Widget.Animastor.Button.Outlined" />
+
+        <Button
+            android:id="@+id/shareButton"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:layout_marginEnd="8dp"
+            android:text="@string/share_btn"
+            android:visibility="gone"
             style="@style/Widget.Animastor.Button.Outlined" />
 
         <Button

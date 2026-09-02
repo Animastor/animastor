@@ -1,10 +1,46 @@
 # ANDROID ↔ WEB PARITY AUDIT
 
+> **Checkpoint 4:** 2026-09-02 · **Commits audited:** web `5cb3b4b5`, `d48d1fd0`, `d0097df4`, `8bf3a13c` / android → this commit
 > **Checkpoint 3:** 2026-08-31 · **Commits audited:** web `443559b8` .. `f661a922` / android → this commit
 > **Checkpoint 2:** 2026-08-28 · **Commits audited:** web `25796bb` .. `101a802c` / android → this commit
 > **Checkpoint 1:** 2026-08-24 · **Commits audited:** web `f81a807` .. `25796bb` / android `20e6df4`
 
 ---
+
+## Checkpoint 4 — Worker Sharing V2 (SH-2, web `5cb3b4b5`)
+
+Web commits audited (Worker Sharing UX layer series):
+
+| Web commit | Change | Android status |
+|---|---|---|
+| `5cb3b4b5` | Worker Sharing V2 UI (SH-2) — tabs, sharing modal, shared-with-me, community, kill-switch | **ANDROID GAP → FIXED** — full parity: kill-switch probe (GET /config → `features.share`, read ONCE, fail CLOSED), three tabs (My Workers / Shared with me / Community, `.seg` pattern), per-row access badge (Private/Public/Users) LEFT of the status pill, owner Sharing modal (off → public/users radio, staged recipients via exact-username lookup, expiry presets 1h/4h/until stopped, recipient add/remove on an active users policy, stop-with-confirm), "Shared with me" rows (§14.2 "Shared by X" reason + expiry + online pill, 90s window), Community = system-pool counts (D3 capacity indicator, empty state at 0) |
+| `d48d1fd0` | SharingModal onStart stuck in loading — always settle busy flag | **PARITY** — every Android mutation settles `busy` in `finally` (same rule) |
+| `d0097df4` / `8bf3a13c` | Private/Public access badge on the worker card + details dialog | **ANDROID GAP → FIXED** — `item_private_worker` gains the `workerAccess` badge; the details dialog renders the same access badge pair |
+
+**Backend contract (unchanged, shared with Web):** the flag-gated V2 surface —
+`GET/POST/DELETE /api/v1/workers/:id/share`, `POST/DELETE
+/api/v1/workers/:id/share/users`, `GET /api/v1/workers/shared-with-me`,
+`GET /api/v1/users/lookup?username=`, kill-switch mirror in `GET /api/v1/config`
+(`features.share`). No Android-specific API. The backend is the single source
+of truth: every mutation re-reads the canonical owner/recipient view and
+REPLACES local state (no cached grants, no fabricated expiry — §14.4 of
+worker-sharing-model-design.md).
+
+**Deliberate Android difference:** expiry uses PRESETS (1h / 4h / until
+stopped) instead of the web's free `datetime-local` input — the exact preset
+set §10 of the design document prescribes; everything else is 1:1.
+
+### §H: Files (checkpoint 4)
+
+- `repository/PrivateWorkerModels.kt` — SH-2 wire models (SharePolicy, ShareGrant, ShareStateResponse, SharedWithMeWorker, AccessReason, LookupUser, request types)
+- `repository/AppConfig.kt` — `features.share` kill-switch mirror
+- `repository/BackendApi.kt` — 7 share endpoints (incl. DELETE-with-body via `@HTTP`)
+- `ui/WorkerSharingHelpers.kt` (NEW) — pure helpers: mode derivation, expiry re-check, sharedBy label, status window, username validation, duplicate check, D7 row eligibility, expiry presets/format, state diff, error mapping (no Android framework calls)
+- `ui/PrivateWorkersFragment.kt` — tabs, per-row badge + Sharing button, Sharing modal (off/public/users views, stop confirmation), SharedWithMe + Community rendering, kill-switch probe
+- `res/layout/fragment_private_workers.xml` — segmented share tabs (GONE when the flag is off)
+- `res/layout/item_private_worker.xml` — access badge + Sharing button
+- `res/values/strings.xml`, `res/values-ru/strings.xml` — en/ru strings (web i18n `share_*` parity)
+- `test/.../WorkerSharingHelpersTest.kt` (NEW) — 17 JVM tests mirroring `sharing.test.ts` fixtures
 
 ## Checkpoint 3 — Parallel AI Analysis (Milestone #2, web `f661a922`)
 
@@ -260,6 +296,14 @@ the «воркер» wording from the start. EN dictionary unchanged (web parity
 | `GET /api/v1/private-worker/setup/workers/:id` | `GET /api/v1/private-worker/setup/workers/:id` | ✓ | ✓ — Details dialog |
 | `POST /api/v1/private-worker/setup/plan` | `POST /api/v1/private-worker/setup/plan` | ✓ | ✓ — preview-only, no UI (same as web) |
 | `DELETE /api/v1/workers/:id/purge` | `DELETE /api/v1/workers/:id/purge` | ✓ | ✓ — revoked-only permanent delete (§E) |
+| `GET /api/v1/workers/:id/share` | `GET /api/v1/workers/:id/share` | ✓ | ✓ — owner view, expiry re-checked (§H) |
+| `POST /api/v1/workers/:id/share` | `POST /api/v1/workers/:id/share` | ✓ body: `{scope, users?, expires_at?}` | ✓ — public/users scope; recipients resolved server-side |
+| `DELETE /api/v1/workers/:id/share` | `DELETE /api/v1/workers/:id/share` | ✓ | ✓ — stop (users-policy lane drained server-side, D6) |
+| `POST /api/v1/workers/:id/share/users` | `POST /api/v1/workers/:id/share/users` | ✓ body: `{users:[…]}` | ✓ — add recipients to an active users policy |
+| `DELETE /api/v1/workers/:id/share/users` | `DELETE /api/v1/workers/:id/share/users` | ✓ body: `{username}` | ✓ — revoke one recipient (DELETE with body) |
+| `GET /api/v1/workers/shared-with-me` | `GET /api/v1/workers/shared-with-me` | ✓ | ✓ — §14.2 standing list + access reason |
+| `GET /api/v1/users/lookup?username=` | `GET /api/v1/users/lookup?username=` | ✓ | ✓ — exact match; 404 → "not found" state |
+| `GET /api/v1/config` | `GET /api/v1/config` | ✓ | ✓ — `features.share` kill-switch mirror (fail CLOSED) |
 
 ---
 

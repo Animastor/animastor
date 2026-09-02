@@ -611,6 +611,67 @@
     <string name="worker_err_not_found">Worker not found</string>
     <string name="worker_err_unavailable">Server unavailable, try again later</string>
 
+    <!-- Worker Sharing V2 (SH-2) — user-facing layer (web parity: i18n share_*).
+         All state comes from the V2 backend (share policies/grants); the UI
+         never fabricates grants, policies or expiry. Gated by the kill-switch
+         (GET /config → features.share): off ⇒ nothing below renders and no V2
+         endpoint is called. -->
+    <string name="share_tab_my">My Workers</string>
+    <string name="share_tab_shared_with_me">Shared with me</string>
+    <string name="share_tab_community">Community</string>
+    <!-- Owner sharing controls -->
+    <string name="share_btn">Sharing</string>
+    <string name="share_modal_title">Worker sharing</string>
+    <string name="share_mode_label">Access mode</string>
+    <string name="share_mode_off">Off</string>
+    <string name="share_mode_public">Public — everyone</string>
+    <string name="share_mode_users">Specific users</string>
+    <string name="share_mode_public_desc">The Worker is available to the Community: its spare capacity serves the shared pool. Your own jobs always keep priority.</string>
+    <string name="share_mode_users_desc">The Worker serves the queues of the selected users only.</string>
+    <string name="share_expires_label">Valid until</string>
+    <string name="share_expires_none">No expiry (until stopped)</string>
+    <string name="share_expires_1h">1 hour</string>
+    <string name="share_expires_4h">4 hours</string>
+    <string name="share_expires_until">Until: %1$s</string>
+    <string name="share_recipients_label">Recipients</string>
+    <string name="share_recipients_empty">Nobody yet. Add a user by username.</string>
+    <string name="share_add_user_label">Add a user</string>
+    <string name="share_add_user_placeholder">exact username</string>
+    <string name="share_add_btn">Add</string>
+    <string name="share_lookup_btn">Find</string>
+    <string name="share_lookup_not_found">User not found. An exact username is required.</string>
+    <string name="share_lookup_ok">Found: %1$s</string>
+    <string name="share_stop_btn">Stop sharing</string>
+    <string name="share_stop_confirm">Stop sharing? All recipients lose access.</string>
+    <string name="share_stopped">Sharing stopped</string>
+    <string name="share_started_public">The Worker is now available to the Community</string>
+    <string name="share_started_users">Access granted to the selected users</string>
+    <string name="share_user_added">User added</string>
+    <string name="share_user_removed">Access revoked</string>
+    <!-- Badges (access mode on the worker card: Private = not shared) -->
+    <string name="worker_access_private">Private</string>
+    <string name="share_public_badge">Public</string>
+    <string name="share_users_badge">Users</string>
+    <!-- Shared with me / community states -->
+    <string name="share_swm_empty">Nobody has shared a Worker with you yet.</string>
+    <string name="share_swm_hint">When another user grants you access, the Worker appears here.</string>
+    <string name="share_shared_by">Shared by %1$s</string>
+    <string name="share_community_empty">No public Workers are currently available.</string>
+    <string name="share_community_hint">Public workers contributed by the community appear here.</string>
+    <!-- Errors -->
+    <string name="share_err_forbidden">Access forbidden</string>
+    <string name="share_err_already_active">Sharing is already active — stop it first</string>
+    <string name="share_err_no_users_policy">No active users sharing</string>
+    <string name="share_err_unknown_user">User not found. An exact username is required.</string>
+    <string name="share_err_self_grant">You cannot grant access to yourself</string>
+    <string name="share_err_expiry_past">The expiry must be in the future</string>
+    <string name="share_err_invalid_users">Specify at least one valid user</string>
+    <string name="share_err_invalid_scope">Invalid sharing mode</string>
+    <string name="share_err_username_required">Enter a username</string>
+    <string name="share_err_username_too_long">Username is too long (max 120 chars)</string>
+    <string name="share_err_unavailable">Server unavailable, try again later</string>
+    <string name="share_err_duplicate">This user is already in the list</string>
+
     <!-- Private Worker Setup Center (Phase 3.1, web parity: i18n worker_setup_*).
          All facts (profiles, versions, URLs, checksums, instructions) come from
          the Setup Contract API (/api/v1/private-worker/setup/*) — nothing is

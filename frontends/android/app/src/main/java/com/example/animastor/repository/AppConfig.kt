@@ -9,10 +9,18 @@ package com.example.animastor.repository
  * it from a settings store — this model stays unchanged.
  */
 data class AppConfig(
-    val limits: Limits? = null
+    val limits: Limits? = null,
+    // SH-2 kill-switch mirror (worker sharing): read ONCE per app load; when
+    // false (or absent — fail CLOSED) the sharing UI is hidden and NO V2
+    // endpoint is ever called.
+    val features: Features? = null
 )
 
 data class Limits(
     // Max chars for a frame prompt (image.prompt / video.action).
     val image_prompt_max_chars: Int? = null
+)
+
+data class Features(
+    val share: Boolean? = null
 )

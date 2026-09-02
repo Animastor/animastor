@@ -678,6 +678,64 @@ interface BackendApi {
     ): PurgeWorkerResponse
 
     // ======================================================
+    // Worker Sharing V2 (SH-2) — flag-gated backend surface
+    // ======================================================
+    // Web parity: frontends/app features/workers/sharing.ts. All routes are
+    // gated by SHARE_FEATURES_ENABLED server-side (off → 404) — the client
+    // additionally reads features.share from /config ONCE and never dials
+    // when the flag is off (defense in depth on both sides). workspace_id /
+    // owner identity are ALWAYS server-resolved from the session; the body
+    // never contributes identity. Foreign/unknown workers 404 indistinctly.
+
+    // "Shared with me" (§14.2): standing per-user list of workers the caller
+    // may use through a PERSONAL grant, each with its access reason.
+    @GET("/api/v1/workers/shared-with-me")
+    suspend fun sharedWithMe(): SharedWithMeResponse
+
+    // Owner view of the current sharing state (expiry re-checked on read).
+    @GET("/api/v1/workers/{workerId}/share")
+    suspend fun getShareState(
+        @Path("workerId") workerId: String
+    ): ShareStateResponse
+
+    // Start sharing: scope "public" (no recipients) or "users" (+ usernames
+    // resolved server-side BEFORE the policy is created — unknown usernames
+    // 400 and no policy exists).
+    @POST("/api/v1/workers/{workerId}/share")
+    suspend fun startShare(
+        @Path("workerId") workerId: String,
+        @Body request: StartShareRequest
+    ): ShareStateResponse
+
+    // Stop sharing (idempotent end-state; users-policy lane is drained by
+    // the backend — no client cleanup, D6).
+    @HTTP(method = "DELETE", path = "/api/v1/workers/{workerId}/share", hasBody = false)
+    suspend fun stopShare(
+        @Path("workerId") workerId: String
+    ): StopShareResponse
+
+    // Recipient management of an ACTIVE users policy.
+    @POST("/api/v1/workers/{workerId}/share/users")
+    suspend fun addShareUsers(
+        @Path("workerId") workerId: String,
+        @Body request: AddShareUsersRequest
+    ): AddShareUsersResponse
+
+    // Revoke ONE recipient (DELETE with a JSON body — Retrofit @HTTP).
+    @HTTP(method = "DELETE", path = "/api/v1/workers/{workerId}/share/users", hasBody = true)
+    suspend fun removeShareUser(
+        @Path("workerId") workerId: String,
+        @Body request: RemoveShareUserRequest
+    ): RemoveShareUserResponse
+
+    // Minimal recipient-picker: EXACT username match only (no enumeration
+    // surface — no listing, no fuzzy/prefix search).
+    @GET("/api/v1/users/lookup")
+    suspend fun lookupUser(
+        @Query("username") username: String
+    ): LookupUserResponse
+
+    // ======================================================
     // Private Worker Setup Contract (Phase 3 / 3.1)
     // ======================================================
     // Web parity: frontends/app features/workers/workerSetup.ts — the SAME

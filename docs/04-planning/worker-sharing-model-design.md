@@ -478,7 +478,12 @@ global counts that already exist.
 4. Hub: mirror/beacon carries `share_policy`; pop gains step 2
    (§7.2); heartbeat payload optional field; `worker-health` counts
    policy-active private workers in the global pool (D3). — **IMPLEMENTED**
-5. Web + Android owner controls (§10) — badge, start/stop, presets. — **NOT YET** (client follow-up; the API is flag-gated and dormant)
+5. Web + Android owner controls (§10) — badge, start/stop, presets. — **IMPLEMENTED**
+   (web: `frontends/app/src/features/workers/WorkerSharingUI.tsx` + `sharing.ts`,
+   commit `5cb3b4b5`; Android: `PrivateWorkersFragment` tabs + sharing modal +
+   row badge, `WorkerSharingHelpers.kt`, commit 2026-09-02 — see
+   `ANDROID_WEB_PARITY.md` checkpoint 4. Android uses the §10 expiry presets
+   1h / 4h / until stopped; web keeps the free datetime-local input.)
 6. Tests: policy CRUD authz matrix (owner yes / foreign 404 / system
    unreachable), hub pop precedence, expiry re-check, mirror staleness
    ≤ TTL, kill-switch off = today's behavior exactly, counts invariant

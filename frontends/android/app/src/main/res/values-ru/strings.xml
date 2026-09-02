@@ -588,6 +588,66 @@
     <string name="worker_err_not_found">Воркер не найден</string>
     <string name="worker_err_unavailable">Сервер недоступен, попробуйте позже</string>
 
+    <!-- Worker Sharing V2 (SH-2) — пользовательский слой (web parity: i18n share_*).
+         Все состояние приходит из V2-backend (share policies/grants); UI ничего
+         не придумывает сам. Управляется kill-switch (GET /config → features.share):
+         выключен ⇒ ничего ниже не рендерится и V2 API не вызывается. -->
+    <string name="share_tab_my">Мои воркеры</string>
+    <string name="share_tab_shared_with_me">Поделились со мной</string>
+    <string name="share_tab_community">Community</string>
+    <!-- Owner sharing controls -->
+    <string name="share_btn">Sharing</string>
+    <string name="share_modal_title">Sharing воркера</string>
+    <string name="share_mode_label">Режим доступа</string>
+    <string name="share_mode_off">Выключен</string>
+    <string name="share_mode_public">Public — для всех</string>
+    <string name="share_mode_users">Конкретным пользователям</string>
+    <string name="share_mode_public_desc">Воркер доступен Community: свободная мощность обслуживает общий пул. Ваши собственные задачи всегда с приоритетом.</string>
+    <string name="share_mode_users_desc">Воркер обслуживает очереди только выбранных пользователей.</string>
+    <string name="share_expires_label">Действует до</string>
+    <string name="share_expires_none">Бессрочно (до отключения)</string>
+    <string name="share_expires_1h">1 час</string>
+    <string name="share_expires_4h">4 часа</string>
+    <string name="share_expires_until">До: %1$s</string>
+    <string name="share_recipients_label">Получатели доступа</string>
+    <string name="share_recipients_empty">Пока никого. Добавьте пользователя по username.</string>
+    <string name="share_add_user_label">Добавить пользователя</string>
+    <string name="share_add_user_placeholder">точный username</string>
+    <string name="share_add_btn">Добавить</string>
+    <string name="share_lookup_btn">Найти</string>
+    <string name="share_lookup_not_found">Пользователь не найден. Нужен точный username.</string>
+    <string name="share_lookup_ok">Найден: %1$s</string>
+    <string name="share_stop_btn">Остановить sharing</string>
+    <string name="share_stop_confirm">Остановить sharing? Все получатели потеряют доступ.</string>
+    <string name="share_stopped">Sharing остановлен</string>
+    <string name="share_started_public">Воркер открыт для Community</string>
+    <string name="share_started_users">Доступ предоставлен выбранным пользователям</string>
+    <string name="share_user_added">Пользователь добавлен</string>
+    <string name="share_user_removed">Доступ отозван</string>
+    <!-- Badges (режим доступа на карточке воркера: Private = не shared) -->
+    <string name="worker_access_private">Private</string>
+    <string name="share_public_badge">Public</string>
+    <string name="share_users_badge">Users</string>
+    <!-- Shared with me / community states -->
+    <string name="share_swm_empty">Никто пока не поделился с вами воркером.</string>
+    <string name="share_swm_hint">Когда другой пользователь откроет вам доступ, воркер появится здесь.</string>
+    <string name="share_shared_by">Поделился: %1$s</string>
+    <string name="share_community_empty">Сейчас нет доступных публичных воркеров.</string>
+    <string name="share_community_hint">Публичные воркеры участников сообщества появятся здесь.</string>
+    <!-- Errors -->
+    <string name="share_err_forbidden">Доступ запрещён</string>
+    <string name="share_err_already_active">Sharing уже включён — сначала остановите его</string>
+    <string name="share_err_no_users_policy">Нет активного sharing для пользователей</string>
+    <string name="share_err_unknown_user">Пользователь не найден. Нужен точный username.</string>
+    <string name="share_err_self_grant">Нельзя предоставить доступ самому себе</string>
+    <string name="share_err_expiry_past">Срок действия должен быть в будущем</string>
+    <string name="share_err_invalid_users">Укажите хотя бы одного корректного пользователя</string>
+    <string name="share_err_invalid_scope">Недопустимый режим sharing</string>
+    <string name="share_err_username_required">Введите username</string>
+    <string name="share_err_username_too_long">Username слишком длинный (макс. 120 символов)</string>
+    <string name="share_err_unavailable">Сервер недоступен, попробуйте позже</string>
+    <string name="share_err_duplicate">Этот пользователь уже в списке</string>
+
     <!-- Центр подключения GPU-воркера (Phase 3.1, web parity: i18n worker_setup_*).
          Все факты (профили, версии, URL, контрольные суммы, инструкции) приходят
          из Setup Contract API (/api/v1/private-worker/setup/*) — здесь только подписи. -->

@@ -73,6 +73,46 @@
                         android:text="@string/worker_add"
                         style="@style/Widget.Animastor.Button" />
 
+                    <!-- SH-2 sharing tabs (web parity: .seg / PrivateWorkersSection
+                         tab strip). Rendered ONLY when the kill-switch is on
+                         (fragment checks features.share from /config and keeps
+                         this GONE otherwise — no V2 endpoint is ever called). -->
+                    <LinearLayout
+                        android:id="@+id/shareTabs"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:orientation="horizontal"
+                        android:background="@drawable/bg_segmented"
+                        android:padding="4dp"
+                        android:visibility="gone">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/tabMyButton"
+                            style="@style/Widget.Animastor.SegButton"
+                            android:layout_width="0dp"
+                            android:layout_height="36dp"
+                            android:layout_weight="1"
+                            android:text="@string/share_tab_my" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/tabSharedButton"
+                            style="@style/Widget.Animastor.SegButton"
+                            android:layout_width="0dp"
+                            android:layout_height="36dp"
+                            android:layout_weight="1"
+                            android:text="@string/share_tab_shared_with_me" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/tabCommunityButton"
+                            style="@style/Widget.Animastor.SegButton"
+                            android:layout_width="0dp"
+                            android:layout_height="36dp"
+                            android:layout_weight="1"
+                            android:text="@string/share_tab_community" />
+
+                    </LinearLayout>
+
                     <!-- Loading / empty hint -->
                     <TextView
                         android:id="@+id/listHint"
