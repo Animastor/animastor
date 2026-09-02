@@ -25,6 +25,7 @@ const registerAuthRoutes = require('../src/routes/auth-routes.cjs');
 const registerAdminRoutes = require('../src/routes/admin-routes.cjs');
 const { authContext } = require('../src/middleware/auth-context');
 const systemAi = require('../src/services/system-ai');
+const dns = require('dns');
 
 function cookieOf(setCookieHeader) {
     if (!setCookieHeader) return null;
@@ -59,6 +60,7 @@ describe('Admin Foundation Security', () => {
     const password = 'admin-pass-42';
 
     let server, port;
+    let _restoreDns;
     let adminCookie, allowCookie, userCookie;
     const userIds = [];
 
@@ -83,6 +85,15 @@ describe('Admin Foundation Security', () => {
             server = app.listen(0, () => { port = server.address().port; resolve(); });
         });
 
+        // Stub DNS lookup so the test domain passes the SSRF guard
+        // (real DNS lookup on admin.example would fail → 400).
+        const origLookup = dns.promises.lookup;
+        _restoreDns = () => { dns.promises.lookup = origLookup; };
+        dns.promises.lookup = async (hostname, opts) => {
+            if (hostname === 'admin.example') return [{ address: '93.184.216.34', family: 4 }];
+            return origLookup(hostname, opts);
+        };
+
         adminCookie = (await loginUser(port, adminUname, password)).cookie;
         allowCookie = (await loginUser(port, allowUname, password)).cookie;
         userCookie = (await loginUser(port, userUname, password)).cookie;
@@ -92,6 +103,7 @@ describe('Admin Foundation Security', () => {
     });
 
     after(async () => {
+        if (_restoreDns) _restoreDns();
         delete process.env.ADMIN_USERNAMES;
         if (server) await new Promise((r) => server.close(r));
         for (const uid of userIds) {

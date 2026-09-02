@@ -9,8 +9,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "node src/backend.cjs",
-    "test": "mocha tests/**/*.test.js",
-    "test:coverage": "nyc --reporter=html --reporter=text mocha tests/**/*.test.js",
+    "test": "mocha --exit tests/**/*.test.js",
+    "test:coverage": "nyc --reporter=html --reporter=text mocha --exit tests/**/*.test.js",
     "test:syntax": "bash ../scripts/syntax-smoke.sh",
     "pretest": "bash ../scripts/syntax-smoke.sh"
   },
