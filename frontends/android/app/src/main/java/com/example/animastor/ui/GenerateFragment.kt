@@ -240,11 +240,14 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                         label = b.audioLabel,
                         iconActiveRes = R.drawable.ic_volume_up,
                         iconInactiveRes = R.drawable.ic_volume_off,
-                        // What THIS user can use: system/shared pool + their own
-                        // private workers (web parity 9b5861d0: GeneratePage
-                        // sectionState — visibility isolation).
-                        total = counts.audio + counts.private_audio,
-                        active = counts.active_audio + counts.private_active_audio,
+                        // What THIS user can use, in PHYSICAL units (web parity
+                        // 57b1e26c): the backend reports a deduplicated union
+                        // (system pool ∪ own private workers, each worker counted
+                        // once) as available_*. Falling back to the raw sum would
+                        // double-count an own worker with an active public share
+                        // policy (D3 lists it in BOTH capacity buckets).
+                        total = counts.available_audio ?: (counts.audio + counts.private_audio),
+                        active = counts.available_active_audio ?: (counts.active_audio + counts.private_active_audio),
                         sectionId = R.id.audioIcon,
                         labelFormat = R.string.generate_section_audio,
                         isGenerating = isGenerating,
@@ -260,8 +263,8 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                         label = b.imageLabel,
                         iconActiveRes = R.drawable.ic_image,
                         iconInactiveRes = R.drawable.ic_image_off,
-                        total = counts.image + counts.private_image,
-                        active = counts.active_image + counts.private_active_image,
+                        total = counts.available_image ?: (counts.image + counts.private_image),
+                        active = counts.available_active_image ?: (counts.active_image + counts.private_active_image),
                         sectionId = R.id.imageIcon,
                         labelFormat = R.string.generate_section_image,
                         isGenerating = isGenerating,
@@ -277,8 +280,8 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                         label = b.videoLabel,
                         iconActiveRes = R.drawable.ic_videocam,
                         iconInactiveRes = R.drawable.ic_videocam_off,
-                        total = counts.video + counts.private_video,
-                        active = counts.active_video + counts.private_active_video,
+                        total = counts.available_video ?: (counts.video + counts.private_video),
+                        active = counts.available_active_video ?: (counts.active_video + counts.private_active_video),
                         sectionId = R.id.videoIcon,
                         labelFormat = R.string.generate_section_video,
                         isGenerating = isGenerating,

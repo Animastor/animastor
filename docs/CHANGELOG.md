@@ -112,6 +112,13 @@ All notable changes to Animastor are documented here.
     backend is the single source of truth — every mutation re-reads the
     canonical owner/recipient view; no V2 endpoint is called when the
     kill-switch is off.
+- **Generate chips: physical worker union (D3-safe)** — web parity for
+  commit `57b1e26c`. `WorkerCounts` gains `available_audio/image/video`
+  (+ `_active_*`); the Generate audio/image/video chips now use the
+  deduplicated union (`available_*` when present, raw sum otherwise)
+  so a policy-active private worker is counted ONCE for its owner
+  instead of double-counted across the overlapping D3 buckets. Mixed-
+  version fallback (raw sum) keeps old backends working.
 
 ---
 

@@ -18,6 +18,19 @@ data class WorkerCounts(
     val private_video: Int = 0,
     val private_active_audio: Int = 0,
     val private_active_image: Int = 0,
-    val private_active_video: Int = 0
+    val private_active_video: Int = 0,
+    // PHYSICAL union for UI counters (web parity 57b1e26c): system pool ∪
+    // the caller's OWN private workers, each PHYSICAL worker counted ONCE
+    // (deduplicated by worker_id server-side). Never sum audio+private_audio:
+    // per D3 a policy-active private worker appears in BOTH the system and
+    // private capacity buckets but is ONE physical unit. Sharing grants
+    // access to an existing worker — it never creates a new one. Null when
+    // the backend predates the field — the client falls back to the raw sum.
+    val available_audio: Int? = null,
+    val available_image: Int? = null,
+    val available_video: Int? = null,
+    val available_active_audio: Int? = null,
+    val available_active_image: Int? = null,
+    val available_active_video: Int? = null
 )
 
