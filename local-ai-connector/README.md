@@ -1,0 +1,74 @@
+# animastor-ai-connector
+
+Local AI Connector (V1, Phase 3) — outbound bridge between an Animastor
+workspace and a local OpenAI-compatible runtime (Ollama / vLLM / llama.cpp /
+LM Studio). The connector ALWAYS dials out to the cloud (outbound WebSocket);
+no inbound ports, no port forwarding.
+
+Spec: `docs/04-planning/local-ai-connector-v1.md` (§3.4, §4, §6, §7, §10, AD-5/AD-6/AD-7).
+
+## What V1 (Phase 3) does
+
+- registers/activates against Animastor over WebSocket (`hello` → `ready`),
+  exchanging the one-time `llmcreg.*` token for the persistent `llmc.*`
+  credential (disclosed exactly once, printed by the CLI on activation);
+- discovers models on the local runtime via `GET {base}/v1/models` —
+  **explicitly, only when the cloud asks** (`models.refresh`) — and reports
+  normalized model-id strings back (`models.list`);
+- heartbeats with discovered models + runtime reachability.
+
+What it deliberately does NOT do: inference, chat/completions, model loading,
+probes, filesystem/shell access, arbitrary HTTP (it is an allowlist adapter,
+not a proxy — AD-5).
+
+## Run
+
+```bash
+cd local-ai-connector
+npm install
+node index.cjs \
+  --url wss://<your-animastor-host>/api/v1/ai-connector/ws \
+  --token llmcreg.<…>.<…> \
+  --runtime-type ollama
+```
+
+On first connect the one-time registration token is exchanged for the
+persistent `llmc.*` credential, printed once — store it (e.g. in
+`ANIMASTOR_CONNECTOR_TOKEN`) for subsequent runs.
+
+## Options
+
+| Flag | Meaning |
+|---|---|
+| `--url` | Animastor connector WS endpoint (`wss://` mandatory off-loopback) |
+| `--token` | `llmcreg.*` (registration) or `llmc.*` (persistent) credential |
+| `--base-url` | local runtime base URL; default `http://127.0.0.1:11434` |
+| `--runtime-type` | `ollama` \| `vllm` \| `llamacpp` \| `lmstudio` \| `openai-compatible` |
+| `--allow-lan` | explicitly allow a non-loopback runtime base URL |
+| `--log-file` | accepted for compatibility; V1 keeps the metadata log in memory |
+
+Env fallbacks: `ANIMASTOR_CONNECTOR_URL`, `ANIMASTOR_CONNECTOR_TOKEN`.
+
+## Security posture (summary)
+
+- The runtime base URL is LOCAL CONFIG ONLY — it can never come from the
+  cloud or any frame (AD-5). The adapter knows exactly one path
+  (`GET {base}/v1/models`); no redirects are followed; responses are
+  size-capped and strictly validated.
+- No automatic probes (AD-7): discovery runs once per session (startup) and
+  then only on explicit `models.refresh`; no inference is ever sent.
+- Logging is metadata-only (AD-6): op, status, error code, duration, byte
+  count — never prompts, responses, or credential material.
+- Credentials are validated by shape and never logged or echoed.
+
+## Layout
+
+```
+index.cjs                     CLI entrypoint
+lib/config.cjs                strict, fail-closed config parsing (loopback default)
+lib/runtime-adapters/         the allowlist seam (AD-5)
+  index.cjs                     runtime-type → adapter registry
+  openai-compatible.cjs         V1 adapter: GET {base}/v1/models + strict normalization
+lib/connector.cjs             WS session (hello/ready/heartbeat/models.refresh→models.list)
+lib/log.cjs                   metadata-only operation log (AD-6)
+```

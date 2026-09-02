@@ -297,6 +297,31 @@ connected, offline on disconnect/heartbeat timeout, writes throttled to
 ~1/min) with the Redis TTL key `animastor:ai-connector:hb:<id>` as a
 liveness mirror (§7, §8.1.5).
 
+**Phase-3 implementation note (2026-09-02):** runtime discovery is
+implemented exactly on the §4 frames above — `S→C models.refresh {}`
+(explicit, user/action-triggered only) and `C→S models.list
+{ models[] | error_code }` (the error_code allowlist: `timeout`,
+`runtime_unreachable`, `bad_response`, `runtime_error`,
+`response_too_large`). No frame carries or accepts any URL (AD-5): the
+connector fetches only its own locally-configured base URL through the
+runtime-adapter seam (`local-ai-connector/lib/runtime-adapters/`, V1 = one
+`openai-compatible` adapter covering all §6 runtimes; `runtime_type` stays
+a UI label). Cloud side: `ai-connector/discovery.js` validates/normalizes
+the reply to plain model-id strings (the same safe shape heartbeat
+`models[]` uses, cap 256 × 512 chars), persists via the existing
+`updateConnectorHeartbeat` state path (models replaced, `last_seen` stamped
+per §7 — a failed discovery never wipes stored models and never breaks the
+WS session), and coalesces concurrent refresh callers onto ONE in-flight
+refresh per live session (no runtime fan-out; pending state dies with the
+session). There is no polling, no cache system, no automatic refresh —
+explicit refresh is the only mechanism (§7). Read surfaces for the
+discovered models: `GET /api/v1/ai-connector/status` (liveness from the
+registry + PG) and `GET /api/v1/ai-connector/models` (PG-only, read-only —
+never triggers a runtime fetch); both workspace-scoped, users-only, no
+secret material (not even token_prefix). `models discovered` ≠ `loaded`:
+nothing here loads models or sends `chat/*` (AD-7 intact; chat frames are
+still outside the protocol).
+
 **Phase 5 streaming:** `chat.delta` from the connector → the backend
 re-emits OpenAI-style SSE frames → the existing SSE client
 (`client.ts:147`). The wire format Cloud↔Connector is the simplified own
@@ -749,12 +774,15 @@ this V1 — the connector merely must not foreclose it.
   atomic exchange, revoke, rotate — clone of
   `fail-closed-worker-auth.test.js`).
 
-### Phase 3 — Runtime Discovery
+### Phase 3 — Runtime Discovery (implemented, 2026-09-02 — see §4 Phase-3 note)
 - Connector distributable skeleton: `local-ai-connector/`
   (hello/ready, heartbeat with models + capabilities + `runtime_ok`,
   `GET {base}/v1/models`, reconnect backoff, loopback enforcement,
   **metadata-only logging** per AD-6, **no automatic probes** per AD-7).
-- Cloud: status/models routes reading registry + PG.
+- Cloud: status/models routes reading registry + PG
+  (`GET /api/v1/ai-connector/status`, `GET /api/v1/ai-connector/models`),
+  discovery service (`ai-connector/discovery.js`) with explicit
+  coalesced refresh over the §4 frames.
 
 ### Phase 4 — Inference (non-streaming)
 - Modify: `workspace-ai-provider.js` — `buildWorkspaceProvider`

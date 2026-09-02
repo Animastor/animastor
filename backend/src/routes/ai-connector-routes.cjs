@@ -3,11 +3,12 @@ const crypto = require('crypto');
 
 const aiConnectorRepo = require('../storage/postgres/repositories/ai-connector-repo');
 const registry = require('../services/ai-connector/registry');
+const discovery = require('../services/ai-connector/discovery');
 
 // ======================================================
-// LAC — Local AI Connector V1 (Phase 1+2+2.5)
+// LAC — Local AI Connector V1 (Phase 1+2+2.5+3)
 // (docs/04-planning/local-ai-connector-v1.md §4, §7, §8, §8.1, §10, §12,
-//  AD-1..AD-3)
+//  AD-1..AD-5, AD-7)
 // ======================================================
 //
 // PART A — WS Foundation (Phase 2). Endpoint:
@@ -21,6 +22,18 @@ const registry = require('../services/ai-connector/registry');
 //                                                             on activation
 //   C→S heartbeat { models[], capabilities{tools,vision,context},
 //                   runtime_ok, latency_ms, runtime{type,version} }
+//
+// Phase 3 — explicit runtime discovery (the only runtime operation that
+// exists; the cloud itself NEVER talks to any runtime — SSRF posture):
+//   S→C models.refresh {}                       — explicit, UI-triggered only
+//   C→S models.list { models[] | error_code }   — normalized model-id strings
+//                                                 (same safe shape as
+//                                                 heartbeat models[]); error
+//                                                 codes from a fixed sanitized
+//                                                 allowlist (discovery service).
+// There is deliberately NO url field on any frame: the connector fetches only
+// its own locally-configured base URL — a client can never point the runtime
+// call anywhere else (AD-5).
 //
 // Identity rules (worker-auth doctrine, verbatim):
 //   - connector_id / workspace_id NEVER come from the client — they are
@@ -241,7 +254,13 @@ function createWsHandler({ redis, logger = console, options = {} } = {}) {
                 status: 'online',
                 models: heartbeat ? heartbeat.models : undefined,
                 capabilities: heartbeat ? heartbeat.capabilities : undefined,
-                runtimeMeta: heartbeat ? { latency_ms: heartbeat.latency_ms, ...(heartbeat.runtime || {}) } : undefined,
+                // runtime_ok (§7: last explicit discovery outcome — never a
+                // probe result) joins version/latency in runtime_meta.
+                runtimeMeta: heartbeat ? {
+                    latency_ms: heartbeat.latency_ms,
+                    runtime_ok: heartbeat.runtime_ok,
+                    ...(heartbeat.runtime || {}),
+                } : undefined,
             });
         } catch (err) {
             logger.warn(`[AI-CONNECTOR] PG heartbeat update failed (non-fatal): ${err.message}`);
@@ -337,10 +356,18 @@ function createWsHandler({ redis, logger = console, options = {} } = {}) {
         // closes the socket (and the close handler marks the connector offline).
         // 1008 = Policy Violation (liveness requirement) — same semantics as
         // the auth window; 1000 "normal" would misreport a dead peer.
-        session.heartbeatTimer = setTimeout(() => {
-            safeClose(session.ws, CLOSE.policyViolation, REASONS.heartbeatTimeout);
-        }, cfg.heartbeatTimeoutMs);
-        if (session.heartbeatTimer && session.heartbeatTimer.unref) session.heartbeatTimer.unref();
+        resetLivenessTimer(session);
+    }
+
+    /**
+     * Phase 3: an authenticated models.list frame (reply to models.refresh).
+     * Delegates to the discovery service (validate → normalize → persist via
+     * the existing heartbeat/state-update path). The route wrapper exists only
+     * to bind the session identity (pending refreshes are keyed per session)
+     * and the logger.
+     */
+    function handleModelsList(session, msg) {
+        return discovery.handleModelsList(session.connectorId, msg, { session, logger });
     }
 
     async function handleHeartbeat(session, msg) {
@@ -348,7 +375,15 @@ function createWsHandler({ redis, logger = console, options = {} } = {}) {
         session.heartbeatAt = Date.now();
         await touchRedisHb(session.connectorId);
         await maybePersist(session, hb);
-        // Reset the liveness timer — any well-formed message proves liveness.
+        resetLivenessTimer(session);
+    }
+
+    /**
+     * Liveness: any well-formed message (heartbeat OR models.list) proves the
+     * peer is alive — restart the silence timer. Silence past the window is a
+     * policy violation close (1008).
+     */
+    function resetLivenessTimer(session) {
         if (session.heartbeatTimer) clearTimeout(session.heartbeatTimer);
         session.heartbeatTimer = setTimeout(() => {
             safeClose(session.ws, CLOSE.policyViolation, REASONS.heartbeatTimeout);
@@ -388,6 +423,18 @@ function createWsHandler({ redis, logger = console, options = {} } = {}) {
         }
         if (msg.type === 'heartbeat') {
             handleHeartbeat(session, msg).catch(() => {});
+            return;
+        }
+        if (msg.type === 'models.list') {
+            // Phase 3: the reply to models.refresh. Validation +
+            // normalization + persistence live in the discovery service;
+            // the frame NEVER carries or sets any URL (AD-5). Any well-formed
+            // message proves liveness (in-memory timer + Redis mirror); a
+            // failed discovery never breaks the session — the frame is
+            // consumed, the connection stays up.
+            resetLivenessTimer(session);
+            touchRedisHb(session.connectorId).catch(() => {});
+            handleModelsList(session, msg).catch(() => {});
             return;
         }
         // Unknown message type: ignore safely. The endpoint is not a proxy —
@@ -431,6 +478,10 @@ function createWsHandler({ redis, logger = console, options = {} } = {}) {
             if (session.heartbeatTimer) clearTimeout(session.heartbeatTimer);
             if (session.connectorId) {
                 const wasActive = registry.unregister(session.connectorId, session);
+                // Phase 3: a pending refresh on a dying session must fail
+                // immediately (failPendingFor is a no-op when this session
+                // did not own the pending refresh).
+                discovery.failPendingFor(session);
                 // Mark offline only if this session was STILL the registered live
                 // session (a replacement session must not be clobbered offline).
                 if (wasActive) {
@@ -544,6 +595,37 @@ function publicConnector(row) {
     };
 }
 
+// Phase 3 read surfaces (§12: status/models routes reading registry + PG).
+// Strictly derived from PG rows + the in-process live-session registry —
+// neither route ever touches a runtime, and neither exposes credentials
+// (not even the token_prefix mask).
+function publicConnectorStatus(row) {
+    return {
+        connector_id: row.connector_id,
+        name: row.name,
+        runtime_type: row.runtime_type,
+        status: row.status,
+        live: registry.isLive(row.connector_id),
+        last_seen: row.last_seen != null ? Number(row.last_seen) : null,
+        models_count: Array.isArray(row.models) ? row.models.length : 0,
+        capabilities: row.capabilities || null,
+        runtime_meta: row.runtime_meta || null,
+        created_at: row.created_at != null ? Number(row.created_at) : null,
+    };
+}
+
+function publicConnectorModels(row) {
+    return {
+        connector_id: row.connector_id,
+        name: row.name,
+        runtime_type: row.runtime_type,
+        status: row.status,
+        live: registry.isLive(row.connector_id),
+        last_seen: row.last_seen != null ? Number(row.last_seen) : null,
+        models: Array.isArray(row.models) ? row.models : [],
+    };
+}
+
 /**
  * Create the HTTP route handlers. `redis` is optional (injectable for tests):
  * it clears the heartbeat liveness mirror on revoke.
@@ -628,6 +710,42 @@ function createAiConnectorRoutes({ redis, logger = console } = {}) {
             } catch (err) {
                 logger.error(`[AI-CONNECTOR] list failed: ${err.message}`);
                 res.status(500).json({ error: 'Failed to list Local AI connectors' });
+            }
+        });
+
+        // ── GET status (Phase 3 §15: registry liveness + PG state) ─────────
+        app.get('/api/v1/ai-connector/status', async (req, res) => {
+            const workspaceId = userWorkspaceGuard(req, res);
+            if (!workspaceId) return;
+            try {
+                const rows = await aiConnectorRepo.listWorkspaceConnectors(workspaceId);
+                res.json({
+                    connectors: rows
+                        .filter((r) => r.revoked_at == null)
+                        .map(publicConnectorStatus),
+                });
+            } catch (err) {
+                logger.error(`[AI-CONNECTOR] status failed: ${err.message}`);
+                res.status(500).json({ error: 'Failed to load Local AI status' });
+            }
+        });
+
+        // ── GET discovered models (Phase 3 §15/§12; read-only, PG only —
+        //    this route NEVER triggers a runtime fetch; use explicit
+        //    discovery for fresh data) ─────────────────────────────────────
+        app.get('/api/v1/ai-connector/models', async (req, res) => {
+            const workspaceId = userWorkspaceGuard(req, res);
+            if (!workspaceId) return;
+            try {
+                const rows = await aiConnectorRepo.listWorkspaceConnectors(workspaceId);
+                res.json({
+                    connectors: rows
+                        .filter((r) => r.revoked_at == null)
+                        .map(publicConnectorModels),
+                });
+            } catch (err) {
+                logger.error(`[AI-CONNECTOR] models read failed: ${err.message}`);
+                res.status(500).json({ error: 'Failed to load Local AI models' });
             }
         });
 
@@ -721,4 +839,6 @@ module.exports = {
     DEFAULTS,
     CLOSE,
     REASONS,
+    publicConnectorStatus,
+    publicConnectorModels,
 };
