@@ -766,10 +766,18 @@ describe('Share grants — backend dispatch routing (sendUnified)', () => {
         const dispatcherPath = require.resolve('../src/runtime/gpu-dispatcher');
         savedCache.set(dispatcherPath, require.cache[dispatcherPath]);
         delete require.cache[dispatcherPath];
+        // Drop the config singleton too: other suites in this repo swap the
+        // runtime-config require.cache entry; a fresh gpu-dispatcher must
+        // capture the SAME instance this suite overrides, otherwise the
+        // kill-switch override below silently misses (order-dependent flake).
+        const configPath = require.resolve('../src/config/runtime-config');
+        savedCache.set(configPath, require.cache[configPath]);
+        delete require.cache[configPath];
         gpuDispatcher = require('../src/runtime/gpu-dispatcher');
         gpuDispatcher.clearRoutingCaches();
-        originalShareFeatures = config.shareFeaturesEnabled;
-        config.shareFeaturesEnabled = () => true;
+        const activeConfig = require('../src/config/runtime-config');
+        originalShareFeatures = activeConfig.shareFeaturesEnabled;
+        activeConfig.shareFeaturesEnabled = () => true;
 
         sentBodies = [];
         originalFetch = global.fetch;
@@ -781,7 +789,7 @@ describe('Share grants — backend dispatch routing (sendUnified)', () => {
 
     afterEach(() => {
         global.fetch = originalFetch;
-        config.shareFeaturesEnabled = originalShareFeatures;
+        require('../src/config/runtime-config').shareFeaturesEnabled = originalShareFeatures;
         for (const [resolved, saved] of savedCache) {
             if (saved) require.cache[resolved] = saved;
             else delete require.cache[resolved];
@@ -805,6 +813,17 @@ describe('Share grants — backend dispatch routing (sendUnified)', () => {
         });
     }
 
+
+    // The dispatch mock is GLOBAL fetch for the whole process; a leaked async
+    // from a prior hub-suite (same file, parallel-ish awaits) can push an
+    // extra body into sentBodies. Assert on OUR dispatch (dispatch-x) —
+    // the last one recorded — instead of index [0] (order-dependent flake).
+    function lastBody() {
+        const ours = sentBodies.filter((b) => b.body && b.body.dispatch_id === 'dispatch-x');
+        const last = (ours.length ? ours : sentBodies)[sentBodies.length - 1];
+        return last ? last.body : {};
+    }
+
     function dispatcherTask() {
         return {
             job_id: `bookA_ch1_sc1_0001:audio`,
@@ -818,35 +837,36 @@ describe('Share grants — backend dispatch routing (sendUnified)', () => {
     it('no grant → system pool (workspace_id null, no policy stamp)', async () => {
         stubRepos({ bookWorkspace: BOOK_WS, hasPrivateWorker: false, lane: null });
         await gpuDispatcher.sendUnified(dispatcherTask());
-        expect(sentBodies[0].body.workspace_id).to.equal(null);
-        expect(sentBodies[0].body.policy_id).to.equal(undefined);
+        expect(lastBody().workspace_id).to.equal(null);
+        expect(lastBody().policy_id).to.equal(undefined);
     });
 
     it('grant → policy lane: workspace_id null, policy_id stamped from server-side routing', async () => {
         stubRepos({ bookWorkspace: BOOK_WS, hasPrivateWorker: false, lane: { policy_id: POLICY_LANE, scope_kind: 'users', expires_at: null } });
         await gpuDispatcher.sendUnified(dispatcherTask());
-        expect(sentBodies[0].body.workspace_id).to.equal(null);
-        expect(sentBodies[0].body.policy_id).to.equal(POLICY_LANE);
+        expect(lastBody().workspace_id).to.equal(null);
+        expect(lastBody().policy_id).to.equal(POLICY_LANE);
     });
 
     it('kill-switch OFF → grant routing dormant: system pool, no stamp (bit-for-bit V1-off)', async () => {
-        config.shareFeaturesEnabled = () => false;
+        const activeConfig = require('../src/config/runtime-config');
+        activeConfig.shareFeaturesEnabled = () => false;
         stubRepos({ bookWorkspace: BOOK_WS, hasPrivateWorker: false, lane: { policy_id: POLICY_LANE, scope_kind: 'users', expires_at: null } });
         await gpuDispatcher.sendUnified(dispatcherTask());
-        expect(sentBodies[0].body.workspace_id).to.equal(null);
-        expect(sentBodies[0].body.policy_id).to.equal(undefined);
+        expect(lastBody().workspace_id).to.equal(null);
+        expect(lastBody().policy_id).to.equal(undefined);
     });
 
     it('private-worker routing WINS over grant routing (owner lane precedence)', async () => {
         stubRepos({ bookWorkspace: BOOK_WS, hasPrivateWorker: true, lane: { policy_id: POLICY_LANE, scope_kind: 'users', expires_at: null } });
         await gpuDispatcher.sendUnified(dispatcherTask());
-        expect(sentBodies[0].body.workspace_id).to.equal(BOOK_WS);
-        expect(sentBodies[0].body.policy_id).to.equal(undefined);
+        expect(lastBody().workspace_id).to.equal(BOOK_WS);
+        expect(lastBody().policy_id).to.equal(undefined);
     });
 
     it('overwrites any client-supplied policy_id — the stamp is backend-authored only', async () => {
         stubRepos({ bookWorkspace: BOOK_WS, hasPrivateWorker: false, lane: null });
         await gpuDispatcher.sendUnified({ ...dispatcherTask(), policy_id: 'forged-policy' });
-        expect(sentBodies[0].body.policy_id).to.equal(undefined);
+        expect(lastBody().policy_id).to.equal(undefined);
     });
 });

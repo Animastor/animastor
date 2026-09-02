@@ -188,9 +188,16 @@ async function getPrivateBusyCount(redis, type, workspaceId) {
 
 /**
  * One-pass availability snapshot for a caller (single SCAN per type):
- *   system.*  — the global/shared pool (what every caller may use); per D3
- *               this includes policy-active private workers of ANY owner;
- *   private.* — the caller's OWN private workers (null workspace → zeros).
+ *   system.*     — the global/shared pool (what every caller may use); per D3
+ *                  this includes policy-active private workers of ANY owner;
+ *   private.*    — the caller's OWN private workers (null workspace → zeros).
+ *   available.*  — PHYSICAL union visible to this caller: system pool ∪ own
+ *                  private workers, each PHYSICAL worker counted ONCE
+ *                  (deduplicated by worker_id). This is the "how many workers
+ *                  can I use" metric for UI counters — it deliberately does
+ *                  NOT sum the overlapping D3 buckets (a policy-active private
+ *                  worker is one physical unit, not two). Scheduler/capacity
+ *                  consumers keep using system.* / private.* unchanged.
  * Foreign private workers appear in the system buckets ONLY when they carry
  * an active public share policy (D3) — never in this caller's private.*.
  */
@@ -198,6 +205,7 @@ async function getAvailability(redis, workspaceId = null) {
     const out = {
         system: {}, system_busy: {},
         private: {}, private_busy: {},
+        available: {}, available_busy: {},
     };
     const now = Date.now();
     for (const type of config.WORKER_HEARTBEAT_TYPES) {
@@ -206,6 +214,19 @@ async function getAvailability(redis, workspaceId = null) {
         out.system_busy[type] = countWhere(entries, (e) => isSystemScope(e, now), true);
         out.private[type] = countWhere(entries, (e) => isPrivateScopeOf(e, workspaceId));
         out.private_busy[type] = countWhere(entries, (e) => isPrivateScopeOf(e, workspaceId), true);
+        // Physical union: dedupe by worker_id — a heartbeat key IS one physical
+        // worker; sharing changes access, never the number of units.
+        const usable = new Set();
+        const usableBusy = new Set();
+        for (const e of entries) {
+            if (!e || !e.worker_id) continue;
+            const mine = isPrivateScopeOf(e, workspaceId);
+            if (!mine && !isSystemScope(e, now)) continue;
+            usable.add(e.worker_id);
+            if (e.current_job_id) usableBusy.add(e.worker_id);
+        }
+        out.available[type] = usable.size;
+        out.available_busy[type] = usableBusy.size;
     }
     return out;
 }

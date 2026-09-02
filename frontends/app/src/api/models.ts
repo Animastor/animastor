@@ -520,6 +520,17 @@ export interface WorkerCounts {
   private_active_audio?: number;
   private_active_image?: number;
   private_active_video?: number;
+  // PHYSICAL union the caller can use: system pool ∪ own private workers,
+  // each physical worker counted ONCE (dedup by worker_id). The UI counters
+  // use these — NOT audio+private_audio, which double-counts an own worker
+  // with an active public share policy (D3 puts it in both capacity buckets;
+  // sharing grants access to an existing worker, it does not create one).
+  available_audio?: number;
+  available_image?: number;
+  available_video?: number;
+  available_active_audio?: number;
+  available_active_image?: number;
+  available_active_video?: number;
 }
 
 // GET /book/{id}/progress-panel — ProgressPanelResponse/ProgressTask

@@ -632,6 +632,18 @@ module.exports = function(app, redis, deps) {
                 private_active_audio: avail.private_busy.audio || 0,
                 private_active_image: avail.private_busy.image || 0,
                 private_active_video: avail.private_busy.video || 0,
+                // PHYSICAL union for UI counters: system pool ∪ own private
+                // workers, each PHYSICAL worker counted ONCE (dedup by
+                // worker_id). Never sum audio+private_audio: per D3 a
+                // policy-active private worker is in BOTH capacity buckets
+                // but is ONE physical unit. Sharing grants access to an
+                // existing worker — it does not create a new one.
+                available_audio: avail.available.audio || 0,
+                available_image: avail.available.image || 0,
+                available_video: avail.available.video || 0,
+                available_active_audio: avail.available_busy.audio || 0,
+                available_active_image: avail.available_busy.image || 0,
+                available_active_video: avail.available_busy.video || 0,
             });
         } catch (err) {
             res.json({
@@ -640,6 +652,8 @@ module.exports = function(app, redis, deps) {
                 vbook: 0, active_vbook: 0,
                 private_audio: 0, private_image: 0, private_video: 0,
                 private_active_audio: 0, private_active_image: 0, private_active_video: 0,
+                available_audio: 0, available_image: 0, available_video: 0,
+                available_active_audio: 0, available_active_image: 0, available_active_video: 0,
             });
         }
     });

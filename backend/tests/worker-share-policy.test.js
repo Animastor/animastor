@@ -302,8 +302,11 @@ describe('Share policy routes — authz matrix & kill-switch', () => {
             const res = await shareRequest(method, alice.cookie, aliceWorkerId);
             expect(res.status, method).to.equal(404);
         }
-        // Nothing leaked into PG either.
-        const rows = await query(`SELECT COUNT(*)::int AS n FROM share_policies`);
+        // Nothing leaked into PG for THIS attempt. (Scoped to the test
+        // worker: the shared deployment runs tests against the same PG as
+        // production, so a GLOBAL count would see real workers' policies —
+        // e.g. a live public policy on a production worker.)
+        const rows = await query(`SELECT COUNT(*)::int AS n FROM share_policies WHERE worker_id = $1`, [aliceWorkerId]);
         expect(rows.rows[0].n).to.equal(0);
     });
 
@@ -406,7 +409,9 @@ describe('Share policy routes — authz matrix & kill-switch', () => {
             expect(bad.status).to.equal(400);
             expect((await bad.json()).code).to.equal('invalid_expires_at');
 
-            const rows = await query(`SELECT COUNT(*)::int AS n FROM share_policies WHERE revoked_at IS NULL`);
+            // Scoped to the test worker (same-PG-as-production deployment:
+            // a global "no active policies" would see real shared workers).
+            const rows = await query(`SELECT COUNT(*)::int AS n FROM share_policies WHERE worker_id = $1 AND revoked_at IS NULL`, [aliceWorkerId]);
             expect(rows.rows[0].n).to.equal(0);
         });
 
@@ -761,6 +766,135 @@ describe('Share policies — worker-health counts follow decision D3', () => {
         });
         expect(await workerHealth.isAvailable(redis, 'video', WS_B)).to.equal(true);
         expect(await workerHealth.isAvailable(redis, 'video')).to.equal(true);
+    });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// worker-health: available.* — PHYSICAL union (UI counters)
+// ══════════════════════════════════════════════════════════════════════════
+// The user-facing "Audio Workers: N" chip must never double-count an own
+// worker that carries an active public share policy: sharing grants ACCESS
+// to an existing worker, it does not create a second one. D3 stays intact —
+// system.*/private.* capacity buckets still overlap by design; available.*
+// is the deduplicated union of what this caller can physically use.
+describe('Share policies — available.* physical union (UI counters, D3-safe)', () => {
+    let redis;
+
+    beforeEach(() => {
+        redis = createMockRedis();
+        delete process.env.SHARE_FEATURES_ENABLED;
+    });
+
+    afterEach(() => {
+        delete process.env.SHARE_FEATURES_ENABLED;
+    });
+
+    it('scenarios 1-2: private → My=1; enabling Public keeps owner available=1 (D3 buckets overlap by design)', async () => {
+        process.env.SHARE_FEATURES_ENABLED = '1';
+        await writeHeartbeat(redis, 'audio', 'union-priv-a', { workspaceId: WS_A, mode: 'private' });
+        let avail = await workerHealth.getAvailability(redis, WS_A);
+        expect(avail.available.audio).to.equal(1); // My audio Workers = 1
+        expect(avail.private.audio).to.equal(1);
+        expect(avail.system.audio).to.equal(0);    // not in community yet
+
+        await writeHeartbeat(redis, 'audio', 'union-priv-a', {
+            workspaceId: WS_A, mode: 'private',
+            sharePolicy: { policy_id: 'pol-1', scope_kind: 'public', expires_at: null },
+        });
+        avail = await workerHealth.getAvailability(redis, WS_A);
+        // Owner: physical union is STILL 1 — one worker, not two.
+        expect(avail.available.audio).to.equal(1);
+        // D3 capacity buckets keep their semantics (both = 1 by design).
+        expect(avail.private.audio).to.equal(1);
+        expect(avail.system.audio).to.equal(1);
+        // Another user: community capacity = 1, owns nothing.
+        const forB = await workerHealth.getAvailability(redis, WS_B);
+        expect(forB.available.audio).to.equal(1);
+        expect(forB.private.audio).to.equal(0);
+    });
+
+    it('scenarios 3+7: Public → Off (revoke) keeps owner union at 1; community drops it (1→1→1, never 1→2→1)', async () => {
+        process.env.SHARE_FEATURES_ENABLED = '1';
+        await writeHeartbeat(redis, 'audio', 'union-priv-a', {
+            workspaceId: WS_A, mode: 'private',
+            sharePolicy: { policy_id: 'pol-1', scope_kind: 'public', expires_at: null },
+        });
+        // Sharing stopped: the mirror point-update removes the marker.
+        await writeHeartbeat(redis, 'audio', 'union-priv-a', { workspaceId: WS_A, mode: 'private' });
+        const avail = await workerHealth.getAvailability(redis, WS_A);
+        expect(avail.available.audio).to.equal(1);
+        expect(avail.system.audio).to.equal(0);
+        const forB = await workerHealth.getAvailability(redis, WS_B);
+        expect(forB.available.audio).to.equal(0); // no longer available to others
+    });
+
+    it('scenario 6: EXPIRED public policy → owner union unchanged at 1; worker leaves community capacity', async () => {
+        process.env.SHARE_FEATURES_ENABLED = '1';
+        await writeHeartbeat(redis, 'audio', 'union-priv-a', {
+            workspaceId: WS_A, mode: 'private',
+            sharePolicy: { policy_id: 'pol-1', scope_kind: 'public', expires_at: Date.now() - 1000 },
+        });
+        const avail = await workerHealth.getAvailability(redis, WS_A);
+        expect(avail.available.audio).to.equal(1); // owner count unchanged
+        expect(avail.system.audio).to.equal(0);    // expiry re-checked on read
+        const forB = await workerHealth.getAvailability(redis, WS_B);
+        expect(forB.available.audio).to.equal(0);
+    });
+
+    it('scenario 8: two private workers, one public — owner union = 2 (the old sum would show 3)', async () => {
+        process.env.SHARE_FEATURES_ENABLED = '1';
+        await writeHeartbeat(redis, 'audio', 'union-priv-a2', { workspaceId: WS_A, mode: 'private' });
+        await writeHeartbeat(redis, 'audio', 'union-priv-a3', {
+            workspaceId: WS_A, mode: 'private',
+            sharePolicy: { policy_id: 'pol-1', scope_kind: 'public', expires_at: null },
+        });
+        const avail = await workerHealth.getAvailability(redis, WS_A);
+        expect(avail.available.audio).to.equal(2); // 2 physical units
+        expect(avail.private.audio).to.equal(2);
+        expect(avail.system.audio).to.equal(1);    // only the public one
+    });
+
+    it('scenario 4: anonymous (null workspace) sees the physical community union only — own private = 0', async () => {
+        process.env.SHARE_FEATURES_ENABLED = '1';
+        await writeHeartbeat(redis, 'image', 'union-priv-a4', {
+            workspaceId: WS_A, mode: 'private',
+            sharePolicy: { policy_id: 'pol-1', scope_kind: 'public', expires_at: null },
+        });
+        await writeHeartbeat(redis, 'image', 'union-sys-b', { mode: 'system' });
+        const anon = await workerHealth.getAvailability(redis, null);
+        expect(anon.available.image).to.equal(2); // shared private + system worker
+        expect(anon.private.image).to.equal(0);
+        // The reported bug's exact shape: ONE shared private audio worker.
+        await writeHeartbeat(redis, 'audio', 'union-priv-a5', {
+            workspaceId: WS_A, mode: 'private',
+            sharePolicy: { policy_id: 'pol-2', scope_kind: 'public', expires_at: null },
+        });
+        expect((await workerHealth.getAvailability(redis, null)).available.audio).to.equal(1);
+    });
+
+    it('scenario 5: users-scope (personal grants) never enters community capacity — union stays owner-only', async () => {
+        process.env.SHARE_FEATURES_ENABLED = '1';
+        await writeHeartbeat(redis, 'audio', 'union-priv-a7', {
+            workspaceId: WS_A, mode: 'private',
+            sharePolicy: { policy_id: 'pol-3', scope_kind: 'users', expires_at: null },
+        });
+        const avail = await workerHealth.getAvailability(redis, WS_A);
+        expect(avail.available.audio).to.equal(1); // owner: one physical unit
+        expect(avail.system.audio).to.equal(0);    // users-scope is NOT community capacity
+        const forB = await workerHealth.getAvailability(redis, WS_B);
+        expect(forB.available.audio).to.equal(0);  // routing goes through policy lanes, not counts
+    });
+
+    it('kill-switch OFF: available.* degrades to private-only for the owner; no community capacity', async () => {
+        delete process.env.SHARE_FEATURES_ENABLED; // default OFF
+        await writeHeartbeat(redis, 'audio', 'union-priv-a6', {
+            workspaceId: WS_A, mode: 'private',
+            sharePolicy: { policy_id: 'pol-1', scope_kind: 'public', expires_at: null },
+        });
+        const avail = await workerHealth.getAvailability(redis, WS_A);
+        expect(avail.available.audio).to.equal(1); // own worker still counted
+        expect(avail.system.audio).to.equal(0);    // marker ignored (pre-sharing behavior)
+        expect((await workerHealth.getAvailability(redis, WS_B)).available.audio).to.equal(0);
     });
 });
 
