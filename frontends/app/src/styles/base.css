@@ -1256,14 +1256,19 @@ button { font: inherit; color: inherit; }
 .worker__status--offline { color: var(--text-2); background: var(--surface); border: 1px solid var(--outline-2); }
 .worker__status--revoked { color: var(--error); background: rgba(176, 0, 32, 0.12); }
 /* Access-mode badge (worker card, immediately left of Online/Offline):
-   Private = the Animastor gold (--accent, cinema_accent semantics);
-   Public = the editor Waveform tool blue (#90CAF9 — the exact paint of
-   lib/waveform.tsx / WaveformView.kt, not a new color). Solid pills with
-   the existing dark on-accent text stay readable in both themes. */
+   Private = light golden tint of the Animastor cinema_accent (--accent
+   #C9A15A mixed 50% white — the solid --accent read olive against the dark
+   on-accent text); Public = the editor Waveform tool blue (#90CAF9 — the
+   exact paint of lib/waveform.tsx / WaveformView.kt, not a new color).
+   Solid pale pills with the existing dark on-accent text stay readable in
+   both themes. */
 .worker__row-badges { display: inline-flex; align-items: center; gap: 0.35rem; flex-shrink: 0; }
 .worker__badge { font-size: 0.75rem; font-weight: 700; padding: 0.1rem 0.5rem; border-radius: var(--radius-pill); color: var(--on-accent); }
-.worker__badge--private { background: var(--accent); }
+.worker__badge--private { background: #E4D0AC; }
 .worker__badge--public { background: #90CAF9; }
+/* The section selectors breathe below the full-width «Добавить воркер»
+   button (.card has no flex gap; card__title/hint margins don't reach here). */
+.worker__tabs { margin-top: 0.75rem; }
 .worker__warn { color: var(--error); font-weight: 600; }
 .worker__cred { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .worker__token {

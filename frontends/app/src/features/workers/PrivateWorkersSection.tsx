@@ -202,7 +202,7 @@ export function PrivateWorkersSection() {
               ever called while it is off; rows then render their Private
               badge — nothing can be shared). */}
           {shareOn && (
-            <div class="seg seg--block" role="tablist" aria-label={t('share_btn')}>
+            <div class="seg seg--block worker__tabs" role="tablist" aria-label={t('share_btn')}>
               <button
                 role="tab" aria-selected={tab === 'my'}
                 class={'seg__btn' + (tab === 'my' ? ' seg__btn--active' : '')}
@@ -332,7 +332,11 @@ export function PrivateWorkersSection() {
       )}
 
       {detailsFor && (
-        <WorkerDetailsModal worker={detailsFor} onClose={() => setDetailsFor(null)} />
+        <WorkerDetailsModal
+          worker={detailsFor}
+          isPublicShare={shareStates[detailsFor.worker_id] === 'public'}
+          onClose={() => setDetailsFor(null)}
+        />
       )}
 
       {sharingFor && (
@@ -873,7 +877,11 @@ function LegacyInstructions({ token, worker }: { token: string; worker: PrivateW
 // Shows ONLY real backend fields: extended status, last seen, capabilities
 // (profiles/workflows/GPU/VRAM when reported). Null data is never invented.
 // ─────────────────────────────────────────────────────────────────────────
-function WorkerDetailsModal({ worker, onClose }: { worker: PrivateWorker; onClose: () => void }) {
+function WorkerDetailsModal({ worker, isPublicShare, onClose }: {
+  worker: PrivateWorker;
+  isPublicShare: boolean;
+  onClose: () => void;
+}) {
   const [detail, setDetail] = useState<SetupWorkerDetail | null>(null);
   const [error, setError] = useState('');
   const [uninstallUrl, setUninstallUrl] = useState<string | null>(null);
@@ -907,13 +915,23 @@ function WorkerDetailsModal({ worker, onClose }: { worker: PrivateWorker; onClos
       <>
         <div class="worker__row-main">
           <span class="worker__name">{worker.name}</span>
-          {detail ? (
-            <span class={'worker__status ' + setupStatusClass(detail.status)}>
-              {t(setupStatusKey(detail.status))}
+          {/* Same access-mode + status badge pair as the worker card row:
+              access-mode badge immediately LEFT of the status pill. */}
+          <span class="worker__row-badges">
+            <span
+              class={'worker__badge ' + (isPublicShare ? 'worker__badge--public' : 'worker__badge--private')}
+              aria-label={t(isPublicShare ? 'worker_access_public' : 'worker_access_private')}
+            >
+              {isPublicShare ? t('share_public_badge') : t('worker_access_private')}
             </span>
-          ) : (
-            <span class={'worker__status ' + statusClass(worker.status)}>{t(statusKey(worker.status))}</span>
-          )}
+            {detail ? (
+              <span class={'worker__status ' + setupStatusClass(detail.status)}>
+                {t(setupStatusKey(detail.status))}
+              </span>
+            ) : (
+              <span class={'worker__status ' + statusClass(worker.status)}>{t(statusKey(worker.status))}</span>
+            )}
+          </span>
         </div>
         <div class="worker__row-meta">
           <span>{t(worker.worker_type === 'audio' ? 'layer_audio' : worker.worker_type === 'image' ? 'layer_image' : 'layer_video')}</span>
