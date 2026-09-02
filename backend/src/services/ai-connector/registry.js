@@ -36,6 +36,23 @@ function disconnectAll() {
     sessions.clear();
 }
 
+/**
+ * Forcibly close the live session of ONE connector (management-route side
+ * effect: revoke / rotate kills the credential, so the session authenticated
+ * with it must die too — fail-closed, never left lingering until its next
+ * heartbeat). The socket's own close handler performs the PG offline mark and
+ * registry unregister — the map entry is left to that path.
+ * @returns {boolean} true when a live session was closed.
+ */
+function evict(connectorId, code, reason) {
+    const session = sessions.get(connectorId);
+    if (!session) return false;
+    try {
+        session.ws.close(typeof code === 'number' ? code : 1000, String(reason || 'evicted').slice(0, 64));
+    } catch (_) {}
+    return true;
+}
+
 function stats() {
     return { count: sessions.size };
 }
@@ -46,6 +63,7 @@ module.exports = {
     getLive,
     isLive,
     disconnectAll,
+    evict,
     stats,
     CLOSE_REPLACED,
 };

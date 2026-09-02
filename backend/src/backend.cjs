@@ -229,6 +229,21 @@ require('./routes/config-routes.cjs')(app, redis, routeDeps);
 // Workspace AI provider settings (Experimental Beta — Milestone 1)
 require('./routes/settings-ai-routes.cjs')(app);
 
+// Local AI Connector (LAC V1): registration & lifecycle routes for the
+// caller's workspace (users only — guests never own long-lived credentials;
+// the WS handler below shares this module). Mounted right after the settings
+// AI routes (§15 Phase 2 wiring point).
+// Registration-flooding rate limit (§10.2) FIRST: the create/re-arm surface
+// mints one-time tokens — stricter than the generic /api/ limiter.
+app.use(['/api/v1/ai-connector/registrations', '/api/v1/ai-connector/registrations/:connectorId/token'], rateLimit({
+    windowMs: 60_000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many registration attempts, try again later' },
+}));
+require('./routes/ai-connector-routes.cjs').createAiConnectorRoutes({ redis })(app);
+
 // Admin foundation: system AI control (kill switch + system provider) +
 // SYSTEM worker registry (Animastor-operated pool, PW-4 fail-closed model).
 // Guarded by requireAdmin; served on admin.animastor.in behind Basic Auth.

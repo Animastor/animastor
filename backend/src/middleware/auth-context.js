@@ -82,10 +82,15 @@ async function authContext(req, res, next) {
         // removed legacy heartbeat endpoint was exactly that DB-churn
         // vector). Worker identity uses its own credential namespace (wrk.*),
         // never guest auto-provision.
+        // EXEMPT: /api/v1/ai-connector* — same doctrine for the Local AI
+        // Connector (LAC): registration/lifecycle routes are users-only (a
+        // guest workspace must never own long-lived llmc.* credentials), and
+        // an anonymous probe must not mint a guest workspace per hit.
         const isContentWrite = req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH';
         if (isContentWrite && req.path && req.path.startsWith('/api/v1')
             && !req.path.startsWith('/api/v1/auth')
             && !req.path.startsWith('/api/v1/worker')
+            && !req.path.startsWith('/api/v1/ai-connector')
             && !req.path.startsWith('/api/v1/admin')) {
             const created = await authService.createGuest();
             req.guest = { guestId: created.guestId };

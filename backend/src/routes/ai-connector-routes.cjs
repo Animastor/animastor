@@ -5,25 +5,27 @@ const aiConnectorRepo = require('../storage/postgres/repositories/ai-connector-r
 const registry = require('../services/ai-connector/registry');
 
 // ======================================================
-// LAC — Local AI Connector V1 Phase 2: WebSocket Foundation
-// (docs/04-planning/local-ai-connector-v1.md §4, §7, §8.1, §10, AD-1..AD-3)
+// LAC — Local AI Connector V1 (Phase 1+2+2.5)
+// (docs/04-planning/local-ai-connector-v1.md §4, §7, §8, §8.1, §10, §12,
+//  AD-1..AD-3)
 // ======================================================
-// The backend monolith is the SOLE WS terminator (AD-8). Endpoint:
+//
+// PART A — WS Foundation (Phase 2). Endpoint:
 //   GET /api/v1/ai-connector/ws
 //
 // Protocol (version 1) — cloud ↔ connector, JSON frames:
-//   C→S hello     { protocol_version, credential }
-//   S→C ready     { connector_id, heartbeat_interval_ms, server_time }
+//   C→S hello     { protocol_version, credential }            — persistent auth
+//   C→S hello     { protocol_version, reg_token }             — first activation
+//   S→C ready     { connector_id, heartbeat_interval_ms, server_time,
+//                   credential, credential_prefix }           — credential only
+//                                                             on activation
 //   C→S heartbeat { models[], capabilities{tools,vision,context},
 //                   runtime_ok, latency_ms, runtime{type,version} }
 //
-// Phase 2 authenticates with the persistent llmc.* credential only (the
-// one-time llmcreg.* activation exchange lands with the registration phase).
-//
 // Identity rules (worker-auth doctrine, verbatim):
 //   - connector_id / workspace_id NEVER come from the client — they are
-//     derived exclusively from the credential (llmc.*) resolved against PG
-//     (hash-only, timing-safe).
+//     derived exclusively from the credential / registration token (llmc.* /
+//     llmcreg.*) resolved against PG (hash-only, timing-safe).
 //   - A revoked connector never authenticates.
 //   - Single live session per connector (AD-3/§8.1.5): a newer
 //     authentication REPLACES the older session (older socket gets a
@@ -64,6 +66,7 @@ const CLOSE = {
     protocolError: 1002,
     policyViolation: 1008,
     replaced: registry.CLOSE_REPLACED, // 4000
+    rotated: 4001,
     serverShutdown: 1001,
 };
 
@@ -74,6 +77,7 @@ const REASONS = {
     malformedFrame: 'malformed_frame',
     revoked: 'revoked',
     replaced: 'replaced',
+    rotated: 'rotated',
     heartbeatTimeout: 'heartbeat_timeout',
     serverShutdown: 'server_shutdown',
 };
@@ -113,16 +117,25 @@ function parseFrame(raw) {
     return { ok: true, msg };
 }
 
+/**
+ * Validate the hello frame shape: protocol_version must be 1 and EXACTLY ONE
+ * authentication mode must be present — the persistent `credential` (llmc.*)
+ * or the one-time `reg_token` (llmcreg.*, atomic activation §8.1). Presenting
+ * both (or neither) is a policy violation, never "try both" (fail-closed —
+ * a frame must declare its intent, so a compromised-credential fallback to
+ * registration replay is structurally impossible).
+ */
 function validateHello(msg) {
     if (msg.protocol_version !== PROTOCOL_VERSION) {
         return { ok: false, reason: REASONS.protocolVersionUnsupported };
     }
-    // Phase 2 authenticates with the persistent llmc.* credential only. The
-    // one-time llmcreg.* registration exchange (atomic activation, AD-3) is
-    // wired in the registration phase (§4 hello `reg_token`) — presenting a
-    // reg_token here is an authentication failure.
-    if (typeof msg.credential === 'string' && msg.credential.length > 0) {
-        return { ok: true, credential: msg.credential };
+    const hasCredential = typeof msg.credential === 'string' && msg.credential.length > 0;
+    const hasRegToken = typeof msg.reg_token === 'string' && msg.reg_token.length > 0;
+    if (hasCredential && !hasRegToken) {
+        return { ok: true, mode: 'credential', credential: msg.credential };
+    }
+    if (hasRegToken && !hasCredential) {
+        return { ok: true, mode: 'registration', regToken: msg.reg_token };
     }
     return { ok: false, reason: REASONS.authFailed };
 }
@@ -230,9 +243,31 @@ function createWsHandler({ redis, logger = console, options = {} } = {}) {
             return;
         }
 
+        // Resolve identity EXCLUSIVELY from what hello carried (never from
+        // any client-supplied id — worker-auth doctrine).
+        //
+        //   mode 'credential'   → authenticateConnector (hash-only, timing-
+        //                         safe; revoked/unknown → null → close 1008).
+        //   mode 'registration' → activateConnector: the ATOMIC EXACTLY-ONCE
+        //                         exchange (§8.1/AD-3) — one PG transaction
+        //                         with SELECT … FOR UPDATE mints the single
+        //                         persistent llmc.* credential, disclosed
+        //                         exactly once, in `ready`. A replayed/used/
+        //                         expired token closes with the mapped reason.
         let authRow = null;
+        let minted = null;
         try {
-            authRow = await aiConnectorRepo.authenticateConnector(v.credential);
+            if (v.mode === 'credential') {
+                authRow = await aiConnectorRepo.authenticateConnector(v.credential);
+            } else {
+                const act = await aiConnectorRepo.activateConnector(v.regToken);
+                if (act.ok) {
+                    authRow = act.connector;
+                    minted = { token: act.token, tokenPrefix: act.tokenPrefix };
+                } else {
+                    logger.warn(`[AI-CONNECTOR] registration exchange rejected: ${act.reason}`);
+                }
+            }
         } catch (err) {
             logger.warn(`[AI-CONNECTOR] credential resolution failed (denied): ${err.message}`);
         }
@@ -259,12 +294,20 @@ function createWsHandler({ redis, logger = console, options = {} } = {}) {
         await maybePersist(session, null);
         await touchRedisHb(authRow.connector_id);
 
-        const ready = jsonStringify({
+        const readyPayload = {
             type: 'ready',
             connector_id: authRow.connector_id,
             heartbeat_interval_ms: cfg.heartbeatIntervalMs,
             server_time: now,
-        });
+        };
+        if (minted) {
+            // §8.1 step 5: plaintext llmc.* disclosed EXACTLY ONCE — in this
+            // frame only. Never persisted, never logged (the log hygiene test
+            // asserts this; the send below is the sole egress).
+            readyPayload.credential = minted.token;
+            readyPayload.credential_prefix = minted.tokenPrefix;
+        }
+        const ready = jsonStringify(readyPayload);
         if (ready && session.ws.readyState === 1) {
             session.ws.send(ready);
         }
@@ -302,6 +345,13 @@ function createWsHandler({ redis, logger = console, options = {} } = {}) {
         }
         const { msg } = parsed;
         if (msg.type === 'hello') {
+            if (session.state !== 'authenticating') {
+                // Hello is the OPENING frame only. A re-hello after
+                // authentication is a protocol violation — and must never
+                // re-enter the registry as a self-replacement.
+                safeClose(session.ws, CLOSE.policyViolation, REASONS.authFailed);
+                return;
+            }
             handleHello(session, msg).catch(() => {
                 safeClose(session.ws, CLOSE.protocolError, REASONS.authFailed);
             });
@@ -397,4 +447,255 @@ function createWsHandler({ redis, logger = console, options = {} } = {}) {
     return { attachUpgrade, shutdown, wss, WS_PATH, PROTOCOL_VERSION, cfg };
 }
 
-module.exports = { createWsHandler, WS_PATH, PROTOCOL_VERSION, DEFAULTS, CLOSE, REASONS };
+// ======================================================
+// PART B — HTTP registration & lifecycle routes (§8, §12)
+// ======================================================
+// The user-facing surface of the connector registry — a verbatim clone of the
+// worker-routes discipline (userWorkspaceGuard, one-time disclosure, no
+// existence oracle across workspaces):
+//
+//   POST   /api/v1/ai-connector/registrations   — create (pending) + one-time
+//                                                 llmcreg.* token
+//   GET    /api/v1/ai-connector/registrations/:connectorId/token
+//              — (re)issue the one-time token for a still-pending connector
+//                (re-arm; the previous token dies the moment this commits)
+//   GET    /api/v1/ai-connector/connectors      — list (never secrets)
+//   GET    /api/v1/ai-connector/connectors/:connectorId — detail
+//   POST   /api/v1/ai-connector/connectors/:connectorId/rotate
+//              — new persistent credential (old dies; one-time disclosure;
+//                any live session authenticated with the old credential is
+//                evicted — fail-closed)
+//   DELETE /api/v1/ai-connector/connectors/:connectorId — revoke (soft;
+//                live session evicted, PG offline, Redis hb key cleared)
+//
+// Identity rules:
+//   - REGISTERED USERS ONLY (worker-routes precedent: a guest workspace must
+//     never own long-lived credentials that outlive the guest purge).
+//   - workspace_id ALWAYS from req.workspace (authContext) — never the body.
+//   - The plaintext credential / registration token is returned ONLY by the
+//     create / re-arm / rotate / activate responses — everything else carries
+//     at most token_prefix.
+//   - The exchange itself (llmcreg.* → llmc.*) lives in the WS hello
+//     (activateConnector §8.1) — there is deliberately NO HTTP exchange
+//     endpoint: the connector self-locates via the token and receives its
+//     persistent credential over its own authenticated WS session.
+// ======================================================
+
+const MAX_CONNECTOR_NAME_LEN = 120;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Users-only guard; returns the caller's workspace id or answers 401/403. */
+function userWorkspaceGuard(req, res) {
+    if (!req.user) {
+        res.status(401).json({ error: 'Authentication required', code: 'auth_required' });
+        return null;
+    }
+    if (req.guest) {
+        // A request cannot be both user and guest — defensive only.
+        res.status(403).json({ error: 'Guests cannot manage Local AI connectors', code: 'guest_forbidden' });
+        return null;
+    }
+    if (!req.workspace || !req.workspace.id) {
+        res.status(401).json({ error: 'Workspace not resolved', code: 'workspace_unresolved' });
+        return null;
+    }
+    return req.workspace.id;
+}
+
+/** Public JSON shape of a connector row (never secrets; bigints → numbers). */
+function publicConnector(row) {
+    if (!row) return null;
+    return {
+        connector_id: row.connector_id,
+        workspace_id: row.workspace_id,
+        name: row.name,
+        runtime_type: row.runtime_type,
+        status: row.status,
+        token_prefix: row.token_prefix || null,
+        last_seen: row.last_seen != null ? Number(row.last_seen) : null,
+        models: row.models || null,
+        capabilities: row.capabilities || null,
+        runtime_meta: row.runtime_meta || null,
+        revoked_at: row.revoked_at != null ? Number(row.revoked_at) : null,
+        created_at: row.created_at != null ? Number(row.created_at) : null,
+    };
+}
+
+/**
+ * Create the HTTP route handlers. `redis` is optional (injectable for tests):
+ * it clears the heartbeat liveness mirror on revoke.
+ */
+function createAiConnectorRoutes({ redis, logger = console } = {}) {
+    return function registerAiConnectorRoutes(app) {
+        // ── POST create registration (pending connector + one-time token) ──
+        app.post('/api/v1/ai-connector/registrations', async (req, res) => {
+            const workspaceId = userWorkspaceGuard(req, res);
+            if (!workspaceId) return;
+
+            const body = req.body || {};
+            const name = typeof body.name === 'string' ? body.name.trim() : '';
+            if (!name || name.length > MAX_CONNECTOR_NAME_LEN) {
+                return res.status(400).json({ error: `name is required (max ${MAX_CONNECTOR_NAME_LEN} chars)` });
+            }
+            const runtimeType = typeof body.runtime_type === 'string' && body.runtime_type
+                ? body.runtime_type
+                : 'openai-compatible';
+            if (!aiConnectorRepo.RUNTIME_TYPES.includes(runtimeType)) {
+                return res.status(400).json({
+                    error: `runtime_type must be one of: ${aiConnectorRepo.RUNTIME_TYPES.join(', ')}`,
+                });
+            }
+            // workspace_id from the body is deliberately IGNORED — the
+            // connector is always created in the caller's own workspace.
+
+            try {
+                const { connector, regToken, regExpiresAt } = await aiConnectorRepo.createConnector({
+                    workspaceId,
+                    name,
+                    runtimeType,
+                    createdBy: req.user.userId,
+                });
+                res.status(201).json({
+                    connector: publicConnector(connector),
+                    reg_token: regToken,     // one-time disclosure — never again
+                    reg_expires_at: regExpiresAt,
+                    ws_url: '/api/v1/ai-connector/ws',
+                });
+            } catch (err) {
+                logger.error(`[AI-CONNECTOR] registration create failed: ${err.message}`);
+                res.status(500).json({ error: 'Failed to create Local AI connector' });
+            }
+        });
+
+        // ── GET (re)issue the one-time registration token (pending only) ───
+        app.get('/api/v1/ai-connector/registrations/:connectorId/token', async (req, res) => {
+            const workspaceId = userWorkspaceGuard(req, res);
+            if (!workspaceId) return;
+            if (!UUID_RE.test(req.params.connectorId)) {
+                return res.status(404).json({ error: 'Connector not found' });
+            }
+            try {
+                const result = await aiConnectorRepo.issueRegistrationToken(req.params.connectorId, workspaceId);
+                if (!result) {
+                    // Unknown id, foreign workspace, revoked or ALREADY
+                    // ACTIVATED — one indistinct 404 (no existence oracle;
+                    // re-arming an activated connector would mint a second
+                    // credential path and is refused by the repo).
+                    return res.status(404).json({ error: 'Connector not found' });
+                }
+                res.json({
+                    connector: publicConnector(result.connector),
+                    reg_token: result.regToken, // one-time disclosure
+                    reg_expires_at: result.regExpiresAt,
+                    ws_url: '/api/v1/ai-connector/ws',
+                });
+            } catch (err) {
+                logger.error(`[AI-CONNECTOR] registration token re-arm failed: ${err.message}`);
+                res.status(500).json({ error: 'Failed to re-issue registration token' });
+            }
+        });
+
+        // ── GET list connectors of the caller's workspace ──────────────────
+        app.get('/api/v1/ai-connector/connectors', async (req, res) => {
+            const workspaceId = userWorkspaceGuard(req, res);
+            if (!workspaceId) return;
+            try {
+                const rows = await aiConnectorRepo.listWorkspaceConnectors(workspaceId);
+                res.json({ connectors: rows.map(publicConnector) });
+            } catch (err) {
+                logger.error(`[AI-CONNECTOR] list failed: ${err.message}`);
+                res.status(500).json({ error: 'Failed to list Local AI connectors' });
+            }
+        });
+
+        // ── GET one connector detail ───────────────────────────────────────
+        app.get('/api/v1/ai-connector/connectors/:connectorId', async (req, res) => {
+            const workspaceId = userWorkspaceGuard(req, res);
+            if (!workspaceId) return;
+            if (!UUID_RE.test(req.params.connectorId)) {
+                return res.status(404).json({ error: 'Connector not found' });
+            }
+            try {
+                const row = await aiConnectorRepo.getConnector(req.params.connectorId);
+                if (!row || row.workspace_id !== workspaceId) {
+                    // Foreign/unknown — one indistinct answer.
+                    return res.status(404).json({ error: 'Connector not found' });
+                }
+                res.json({ connector: publicConnector(row) });
+            } catch (err) {
+                logger.error(`[AI-CONNECTOR] detail failed: ${err.message}`);
+                res.status(500).json({ error: 'Failed to load Local AI connector' });
+            }
+        });
+
+        // ── POST rotate persistent credential (old dies; session evicted) ──
+        app.post('/api/v1/ai-connector/connectors/:connectorId/rotate', async (req, res) => {
+            const workspaceId = userWorkspaceGuard(req, res);
+            if (!workspaceId) return;
+            if (!UUID_RE.test(req.params.connectorId)) {
+                return res.status(404).json({ error: 'Connector not found' });
+            }
+            try {
+                const result = await aiConnectorRepo.rotateConnectorCredential(req.params.connectorId, workspaceId);
+                if (!result) {
+                    // Unknown id, foreign workspace, revoked or never
+                    // activated — one indistinct answer.
+                    return res.status(404).json({ error: 'Connector not found' });
+                }
+                // Fail-closed: any live session authenticated with the OLD
+                // credential dies NOW (its close handler marks the connector
+                // offline; the connector reconnects with the new credential).
+                const evicted = registry.evict(req.params.connectorId, CLOSE.rotated, REASONS.rotated);
+                if (evicted) {
+                    logger.info(`[AI-CONNECTOR] rotated credential → live session evicted for ${result.connector.connector_id}`);
+                }
+                res.json({
+                    connector: publicConnector(result.connector),
+                    token: result.token, // one-time disclosure — never again
+                });
+            } catch (err) {
+                logger.error(`[AI-CONNECTOR] rotate failed: ${err.message}`);
+                res.status(500).json({ error: 'Failed to rotate Local AI connector credential' });
+            }
+        });
+
+        // ── DELETE revoke (soft delete; session evicted; liveness cleared) ─
+        app.delete('/api/v1/ai-connector/connectors/:connectorId', async (req, res) => {
+            const workspaceId = userWorkspaceGuard(req, res);
+            if (!workspaceId) return;
+            if (!UUID_RE.test(req.params.connectorId)) {
+                return res.status(404).json({ error: 'Connector not found' });
+            }
+            try {
+                const { revoked } = await aiConnectorRepo.revokeConnector(req.params.connectorId, workspaceId);
+                if (!revoked) {
+                    return res.status(404).json({ error: 'Connector not found' });
+                }
+                // Kill the live session (its close handler marks PG offline);
+                // clear the Redis liveness mirror directly as well — a
+                // revoked connector must not look alive for up to TTL.
+                const evicted = registry.evict(req.params.connectorId, CLOSE.policyViolation, REASONS.revoked);
+                if (redis) {
+                    try { await redis.del(`animastor:ai-connector:hb:${req.params.connectorId}`); } catch (_) {}
+                }
+                if (evicted) {
+                    logger.info(`[AI-CONNECTOR] revoked → live session evicted for ${req.params.connectorId}`);
+                }
+                res.json({ revoked: true });
+            } catch (err) {
+                logger.error(`[AI-CONNECTOR] revoke failed: ${err.message}`);
+                res.status(500).json({ error: 'Failed to revoke Local AI connector' });
+            }
+        });
+    };
+}
+
+module.exports = {
+    createWsHandler,
+    createAiConnectorRoutes,
+    WS_PATH,
+    PROTOCOL_VERSION,
+    DEFAULTS,
+    CLOSE,
+    REASONS,
+};

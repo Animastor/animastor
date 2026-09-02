@@ -536,4 +536,119 @@ describe('LLM Connector WebSocket foundation (LAC-2)', () => {
         expect(logged).to.not.match(/llmc\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
         await query(`DELETE FROM ai_connectors WHERE connector_id = $1`, [connector.connector_id]);
     });
+
+    // ── 9. registration exchange over hello (§8.1/AD-3) ───────────────────
+
+    const HELLO_REG = (regToken, version = 1) => ({ type: 'hello', protocol_version: version, reg_token: regToken });
+
+    it('hello(llmcreg.*) → atomic activation: ready discloses the minted llmc.* ONCE; row activated', async function () {
+        this.timeout(10000);
+        const { connector, regToken } = await repo.createConnector({ workspaceId: wsA, name: 'ws-activate' });
+
+        const captured = await captureConsole(async () => {
+            const ws = await connect(main.url);
+            const readyPromise = nextMessage(ws);
+            send(ws, HELLO_REG(regToken));
+            const ready = await readyPromise;
+            // Identity server-derived; the ONE-TIME credential disclosure.
+            expect(ready.type).to.equal('ready');
+            expect(ready.connector_id).to.equal(connector.connector_id);
+            expect(ready.credential).to.match(/^llmc\./);
+            expect(ready.credential_prefix).to.be.a('string');
+            expect(ready.heartbeat_interval_ms).to.be.a('number');
+            // Activated row: hash-only, reg hash nulled, online.
+            const row = await rawRow(connector.connector_id);
+            expect(row.status).to.equal('online');
+            expect(row.reg_token_hash).to.be.null;
+            expect(row.token_hash).to.be.a('string');
+            expect(Number(row.last_seen)).to.be.above(0);
+            // The connection is fully live: heartbeat works.
+            send(ws, { type: 'heartbeat', runtime_ok: true });
+            await new Promise((r) => setTimeout(r, 100));
+            ws.close();
+            return { token: ready.credential, regToken };
+        });
+
+        // Log hygiene: neither the llmcreg.* nor the llmc.* plaintext in logs.
+        const logged = captured.entries.map((e) => e.text).join('\n');
+        expect(logged).to.not.include(captured.result.regToken);
+        expect(logged).to.not.include(captured.result.token.split('.')[2]);
+        expect(logged).to.not.match(/llmcreg\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
+        expect(logged).to.not.match(/llmc\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
+        await query(`DELETE FROM ai_connectors WHERE connector_id = $1`, [connector.connector_id]);
+    });
+
+    it('replayed reg_token after activation → close 1008 (registration_already_used)', async function () {
+        this.timeout(10000);
+        const { regToken } = await repo.createConnector({ workspaceId: wsA, name: 'ws-replay' });
+        // First use wins.
+        let ws1 = await connect(main.url);
+        send(ws1, HELLO_REG(regToken));
+        await nextMessage(ws1);
+        ws1.close();
+
+        // Replay loses — exactly-once (AD-3).
+        const ws2 = await connect(main.url);
+        const closed = nextClose(ws2);
+        send(ws2, HELLO_REG(regToken));
+        const res = await closed;
+        expect(res.code).to.equal(1008);
+    });
+
+    it('expired reg_token → close 1008; hello with BOTH credential and reg_token → close 1008', async function () {
+        this.timeout(10000);
+        const { connector, regToken } = await repo.createConnector({ workspaceId: wsA, name: 'ws-expired' });
+        await query(`UPDATE ai_connectors SET reg_expires_at = $2 WHERE connector_id = $1`,
+            [connector.connector_id, Date.now() - 1000]);
+
+        const ws = await connect(main.url);
+        const closed = nextClose(ws);
+        send(ws, HELLO_REG(regToken));
+        const res = await closed;
+        expect(res.code).to.equal(1008);
+
+        // Mode confusion is a policy violation, never "try both".
+        const { connector: c2, regToken: reg2 } = await repo.createConnector({ workspaceId: wsA, name: 'ws-both' });
+        const ws2 = await connect(main.url);
+        const closed2 = nextClose(ws2);
+        send(ws2, { type: 'hello', protocol_version: 1, reg_token: reg2, credential: 'llmc.x.y' });
+        const res2 = await closed2;
+        expect(res2.code).to.equal(1008);
+        // The un-activated row must not have been touched by the confused frame.
+        const row = await rawRow(c2.connector_id);
+        expect(row.status).to.equal('pending');
+        await query(`DELETE FROM ai_connectors WHERE connector_id IN ($1, $2)`, [connector.connector_id, c2.connector_id]);
+    });
+
+    it('minted credential authenticates persistently; ready carries NO credential on llmc.* hello', async function () {
+        this.timeout(10000);
+        const { connector, regToken } = await repo.createConnector({ workspaceId: wsA, name: 'ws-persist' });
+        const ws1 = await connect(main.url);
+        send(ws1, HELLO_REG(regToken));
+        const ready1 = await nextMessage(ws1);
+        ws1.close();
+
+        // New connection with the persistent credential — normal path.
+        const ws2 = await connect(main.url);
+        send(ws2, HELLO(ready1.credential));
+        const ready2 = await nextMessage(ws2);
+        expect(ready2.connector_id).to.equal(connector.connector_id);
+        expect(ready2.credential).to.be.undefined;      // never re-disclosed
+        expect(ready2.credential_prefix).to.be.undefined;
+        ws2.close();
+        await query(`DELETE FROM ai_connectors WHERE connector_id = $1`, [connector.connector_id]);
+    });
+
+    it('second hello on an authenticated session → close 1008 (never self-replacement)', async function () {
+        this.timeout(10000);
+        const { connector, token } = await createActivatedConnector(wsA, 'ws-rehello');
+        const ws = await connect(main.url);
+        send(ws, HELLO(token));
+        await nextMessage(ws);
+        const closed = nextClose(ws);
+        send(ws, HELLO(token)); // duplicate hello — protocol violation
+        const res = await closed;
+        expect(res.code).to.equal(1008);
+        await query(`DELETE FROM ai_connectors WHERE connector_id = $1`, [connector.connector_id]);
+    });
 });
