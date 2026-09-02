@@ -147,28 +147,47 @@ async function createConnector({ workspaceId, name, runtimeType = 'openai-compat
 
 /**
  * (Re)issue the one-time registration token for a still-PENDING connector.
- * A previously issued token dies the moment this commits (hash replaced).
- * Revoked/activated connectors cannot be re-armed.
+ * A previously issued token dies the moment this commits (hash replaced) —
+ * after any re-arm there is EXACTLY ONE live registration token (the last
+ * committed). Serialized with SELECT … FOR UPDATE, so two concurrent re-arms
+ * cannot interleave: the loser blocks on the row lock, re-validates
+ * (pending, not revoked) and replaces the winner's hash — last-writer-wins,
+ * no torn state. Revoked/activated connectors cannot be re-armed (validated
+ * INSIDE the lock, fail-closed order like activateConnector §8.1).
  * @returns {Promise<{connector:object, regToken:string, regExpiresAt:number}|null>}
  */
 async function issueRegistrationToken(connectorId, workspaceId, now = Date.now()) {
     if (!connectorId || !workspaceId) return null;
-    const probe = await query(`
-        SELECT 1 FROM ai_connectors
-        WHERE connector_id = $1 AND workspace_id = $2
-          AND status = 'pending' AND revoked_at IS NULL
-    `, [connectorId, workspaceId]);
-    if (!probe.rows[0]) return null;
-    const { token, secretHash } = generateRegToken(connectorId);
-    const regExpiresAt = now + REG_TOKEN_TTL_MS;
-    const { rows } = await query(`
-        UPDATE ai_connectors SET reg_token_hash = $3, reg_expires_at = $4
-        WHERE connector_id = $1 AND workspace_id = $2
-          AND status = 'pending' AND revoked_at IS NULL
-        RETURNING ${PUBLIC_COLUMNS}
-    `, [connectorId, workspaceId, secretHash, regExpiresAt]);
-    if (!rows[0]) return null;
-    return { connector: rows[0], regToken: token, regExpiresAt };
+    const client = await getPool().connect();
+    try {
+        await client.query('BEGIN');
+        // Row-level lock — the serialization point for concurrent re-arms.
+        const { rows } = await client.query(`
+            SELECT connector_id, workspace_id, status, revoked_at
+            FROM ai_connectors
+            WHERE connector_id = $1 AND workspace_id = $2
+            FOR UPDATE
+        `, [connectorId, workspaceId]);
+        const row = rows[0];
+        if (!row || row.revoked_at != null || row.status !== 'pending') {
+            await client.query('COMMIT');
+            return null;
+        }
+        const { token, secretHash } = generateRegToken(connectorId);
+        const regExpiresAt = now + REG_TOKEN_TTL_MS;
+        const { rows: updated } = await client.query(`
+            UPDATE ai_connectors SET reg_token_hash = $2, reg_expires_at = $3
+            WHERE connector_id = $1
+            RETURNING ${PUBLIC_COLUMNS}
+        `, [connectorId, secretHash, regExpiresAt]);
+        await client.query('COMMIT');
+        return { connector: updated[0], regToken: token, regExpiresAt };
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+    } finally {
+        client.release();
+    }
 }
 
 /**
@@ -309,28 +328,47 @@ async function authenticateConnector(token) {
 
 /**
  * Rotate the persistent credential: replace the token hash (the old token
- * dies the moment this commits). Returns the new one-time token, or null
- * when the connector does not belong to the workspace / is revoked / was
- * never activated.
- * @returns {Promise<{connector:object, token:string, tokenPrefix:string, previousTokenHash:string}|null>}
+ * dies the moment this commits). Single serialized PG transaction with a
+ * row-level lock, so concurrent rotations cannot interleave: each commits
+ * from a fresh locked read, exactly one persistent credential exists at any
+ * time, and the LAST committed rotation wins (earlier plaintext tokens are
+ * dead the moment their hash is overwritten — authentication always checks
+ * the current row state). Returns the new one-time token, or null when the
+ * connector does not belong to the workspace / is revoked / was never
+ * activated. The previous credential hash is NOT returned — hashes are
+ * internal state, callers verify outcomes through authenticateConnector.
+ * @returns {Promise<{connector:object, token:string, tokenPrefix:string}|null>}
  */
 async function rotateConnectorCredential(connectorId, workspaceId) {
-    const { rows: probeRows } = await query(`
-        SELECT token_hash FROM ai_connectors
-        WHERE connector_id = $1 AND workspace_id = $2
-          AND revoked_at IS NULL AND token_hash IS NOT NULL
-    `, [connectorId, workspaceId]);
-    if (!probeRows[0]) return null;
-    const previousTokenHash = probeRows[0].token_hash;
-    const { token, secretHash, tokenPrefix } = generateCredential(connectorId);
-    const { rows } = await query(`
-        UPDATE ai_connectors SET token_hash = $3, token_prefix = $4
-        WHERE connector_id = $1 AND workspace_id = $2
-          AND revoked_at IS NULL AND token_hash IS NOT NULL
-        RETURNING ${PUBLIC_COLUMNS}
-    `, [connectorId, workspaceId, secretHash, tokenPrefix]);
-    if (!rows[0]) return null;
-    return { connector: rows[0], token, tokenPrefix, previousTokenHash };
+    const client = await getPool().connect();
+    try {
+        await client.query('BEGIN');
+        // Row-level lock — validates state under the lock, never stale.
+        const { rows: locked } = await client.query(`
+            SELECT connector_id, workspace_id, revoked_at, token_hash
+            FROM ai_connectors
+            WHERE connector_id = $1 AND workspace_id = $2
+            FOR UPDATE
+        `, [connectorId, workspaceId]);
+        const row = locked[0];
+        if (!row || row.revoked_at != null || row.token_hash == null) {
+            await client.query('COMMIT');
+            return null;
+        }
+        const { token, secretHash, tokenPrefix } = generateCredential(connectorId);
+        const { rows: updated } = await client.query(`
+            UPDATE ai_connectors SET token_hash = $2, token_prefix = $3
+            WHERE connector_id = $1
+            RETURNING ${PUBLIC_COLUMNS}
+        `, [connectorId, secretHash, tokenPrefix]);
+        await client.query('COMMIT');
+        return { connector: updated[0], token, tokenPrefix };
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+    } finally {
+        client.release();
+    }
 }
 
 /**

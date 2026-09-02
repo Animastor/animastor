@@ -305,7 +305,10 @@ describe('LLM Connector credential lifecycle (LAC-1)', () => {
         expect(rot).to.not.equal(null);
         expect(rot.token).to.match(/^llmc\./);
         expect(rot.token).to.not.equal(act.token);
-        expect(rot.previousTokenHash).to.equal(repo.parseToken(act.token).secretHash);
+        // Hashes are internal state — the public rotation result never
+        // carries the previous (or any) credential hash.
+        expect(rot.previousTokenHash).to.equal(undefined);
+        expect(JSON.stringify(rot)).to.not.include(repo.parseToken(act.token).secretHash);
 
         // Old credential is dead the moment rotation commits.
         expect(await repo.authenticateConnector(act.token)).to.equal(null);
@@ -313,6 +316,51 @@ describe('LLM Connector credential lifecycle (LAC-1)', () => {
         const auth = await repo.authenticateConnector(rot.token);
         expect(auth.connector_id).to.equal(connector.connector_id);
         expect(auth.workspace_id).to.equal(wsA);
+        // Exactly one current persistent credential hash row-side.
+        const raw = await rawRow(connector.connector_id);
+        expect(raw.token_hash).to.equal(repo.parseToken(rot.token).secretHash);
+        await query(`DELETE FROM ai_connectors WHERE connector_id = $1`, [connector.connector_id]);
+    });
+
+    it('two CONCURRENT rotations → last committed wins, exactly one live credential', async function () {
+        this.timeout(30000);
+        const { connector, regToken } = await repo.createConnector({
+            workspaceId: wsA, name: 'rotate-race',
+        });
+        const act = await repo.activateConnector(regToken);
+        // Serialized by the row lock: each rotation commits from a fresh
+        // locked read; no stale state, no torn result.
+        const [r1, r2] = await Promise.all([
+            repo.rotateConnectorCredential(connector.connector_id, wsA),
+            repo.rotateConnectorCredential(connector.connector_id, wsA),
+        ]);
+        expect(r1).to.not.equal(null);
+        expect(r2).to.not.equal(null);
+        expect(r1.token).to.match(/^llmc\./);
+        expect(r2.token).to.match(/^llmc\./);
+        expect(r1.token).to.not.equal(r2.token);
+        expect(r1.token).to.not.equal(act.token);
+        expect(r2.token).to.not.equal(act.token);
+        // Neither result leaks the previous credential hash.
+        expect(r1.previousTokenHash).to.equal(undefined);
+        expect(r2.previousTokenHash).to.equal(undefined);
+
+        // DB state: exactly ONE current token_hash — matching the LAST
+        // committed rotation.
+        const raw = await rawRow(connector.connector_id);
+        const candidates = [r1, r2].map((r) => repo.parseToken(r.token).secretHash);
+        expect(candidates).to.include(raw.token_hash);
+        expect(candidates.filter((h) => h === raw.token_hash)).to.have.lengthOf(1);
+
+        // Exactly one of the two fresh tokens authenticates: the one whose
+        // hash is the committed state (the last rotation); the other is
+        // already stale. The pre-race credential is dead either way.
+        const auth1 = await repo.authenticateConnector(r1.token);
+        const auth2 = await repo.authenticateConnector(r2.token);
+        expect([auth1, auth2].filter((a) => a !== null)).to.have.lengthOf(1);
+        if (auth1) { expect(auth1.connector_id).to.equal(connector.connector_id); }
+        else { expect(auth2.connector_id).to.equal(connector.connector_id); }
+        expect(await repo.authenticateConnector(act.token)).to.equal(null);
         await query(`DELETE FROM ai_connectors WHERE connector_id = $1`, [connector.connector_id]);
     });
 
@@ -412,6 +460,51 @@ describe('LLM Connector credential lifecycle (LAC-1)', () => {
         expect(act.ok).to.equal(true);
         // Activated connectors cannot be re-armed.
         expect(await repo.issueRegistrationToken(connector.connector_id, wsA)).to.equal(null);
+        await query(`DELETE FROM ai_connectors WHERE connector_id = $1`, [connector.connector_id]);
+    });
+
+    it('two CONCURRENT re-arms → exactly one live registration token (last committed)', async function () {
+        this.timeout(30000);
+        const { connector, regToken } = await repo.createConnector({ workspaceId: wsA, name: 're-arm-race' });
+        // Serialized by the row lock: each re-arm commits from a fresh locked
+        // read and replaces the previous hash — after both, exactly ONE token
+        // (the last committed) can activate.
+        const [r1, r2] = await Promise.all([
+            repo.issueRegistrationToken(connector.connector_id, wsA),
+            repo.issueRegistrationToken(connector.connector_id, wsA),
+        ]);
+        expect(r1).to.not.equal(null);
+        expect(r2).to.not.equal(null);
+        expect(r1.regToken).to.not.equal(r2.regToken);
+        expect(r1.regToken).to.not.equal(regToken);
+        expect(r2.regToken).to.not.equal(regToken);
+
+        // DB state: exactly one live reg-token hash — the last committed.
+        const raw = await rawRow(connector.connector_id);
+        const candidates = [r1, r2].map((r) => repo.parseRegToken(r.regToken).secretHash);
+        expect(candidates).to.include(raw.reg_token_hash);
+        expect(candidates.filter((h) => h === raw.reg_token_hash)).to.have.lengthOf(1);
+        expect(raw.reg_token_hash).to.not.equal(repo.parseRegToken(regToken).secretHash);
+
+        // Exactly one of the three tokens activates; the rest are dead.
+        const attempts = await Promise.all([
+            repo.activateConnector(regToken),
+            repo.activateConnector(r1.regToken),
+            repo.activateConnector(r2.regToken),
+        ]);
+        expect(attempts.filter((a) => a.ok)).to.have.lengthOf(1);
+        expect(attempts.filter((a) => !a.ok && a.reason === 'registration_already_used')).to.have.lengthOf(2);
+        const winner = attempts.find((a) => a.ok);
+        expect(winner.connector.connector_id).to.equal(connector.connector_id);
+        expect(winner.connector.status).to.equal('online');
+        // After activation no registration token remains usable.
+        for (const a of attempts) {
+            if (!a.ok) {
+                expect((await repo.activateConnector(
+                    [regToken, r1.regToken, r2.regToken][attempts.indexOf(a)]
+                )).ok).to.equal(false);
+            }
+        }
         await query(`DELETE FROM ai_connectors WHERE connector_id = $1`, [connector.connector_id]);
     });
 
