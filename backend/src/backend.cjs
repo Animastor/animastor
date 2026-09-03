@@ -244,6 +244,13 @@ app.use(['/api/v1/ai-connector/registrations', '/api/v1/ai-connector/registratio
 }));
 require('./routes/ai-connector-routes.cjs').createAiConnectorRoutes({ redis })(app);
 
+// LLM Sharing Phase 1 — Control Plane (SH-AI-1): workspace-owner lifecycle
+// routes for shareable inference endpoints (Private by default; users only;
+// foreign ids indistinguishable 404). The shared-pool resolver seam lives in
+// services/ai-connector/shared-pool.js — consumer-side shared discovery is a
+// later phase by design.
+require('./routes/ai-endpoint-routes.cjs').createAiEndpointRoutes()(app);
+
 // Admin foundation: system AI control (kill switch + system provider) +
 // SYSTEM worker registry (Animastor-operated pool, PW-4 fail-closed model).
 // Guarded by requireAdmin; served on admin.animastor.in behind Basic Auth.

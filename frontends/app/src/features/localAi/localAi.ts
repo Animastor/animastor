@@ -238,3 +238,61 @@ export const OFFLINE_TROUBLESHOOT_KEYS = [
 export function buildBindingBody(connectorId: string, model: string): { provider_type: 'local-ai'; connector_id: string; model: string } {
   return { provider_type: 'local-ai', connector_id: connectorId, model: model.trim() };
 }
+
+// ── LLM Sharing Phase 1 — Share this AI (minimal owner-side UI) ──────────────
+// Endpoint row shape from GET /api/v1/ai-endpoints — no credentials, no
+// runtime URL, no local IP, no filesystem detail (the backend contract
+// guarantees this by construction; the type mirrors it).
+
+/** The four sharing-relevant UI states. Derived, not stored: the badge
+ *  reflects availability FIRST (offline / runtime unavailable), then the
+ *  sharing state (Private / Shared) — lifecycle states stay separate. */
+export type ShareStatus = 'private' | 'shared' | 'offline' | 'runtime_unavailable';
+
+export interface AiEndpoint {
+  endpoint_id: string;
+  workspace_id: string;
+  connector_id: string;
+  name: string;
+  runtime_type: ConnectorRuntimeType;
+  model: string | null;
+  description: string | null;
+  enabled: boolean;
+  sharing_enabled: boolean;
+  connector_live: boolean;
+  runtime_reachable: boolean;
+  models_discovered: number;
+  concurrency_limit: number;
+  created_at: number | null;
+  updated_at: number | null;
+}
+
+/**
+ * Sharing badge state: availability outranks sharing state — an offline
+ * shared endpoint shows Offline (the honest "nothing can be served right
+ * now" state), a live-but-unreachable shared one shows Runtime unavailable,
+ * and only a fully available endpoint shows Private/Shared.
+ */
+export function shareStatus(
+  e: Pick<AiEndpoint, 'sharing_enabled' | 'connector_live' | 'runtime_reachable'>,
+): ShareStatus {
+  if (!e.connector_live) return 'offline';
+  if (!e.runtime_reachable) return 'runtime_unavailable';
+  return e.sharing_enabled ? 'shared' : 'private';
+}
+
+/** i18n key for the sharing badge. */
+export function shareStatusKey(s: ShareStatus): string {
+  const map: Record<ShareStatus, string> = {
+    private: 'share_ai_status_private',
+    shared: 'share_ai_status_shared',
+    offline: 'share_ai_status_offline',
+    runtime_unavailable: 'share_ai_status_runtime_unavailable',
+  };
+  return map[s];
+}
+
+/** CSS class for the sharing pill (worker pill pattern). */
+export function shareStatusClass(s: ShareStatus): string {
+  return s === 'shared' ? 'worker__status--online' : 'worker__status--offline';
+}

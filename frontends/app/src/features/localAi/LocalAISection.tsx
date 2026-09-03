@@ -42,6 +42,9 @@ import {
   buildRunCommand,
   REGISTRATION_STEP_KEYS,
   OFFLINE_TROUBLESHOOT_KEYS,
+  shareStatus,
+  shareStatusKey,
+  shareStatusClass,
 } from './localAi';
 import type {
   AiConnectorStatus,
@@ -51,6 +54,7 @@ import type {
   RefreshModelsResponse,
   ConnectorTestResponse,
   LocalProviderMeta,
+  AiEndpoint,
 } from './localAi';
 
 interface ProviderRead { provider: LocalProviderMeta | null; has_workspace_provider: boolean }
@@ -153,6 +157,9 @@ export function LocalAISection() {
   >(null);
   // Per-connector model selection for the provider binding (transient).
   const [bindingModel, setBindingModel] = useState<Record<string, string>>({});
+  // LLM Sharing Phase 1 — endpoints by connector id (owner view).
+  const [endpointsBy, setEndpointsBy] = useState<Record<string, AiEndpoint[]>>({});
+  const [confirmShare, setConfirmShare] = useState<AiEndpoint | null>(null);
 
   // Fresh-value refs so the polling interval (mounted once) actually sees
   // the CURRENT busy/confirmRevoke state — a stale closure here would keep
@@ -166,16 +173,24 @@ export function LocalAISection() {
     if (pollInFlight.current) return;
     pollInFlight.current = true;
     try {
-      const [st, models, prov] = await Promise.all([
+      const [st, models, prov, eps] = await Promise.all([
         getJson<{ connectors: AiConnectorStatus[] }>('/ai-connector/status'),
         getJson<{ connectors: AiConnectorModels[] }>('/ai-connector/models'),
         getJson<ProviderRead>('/settings/ai/provider'),
+        // LLM Sharing Phase 1: owner's endpoint rows (401/404 silently
+        // ignored — an account without endpoints sees none).
+        getJson<{ endpoints: AiEndpoint[] }>('/ai-endpoints').catch(() => ({ endpoints: [] as AiEndpoint[] })),
       ]);
       setConnectors(st.connectors);
       const by: Record<string, string[]> = {};
       for (const c of models.connectors) by[c.connector_id] = c.models;
       setModelsBy(by);
       setProvider(prov.provider && prov.provider.provider_type === 'local-ai' ? prov.provider : null);
+      const eby: Record<string, AiEndpoint[]> = {};
+      for (const e of eps.endpoints || []) {
+        (eby[e.connector_id] = eby[e.connector_id] || []).push(e);
+      }
+      setEndpointsBy(eby);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -366,6 +381,74 @@ export function LocalAISection() {
     }
   };
 
+  // ── LLM Sharing Phase 1 — Share this AI ─────────────────────────────────
+  // Minimal owner-side control plane: create endpoint (Private), enable /
+  // disable sharing, delete. NEVER shows credentials, local IP, runtime URL
+  // or filesystem info — the backend endpoint shape has none of it.
+
+  const onCreateEndpoint = async (c: AiConnectorStatus) => {
+    if (busy) return;
+    setBusy(true); setError(''); setNotice(''); setTestOk(null);
+    try {
+      const res = await postJson<{ endpoint: AiEndpoint }>('/ai-endpoints', {
+        name: `${c.name} endpoint`,
+        connector_id: c.connector_id,
+        runtime_type: c.runtime_type,
+      });
+      setNotice(tf('share_ai_endpoint_created', res.endpoint.name));
+      await loadStatus();
+    } catch (e) {
+      setError(humanError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onShare = async (e: AiEndpoint) => {
+    if (busy) return;
+    setBusy(true); setError(''); setNotice(''); setTestOk(null);
+    try {
+      await postJson(`/ai-endpoints/${encodeURIComponent(e.endpoint_id)}/share`, {
+        confirm_share: true,
+      });
+      setConfirmShare(null);
+      setNotice(t('share_ai_enabled_notice'));
+      await loadStatus();
+    } catch (err) {
+      setError(humanError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onUnshare = async (e: AiEndpoint) => {
+    if (busy) return;
+    setBusy(true); setError(''); setNotice(''); setTestOk(null);
+    try {
+      await deleteJson(`/ai-endpoints/${encodeURIComponent(e.endpoint_id)}/share`);
+      setNotice(t('share_ai_disabled_notice'));
+      await loadStatus();
+    } catch (err) {
+      setError(humanError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onDeleteEndpoint = async (e: AiEndpoint) => {
+    if (busy) return;
+    setBusy(true); setError(''); setNotice(''); setTestOk(null);
+    try {
+      await deleteJson(`/ai-endpoints/${encodeURIComponent(e.endpoint_id)}`);
+      setNotice(t('share_ai_endpoint_deleted'));
+      await loadStatus();
+    } catch (err) {
+      setError(humanError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const boundConnectorId = provider?.connector_id ?? null;
 
   return (
@@ -441,6 +524,7 @@ export function LocalAISection() {
                 const isBound = boundConnectorId === c.connector_id;
                 const reachable = runtimeReachable(c);
                 const rtInfo = runtimeInfo(c);
+                const endpoints = endpointsBy[c.connector_id] ?? [];
                 return (
                   <div class="worker__row" key={c.connector_id}>
                     <div class="worker__row-main">
@@ -473,6 +557,72 @@ export function LocalAISection() {
                       )}
                     </div>
                     <p class="card__hint">{t('local_ai_models_disclaimer')}</p>
+
+                    {/* ── LLM Sharing Phase 1: Share this AI (minimal
+                        owner-side control plane — no marketplace) ── */}
+                    <div class="worker__row-meta">
+                      <span class="card__label">{t('share_ai_title')}</span>
+                    </div>
+                    {endpoints.length === 0 ? (
+                      <>
+                        <p class="card__hint card__hint--wrap">{t('share_ai_no_endpoint_hint')}</p>
+                        {c.status !== 'pending' && (
+                          <div class="settings__actions">
+                            <button
+                              class="btn btn--outlined"
+                              disabled={busy}
+                              title={t('share_ai_create_endpoint_hint')}
+                              onClick={() => void onCreateEndpoint(c)}
+                            >
+                              {t('share_ai_create_endpoint')}
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      endpoints.map((ep) => {
+                        const ss = shareStatus(ep);
+                        return (
+                          <div class="worker__row-meta" key={ep.endpoint_id}>
+                            <span>{ep.name}</span>
+                            <span>·</span>
+                            <span class={'worker__status ' + shareStatusClass(ss)}>{t(shareStatusKey(ss) as StrKey)}</span>
+                            <span>·</span>
+                            <span>{tf('share_ai_concurrency_label', String(ep.concurrency_limit))}</span>
+                            <span>·</span>
+                            <span>{tf('local_ai_models_count', String(ep.models_discovered))}</span>
+                            {ep.model && (
+                              <>
+                                <span>·</span>
+                                <span>{tf('share_ai_models_label', ep.model)}</span>
+                              </>
+                            )}
+                            <div class="settings__actions">
+                              {!ep.sharing_enabled ? (
+                                <button
+                                  class="btn btn--outlined"
+                                  disabled={busy}
+                                  onClick={() => setConfirmShare(ep)}
+                                >
+                                  {t('share_ai_share_button')}
+                                </button>
+                              ) : (
+                                <button class="btn btn--outlined" disabled={busy} onClick={() => void onUnshare(ep)}>
+                                  {t('share_ai_unshare_button')}
+                                </button>
+                              )}
+                              <button
+                                class="btn btn--outlined btn--error"
+                                disabled={busy}
+                                onClick={() => void onDeleteEndpoint(ep)}
+                              >
+                                {t('worker_delete')}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
 
                     {/* Model picker for the provider binding (free text or a
                         discovered id — the no-registry principle). */}
@@ -585,6 +735,27 @@ export function LocalAISection() {
               </button>
               <button class="btn btn--error" onClick={() => void onRevoke(confirmRevoke)} disabled={busy}>
                 {busy ? t('play_loading') : t('worker_revoke')}
+              </button>
+            </div>
+          </>
+        </Modal>
+      )}
+
+      {/* Share confirmation (LLM Sharing Phase 1 — explicit owner consent) */}
+      {confirmShare && (
+        <Modal
+          title={t('share_ai_share_button')}
+          onClose={() => { if (!busy) setConfirmShare(null); }}
+        >
+          <>
+            <p class="modal__notice">{t('share_ai_enable_confirm')}</p>
+            <p class="card__hint card__hint--wrap">{t('share_ai_create_endpoint_hint')}</p>
+            <div class="modal__footer">
+              <button class="btn btn--outlined" onClick={() => { if (!busy) setConfirmShare(null); }} disabled={busy}>
+                {t('dialog_cancel')}
+              </button>
+              <button class="btn" onClick={() => void onShare(confirmShare)} disabled={busy}>
+                {busy ? t('play_loading') : t('share_ai_share_button')}
               </button>
             </div>
           </>

@@ -18,6 +18,9 @@ import {
   buildBindingBody,
   REGISTRATION_STEP_KEYS,
   OFFLINE_TROUBLESHOOT_KEYS,
+  shareStatus,
+  shareStatusKey,
+  shareStatusClass,
 } from './localAi';
 
 describe('localAi runtime types', () => {
@@ -199,5 +202,40 @@ describe('UI key lists are non-empty and i18n-shaped', () => {
     expect(OFFLINE_TROUBLESHOOT_KEYS.length).toBeGreaterThan(0);
     expect(REGISTRATION_STEP_KEYS.every((k) => k.startsWith('local_ai_'))).toBe(true);
     expect(OFFLINE_TROUBLESHOOT_KEYS.every((k) => k.startsWith('local_ai_'))).toBe(true);
+  });
+});
+
+// ── LLM Sharing Phase 1 — Share this AI ────────────────────────────────────
+
+describe('shareStatus — availability outranks sharing state', () => {
+  it('offline connector → Offline even when sharing is enabled', () => {
+    expect(shareStatus({ sharing_enabled: true, connector_live: false, runtime_reachable: false })).toBe('offline');
+    expect(shareStatus({ sharing_enabled: true, connector_live: false, runtime_reachable: true })).toBe('offline');
+  });
+
+  it('live but runtime unreachable → Runtime unavailable (honest, never optimistic)', () => {
+    expect(shareStatus({ sharing_enabled: true, connector_live: true, runtime_reachable: false })).toBe('runtime_unavailable');
+    expect(shareStatus({ sharing_enabled: false, connector_live: true, runtime_reachable: false })).toBe('runtime_unavailable');
+  });
+
+  it('fully available → Private or Shared per the policy', () => {
+    expect(shareStatus({ sharing_enabled: false, connector_live: true, runtime_reachable: true })).toBe('private');
+    expect(shareStatus({ sharing_enabled: true, connector_live: true, runtime_reachable: true })).toBe('shared');
+  });
+});
+
+describe('shareStatusKey / shareStatusClass — badge mapping', () => {
+  it('maps the four states to their i18n keys', () => {
+    expect(shareStatusKey('private')).toBe('share_ai_status_private');
+    expect(shareStatusKey('shared')).toBe('share_ai_status_shared');
+    expect(shareStatusKey('offline')).toBe('share_ai_status_offline');
+    expect(shareStatusKey('runtime_unavailable')).toBe('share_ai_status_runtime_unavailable');
+  });
+
+  it('only Shared renders the online pill class', () => {
+    expect(shareStatusClass('shared')).toBe('worker__status--online');
+    expect(shareStatusClass('private')).toBe('worker__status--offline');
+    expect(shareStatusClass('offline')).toBe('worker__status--offline');
+    expect(shareStatusClass('runtime_unavailable')).toBe('worker__status--offline');
   });
 });

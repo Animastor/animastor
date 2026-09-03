@@ -391,6 +391,91 @@ CREATE TABLE IF NOT EXISTS ai_connectors (
 
 CREATE INDEX IF NOT EXISTS idx_ai_connectors_workspace ON ai_connectors(workspace_id);
 
+-- ======================================================
+-- LLM Sharing Phase 1 — Control Plane (SH-AI-1)
+-- ======================================================
+-- The shareable resource is the INFERENCE ENDPOINT / serving capacity of a
+-- registered Local AI Connector — never the model file, never a bare GPU
+-- (llm-agent-resource-sharing-model.md §5/§7, local-ai-connector-v1.md §14).
+--
+-- ai_endpoints — the first-class "AI Endpoint" record (sharing doc §15-V2
+-- shape, realized on the connector seam). It references a connector row and
+-- NOTHING secret: no plaintext credentials, no runtime URL, no API keys, no
+-- GPU secrets. The Connector stays the ONLY transport to the local machine
+-- (Cloud → registered connector WS → local runtime) — there is no
+-- cloud→localhost path, no arbitrary URL surface (AD-5 untouched).
+--
+-- Endpoint rows are the OWNER'S declaration of a shareable resource and the
+-- sharing STATE lives in ai_endpoint_share_policies (below). Lifecycle
+-- states are deliberately SEPARATE fields, never one enum:
+--   endpoint exists          (this row)
+--   sharing enabled          (policy.enabled)
+--   connector live           (ai-connector registry WS session)
+--   runtime reachable        (connector heartbeat runtime_ok)
+--   models discovered        (connector models[] — discovered ≠ loaded, §7)
+-- Availability of an endpoint FOLLOWS its connector's liveness — it is
+-- never stored on the endpoint row itself (live WS session authoritative).
+--
+-- NOTE for editors — runMigrations splits SCHEMA_SQL on the semicolon
+-- character, so SQL comments in this block must never contain one.
+CREATE TABLE IF NOT EXISTS ai_endpoints (
+    endpoint_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id    UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    connector_id    UUID NOT NULL REFERENCES ai_connectors(connector_id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    -- runtime/model metadata snapshot (label only — never a URL)
+    runtime_type    TEXT NOT NULL DEFAULT 'openai-compatible'
+                    CHECK(runtime_type IN ('ollama','vllm','llamacpp','lmstudio','openai-compatible')),
+    model           TEXT,
+    description     TEXT,
+    -- owner-managed availability switch, distinct from sharing state
+    enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+    deleted_at      BIGINT,
+    created_by      UUID REFERENCES users(user_id),
+    created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000),
+    updated_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_endpoints_workspace ON ai_endpoints(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_ai_endpoints_connector ON ai_endpoints(connector_id);
+
+-- ai_endpoint_share_policies — the V1 share policy (worker share_policies
+-- discipline, adapted to endpoints). Sharing is a POLICY, never an ownership
+-- event (sharing doc §6.2): the owner's own resolution path is untouched
+-- (D3 — owner traffic never traverses the pool), ownership never transfers.
+--
+-- V1 policy is deliberately minimal: enabled + access mode + concurrency
+-- limit + optional request/token limits. NO billing, NO credits, NO
+-- cost_risk declaration, NO marketplace fields (explicitly deferred —
+-- sharing doc §15 V1-excludes).
+--
+-- enabled=false or revoked rows mean Private (default). Default for every
+-- endpoint (including all pre-existing Local AI connectors after this
+-- migration) is Private — sharing NEVER auto-enables (§13 migration safety).
+CREATE TABLE IF NOT EXISTS ai_endpoint_share_policies (
+    policy_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    endpoint_id     UUID NOT NULL REFERENCES ai_endpoints(endpoint_id) ON DELETE CASCADE,
+    workspace_id    UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    enabled         BOOLEAN NOT NULL DEFAULT FALSE,
+    access_mode     TEXT NOT NULL DEFAULT 'public' CHECK(access_mode IN ('public')),
+    concurrency_limit INTEGER NOT NULL DEFAULT 1 CHECK(concurrency_limit >= 1 AND concurrency_limit <= 8),
+    request_limit   BIGINT,
+    token_limit     BIGINT,
+    revoked_at      BIGINT,
+    created_by      UUID REFERENCES users(user_id),
+    created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000),
+    updated_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000)
+);
+
+-- One policy row per endpoint (1:1): the partial unique index keeps at most
+-- one live policy and disable/enable flips the SAME row (Share → Private →
+-- Shared is a state transition, not a new policy).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_endpoint_share_policies_one
+    ON ai_endpoint_share_policies(endpoint_id) WHERE revoked_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_ai_endpoint_share_policies_ws
+    ON ai_endpoint_share_policies(workspace_id);
+
 -- Reconciliation & recovery log
 CREATE TABLE IF NOT EXISTS reconciliation_events (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -1530,6 +1615,68 @@ async function runMigrations() {
         console.log('[PG] LAC-2: workspace_ai_providers.connector_id added (local-ai binding)');
     } catch (err) {
         console.error('[PG] LAC-2 provider binding column migration failed:', err.message);
+        throw err;
+    }
+
+    // ======================================================
+    // SH-AI-1: LLM Sharing Phase 1 — Control Plane (ai_endpoints +
+    //          ai_endpoint_share_policies)
+    // ======================================================
+    // Purely additive migration (llm-sharing-phase1-control-plane.md):
+    // two new tables, no changes to ai_connectors, workspace_ai_providers,
+    // workers or any existing column. Fresh and long-lived DBs migrate
+    // identically (single-file migration discipline).
+    //
+    // Migration safety (§13 of the task brief): after deploy ALL existing
+    // connectors remain private — no endpoint rows are created for them
+    // (an endpoint is created explicitly by its owner), every policy row
+    // defaults to enabled=false (Private), existing workspace_ai_providers
+    // keep working unchanged, and sharing never auto-enables. Rollback is
+    // dropping the two tables — nothing else references them.
+    try {
+        await query(`CREATE TABLE IF NOT EXISTS ai_endpoints (
+            endpoint_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            workspace_id    UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            connector_id    UUID NOT NULL REFERENCES ai_connectors(connector_id) ON DELETE CASCADE,
+            name            TEXT NOT NULL,
+            runtime_type    TEXT NOT NULL DEFAULT 'openai-compatible'
+                            CHECK(runtime_type IN ('ollama','vllm','llamacpp','lmstudio','openai-compatible')),
+            model           TEXT,
+            description     TEXT,
+            enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+            deleted_at      BIGINT,
+            created_by      UUID REFERENCES users(user_id),
+            created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000),
+            updated_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000)
+        )`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_ai_endpoints_workspace
+            ON ai_endpoints(workspace_id)`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_ai_endpoints_connector
+            ON ai_endpoints(connector_id)`);
+        await query(`CREATE TABLE IF NOT EXISTS ai_endpoint_share_policies (
+            policy_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            endpoint_id     UUID NOT NULL REFERENCES ai_endpoints(endpoint_id) ON DELETE CASCADE,
+            workspace_id    UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            enabled         BOOLEAN NOT NULL DEFAULT FALSE,
+            access_mode     TEXT NOT NULL DEFAULT 'public' CHECK(access_mode IN ('public')),
+            concurrency_limit INTEGER NOT NULL DEFAULT 1 CHECK(concurrency_limit >= 1 AND concurrency_limit <= 8),
+            request_limit   BIGINT,
+            token_limit     BIGINT,
+            revoked_at      BIGINT,
+            created_by      UUID REFERENCES users(user_id),
+            created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000),
+            updated_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000)
+        )`);
+        // One live policy per endpoint — the enforcement point (worker D1
+        // discipline): disable/enable flips the same row, revoke frees the
+        // slot for a future policy generation.
+        await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_endpoint_share_policies_one
+            ON ai_endpoint_share_policies(endpoint_id) WHERE revoked_at IS NULL`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_ai_endpoint_share_policies_ws
+            ON ai_endpoint_share_policies(workspace_id)`);
+        console.log('[PG] SH-AI-1: ai_endpoints + ai_endpoint_share_policies initialized (LLM Sharing Phase 1 control plane)');
+    } catch (err) {
+        console.error('[PG] SH-AI-1 sharing control plane migration failed:', err.message);
         throw err;
     }
 
