@@ -58,7 +58,6 @@ class LocalAiSettingsFragment : Fragment(R.layout.fragment_local_ai_settings) {
     private var busy = false
     // Per-connector model selection (transient; empty = backend default)
     private val selectedModel = mutableMapOf<String, String>()
-    private var typeInitialized = false
 
     companion object {
         private val RUNTIME_LABELS = mapOf(
@@ -79,10 +78,6 @@ class LocalAiSettingsFragment : Fragment(R.layout.fragment_local_ai_settings) {
 
         val labels = LocalAiHelpers.RUNTIME_TYPES.map { getString(RUNTIME_LABELS[it] ?: R.string.local_ai_runtime_openai_compatible) }
         b.runtimeTypeSpinner.adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_dropdown_item, labels)
-        b.runtimeTypeSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) { typeInitialized = true }
-            override fun onNothingSelected(p: AdapterView<*>?) {}
-        }
 
         b.createButton.setOnClickListener { onCreate() }
         b.unbindButton.setOnClickListener { onUnbind() }

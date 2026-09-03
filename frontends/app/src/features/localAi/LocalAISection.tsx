@@ -21,7 +21,7 @@
 // credential material (not even the prefix mask).
 // ─────────────────────────────────────────────────────────────────────────
 
-import { useState, useCallback, useEffect } from 'preact/hooks';
+import { useState, useCallback, useEffect, useRef } from 'preact/hooks';
 import { t, tf } from '../../app/i18n';
 import type { StrKey } from '../../app/i18n';
 import { getJson, postJson, putJson, deleteJson, ApiError } from '../../api/client';
@@ -154,7 +154,17 @@ export function LocalAISection() {
   // Per-connector model selection for the provider binding (transient).
   const [bindingModel, setBindingModel] = useState<Record<string, string>>({});
 
+  // Fresh-value refs so the polling interval (mounted once) actually sees
+  // the CURRENT busy/confirmRevoke state — a stale closure here would keep
+  // polling during operations and let slow polls overlap.
+  const busyRef = useRef(false);
+  const confirmRevokeRef = useRef<AiConnectorStatus | null>(null);
+  const pollInFlight = useRef(false);
+
   const loadStatus = useCallback(async () => {
+    // In-flight dedup: a slow poll never stacks on top of a newer one.
+    if (pollInFlight.current) return;
+    pollInFlight.current = true;
     try {
       const [st, models, prov] = await Promise.all([
         getJson<{ connectors: AiConnectorStatus[] }>('/ai-connector/status'),
@@ -168,8 +178,16 @@ export function LocalAISection() {
       setProvider(prov.provider && prov.provider.provider_type === 'local-ai' ? prov.provider : null);
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      pollInFlight.current = false;
     }
   }, []);
+
+  useEffect(() => {
+    // Keep the refs current for the mounted-once interval below.
+    busyRef.current = busy;
+    confirmRevokeRef.current = confirmRevoke;
+  }, [busy, confirmRevoke]);
 
   useEffect(() => {
     let alive = true;
@@ -178,10 +196,12 @@ export function LocalAISection() {
       if (alive) setLoaded(true);
     })();
     // Read-only status polling (PG + in-memory registry — no runtime probe,
-    // no inference; AD-7 intact). Light cadence; paused while busy.
-    const timer = setInterval(() => { if (!busy && !confirmRevoke) void loadStatus(); }, 15_000);
+    // no inference; AD-7 intact). Light cadence; paused while busy or while
+    // a confirm/revoke dialog is open.
+    const timer = setInterval(() => {
+      if (!busyRef.current && !confirmRevokeRef.current) void loadStatus();
+    }, 15_000);
     return () => { alive = false; clearInterval(timer); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const onCreate = async () => {

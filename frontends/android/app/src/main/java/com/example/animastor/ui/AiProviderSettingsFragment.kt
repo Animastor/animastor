@@ -108,15 +108,23 @@ class AiProviderSettingsFragment : Fragment(R.layout.fragment_ai_provider_settin
                 val res = RetrofitClient.api.getAiProvider()
                 val meta = res.provider
                 saved = meta
-                if (meta != null) {
-                    val typeIdx = BetaSettingsHelpers.VALID_PROVIDER_TYPES
-                        .indexOf(meta.provider_type ?: meta.provider ?: DEFAULT_TYPE)
-                        .coerceAtLeast(0)
-                    b.providerTypeSpinner.setSelection(typeIdx)
-                    b.endpointInput.setText(meta.endpoint ?: "")
-                    b.modelInput.setText(meta.model ?: "")
+                if (meta != null && meta.provider_type == "local-ai") {
+                    // Local AI binding — managed in the Local AI section (web
+                    // parity: AIProviderSection shows the same notice and does
+                    // NOT hydrate the cloud form with a fake provider).
+                    renderSavedState()
+                    showNotice(getString(R.string.ai_provider_local_active))
+                } else {
+                    if (meta != null) {
+                        val typeIdx = BetaSettingsHelpers.VALID_PROVIDER_TYPES
+                            .indexOf(meta.provider_type ?: meta.provider ?: DEFAULT_TYPE)
+                            .coerceAtLeast(0)
+                        b.providerTypeSpinner.setSelection(typeIdx)
+                        b.endpointInput.setText(meta.endpoint ?: "")
+                        b.modelInput.setText(meta.model ?: "")
+                    }
+                    renderSavedState()
                 }
-                renderSavedState()
             } catch (e: Throwable) {
                 showError(friendlyError(e))
             } finally {
@@ -139,7 +147,13 @@ class AiProviderSettingsFragment : Fragment(R.layout.fragment_ai_provider_settin
 
         val modelPart = meta.model?.let { " \u00B7 $it" } ?: ""
         val maskedPart = meta.api_key_masked?.takeIf { it.isNotEmpty() }?.let { " \u00B7 $it" } ?: ""
-        b.savedStateLabel.text = "${meta.endpoint ?: ""}$modelPart$maskedPart"
+        // local-ai rows carry no endpoint/key material (the connector binding
+        // lives in the Local AI section) — never render a fake cloud provider.
+        b.savedStateLabel.text = if (meta.provider_type == "local-ai") {
+            getString(R.string.ai_provider_local_active)
+        } else {
+            "${meta.endpoint ?: ""}$modelPart$maskedPart"
+        }
 
         // Status pill: last tested + OK/Failed/Untested.
         val statusText = when (meta.status) {
@@ -164,12 +178,16 @@ class AiProviderSettingsFragment : Fragment(R.layout.fragment_ai_provider_settin
         val apiKey = (b.apiKeyInput.text ?: "").toString()
         val model = (b.modelInput.text ?: "").toString()
 
+        // Web parity (AIProviderSection.onSave): a local-ai binding stores
+        // no usable cloud credential — switching to a cloud provider type
+        // is a fresh ADD (key required).
+        val current = saved
         val v = BetaSettingsHelpers.validateProviderInput(
             providerType = selectedType(),
             endpoint = endpoint,
             apiKey = apiKey,
             model = model,
-            isExisting = saved != null
+            isExisting = current != null && current.provider_type != "local-ai"
         )
         if (!v.ok) {
             showError(getString(stringResFor(v.errorKey)))

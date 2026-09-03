@@ -334,7 +334,8 @@ async function connectorChat(connectorId, payload, { timeoutMs = DEFAULTS.reques
     }
 
     // Micro-optimization for readability: attach logging at settle time via
-    // a wrapper so durations include the full round trip.
+    // a wrapper so durations include the full round trip. The .catch keeps
+    // a throwing logger from ever surfacing as an unhandled rejection.
     const startedAt = Date.now();
     promise.then((result) => {
         // Metadata-only log line (§10.3): ids, model, duration, status.
@@ -345,7 +346,7 @@ async function connectorChat(connectorId, payload, { timeoutMs = DEFAULTS.reques
         } else {
             logger.warn(`[AI-CONNECTOR] chat failed: ${code} (connector ${connectorId}, ${durationMs}ms)`);
         }
-    });
+    }).catch(() => { /* logging must never break the transport */ });
     return promise;
 }
 
