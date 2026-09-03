@@ -12,6 +12,7 @@ import { workerType } from '../app/routeState';
 import { navigate } from '../app/router';
 import type { Route } from '../app/router';
 import { PrivateWorkersSection } from '../features/workers/PrivateWorkersSection';
+import { LocalAISection } from '../features/localAi/LocalAISection';
 import {
   PROVIDER_TYPE_OPTIONS,
   OPENROUTER_DEFAULT_ENDPOINT,
@@ -24,13 +25,15 @@ import type { ProviderType, ProviderStatus } from '../features/aiProviders/aiPro
 
 // SettingsPage covers: /settings (general), /settings/vbook (section="vbook"),
 // /settings/worker (section="worker"), /settings/ai (section="ai"),
-// /settings/private-workers (section="private-workers", Phase 3).
+// /settings/private-workers (section="private-workers", Phase 3),
+// /settings/local-ai (section="local-ai", Local AI Connector V1 Phase 6).
 export function SettingsPage(props: { section?: string; path?: string }) {
   const { section } = props;
   if (section === 'vbook') return <VBookSection />;
   if (section === 'worker') return <WorkerSection />;
   if (section === 'ai') return <AIProviderSection />;
   if (section === 'private-workers') return <PrivateWorkersSection />;
+  if (section === 'local-ai') return <LocalAISection />;
   return <GeneralSection />;
 }
 
@@ -146,6 +149,7 @@ function GeneralSection() {
             destructive Cache/Storyboard buttons per user request. */}
         <div class="settings__group">
           <NavRow label={t('ai_provider_title')} onClick={() => navigate('/settings/ai')} />
+          <NavRow label={t('local_ai_title')} onClick={() => navigate('/settings/local-ai')} />
           <NavRow label={t('worker_mgmt_title')} onClick={() => navigate('/settings/private-workers')} />
           <NavRow label={t('vbook_settings_title')} onClick={() => navigate('/settings/vbook')} />
           <NavRow label={t('worker_settings_title')} onClick={() => navigate('/settings/worker')} />
@@ -215,12 +219,13 @@ interface AiProviderMeta {
   workspace_id: string;
   provider: string;
   provider_type: string;
-  endpoint: string;
+  endpoint: string | null;
   model: string | null;
   enabled: boolean;
   configured: boolean;
   has_api_key: boolean;
-  api_key_masked: string;
+  api_key_masked: string | null;
+  connector_id?: string | null; // local-ai binding only (Local AI Connector V1)
   status: ProviderStatus;
   last_tested_at: number | null;
 }
@@ -251,9 +256,16 @@ function AIProviderSection() {
         const meta = res.provider ?? null;
         setSaved(meta);
         if (meta) {
-          setProviderType((meta.provider_type as ProviderType) || 'openai-compatible');
-          setEndpoint(meta.endpoint || '');
-          setModel(meta.model || '');
+          if (meta.provider_type === 'local-ai') {
+            // Local AI binding — managed in the Local AI section. The cloud
+            // form stays at its defaults (no fake endpoint/model hydration);
+            // switching to a cloud provider requires a fresh key.
+            setNotice(t('ai_provider_local_active'));
+          } else {
+            setProviderType((meta.provider_type as ProviderType) || 'openai-compatible');
+            setEndpoint(meta.endpoint || '');
+            setModel(meta.model || '');
+          }
         }
       } catch (e) {
         if (alive) setError((e as Error).message);
@@ -269,7 +281,10 @@ function AIProviderSection() {
     // Validate on the client first (spec §16 — http(s) only, type allowlist,
     // key required on a fresh ADD). The backend re-validates everything.
     const v = validateProviderInput({
-      providerType, endpoint, apiKey, model, isExisting: !!saved,
+      providerType, endpoint, apiKey, model,
+      // A local-ai binding stores no usable cloud credential — switching to
+      // a cloud provider type is a fresh ADD (key required).
+      isExisting: !!saved && saved.provider_type !== 'local-ai',
     });
     if (!v.ok) { setError(t(v.error as StrKey)); return; }
     setBusy(true); setError(''); setNotice(''); setTestSuccess(null);
@@ -381,7 +396,9 @@ function AIProviderSection() {
             <>
               <p class="card__hint card__hint--wrap">
                 {saved
-                  ? `${saved.endpoint}${saved.model ? ` · ${saved.model}` : ''} · ${saved.api_key_masked}`
+                  ? (saved.provider_type === 'local-ai'
+                      ? t('ai_provider_local_active')
+                      : `${saved.endpoint}${saved.model ? ` · ${saved.model}` : ''} · ${saved.api_key_masked}`)
                   : t('ai_provider_none')}
               </p>
 

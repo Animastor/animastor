@@ -19,6 +19,9 @@ data class AiProviderMeta(
     val configured: Boolean = false,
     val has_api_key: Boolean = false,
     val api_key_masked: String? = null,
+    /** Local AI Connector V1 (Phase 6): the bound connector for
+     *  provider_type="local-ai" rows — null for cloud provider types. */
+    val connector_id: String? = null,
     /** "ok" | "failed" | "untested" — persisted by Test Connection. */
     val status: String? = null,
     /** Epoch SECONDS (PG BIGINT), not ms. */
@@ -45,6 +48,9 @@ data class AiProviderTestResponse(
     val ok: Boolean = false,
     val model: String? = null,
     val status: Int? = null,
-    val error: String? = null
+    val error: String? = null,
+    // Local AI Connector path (Phase 6): the sanitized error code
+    // (connector_offline / timeout / model_not_found / …) — never raw detail.
+    val code: String? = null
     // never includes apiKey — the backend strips it.
 )

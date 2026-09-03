@@ -125,6 +125,15 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 .addToBackStack(null)
                 .commit()
         }
+        // Local AI Connector V1 (web parity: /settings/local-ai) — local LLM
+        // runtime binding via the outbound connector.
+        b.localAiButton.setOnClickListener {
+            val fragment = LocalAiSettingsFragment()
+            parentFragmentManager.beginTransaction()
+                .add(R.id.nav_host_container, fragment, "LocalAiSettingsFragment")
+                .addToBackStack(null)
+                .commit()
+        }
 
         b.clearCacheButton.setOnClickListener {
             if (viewModel.bookId.isBlank()) {

@@ -1291,6 +1291,9 @@ button { font: inherit; color: inherit; }
 .worker__actions .btn { flex: 1 1 0; min-width: 0; padding: 0 0.5rem; }
 .worker__actions .btn--error { width: auto; }
 
+/* Local AI Connector (V1 Phase 6) — model hint line inside a connector row */
+.local-ai__model-hint { font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.7rem; }
+
 /* Private Worker Setup Center (Phase 3.1) — reuses card/btn/modal tokens */
 .worker__status--connecting { color: var(--warning); background: var(--warning-container, rgba(212, 168, 75, 0.14)); }
 .worker__status--error { color: var(--error); background: rgba(176, 0, 32, 0.12); }

@@ -398,6 +398,7 @@ function secondaryTitleByPath(path: string): string {
   if (path.startsWith('/settings/vbook')) return t('vbook_settings_title');
   if (path.startsWith('/settings/private-workers')) return t('worker_mgmt_title');
   if (path.startsWith('/settings/worker')) return t('worker_settings_title');
+  if (path.startsWith('/settings/local-ai')) return t('local_ai_title');
   if (path.startsWith('/settings/ai')) return t('ai_provider_title');
   if (path.startsWith('/settings')) return t('settings_title');
   if (path.startsWith('/ai')) return t('ai');

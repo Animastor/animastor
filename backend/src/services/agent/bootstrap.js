@@ -66,7 +66,11 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
     // is the only other source. No hidden env bypass.
     const aiProviderSvc = require('../workspace-ai-provider');
     const aiProvider = await aiProviderSvc.resolveAIForBook(bookId);
-    if (!aiProvider.apiKey) {
+    // Local AI Connector snapshots carry apiKey=null BY DESIGN (LAC §9 —
+    // inference rides the connector WS transport, not an HTTP credential).
+    // They are usable providers; only non-connector snapshots without a
+    // key fail closed here.
+    if (!aiProvider.apiKey && aiProvider.transport !== 'connector') {
         throw new Error('AI assistant is not available — cannot import book (no workspace provider and system AI is disabled or unconfigured)');
     }
 
@@ -336,7 +340,8 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
     // second (admin kill switch enforced).
     const aiProviderSvc = require('../workspace-ai-provider');
     const aiProvider = await aiProviderSvc.resolveAIForBook(bookId);
-    if (!aiProvider.apiKey) {
+    // Connector snapshots: apiKey is null by design (LAC §9) — usable.
+    if (!aiProvider.apiKey && aiProvider.transport !== 'connector') {
         throw new Error('AI assistant is not available — cannot continue generation (no workspace provider and system AI is disabled or unconfigured)');
     }
     // Wrap the whole window run in the provider context so the cached-scene

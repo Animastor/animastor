@@ -28,10 +28,36 @@ module.exports = function(app, redis, deps) {
     // of truth for the key, so the kill switch cannot be bypassed.
     const workspaceAi = require('../services/workspace-ai-provider');
     const { safeFetch } = require('../services/url-safety');
+    const { connectorChat, describeConnectorError } = require('../services/ai-connector/transport');
     async function resolveChatAI(bookId) {
         const provider = bookId
             ? await workspaceAi.resolveAIForBook(bookId)
             : await workspaceAi.resolveSystemFallback();
+        // Local AI Connector snapshot (LAC §9): no endpoint/key — the fetch
+        // is replaced by the connector WS transport. Model may fall back to
+        // the connector's first DISCOVERED model (discovered ≠ loaded, §7) so
+        // a binding without an explicit model still gets an honest answer
+        // from the runtime instead of a cloud default model id.
+        if (provider && provider.transport === 'connector') {
+            let model = provider.model || null;
+            if (!model && provider.connectorId) {
+                try {
+                    const { getConnector } = require('../storage/postgres/repositories/ai-connector-repo');
+                    const row = await getConnector(provider.connectorId);
+                    const models = Array.isArray(row && row.models) ? row.models : [];
+                    if (models.length > 0) model = String(models[0]);
+                } catch (_) { /* transport reports the honest error below */ }
+            }
+            return {
+                transport: 'connector',
+                connectorId: provider.connectorId,
+                baseUrl: null,
+                apiKey: '',
+                model: model || '',
+                source: provider.source,
+                validatePublic: false,
+            };
+        }
         return {
             baseUrl: provider.endpoint || chatEngine.AI_API_BASE_URL,
             apiKey: provider.apiKey || '',
@@ -377,7 +403,17 @@ module.exports = function(app, redis, deps) {
             const tools = chatEngine.getToolsForMode(sessionMode, bookId, isLocked);
 
             const ai = await resolveChatAI(bookId);
-            if (!ai.apiKey) return aiUnavailable(res);
+            // Connector snapshots legitimately carry no apiKey (LAC §9) —
+            // the connector path is guarded below at the fetch site.
+            if (!ai.apiKey && ai.transport !== 'connector') return aiUnavailable(res);
+            // A connector binding without a usable model id (no bound model,
+            // no discovered models) must fail closed with a clear message.
+            if (ai.transport === 'connector' && (!ai.connectorId || !ai.model)) {
+                return res.status(503).json({
+                    error: 'Local AI is not ready — select a connector and a model in Settings / AI',
+                    code: 'local_ai_not_ready',
+                });
+            }
 
             // Build system prompt:
             // - If `system` is explicitly provided (legacy clients), use it as base
@@ -427,30 +463,67 @@ module.exports = function(app, redis, deps) {
                 ];
             }
 
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), AI_FETCH_TIMEOUT_MS);
-            const response = await safeFetch(`${ai.baseUrl}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ai.apiKey}` },
-                body: JSON.stringify({
+            let aiResponse;
+            if (ai.transport === 'connector') {
+                // Local AI Connector path (LAC §9): the completion rides the
+                // connector's authenticated WS session — no server-side URL,
+                // no Authorization header, no SSRF surface (AD-5). The cloud
+                // timer is authoritative (§5); connectorChat maps to the
+                // sanitized code surface (§4). Tool payloads are NOT
+                // forwarded (Phase-4 contract: only max_tokens/temperature
+                // survive) — content-embedded tool calls still go through
+                // extractToolCallsFromContent below.
+                const tokenBudget = tools.length > 0
+                    ? Math.min(MAX_TOKENS_WITH_TOOLS, 8192) // connector LIMITS.maxMaxTokens
+                    : MAX_TOKENS_PLAIN;
+                const cres = await connectorChat(ai.connectorId, {
                     model: ai.model,
                     messages: apiMessages,
-                    tools: tools.length > 0 ? tools : undefined,
-                    tool_choice: tools.length > 0 ? 'auto' : undefined,
-                    ...aiRequestBodyExtras(tools),
-                }),
-                signal: controller.signal,
-                validatePublic: ai.validatePublic,
-            });
-            clearTimeout(timeout);
+                    params: { max_tokens: tokenBudget, temperature: 0.3 },
+                }, { timeoutMs: AI_FETCH_TIMEOUT_MS });
+                if (!cres.ok) {
+                    const code = cres.code || 'runtime_error';
+                    const status = code === 'connector_offline' ? 503 : (code === 'timeout' ? 504 : 502);
+                    console.error(`[AI] connector chat error: ${code}`);
+                    return res.status(status).json({
+                        error: describeConnectorError(code),
+                        code,
+                    });
+                }
+                aiResponse = {
+                    choices: [{
+                        index: 0,
+                        message: { role: 'assistant', content: cres.content },
+                        finish_reason: cres.finishReason || 'stop',
+                    }],
+                    usage: cres.usage || undefined,
+                };
+            } else {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), AI_FETCH_TIMEOUT_MS);
+                const response = await safeFetch(`${ai.baseUrl}/chat/completions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ai.apiKey}` },
+                    body: JSON.stringify({
+                        model: ai.model,
+                        messages: apiMessages,
+                        tools: tools.length > 0 ? tools : undefined,
+                        tool_choice: tools.length > 0 ? 'auto' : undefined,
+                        ...aiRequestBodyExtras(tools),
+                    }),
+                    signal: controller.signal,
+                    validatePublic: ai.validatePublic,
+                });
+                clearTimeout(timeout);
 
-            if (!response.ok) {
-                const errText = await response.text();
-                console.error('[AI] API error:', response.status, errText);
-                return res.status(502).json({ error: `AI API error: ${response.status}` });
+                if (!response.ok) {
+                    const errText = await response.text();
+                    console.error('[AI] API error:', response.status, errText);
+                    return res.status(502).json({ error: `AI API error: ${response.status}` });
+                }
+
+                aiResponse = await response.json();
             }
-
-            const aiResponse = await response.json();
             const aiMessage = aiResponse.choices?.[0]?.message;
             let replyText = aiMessage?.content || '';
             // Strip AI chain-of-thought reasoning blocks — internal, not for the UI

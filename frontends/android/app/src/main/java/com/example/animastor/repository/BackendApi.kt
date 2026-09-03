@@ -643,6 +643,46 @@ interface BackendApi {
     ): AiProviderTestResponse
 
     // ======================================================
+    // Local AI Connector (Local AI Connector V1 — Phase 6)
+    // ======================================================
+    // Web parity: frontends/app features/localAi + /settings/local-ai. The
+    // connector dials OUT to the cloud over WS; the runtime URL is local
+    // config only (AD-5) and never crosses this API. One-time credentials
+    // (llmcreg.* registration / llmc.* rotate) are disclosed exactly once by
+    // create/reissue/rotate responses and never returned again.
+
+    @GET("/api/v1/ai-connector/status")
+    suspend fun getAiConnectorStatus(): AiConnectorStatusResponse
+
+    @GET("/api/v1/ai-connector/models")
+    suspend fun getAiConnectorModels(): AiConnectorModelsResponse
+
+    @POST("/api/v1/ai-connector/registrations")
+    suspend fun createAiConnector(
+        @Body request: CreateAiConnectorRequest
+    ): CreateAiConnectorResponse
+
+    @GET("/api/v1/ai-connector/registrations/{connectorId}/token")
+    suspend fun reissueAiConnectorToken(
+        @Path("connectorId") connectorId: String
+    ): ReissueAiConnectorTokenResponse
+
+    @POST("/api/v1/ai-connector/connectors/{connectorId}/models/refresh")
+    suspend fun refreshAiConnectorModels(
+        @Path("connectorId") connectorId: String
+    ): RefreshAiConnectorModelsResponse
+
+    @POST("/api/v1/ai-connector/connectors/{connectorId}/rotate")
+    suspend fun rotateAiConnector(
+        @Path("connectorId") connectorId: String
+    ): RotateAiConnectorResponse
+
+    @HTTP(method = "DELETE", path = "/api/v1/ai-connector/connectors/{connectorId}", hasBody = false)
+    suspend fun revokeAiConnector(
+        @Path("connectorId") connectorId: String
+    ): RevokeAiConnectorResponse
+
+    // ======================================================
     // Private Workers (Experimental Beta — Phase 3)
     // ======================================================
     // Web parity: frontends/app features/workers + /settings/private-workers.

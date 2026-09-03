@@ -18,6 +18,18 @@ const AI_API_BASE_URL = process.env.AI_API_BASE_URL || 'https://api.aicredits.in
 // provider is supplied the call keeps the historical global env behaviour.
 
 async function callAI(messages, options = {}, provider = null) {
+    // Local AI Connector branch (LAC §9): the connector transport replaces
+    // the HTTP fetch — no server-side endpoint, no apiKey, no SSRF surface.
+    // Runs BEFORE the apiKey check: a connector snapshot legitimately has
+    // apiKey === null. Fail-closed (AD-12): offline/broken connector throws
+    // an explicit sanitized error — never a silent fallback to system AI.
+    // No callAI-level retry: cold model loads can legitimately take 30-60 s
+    // (§16.2) and a 3× retry of a timeout would triple that load; agent-side
+    // STEP_RETRIES still apply above this seam as spec'd (§5).
+    if (provider && provider.transport === 'connector') {
+        return callAIOverConnector(messages, options, provider);
+    }
+
     // A passed provider (workspace/personal) always wins — the kill switch
     // only governs SYSTEM/provider AI. The env fallback is gated behind the
     // admin kill switch so it can never bypass it.
@@ -114,6 +126,42 @@ async function callAI(messages, options = {}, provider = null) {
     }
 
     throw new Error(`AI API call failed after ${maxRetries} attempts: ${lastError?.message || 'unknown error'}`);
+}
+
+/**
+ * Local AI Connector transport (LAC §9 — the callAI-shaped seam): routes
+ * the completion through ai-connector/transport.connectorChat over the
+ * connector's authenticated WS session. Only max_tokens/temperature
+ * survive the params (Phase-4 contract); sanitizer discipline is enforced
+ * connector-side AND cloud-side. Throws sanitized errors only.
+ */
+async function callAIOverConnector(messages, options, provider) {
+    const { connectorChat, describeConnectorError } = require('./ai-connector/transport');
+    if (!provider.connectorId) {
+        throw new Error('Local AI connector is not bound');
+    }
+    const model = options.model || provider.model || '';
+    if (!model) {
+        throw new Error('Local AI model is not selected');
+    }
+    const result = await connectorChat(provider.connectorId, {
+        model,
+        messages,
+        params: {
+            max_tokens: options.maxTokens || 8192,
+            temperature: options.temperature ?? 0.3,
+        },
+    }, { timeoutMs: options.timeout || 60000 });
+
+    if (!result.ok) {
+        console.error(`[AI-SERVICE] connector call failed (code=${result.code})`);
+        throw new Error(describeConnectorError(result.code));
+    }
+    return {
+        content: result.content,
+        finishReason: result.finishReason || 'stop',
+        usage: result.usage || null,
+    };
 }
 
 // ======================================================

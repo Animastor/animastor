@@ -795,6 +795,36 @@ function createAiConnectorRoutes({ redis, logger = console } = {}) {
             }
         });
 
+        // ── POST explicit models refresh (Phase 6 — the ONLY discovery  ──
+        //    trigger; user/action-initiated per §7/AD-7: no polling, no
+        //    automatic refresh, no automatic inference probes). Sends
+        //    models.refresh {} over the live WS session and waits for
+        //    models.list; sanitized codes only on failure.
+        app.post('/api/v1/ai-connector/connectors/:connectorId/models/refresh', async (req, res) => {
+            const workspaceId = userWorkspaceGuard(req, res);
+            if (!workspaceId) return;
+            if (!UUID_RE.test(req.params.connectorId)) {
+                return res.status(404).json({ error: 'Connector not found' });
+            }
+            try {
+                const row = await aiConnectorRepo.getConnector(req.params.connectorId);
+                if (!row || row.workspace_id !== workspaceId || row.revoked_at != null) {
+                    // Foreign/unknown/revoked — one indistinct 404.
+                    return res.status(404).json({ error: 'Connector not found' });
+                }
+                const result = await discovery.requestModelsRefresh(req.params.connectorId);
+                if (!result.ok) {
+                    // Sanitized code only (connector_offline / timeout /
+                    // runtime_unreachable / …) — never raw runtime detail.
+                    return res.json({ ok: false, code: result.code });
+                }
+                res.json({ ok: true, models: result.models });
+            } catch (err) {
+                logger.error(`[AI-CONNECTOR] models refresh failed: ${err.message}`);
+                res.status(500).json({ error: 'Failed to refresh Local AI models' });
+            }
+        });
+
         // ── GET one connector detail ───────────────────────────────────────
         app.get('/api/v1/ai-connector/connectors/:connectorId', async (req, res) => {
             const workspaceId = userWorkspaceGuard(req, res);

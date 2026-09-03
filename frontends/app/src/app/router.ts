@@ -6,7 +6,8 @@ export type Route =
   | '/settings' | '/ai' | '/library'
   | '/workflows' | '/workflows/:name'
   | '/workflows/type/:type' | '/dev'
-  | '/settings/vbook' | '/settings/worker' | '/settings/ai' | '/settings/private-workers';
+  | '/settings/vbook' | '/settings/worker' | '/settings/ai' | '/settings/private-workers'
+  | '/settings/local-ai';
 
 export const TAB_ROUTES: Route[] = ['/file', '/generate', '/play', '/edit', '/navigate'];
 export const START_ROUTE: Route = '/file';

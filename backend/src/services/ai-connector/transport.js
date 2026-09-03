@@ -126,6 +126,30 @@ const SANITIZED_MESSAGES = {
 // resolve, timer, settled }.
 const pending = new Map();
 
+/**
+ * User-facing description of a connector failure code (Phase 6: UI/SDK
+ * surface). Sanitized by construction — fixed strings per code, never raw
+ * runtime detail, URLs or credential material. Callers map these to their
+ * own i18n where a UI exists.
+ * @param {string} code
+ * @returns {string}
+ */
+function describeConnectorError(code) {
+    const prefix = {
+        connector_offline: 'Local AI is offline',
+        session_closed: 'Local AI connection lost',
+        runtime_unreachable: 'Local runtime is unreachable',
+        model_not_found: 'Model not found on the local runtime',
+        timeout: 'Local AI request timed out',
+        busy: 'Local AI is busy — try again shortly',
+        context_length: 'Local AI model context length exceeded',
+        stream_failed: 'Local AI stream failed after partial output',
+    };
+    if (prefix[code]) return prefix[code];
+    if (SANITIZED_MESSAGES[code]) return SANITIZED_MESSAGES[code];
+    return 'Local AI request failed';
+}
+
 function sanitizeMessage(text) {
     if (typeof text !== 'string') return null;
     const clean = text.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, LIMITS.maxErrorFrameMessageChars);
@@ -505,6 +529,7 @@ module.exports = {
     failPendingFor,
     validatePayload,
     sanitizeUsage,
+    describeConnectorError,
     stats,
     DEFAULTS,
     LIMITS,

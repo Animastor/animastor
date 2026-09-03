@@ -130,7 +130,8 @@ describe('Workspace AI Provider', () => {
         const fk = await query(
             `SELECT rc.delete_rule FROM information_schema.referential_constraints rc
              WHERE rc.constraint_name = (SELECT conname FROM pg_constraint
-                 WHERE conrelid = 'workspace_ai_providers'::regclass AND contype = 'f')`
+                 WHERE conrelid = 'workspace_ai_providers'::regclass AND contype = 'f'
+                   AND confrelid = 'workspaces'::regclass)`
         );
         expect(fk.rows[0].delete_rule).to.equal('CASCADE');
     });

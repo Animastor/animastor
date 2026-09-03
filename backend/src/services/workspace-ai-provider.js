@@ -25,14 +25,27 @@ let _logEmitted = false;
 // legacy `custom` value is kept as a back-compat alias of `openai-compatible`.
 // The architecture is NOT tied to OpenRouter — the `model` field is a free
 // string the user can type in (spec §15).
-const PROVIDER_TYPES = ['openrouter', 'openai-compatible', 'custom'];
+// `local-ai` — Local AI Connector V1 (LAC): the workspace provider is bound
+// to an ai_connectors row (connector_id) instead of an HTTP endpoint/key.
+// The runtime URL never exists server-side (AD-5); inference rides the
+// connector's authenticated WS session via the transport seam (§9).
+const PROVIDER_TYPES = ['openrouter', 'openai-compatible', 'custom', 'local-ai'];
 
 const DEFAULT_PROVIDER_TYPE = 'openai-compatible';
+
+const LOCAL_AI_TYPE = 'local-ai';
+
+// Marker value for api_key_enc on local-ai rows (AD-11): satisfies the NOT
+// NULL constraint without storing any credential material. It is never a
+// usable cloud key — decryptSecret() returns null for it (not a ciphertext
+// envelope), and publicMeta() handles local-ai rows separately.
+const LOCAL_AI_KEY_MARKER = 'local-ai-connector-binding';
 
 function normalizeProviderType(value) {
     if (!value || typeof value !== 'string') return null;
     const v = value.trim().toLowerCase();
     if (v === 'openai' || v === 'openai-api') return 'openai-compatible';
+    if (v === 'local' || v === 'localai') return LOCAL_AI_TYPE;
     if (PROVIDER_TYPES.includes(v)) return v;
     return null;
 }
@@ -194,7 +207,32 @@ function globalFallbackProvider() {
     };
 }
 
+/**
+ * Local AI Connector provider snapshot (LAC §9): transport='connector' means
+ * the consumer branch talks to the connector's live WS session through
+ * ai-connector/transport — there is NO server-side endpoint/key at all
+ * (apiKey stays null by design; the empty-key fail-closed hint must not
+ * apply — resolveAIProvider skips the re-tag for connector snapshots).
+ * Liveness is NOT checked here: the transport step fails closed with
+ * 'connector_offline' (AD-12 — never a silent fallback to the system AI).
+ */
+function buildConnectorProvider(row) {
+    return {
+        source: 'workspace',
+        transport: 'connector',
+        provider: LOCAL_AI_TYPE,
+        connectorId: row.connector_id || null,
+        endpoint: null,
+        apiKey: null,
+        model: row.model || FALLBACK_MODEL,
+        workspaceId: row.workspace_id,
+    };
+}
+
 function buildWorkspaceProvider(row) {
+    if ((row.provider_type || row.provider) === LOCAL_AI_TYPE) {
+        return buildConnectorProvider(row);
+    }
     const apiKey = decryptSecret(row.api_key_enc);
     if (!apiKey) {
         // Rotated key or corrupted ciphertext — the workspace row is unusable.
@@ -237,7 +275,7 @@ async function getRow(workspaceId) {
     const { query } = require('../storage/postgres/database');
     const result = await query(
         `SELECT workspace_id, provider, provider_type, endpoint, api_key_enc, model, enabled,
-                status, last_tested_at, created_at, updated_at
+                connector_id, status, last_tested_at, created_at, updated_at
          FROM workspace_ai_providers WHERE workspace_id = $1 LIMIT 1`,
         [workspaceId]
     );
@@ -247,12 +285,19 @@ async function getRow(workspaceId) {
 async function insertRow(workspaceId, input) {
     const { query } = require('../storage/postgres/database');
     const providerType = normalizeProviderType(input.providerType) || input.provider || DEFAULT_PROVIDER_TYPE;
+    const isLocalAi = providerType === LOCAL_AI_TYPE;
     const result = await query(
         `INSERT INTO workspace_ai_providers
-             (workspace_id, provider, provider_type, endpoint, api_key_enc, model, enabled, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-        [workspaceId, providerType, providerType, input.endpoint, encryptSecret(input.apiKey),
-         input.model || null, input.enabled !== false, DEFAULT_STATUS]
+             (workspace_id, provider, provider_type, endpoint, api_key_enc, model, enabled, connector_id, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+        [workspaceId, providerType, providerType,
+         // local-ai rows carry no endpoint/credential — marker values only
+         // (AD-11; NOT NULL satisfied, no usable material stored).
+         isLocalAi ? '' : input.endpoint,
+         isLocalAi ? LOCAL_AI_KEY_MARKER : encryptSecret(input.apiKey),
+         input.model || null, input.enabled !== false,
+         isLocalAi ? (input.connectorId || null) : null,
+         DEFAULT_STATUS]
     );
     return result.rows[0];
 }
@@ -277,17 +322,24 @@ async function updateRow(workspaceId, input, existing) {
         endpoint: normalizeEndpoint(input.endpoint ?? existing.endpoint) || '',
         model: input.model !== undefined ? (input.model || null) : (existing.model || null),
         enabled: input.enabled !== undefined ? input.enabled !== false : (existing.enabled !== false),
+        connector_id: providerType === LOCAL_AI_TYPE ? (input.connectorId || null) : null,
     };
     if (input.apiKey) next.api_key_enc = encryptSecret(input.apiKey);
+    // Switching TO a local-ai binding: overwrite any stored cloud credential
+    // with the AD-11 marker — the old key must not linger in the row.
+    if (providerType === LOCAL_AI_TYPE) {
+        next.api_key_enc = LOCAL_AI_KEY_MARKER;
+        next.endpoint = '';
+    }
 
     const result = await query(
         `UPDATE workspace_ai_providers
          SET provider = $2, provider_type = $3, endpoint = $4, api_key_enc = COALESCE($5, api_key_enc),
-             model = $6, enabled = $7,
+             model = $6, enabled = $7, connector_id = $8,
              updated_at = (EXTRACT(EPOCH FROM NOW())::bigint)
          WHERE workspace_id = $1 RETURNING *`,
         [workspaceId, next.provider_type, next.provider_type, next.endpoint, next.api_key_enc || null,
-         next.model, next.enabled]
+         next.model, next.enabled, next.connector_id]
     );
     return result.rows[0];
 }
@@ -297,6 +349,28 @@ async function updateRow(workspaceId, input, existing) {
 /** Meta row for GET/PUT responses — NEVER returns the plaintext key. */
 function publicMeta(row) {
     if (!row) return null;
+    const isLocalAi = (row.provider_type || row.provider) === LOCAL_AI_TYPE;
+    if (isLocalAi) {
+        // Local AI binding (LAC §9): no endpoint, no key material — the
+        // binding is the connector_id reference. has_api_key stays false and
+        // api_key_masked null so the UI never pretends a credential exists.
+        return {
+            workspace_id: row.workspace_id,
+            provider: LOCAL_AI_TYPE,
+            provider_type: LOCAL_AI_TYPE,
+            endpoint: null,
+            model: row.model || null,
+            enabled: row.enabled !== false,
+            configured: true,
+            has_api_key: false,
+            api_key_masked: null,
+            connector_id: row.connector_id || null,
+            status: row.status || DEFAULT_STATUS,
+            last_tested_at: row.last_tested_at != null ? Number(row.last_tested_at) : null,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        };
+    }
     return {
         workspace_id: row.workspace_id,
         provider: row.provider || row.provider_type || DEFAULT_PROVIDER_TYPE,
@@ -344,7 +418,7 @@ async function setLastTest(workspaceId, ok) {
 /**
  * Upsert the active provider. One row per workspace enforced by PK.
  * @param {string} workspaceId
- * @param {{providerType?:string, provider?:string, endpoint:string, apiKey?:string, model?:string|null, enabled?:boolean}} input
+ * @param {{providerType?:string, provider?:string, endpoint?:string, apiKey?:string, model?:string|null, connectorId?:string|null, enabled?:boolean}} input
  * @throws When `provider`/`providerType` is supplied but not one of PROVIDER_TYPES.
  */
 async function upsertProvider(workspaceId, input) {
@@ -473,9 +547,12 @@ async function resolveAIProvider(workspaceId, purpose /* = 'agent' */) {
     // A shallow copy with the purpose/derived-source tags is safe: the
     // AsyncLocalStorage context owns this transient instance, not the cache.
     const tagged = { ...provider, purpose: p };
-    if (!tagged.apiKey) {
+    if (!tagged.apiKey && tagged.transport !== 'connector') {
         // Personal-only fail-closed hint (spec §10). Callers choose whether to
         // surface this as an error or fall back to legacy behaviour.
+        // Connector snapshots are exempt: apiKey is null BY DESIGN (LAC §9 —
+        // there is no server-side credential; the empty-key hint would turn
+        // every local-ai binding into a false 'workspace-unconfigured').
         tagged.source = tagged.source === 'workspace' ? 'workspace-unconfigured' : 'unconfigured';
     }
     return tagged;
@@ -548,6 +625,48 @@ async function testConnection({ endpoint, apiKey, model }) {
     }
 }
 
+/**
+ * Local AI Connector connection test (LAC §9 / AD-7): ONE user-initiated
+ * chat.request with max_tokens:1 through the connector's live WS session.
+ * May cold-load the model (30-60 s spikes — the UI warns). Never scheduled,
+ * never heartbeat-driven. Sanitized codes only — never raw runtime errors,
+ * URLs or credential material.
+ * @param {{connectorId:string, model?:string|null}} input
+ * @returns {Promise<{ok:boolean, model?:string, error?:string, code?:string}>}
+ */
+async function testConnectorConnection({ connectorId, model }) {
+    const { connectorChat, describeConnectorError } = require('./ai-connector/transport');
+    if (!connectorId) return { ok: false, error: 'Local AI connector is not bound', code: 'connector_not_bound' };
+
+    let usedModel = (typeof model === 'string' && model.trim()) ? model.trim() : null;
+    if (!usedModel) {
+        // Fall back to the first discovered model of the connector. A model
+        // is required by the chat.request contract; discovery ≠ loading —
+        // picking a discovered id proves nothing about warm state (§7).
+        try {
+            const { getConnector } = require('../storage/postgres/repositories/ai-connector-repo');
+            const row = await getConnector(connectorId);
+            const models = Array.isArray(row && row.models) ? row.models : [];
+            if (models.length > 0) usedModel = String(models[0]);
+        } catch (_) { /* fall through to the explicit no-models answer */ }
+    }
+    if (!usedModel) {
+        return { ok: false, error: 'No models discovered — run Refresh Models first', code: 'no_models' };
+    }
+
+    try {
+        const result = await connectorChat(connectorId, {
+            model: usedModel,
+            messages: [{ role: 'user', content: 'ok' }],
+            params: { max_tokens: 1, temperature: 0 },
+        }, { timeoutMs: 180_000 });
+        if (result.ok) return { ok: true, model: usedModel };
+        return { ok: false, error: describeConnectorError(result.code), code: result.code };
+    } catch (err) {
+        return { ok: false, error: 'Local AI connection test failed' };
+    }
+}
+
 module.exports = {
     getSecretKey,
     validateSecretKeyRaw: _validateSecretKeyRaw,
@@ -565,6 +684,7 @@ module.exports = {
     resolveAIProvider,
     hasUsableApiKey,
     testConnection,
+    testConnectorConnection,
     invalidateCache,
     invalidateAllCache,
     maskKey,

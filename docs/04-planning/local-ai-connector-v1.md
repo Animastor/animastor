@@ -450,6 +450,75 @@ Fixed contract:
   `POST /api/v1/ai/chat/stream` and the Web incremental rendering land
   with the resolver/provider-binding step).
 
+**Phase-6 implementation note (2026-09-03):** user UI + end-to-end
+integration lands exactly on the reserved §9 seam — the resolver
+fallback chain, the protocol and Phase 1–5 are untouched:
+
+- **Schema (LAC-2):** additive migration —
+  `workspace_ai_providers.connector_id UUID → ai_connectors ON DELETE SET
+  NULL`. `local-ai` rows store marker values (endpoint `''`,
+  api_key_enc `local-ai-connector-binding`, AD-11); switching back to a
+  cloud type requires a REAL api_key again (route-enforced).
+- **Resolver (§9):** `PROVIDER_TYPES + 'local-ai'`;
+  `buildWorkspaceProvider` returns the connector snapshot
+  `{source:'workspace', transport:'connector', connectorId, endpoint:
+  null, apiKey:null, model}` — liveness stays out of the 30s cache and
+  is checked at the transport step (offline → explicit error, AD-12).
+  `resolveAIProvider` does NOT re-tag connector snapshots as
+  'workspace-unconfigured' (apiKey null is by design); the agent
+  bootstrap guards accept connector snapshots the same way.
+- **Transport branches (exactly three places, §9):**
+  `ai-service.callAI` (before the apiKey check; single attempt —
+  cold-load timeouts are not tripled, agent STEP_RETRIES still apply
+  upstream), `ai-routes.resolveChatAI` + the chat fetch site (connector
+  branch → `connectorChat`, sanitized codes → 503 offline / 504 timeout /
+  502 else; model falls back to the first DISCOVERED model, §7 —
+  discovered ≠ loaded), and `testConnection` gains
+  `testConnectorConnection` (user-initiated `max_tokens:1` probe over
+  the live WS, AD-7; model defaults to the first discovered id, no
+  models → explicit `no_models`).
+- **Settings routes:** PUT `/settings/ai/provider` accepts
+  `provider_type:'local-ai'` + `connector_id` (validated against the
+  CALLER's workspace; foreign/revoked/unknown → one indistinct 404;
+  endpoint/SSRF/api_key requirements replaced by the connector
+  contract — no URL input exists on this path, AD-5); POST
+  `/settings/ai/test` branches to the connector probe when
+  body.connector_id or the stored binding says local-ai (runs BEFORE
+  the HTTP path so a connector binding can never false-positive
+  against the global env key).
+- **New HTTP route (the missing Phase-3 gap):** POST
+  `/ai-connector/connectors/:id/models/refresh` — the ONLY discovery
+  trigger (user/action-initiated, §7/AD-7); workspace-scoped,
+  indistinct-404 discipline, sanitized codes only.
+- **Web UI:** `LocalAISection` at `/settings/local-ai` (SettingsPage
+  dispatch extension + General nav row + AppShell title) — create
+  connector (name + runtime type), one-time `llmcreg.*` disclosure
+  modal with copy + `npx animastor-ai-connector --url … --token …`
+  instruction (steps, TTL note, expiry detection), Pending/Online/
+  Offline pills (registry `live` beats stale PG), runtime reachability
+  (`runtime_ok`) shown DISTINCT from online, discovered models with an
+  explicit "discovered ≠ loaded" disclaimer, Refresh Models (explicit
+  flow only), model picker, provider binding via the existing PUT
+  singleton + unbind via DELETE, Test Connection (cold-load warning),
+  reissue token (pending only), rotate (one-time `llmc.*` disclosure),
+  revoke (confirm + hint). Plaintext tokens live ONLY in transient
+  component state while a disclosure modal is open. The cloud provider
+  form shows a "Local AI active" notice when the binding is local-ai.
+  Read-only status polling (15s) touches PG+registry only — never the
+  runtime.
+- **Android (minimal parity, no new architecture):**
+  `LocalAiSettingsFragment` (+ `LocalAiHelpers` pure helpers, tested
+  on the JVM) over the SAME API — Connector → Status → Runtime →
+  Models → Test → Revoke/Rotate → binding; Settings nav row "Local AI";
+  worker-style status pills; one-time credential dialog (copy +
+  dismiss-only exit); errors mapped from sanitized codes; no URL input.
+  i18n EN/RU (`local_ai_*`).
+- **Error/empty states:** every backend code maps to a fixed localized
+  string (offline, timeout, runtime unreachable, model not found, busy,
+  no models, discovery failed, registration expired/used, 404, 401,
+  403, 429); no raw runtime text, URLs, stack traces or secrets ever
+  reach the UI.
+
 ---
 
 ## 5. Request Path Animastor → Connector → Local Runtime
@@ -826,7 +895,11 @@ nothing new; when the user's provider is local-ai, error text may say
 
 Android work is deferred to Phase 6.5/7 (mirror of the Local AI section,
 i18n RU/EN, parity doc update), same pattern as the worker sharing V2
-Android parity commit.
+Android parity commit. **Update (Phase 6, 2026-09-03): the minimal
+user-facing Android UX (the same Connector → Status → Runtime → Models →
+Test → Revoke/Rotate → binding flow over the same API) shipped WITH
+Phase 6 — see §4 Phase-6 note; full parity polish + i18n expansion stay
+Phase 6.5/7.**
 
 ---
 
@@ -943,12 +1016,15 @@ phase. No production caller sends `chat.request` in step 1.
   `POST /api/v1/ai/chat/stream` (greenfield — does not exist today).
 - Web: incremental rendering in `AiAssistantPage.tsx`.
 
-### Phase 6 — UI
+### Phase 6 — UI (implemented, 2026-09-03 — see §4 Phase-6 note)
 - Web: `LocalAISection` (SettingsPage `:30-33` extension), connection
   wizard (one-time token display + copy), status card ("My Local AI /
   Ollama / Qwen3 32B / Online"), model picker fed by `/ai-connector/models`,
   provider binding via existing PUT `/settings/ai/provider`.
 - i18n strings EN/RU in `frontends/app/src/app/i18n.ts`.
+- Android: minimal equivalent UX (fragment + pure helpers + JVM tests) over
+  the same API — see §4 Phase-6 note; the parity-locked provider screen is
+  untouched, the Local AI screen is a sibling row.
 
 ### Phase 7 — Production Hardening
 - Rate limits on registration; connector fingerprint alert; latency

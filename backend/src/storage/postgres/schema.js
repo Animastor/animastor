@@ -1514,6 +1514,26 @@ async function runMigrations() {
     }
 
     // ======================================================
+    // LAC-2: Local AI provider binding column (Local AI Connector V1 — Phase 6)
+    // ======================================================
+    // Additive migration: workspace_ai_providers gains a nullable
+    // connector_id reference for provider_type='local-ai' rows (the §9 seam:
+    // the singleton consumer binding references an ai_connectors row).
+    // Runs after LAC-1 so the FK target exists on fresh DBs. Cloud rows keep
+    // connector_id NULL — no semantics change for Phase 1-5 providers.
+    // Marker values (AD-11): local-ai rows store endpoint='' and
+    // api_key_enc='local-ai-connector-binding' — no real credential material.
+    try {
+        await query(`ALTER TABLE workspace_ai_providers
+            ADD COLUMN IF NOT EXISTS connector_id UUID
+            REFERENCES ai_connectors(connector_id) ON DELETE SET NULL`);
+        console.log('[PG] LAC-2: workspace_ai_providers.connector_id added (local-ai binding)');
+    } catch (err) {
+        console.error('[PG] LAC-2 provider binding column migration failed:', err.message);
+        throw err;
+    }
+
+    // ======================================================
     // PW-2: Workspace-aware job ownership (Experimental Beta — Phase 2)
     // ======================================================
     // Add the server-derived workspace ownership anchor to generation_tasks.
