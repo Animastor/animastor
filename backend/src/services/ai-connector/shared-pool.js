@@ -43,9 +43,12 @@
 //                              D3, owner traffic never traverses the pool)
 //   6. runtime reachable      — heartbeat runtime_ok (fail-honest: unknown →
 //                              treated unreachable; discovered ≠ loaded, §7)
-//   7. model availability     — the requested model is in the connector's
-//                              DISCOVERED models list (fallback: endpoint's
-//                              configured model, else first discovered)
+//   7. model availability     — the selected model MUST be in the connector's
+//                              discovered models list. Precedence:
+//                                a) requestedModel (if present in discovered)
+//                                b) endpoint.model  (if present in discovered)
+//                                c) first discovered model
+//                              If none of these are in discovered → 'no_models'
 //   8. concurrency available  — in-process per-endpoint slot counter against
 //                              policy.concurrency_limit (Phase 1 seam — a
 //                              simple gate, not a scheduler)
@@ -101,27 +104,54 @@ function selectEndpoint(candidates) {
 }
 
 /**
- * Pick the model a shared request should run on (the no-registry principle:
- * model stays a free string — discovered ids are only a hint, §7).
- * Precedence: explicitly requested model → endpoint's configured model →
- * first discovered model. Returns null when nothing usable exists.
+ * Pick the model a shared request should run on.
+ *
+ * STRICT eligibility (no-registry principle — §7): the selected model
+ * MUST be present in the connector's discovered models list. A model
+ * that is not in the discovered list is never returned — even if the
+ * consumer requested it or the endpoint has it configured.
+ *
+ * Precedence:
+ *   1. requestedModel — only if it exists in discovered
+ *   2. endpoint.model — only if it exists in discovered
+ *   3. first discovered model
+ *
+ * Returns null when no usable model exists in the discovered list.
  */
 function selectModel(entry, requestedModel) {
+    const discovered = Array.isArray(entry.connector.models) ? entry.connector.models : [];
+    const discoveredSet = new Set(discovered.map(String));
+    if (discoveredSet.size === 0) return null;
+
+    // (a) explicitly requested model — only if present in discovered
     if (requestedModel && typeof requestedModel === 'string' && requestedModel.trim()) {
-        return requestedModel.trim();
+        const trimmed = requestedModel.trim();
+        if (discoveredSet.has(trimmed)) return trimmed;
+        // requested model NOT in discovered — fall through, but will return null
+        // unless a later candidate has it. This candidate is NOT eligible for
+        // this requested model.
+        return null;
     }
+    // (b) endpoint's configured model — only if present in discovered
     const configured = entry.endpoint.model;
     if (configured && typeof configured === 'string' && configured.trim()) {
-        return configured.trim();
+        const trimmed = configured.trim();
+        if (discoveredSet.has(trimmed)) return trimmed;
     }
-    const discovered = Array.isArray(entry.connector.models) ? entry.connector.models : [];
-    return discovered.length > 0 ? String(discovered[0]) : null;
+    // (c) first discovered model (always safe — already in the set)
+    return String(discovered[0]);
 }
 
 /**
  * Full eligibility filter for one candidate entry.
  * The repo already applied: policy.enabled, endpoint.enabled, not deleted,
  * connector not revoked. This adds the in-process gates.
+ *
+ * Model eligibility is STRICT: selectModel() only returns a model present in
+ * connector.models; if no such model exists, the candidate is rejected with
+ * 'no_models' (an endpoint whose configured model is no longer discovered is
+ * NOT eligible — the consumer must not receive a model the runtime cannot load).
+ *
  * @returns {{eligible:boolean, reason?:string}}
  */
 function checkEligibility(entry, { workspaceId, requestedModel }) {
@@ -168,6 +198,10 @@ function checkEligibility(entry, { workspaceId, requestedModel }) {
  * The returned snapshot acquires one concurrency slot; the caller MUST call
  * releaseSharedAI(snapshot) when done (or use withSharedAI below). Failing
  * to release only makes the pool conservative, never broken.
+ *
+ * The model in the snapshot is always present in the endpoint's discovered
+ * models list — a strict contract that prevents the runtime from ever
+ * receiving a model it cannot load.
  *
  * @param {{workspaceId:string, purpose?:string, model?:string|null}} request
  * @returns {Promise<{source:'shared', transport:'connector', provider:'local-ai',

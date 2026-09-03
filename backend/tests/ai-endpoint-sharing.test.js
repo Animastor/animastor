@@ -503,12 +503,32 @@ describe('LLM Sharing Phase 1 — Control Plane (SH-AI-1)', function () {
         });
 
         it('model selection: requested → configured → first discovered', async () => {
-            const s = await sharedPool.resolveSharedAI({ workspaceId: wsB, model: 'qwen3:8b' });
-            expect(s.model).to.equal('qwen3:8b'); // requested wins
+            // Create a fresh endpoint so this test is isolated from ep1/ep2.
+            const fresh = await api(srv, 'POST', '/api/v1/ai-endpoints', {
+                identity: idA(),
+                body: { name: 'model-select', connector_id: connA1.connector_id, model: 'qwen3:32b' },
+            });
+            expect(fresh.status).to.equal(201);
+            const id = fresh.body.endpoint.endpoint_id;
+            await api(srv, 'POST', `/api/v1/ai-endpoints/${id}/share`, {
+                identity: idA(), body: { confirm_share: true },
+            });
+            await makeConnectorLive(connA1.connector_id, { models: ['qwen3:32b'] });
+
+            // requested model present → uses it
+            const s = await sharedPool.resolveSharedAI({ workspaceId: wsB, model: 'qwen3:32b' });
+            expect(s).to.not.be.null;
+            expect(s.model).to.equal('qwen3:32b');
             sharedPool.releaseSharedAI(s);
+
+            // no request → falls back to endpoint.model
             const s2 = await sharedPool.resolveSharedAI({ workspaceId: wsB });
-            expect(s2.model).to.equal('qwen3:32b'); // ep1 configured model
+            expect(s2).to.not.be.null;
+            expect(s2.model).to.equal('qwen3:32b');
             sharedPool.releaseSharedAI(s2);
+
+            await api(srv, 'DELETE', `/api/v1/ai-endpoints/${id}/share`, { identity: idA() });
+            await api(srv, 'DELETE', `/api/v1/ai-endpoints/${id}`, { identity: idA() });
         });
 
         it('owner never resolves through their own shared endpoint (D3)', async () => {
@@ -708,6 +728,249 @@ describe('LLM Sharing Phase 1 — Control Plane (SH-AI-1)', function () {
                 await deleteProvider(wsA);
                 invalidateCache(wsA);
             }
+        });
+    });
+
+    // ── STRICT MODEL ELIGIBILITY (hardening §2.7) ────────────────────────
+    // selectModel() MUST only return a model present in connector.models;
+    // endpoints whose model is not discovered are NOT eligible.
+
+    describe('strict model eligibility — discovered list is the truth', () => {
+        // Create a dedicated connector with empty discovered models list,
+        // and one with mismatched discovered models, so we can test the
+        // strict model eligibility contract without touching shared fixtures.
+        let extraWs, extraUser, extraConn, extraEp;
+
+        // Clean residual ep1/ep2 state from earlier test blocks so this block
+        // gets a deterministic starting point.
+        before(async () => {
+            extraUser = await createUser('model_elig_u');
+            extraWs = await createWorkspace('model_elig');
+            extraConn = (await createActivatedConnector(extraWs, 'Model Elig Conn', 'ollama')).connector;
+            // Disable sharing on the shared fixtures so only this block's
+            // freshly created endpoints participate in the resolver.
+            await api(srv, 'DELETE', `/api/v1/ai-endpoints/${ep1.endpoint_id}/share`, { identity: idA() });
+            await api(srv, 'DELETE', `/api/v1/ai-endpoints/${ep2.endpoint_id}/share`, { identity: idA() });
+            await makeConnectorOffline(connA1.connector_id);
+            await makeConnectorOffline(connA2.connector_id);
+        });
+
+        after(async () => {
+            // Restore shared fixtures for any later tests.
+            if (extraEp) {
+                await api(srv, 'DELETE', `/api/v1/ai-endpoints/${extraEp.endpoint_id}/share`, {
+                    identity: { user: { userId: extraUser }, workspace: { id: extraWs } },
+                });
+                await api(srv, 'DELETE', `/api/v1/ai-endpoints/${extraEp.endpoint_id}`, {
+                    identity: { user: { userId: extraUser }, workspace: { id: extraWs } },
+                });
+            }
+            await makeConnectorOffline(extraConn.connector_id);
+            await makeConnectorLive(connA1.connector_id);
+            await makeConnectorLive(connA2.connector_id, { models: ['llama3:70b'] });
+            await api(srv, 'POST', `/api/v1/ai-endpoints/${ep1.endpoint_id}/share`, {
+                identity: idA(), body: { confirm_share: true },
+            });
+            await api(srv, 'POST', `/api/v1/ai-endpoints/${ep2.endpoint_id}/share`, {
+                identity: idA(), body: { confirm_share: true },
+            });
+        });
+
+        // Each test in this block creates a fresh endpoint, enables sharing,
+        // and cleans up — the shared fixtures (ep1/ep2) stay untouched.
+
+        it('requested model present in discovered → eligible', async () => {
+            // connA1 discovered: ['qwen3:32b'] — request that exact model
+            await makeConnectorLive(connA1.connector_id, { models: ['qwen3:32b'] });
+            const res = await api(srv, 'POST', '/api/v1/ai-endpoints', {
+                identity: idA(),
+                body: { name: 'strict-a', connector_id: connA1.connector_id, model: 'qwen3:32b' },
+            });
+            expect(res.status).to.equal(201);
+            const epId = res.body.endpoint.endpoint_id;
+            await api(srv, 'POST', `/api/v1/ai-endpoints/${epId}/share`, {
+                identity: idA(), body: { confirm_share: true },
+            });
+
+            const snap = await sharedPool.resolveSharedAI({
+                workspaceId: wsB, model: 'qwen3:32b',
+            });
+            expect(snap).to.not.be.null;
+            expect(snap.model).to.equal('qwen3:32b');
+            sharedPool.releaseSharedAI(snap);
+
+            // cleanup
+            await api(srv, 'DELETE', `/api/v1/ai-endpoints/${epId}/share`, { identity: idA() });
+            await api(srv, 'DELETE', `/api/v1/ai-endpoints/${epId}`, { identity: idA() });
+        });
+
+        it('requested model absent from discovered → endpoint skipped', async () => {
+            await makeConnectorLive(connA1.connector_id, { models: ['qwen3:32b'] });
+            const res = await api(srv, 'POST', '/api/v1/ai-endpoints', {
+                identity: idA(),
+                body: { name: 'strict-b', connector_id: connA1.connector_id, model: 'qwen3:32b' },
+            });
+            expect(res.status).to.equal(201);
+            const epId = res.body.endpoint.endpoint_id;
+            await api(srv, 'POST', `/api/v1/ai-endpoints/${epId}/share`, {
+                identity: idA(), body: { confirm_share: true },
+            });
+
+            // Request a model that does NOT exist in discovered list
+            const snap = await sharedPool.resolveSharedAI({
+                workspaceId: wsB, model: 'nonexistent:99b',
+            });
+            expect(snap).to.be.null;
+
+            // cleanup
+            await api(srv, 'DELETE', `/api/v1/ai-endpoints/${epId}/share`, { identity: idA() });
+            await api(srv, 'DELETE', `/api/v1/ai-endpoints/${epId}`, { identity: idA() });
+        });
+
+        it('first endpoint has wrong model → falls through to next eligible', async () => {
+            // Create endpoint A on connA1 (discovered: qwen3:32b)
+            await makeConnectorLive(connA1.connector_id, { models: ['qwen3:32b'] });
+            const epA = await api(srv, 'POST', '/api/v1/ai-endpoints', {
+                identity: idA(),
+                body: { name: 'strict-first', connector_id: connA1.connector_id, model: 'qwen3:32b' },
+            });
+            expect(epA.status).to.equal(201);
+            await api(srv, 'POST', `/api/v1/ai-endpoints/${epA.body.endpoint.endpoint_id}/share`, {
+                identity: idA(), body: { confirm_share: true },
+            });
+
+            // Create endpoint B on connA2 (discovered: llama3:70b)
+            await makeConnectorLive(connA2.connector_id, { models: ['llama3:70b'] });
+            const epB = await api(srv, 'POST', '/api/v1/ai-endpoints', {
+                identity: idA(),
+                body: { name: 'strict-second', connector_id: connA2.connector_id, model: 'llama3:70b' },
+            });
+            expect(epB.status).to.equal(201);
+            await api(srv, 'POST', `/api/v1/ai-endpoints/${epB.body.endpoint.endpoint_id}/share`, {
+                identity: idA(), body: { confirm_share: true },
+            });
+
+            // Request a model only connA2 has — epA (first in order) is
+            // skipped because it lacks the requested model; epB is selected.
+            const snap = await sharedPool.resolveSharedAI({
+                workspaceId: wsB, model: 'llama3:70b',
+            });
+            expect(snap).to.not.be.null;
+            expect(snap.shared.endpointId).to.equal(epB.body.endpoint.endpoint_id);
+            expect(snap.model).to.equal('llama3:70b');
+            sharedPool.releaseSharedAI(snap);
+
+            // cleanup
+            await api(srv, 'DELETE', `/api/v1/ai-endpoints/${epA.body.endpoint.endpoint_id}/share`, { identity: idA() });
+            await api(srv, 'DELETE', `/api/v1/ai-endpoints/${epA.body.endpoint.endpoint_id}`, { identity: idA() });
+            await api(srv, 'DELETE', `/api/v1/ai-endpoints/${epB.body.endpoint.endpoint_id}/share`, { identity: idA() });
+            await api(srv, 'DELETE', `/api/v1/ai-endpoints/${epB.body.endpoint.endpoint_id}`, { identity: idA() });
+        });
+
+        it('endpoint.model present and in discovered → uses it', async () => {
+            await makeConnectorLive(connA1.connector_id, { models: ['qwen3:32b', 'qwen3:8b'] });
+            const res = await api(srv, 'POST', '/api/v1/ai-endpoints', {
+                identity: idA(),
+                body: { name: 'strict-c', connector_id: connA1.connector_id, model: 'qwen3:8b' },
+            });
+            expect(res.status).to.equal(201);
+            const epId = res.body.endpoint.endpoint_id;
+            await api(srv, 'POST', `/api/v1/ai-endpoints/${epId}/share`, {
+                identity: idA(), body: { confirm_share: true },
+            });
+
+            // No requested model → falls back to endpoint.model → qwen3:8b
+            const snap = await sharedPool.resolveSharedAI({ workspaceId: wsB });
+            expect(snap).to.not.be.null;
+            expect(snap.model).to.equal('qwen3:8b');
+            sharedPool.releaseSharedAI(snap);
+
+            // cleanup
+            await api(srv, 'DELETE', `/api/v1/ai-endpoints/${epId}/share`, { identity: idA() });
+            await api(srv, 'DELETE', `/api/v1/ai-endpoints/${epId}`, { identity: idA() });
+        });
+
+        it('endpoint.model absent from discovered → first discovered model used', async () => {
+            // connA1 discovered: ['qwen3:32b'] — endpoint.model: 'wrong:model'
+            await makeConnectorLive(connA1.connector_id, { models: ['qwen3:32b'] });
+            const res = await api(srv, 'POST', '/api/v1/ai-endpoints', {
+                identity: idA(),
+                body: { name: 'strict-d', connector_id: connA1.connector_id, model: 'wrong:model' },
+            });
+            expect(res.status).to.equal(201);
+            const epId = res.body.endpoint.endpoint_id;
+            await api(srv, 'POST', `/api/v1/ai-endpoints/${epId}/share`, {
+                identity: idA(), body: { confirm_share: true },
+            });
+
+            // No requested model → endpoint.model ('wrong:model') NOT in discovered
+            // → first discovered: 'qwen3:32b'
+            const snap = await sharedPool.resolveSharedAI({ workspaceId: wsB });
+            expect(snap).to.not.be.null;
+            expect(snap.model).to.equal('qwen3:32b');
+            sharedPool.releaseSharedAI(snap);
+
+            // cleanup
+            await api(srv, 'DELETE', `/api/v1/ai-endpoints/${epId}/share`, { identity: idA() });
+            await api(srv, 'DELETE', `/api/v1/ai-endpoints/${epId}`, { identity: idA() });
+        });
+
+        it('connector has no discovered models → null (no_models)', async () => {
+            // extraConn: no heartbeat / no models discovered
+            await makeConnectorLive(extraConn.connector_id, { models: [] });
+            const res = await api(srv, 'POST', '/api/v1/ai-endpoints', {
+                identity: { user: { userId: extraUser }, workspace: { id: extraWs } },
+                body: { name: 'strict-empty', connector_id: extraConn.connector_id, model: 'whatever' },
+            });
+            expect(res.status).to.equal(201);
+            extraEp = res.body.endpoint.endpoint_id;
+            await api(srv, 'POST', `/api/v1/ai-endpoints/${extraEp}/share`, {
+                identity: { user: { userId: extraUser }, workspace: { id: extraWs } },
+                body: { confirm_share: true },
+            });
+
+            // No discovered models → not eligible → null
+            const snap = await sharedPool.resolveSharedAI({ workspaceId: wsB });
+            expect(snap).to.be.null;
+            // Also: even with a specific model request, same result
+            const snap2 = await sharedPool.resolveSharedAI({ workspaceId: wsB, model: 'anything' });
+            expect(snap2).to.be.null;
+        });
+
+        it('owner endpoint NOT eligible through shared pool (D3)', async () => {
+            // ep1 is shared and live → owner wsA still gets null from shared pool
+            await makeConnectorLive(connA1.connector_id, { models: ['qwen3:32b'] });
+            const snap = await sharedPool.resolveSharedAI({ workspaceId: wsA });
+            expect(snap).to.be.null;
+        });
+
+        it('concurrency + release still works under strict model eligibility', async () => {
+            await makeConnectorLive(connA1.connector_id, { models: ['qwen3:32b'] });
+            const res = await api(srv, 'POST', '/api/v1/ai-endpoints', {
+                identity: idA(),
+                body: { name: 'strict-conc', connector_id: connA1.connector_id, model: 'qwen3:32b' },
+            });
+            expect(res.status).to.equal(201);
+            const epId = res.body.endpoint.endpoint_id;
+            await api(srv, 'POST', `/api/v1/ai-endpoints/${epId}/share`, {
+                identity: idA(), body: { confirm_share: true, concurrency_limit: 1 },
+            });
+
+            const s1 = await sharedPool.resolveSharedAI({ workspaceId: wsB });
+            expect(s1).to.not.be.null;
+            expect(s1.model).to.equal('qwen3:32b');
+            // At limit → second request returns null
+            const s2 = await sharedPool.resolveSharedAI({ workspaceId: wsB });
+            expect(s2).to.be.null;
+            sharedPool.releaseSharedAI(s1);
+            // After release → eligible again
+            const s3 = await sharedPool.resolveSharedAI({ workspaceId: wsB });
+            expect(s3).to.not.be.null;
+            sharedPool.releaseSharedAI(s3);
+
+            // cleanup
+            await api(srv, 'DELETE', `/api/v1/ai-endpoints/${epId}/share`, { identity: idA() });
+            await api(srv, 'DELETE', `/api/v1/ai-endpoints/${epId}`, { identity: idA() });
         });
     });
 });
