@@ -784,6 +784,175 @@ describe('LAC-4 session: chat.request → chat.response/chat.error (connector si
         }
     });
 
+    it('duplicate request_id after a REJECTED (invalid) request → invalid_request, never becomes executable', async () => {
+        const rt = await startFakeRuntime((req, res) => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(openAiChat('never')));
+        });
+        try {
+            const { session, sent } = makeSession(rt.baseUrl);
+            // First delivery: invalid shape → rejected, id remembered.
+            session._handleMessage(JSON.stringify(CHAT_REQ('d-3', { model: 42 })));
+            await wait(60);
+            const first = sent.find((f) => f.type === 'chat.error' && f.request_id === 'd-3');
+            expect(first).to.exist;
+            expect(first.code).to.equal('invalid_request');
+            // Same id arrives again, now perfectly valid → STILL refused:
+            // a rejected request_id never becomes executable later.
+            session._handleMessage(JSON.stringify(CHAT_REQ('d-3')));
+            await wait(100);
+            const again = sent.filter((f) => f.type === 'chat.error' && f.request_id === 'd-3').pop();
+            expect(again).to.exist;
+            expect(again.code).to.equal('invalid_request');
+            expect(rt.requests).to.have.lengthOf(0);
+            session.stop();
+        } finally {
+            await rt.closeServer();
+        }
+    });
+
+    it('duplicate request_id after >10000 other request ids → STILL rejected (history is never evicted)', async function () {
+        this.timeout(20000);
+        const rt = await startFakeRuntime((req, res) => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(openAiChat('nope')));
+        });
+        try {
+            const { session, sent } = makeSession(rt.baseUrl);
+            // >10000 distinct (invalid-shaped, so no runtime traffic) ids —
+            // under the old eviction scheme this would push 'evict-0' out
+            // of the store and let it re-execute.
+            for (let i = 0; i <= 10000; i++) {
+                session._handleMessage(JSON.stringify(CHAT_REQ(`evict-${i}`, { model: 42 })));
+                if (sent.length > 5000) sent.length = 0; // keep test memory flat
+            }
+            sent.length = 0;
+            // The very first id comes back — must STILL be a duplicate.
+            session._handleMessage(JSON.stringify(CHAT_REQ('evict-0')));
+            await wait(100);
+            const dup = sent.find((f) => f.type === 'chat.error' && f.request_id === 'evict-0');
+            expect(dup).to.exist;
+            expect(dup.code).to.equal('invalid_request');
+            expect(rt.requests).to.have.lengthOf(0); // NOT re-executed
+            session.stop();
+        } finally {
+            await rt.closeServer();
+        }
+    });
+
+    it('seen-id store full → fail-closed: fresh ids refused invalid_request, session survives, duplicates still caught', async function () {
+        this.timeout(60000);
+        const rt = await startFakeRuntime((req, res) => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(openAiChat('never runs')));
+        });
+        try {
+            const { session, sent, socket } = makeSession(rt.baseUrl);
+            const cap = chatLib.LIMITS.maxSeenRequestIds;
+            // Saturate the store with distinct (invalid-shaped) ids.
+            for (let i = 0; i < cap + 10; i++) {
+                session._handleMessage(JSON.stringify(CHAT_REQ(`fill-${i}`, { model: 42 })));
+                if (sent.length > 5000) sent.length = 0;
+            }
+            sent.length = 0;
+            // A brand-new, perfectly valid id → refused (fail-closed).
+            // The alternative — forgetting old ids to make room — is the
+            // re-execution bug this contract forbids.
+            session._handleMessage(JSON.stringify(CHAT_REQ('fresh-after-full')));
+            await wait(100);
+            const err = sent.find((f) => f.type === 'chat.error' && f.request_id === 'fresh-after-full');
+            expect(err).to.exist;
+            expect(err.code).to.equal('invalid_request');
+            expect(rt.requests).to.have.lengthOf(0);
+            // An id seen BEFORE saturation is still caught as a duplicate.
+            session._handleMessage(JSON.stringify(CHAT_REQ('fill-0')));
+            await wait(80);
+            const dup = sent.filter((f) => f.type === 'chat.error' && f.request_id === 'fill-0').pop();
+            expect(dup).to.exist;
+            expect(dup.code).to.equal('invalid_request');
+            // The session itself survives: heartbeat still flows, socket open.
+            session._sendHeartbeat();
+            expect(sent.some((f) => f.type === 'heartbeat')).to.be.true;
+            expect(socket.readyState).to.not.equal(3);
+            session.stop();
+        } finally {
+            await rt.closeServer();
+        }
+    });
+
+    it('request_id histories are independent between two sessions', async () => {
+        const rt = await startFakeRuntime((req, res) => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(openAiChat('session-local')));
+        });
+        try {
+            const a = makeSession(rt.baseUrl);
+            const b = makeSession(rt.baseUrl);
+            // The SAME id in two different sessions executes in each.
+            a.session._handleMessage(JSON.stringify(CHAT_REQ('si-1')));
+            b.session._handleMessage(JSON.stringify(CHAT_REQ('si-1')));
+            await wait(200);
+            expect(rt.requests).to.have.lengthOf(2);
+            expect(a.sent.find((f) => f.type === 'chat.response' && f.request_id === 'si-1')).to.exist;
+            expect(b.sent.find((f) => f.type === 'chat.response' && f.request_id === 'si-1')).to.exist;
+            // Duplicates are caught per session — each history is its own.
+            a.session._handleMessage(JSON.stringify(CHAT_REQ('si-1')));
+            b.session._handleMessage(JSON.stringify(CHAT_REQ('si-1')));
+            await wait(100);
+            const dupA = a.sent.filter((f) => f.type === 'chat.error' && f.request_id === 'si-1').pop();
+            const dupB = b.sent.filter((f) => f.type === 'chat.error' && f.request_id === 'si-1').pop();
+            expect(dupA && dupA.code).to.equal('invalid_request');
+            expect(dupB && dupB.code).to.equal('invalid_request');
+            expect(rt.requests).to.have.lengthOf(2); // no re-execution anywhere
+            a.session.stop();
+            b.session.stop();
+        } finally {
+            await rt.closeServer();
+        }
+    });
+
+    it('reconnect starts a NEW lifecycle: seen ids do not survive a socket close', async function () {
+        this.timeout(20000);
+        const rt = await startFakeRuntime((req, res) => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(openAiChat('new life')));
+        });
+        try {
+            const sockets = [];
+            const session = createConnectorSession({
+                config: { url: 'ws://127.0.0.1:1/ws', token: 'llmc.a.b', baseUrl: rt.baseUrl, runtimeType: 'ollama' },
+                logger: { info: () => {}, warn: () => {}, error: () => {} },
+                WebSocketImpl: function Stub() {
+                    const s = makeScriptedSocket();
+                    sockets.push(s);
+                    return s;
+                },
+            });
+            session.start();
+            const sock1 = sockets[0];
+            session._handleMessage(JSON.stringify({ type: 'ready', connector_id: 'c', heartbeat_interval_ms: 600000 }));
+            session._handleMessage(JSON.stringify(CHAT_REQ('rc-1')));
+            await wait(150);
+            expect(sock1.sent.find((f) => f.type === 'chat.response' && f.request_id === 'rc-1')).to.exist;
+            expect(rt.requests).to.have.lengthOf(1);
+            // Socket dies → lifecycle 1 ends (history cleared) → reconnect.
+            sock1.close();
+            await wait(1700); // reconnect backoff ~1.0–1.25 s
+            expect(sockets.length).to.equal(2); // fresh socket = fresh lifecycle
+            session._handleMessage(JSON.stringify({ type: 'ready', connector_id: 'c', heartbeat_interval_ms: 600000 }));
+            // The SAME id again is legal in the NEW lifecycle (at-most-once
+            // holds per lifecycle: executed exactly once in each).
+            session._handleMessage(JSON.stringify(CHAT_REQ('rc-1')));
+            await wait(150);
+            const resp2 = sockets[1].sent.find((f) => f.type === 'chat.response' && f.request_id === 'rc-1');
+            expect(resp2).to.exist;
+            expect(rt.requests).to.have.lengthOf(2); // once per lifecycle
+            session.stop();
+        } finally {
+            await rt.closeServer();
+        }
+    });
+
     it('slot released after error: request after a failure succeeds', async () => {
         const rt = await startFakeRuntime((req, res) => {
             if (rt.requests.length === 1) {

@@ -35,7 +35,12 @@
 //     local runtime requests at once; overflow answers busy immediately.
 //   - request_id uniqueness: a request_id is executed at most ONCE per
 //     session lifecycle (in-flight OR completed ids are rejected
-//     invalid_request — no re-execution, ever).
+//     invalid_request — no re-execution, ever). The per-session seen-id
+//     store is fingerprinted and NEVER evicted; when it reaches its bound
+//     the session turns fail-closed (new ids refused invalid_request)
+//     instead of forgetting — bounded memory must never weaken the
+//     at-most-once contract. The store dies with the session: it is
+//     cleared on close/stop, so a reconnect starts a fresh lifecycle.
 //   - Every limit is enforced HERE, not trusted from the cloud (§4
 //     Phase-4 note); violation → sanitized chat.error, session survives.
 //   - One in-flight discovery at a time; extra refreshes coalesce (no
@@ -110,10 +115,13 @@ function createConnectorSession({
         discoveryInFlight: false,
         // Phase 4 inference state (ephemeral, in-memory only):
         //   inflight: request_id → { controller, model, startedAt, cancelledByCloud }
-        //   seenIds: every request_id executed (or rejected as duplicate)
-        //     in THIS session lifecycle — at-most-once execution (§4).
+        //   seenIds: fingerprints of EVERY request_id seen in THIS session
+        //     lifecycle (admitted, busy-rejected, or invalid) — at-most-once
+        //     execution (§4). Entries are never evicted; when the store is
+        //     full the session turns fail-closed (seenStoreFull below).
         chatInflight: new Map(),
         chatSeenIds: new Set(),
+        chatSeenSaturated: false,
         stopped: false,
     };
 
@@ -207,13 +215,30 @@ function createConnectorSession({
         });
     }
 
-    /** Remember a request_id for at-most-once execution (bounded set). */
+    /**
+     * Remember a request_id for at-most-once execution. Fingerprinted,
+     * never evicted (evicting could let a replayed id execute twice —
+     * §4 forbids it). Once the store reaches its bound the session is
+     * permanently FAIL-CLOSED for NEW ids: duplicate checks keep working
+     * (false negatives are impossible), fresh unknown ids are refused.
+     * @returns {boolean} false when the store was already full (the id
+     *   was NOT stored; the caller must reject the request).
+     */
     function rememberRequestId(requestId) {
-        state.chatSeenIds.add(requestId);
-        if (state.chatSeenIds.size > chat.LIMITS.maxSeenRequestIds) {
-            const oldest = state.chatSeenIds.values().next().value;
-            state.chatSeenIds.delete(oldest);
+        if (state.chatSeenSaturated) return false;
+        const fp = chat.fingerprintRequestId(requestId);
+        if (!state.chatSeenIds.has(fp) && state.chatSeenIds.size >= chat.LIMITS.maxSeenRequestIds) {
+            // Bound reached — refuse rather than forget (at-most-once wins).
+            state.chatSeenSaturated = true;
+            return false;
         }
+        state.chatSeenIds.add(fp);
+        return true;
+    }
+
+    /** True when the id is already spent in this session lifecycle. */
+    function hasSeenRequestId(requestId) {
+        return state.chatSeenIds.has(chat.fingerprintRequestId(requestId));
     }
 
     /**
@@ -221,8 +246,11 @@ function createConnectorSession({
      * are enforced HERE (lib/chat.cjs) — never trusted from the cloud.
      * Concurrency: §4 semaphore (default 2) → busy. Duplicate request_id
      * (in-flight or already executed this session) → invalid_request,
-     * never re-executed. The adapter owns the inference timeout; chat.cancel
-     * aborts the local fetch via the entry's AbortController.
+     * never re-executed. Once the seen-id store is full the session is
+     * fail-closed: NEW ids are refused invalid_request (memory bound
+     * without eviction — at-most-once is never weakened). The adapter
+     * owns the inference timeout; chat.cancel aborts the local fetch via
+     * the entry's AbortController.
      */
     function runChatRequest(msg) {
         if (state.phase !== 'ready') return;
@@ -240,7 +268,12 @@ function createConnectorSession({
         const { requestId, model, messages, maxTokens, temperature, timeoutMs } = v.request;
 
         // At-most-once per session lifecycle (§4 Phase-4 note).
-        if (state.chatSeenIds.has(requestId) || state.chatInflight.has(requestId)) {
+        if (hasSeenRequestId(requestId) || state.chatInflight.has(requestId)) {
+            sendChatError(requestId, 'invalid_request');
+            return;
+        }
+        // Memory bound reached → fail-closed for NEW ids (never evict).
+        if (state.chatSeenSaturated) {
             sendChatError(requestId, 'invalid_request');
             return;
         }
@@ -250,7 +283,11 @@ function createConnectorSession({
             sendChatError(requestId, 'busy');
             return;
         }
-        rememberRequestId(requestId);
+        if (!rememberRequestId(requestId)) {
+            // Store saturated between the checks — refuse, never evict.
+            sendChatError(requestId, 'invalid_request');
+            return;
+        }
 
         const entry = {
             controller: new AbortController(),
@@ -475,11 +512,14 @@ function createConnectorSession({
         ws.on('close', () => {
             if (state.heartbeatTimer) { clearInterval(state.heartbeatTimer); state.heartbeatTimer = null; }
             // In-flight inference dies with the socket: abort the local
-            // fetches (no frames can be sent anyway). The seen-ids set and
-            // inflight map are reset — request_id lifecycle is per session.
+            // fetches (no frames can be sent anyway). The seen-id store,
+            // its saturation flag and the inflight map are reset — the
+            // request_id lifecycle is per session; a reconnect starts a
+            // fresh one.
             abortAllInflight();
             state.chatInflight.clear();
             state.chatSeenIds.clear();
+            state.chatSeenSaturated = false;
             if (!state.stopped) scheduleReconnect();
         });
     }
@@ -496,6 +536,7 @@ function createConnectorSession({
             abortAllInflight();
             state.chatInflight.clear();
             state.chatSeenIds.clear();
+            state.chatSeenSaturated = false;
             if (state.ws) {
                 try { state.ws.close(1000, 'client_stop'); } catch (_) {}
             }

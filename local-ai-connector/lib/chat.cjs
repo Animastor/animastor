@@ -16,6 +16,8 @@
 // the adapter hardcodes stream:false (chat.delta is Phase 5).
 // ======================================================
 
+const crypto = require('crypto');
+
 const LIMITS = {
     maxRequestIdChars: 128,
     maxModelChars: 512,            // mirrors the cloud-side model-id cap
@@ -29,7 +31,15 @@ const LIMITS = {
     maxTimeoutMs: 180 * 1000,      // §5: the chat window — never larger here
     maxChatFrameBytes: 1024 * 1024, // hostile-frame guard (prompt caps bind first)
     maxConcurrentRequests: 2,      // §4: connector-side semaphore default
-    maxSeenRequestIds: 10000,      // per-session duplicate protection bound
+    // Per-session duplicate-store bound (connector.cjs). Entries are
+    // fingerprinted (fingerprintRequestId: 64-bit SHA-256 truncation) and
+    // NEVER evicted — evicting an id could let a replayed request_id
+    // execute a second time, violating the §4 at-most-once contract.
+    // When the store is full the session turns FAIL-CLOSED: every NEW
+    // request_id is refused invalid_request until the session lifecycle
+    // ends. Memory is thus strictly bounded (~cap × 16-char fingerprints)
+    // without ever weakening the invariant.
+    maxSeenRequestIds: 100000,
     // Serialized chat.response frame cap — fits under the cloud's 64 KB
     // inbound frame cap with margin (an ordinary long completion must fail
     // with a sanitized error, never kill the session; §4 Phase-4 note).
@@ -174,6 +184,21 @@ function validateChatCancel(msg) {
     return id;
 }
 
+/**
+ * 64-bit fingerprint of a request_id for the per-session duplicate store
+ * (connector.cjs). Storing fingerprints instead of raw ids bounds memory
+ * regardless of id length. Soundness of the at-most-once invariant does
+ * NOT depend on collision resistance: equal ids always hash equal (no
+ * false negatives, a seen id can never re-execute), while a collision
+ * between two DIFFERENT ids can only over-reject a fresh id — the
+ * fail-closed direction, never re-execution.
+ * @param {string} requestId - validated against REQUEST_ID_RE (≤128 chars)
+ * @returns {string} 16 hex chars
+ */
+function fingerprintRequestId(requestId) {
+    return crypto.createHash('sha256').update(requestId, 'utf8').digest('hex').slice(0, 16);
+}
+
 module.exports = {
     LIMITS,
     CHAT_ROLES,
@@ -181,4 +206,5 @@ module.exports = {
     errorMessages,
     validateChatRequest,
     validateChatCancel,
+    fingerprintRequestId,
 };
