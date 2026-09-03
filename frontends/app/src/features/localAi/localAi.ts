@@ -123,21 +123,23 @@ export function looksLikeConnectorCredential(token: string): boolean {
   return parts[1].length > 0 && parts[2].length > 0;
 }
 
-/** Localized status key for the connector pill. `live` (registry truth) is
- *  authoritative for the Online label; a PG `online` without a live session
- *  renders Offline (stale row, e.g. after a crash). */
+/** Localized status key for the connector pill. The registry `live` flag
+ *  (an authenticated WS session is connected) is the AUTHORITATIVE truth:
+ *  whenever it is set the connector is Online. Without a live session the
+ *  PG `status` is a stale trace only — a `pending` row renders Pending,
+ *  anything else (including a stale `online`, e.g. right after a crash)
+ *  renders Offline. */
 export function statusKey(c: { status: ConnectorStatus; live: boolean }): 'local_ai_status_pending' | 'local_ai_status_online' | 'local_ai_status_offline' {
-  if (c.status === 'pending') return 'local_ai_status_pending';
   if (c.live) return 'local_ai_status_online';
-  if (c.status === 'online') return 'local_ai_status_online';
+  if (c.status === 'pending') return 'local_ai_status_pending';
   return 'local_ai_status_offline';
 }
 
-/** CSS class suffix for the status pill (worker pill pattern). */
+/** CSS class suffix for the status pill (worker pill pattern). Same
+ *  authoritative rule as statusKey: live → online; no live session → the
+ *  offline pill (pending included). */
 export function statusClass(c: { status: ConnectorStatus; live: boolean }): string {
-  if (c.status === 'pending') return 'worker__status--offline';
   if (c.live) return 'worker__status--online';
-  if (c.status === 'online') return 'worker__status--online';
   return 'worker__status--offline';
 }
 

@@ -71,23 +71,38 @@ describe('token shapes (llmcreg.*/llmc.*)', () => {
   });
 });
 
-describe('statusKey / statusClass — registry truth beats stale PG rows', () => {
-  it('pending → pending (registered, waiting for first connect)', () => {
+describe('statusKey / statusClass — the registry `live` flag is authoritative', () => {
+  // The full status × live matrix. `live` (an authenticated WS session)
+  // always wins → Online. Without a live session only a `pending` PG row
+  // shows Pending; a stale `online` row (crash / heartbeat timeout) is
+  // shown honestly as Offline.
+
+  it('pending + live=false → Pending', () => {
     expect(statusKey({ status: 'pending', live: false })).toBe('local_ai_status_pending');
     expect(statusClass({ status: 'pending', live: false })).toBe('worker__status--offline');
   });
 
-  it('live session → online regardless of the PG row', () => {
+  it('pending + live=true → Online', () => {
+    expect(statusKey({ status: 'pending', live: true })).toBe('local_ai_status_online');
+    expect(statusClass({ status: 'pending', live: true })).toBe('worker__status--online');
+  });
+
+  it('online + live=true → Online', () => {
     expect(statusKey({ status: 'online', live: true })).toBe('local_ai_status_online');
+    expect(statusClass({ status: 'online', live: true })).toBe('worker__status--online');
+  });
+
+  it('offline + live=true → Online', () => {
     expect(statusKey({ status: 'offline', live: true })).toBe('local_ai_status_online');
     expect(statusClass({ status: 'offline', live: true })).toBe('worker__status--online');
   });
 
-  it('stale PG online without a live session → offline (honest state)', () => {
-    expect(statusKey({ status: 'online', live: false })).toBe('local_ai_status_online');
-    // ^ PG still says online right after a crash — the UI trusts the
-    //   registry; a connection that died shows offline via live=false and
-    //   status=offline rows always map offline:
+  it('online + live=false → Offline (stale PG row after a crash)', () => {
+    expect(statusKey({ status: 'online', live: false })).toBe('local_ai_status_offline');
+    expect(statusClass({ status: 'online', live: false })).toBe('worker__status--offline');
+  });
+
+  it('offline + live=false → Offline', () => {
     expect(statusKey({ status: 'offline', live: false })).toBe('local_ai_status_offline');
     expect(statusClass({ status: 'offline', live: false })).toBe('worker__status--offline');
   });

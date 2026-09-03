@@ -52,12 +52,14 @@ object LocalAiHelpers {
         return parts.size == 3 && parts[0] == "llmc" && parts[1].isNotEmpty() && parts[2].isNotEmpty()
     }
 
-    /** Status label key — the registry `live` flag is authoritative for
-     *  Online; a stale PG online row without a live session renders Online
-     *  only while PG says so, offline rows never fake liveness. */
+    /** Status label key — the registry `live` flag (an authenticated WS
+     *  session is connected) is the AUTHORITATIVE truth: whenever set → Online.
+     *  Without a live session the PG `status` is a stale trace only: a
+     *  `pending` row renders Pending, anything else (including a stale
+     *  `online`, e.g. right after a crash) renders Offline. */
     fun statusKey(status: String?, live: Boolean): String = when {
+        live -> "local_ai_status_online"
         status == "pending" -> "local_ai_status_pending"
-        live || status == "online" -> "local_ai_status_online"
         else -> "local_ai_status_offline"
     }
 

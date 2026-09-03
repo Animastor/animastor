@@ -182,7 +182,6 @@ class LocalAiSettingsFragment : Fragment(R.layout.fragment_local_ai_settings) {
         if (boundConnectorId == c.connectorId) {
             header.addView(pill(ctx, dp, getString(R.string.local_ai_bound_badge), success = true))
         }
-        val isOnline = c.live || c.status == "online"
         header.addView(pill(
             ctx, dp,
             getString(stringResForStatus(LocalAiHelpers.statusKey(c.status, c.live))),

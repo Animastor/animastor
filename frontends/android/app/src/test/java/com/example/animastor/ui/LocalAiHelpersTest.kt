@@ -68,17 +68,30 @@ class LocalAiHelpersTest {
         assertFalse(LocalAiHelpers.looksLikeConnectorCredential("llmc.abc"))
     }
 
-    // ── status mapping (registry truth beats stale rows) ──────────────────
+    // ── status mapping — the registry `live` flag is authoritative ──────
 
     @Test
-    fun status_pending() {
+    fun status_pendingWithoutLiveIsPending() {
         assertEquals("local_ai_status_pending", LocalAiHelpers.statusKey("pending", live = false))
+    }
+
+    @Test
+    fun status_pendingWithLiveIsOnline() {
+        assertEquals("local_ai_status_online", LocalAiHelpers.statusKey("pending", live = true))
     }
 
     @Test
     fun status_liveSessionIsOnline() {
         assertEquals("local_ai_status_online", LocalAiHelpers.statusKey("online", live = true))
         assertEquals("local_ai_status_online", LocalAiHelpers.statusKey("offline", live = true))
+    }
+
+    @Test
+    fun status_staleOnlineWithoutLiveIsOffline() {
+        // Regression: a stale PG `online` row (crash / heartbeat timeout)
+        // without a live WS session must render Offline — `live` is the
+        // authoritative truth.
+        assertEquals("local_ai_status_offline", LocalAiHelpers.statusKey("online", live = false))
     }
 
     @Test
