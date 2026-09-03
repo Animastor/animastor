@@ -12,8 +12,9 @@
 // module reads request_id/model/messages/params/timeout_ms and NOTHING
 // else.
 //
-// Phase 4 = non-streaming ONLY: `stream` is not a settable parameter —
-// the adapter hardcodes stream:false (chat.delta is Phase 5).
+// Phase 4 = non-streaming; Phase 5 adds `stream:true` (chat.delta). The
+// `stream` parameter is strictly boolean: a hostile server cannot smuggle
+// a truthy non-boolean into the runtime request body.
 // ======================================================
 
 const crypto = require('crypto');
@@ -44,6 +45,20 @@ const LIMITS = {
     // inbound frame cap with margin (an ordinary long completion must fail
     // with a sanitized error, never kill the session; §4 Phase-4 note).
     maxResponseFrameBytes: 60 * 1024,
+    // ── Phase 5 (streaming) ──────────────────────────────────────────
+    // chat.delta is a TEXT-INCREMENT frame: only `delta` (never role, never
+    // tool_calls) is forwarded. One individual delta is capped far below the
+    // cloud's 64 KB inbound frame cap; the CUMULATIVE streamed content is
+    // capped at the same 32 768-char budget as a non-streaming response
+    // (§4 Phase-5 note) — beyond either the stream aborts with a sanitized
+    // response_too_large, never an oversized frame.
+    maxDeltaChars: 16 * 1024,
+    maxStreamedContentChars: 32 * 1024,
+    // Per-request runtime-side streaming caps (adapter): individual SSE event
+    // and line-buffer bounds — a hostile/broken runtime can neither hang the
+    // parser on an unterminated "data:" line nor blow memory up.
+    maxSseEventBytes: 64 * 1024,
+    maxSseLineBytes: 64 * 1024,
 };
 
 // Fixed sanitized error messages (allowlisted codes only — a raw runtime
@@ -77,7 +92,7 @@ const MODEL_CTRL_RE = /[\u0000-\u001f\u007f]/;
 /**
  * Validate one chat.request frame.
  * @returns {{ok:true, request:{requestId, model, messages, maxTokens,
- *                               temperature, timeoutMs}}
+ *                               temperature, timeoutMs, stream}}
  *           |{ok:false, code:'invalid_request'|'request_too_large',
  *             requestId:string|null}}
  *          Size violations → request_too_large; shape/type/range
@@ -158,6 +173,12 @@ function validateChatRequest(msg) {
         temperature = params.temperature;
     }
 
+    // Phase 5: `stream` is a strictly boolean parameter — true turns the
+    // request into a streaming one (N× chat.delta + terminal chat.response);
+    // anything non-boolean is invalid_request (no truthy coercion, no
+    // string "true"). Unknown params keys are dropped (never forwarded).
+    const stream = params.stream === true;
+
     // timeout_ms: cloud-controlled — clamped defensively, never trusted.
     let timeoutMs = LIMITS.maxTimeoutMs;
     if (msg.timeout_ms != null) {
@@ -169,7 +190,7 @@ function validateChatRequest(msg) {
 
     return {
         ok: true,
-        request: { requestId, model, messages, maxTokens, temperature, timeoutMs },
+        request: { requestId, model, messages, maxTokens, temperature, timeoutMs, stream },
     };
 }
 

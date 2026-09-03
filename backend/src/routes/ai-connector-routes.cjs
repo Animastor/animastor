@@ -33,17 +33,24 @@ const transport = require('../services/ai-connector/transport');
 //                                                 codes from a fixed sanitized
 //                                                 allowlist (discovery service).
 //
-// Phase 4 — non-streaming inference (§4 Phase-4 note, §5, §9):
+// Phase 4 — inference, non-streaming by default (§4 Phase-4/Phase-5 notes,
+// §5, §9):
 //   S→C chat.request { request_id, model, messages, params, timeout_ms }
 //                     — sent ONLY by the transport service (validated,
-//                       cloud-generated request_id, never carries a URL)
+//                       cloud-generated request_id, never carries a URL);
+//                       params.stream === true (Phase 5) switches the
+//                       request to streaming
+//   C→S chat.delta    { request_id, delta }  — Phase 5 streaming increments
+//                        (text only; strictly validated by the transport)
 //   C→S chat.response { request_id, model, content, finish_reason, usage }
+//                        — terminal for both modes (stream: full content)
 //   C→S chat.error    { request_id, code, message }   — allowlisted codes only
 //   S→C chat.cancel   { request_id }              — the authoritative cloud
 //                        timer expiring (§5); the connector aborts its
-//                        local fetch, frees the slot, sends nothing back.
-// The route accepts chat.response / chat.error from an AUTHENTICATED
-// session and delegates to the transport service (validation,
+//                        local fetch (streaming included), frees the slot,
+//                        sends nothing back.
+// The route accepts chat.delta / chat.response / chat.error from an
+// AUTHENTICATED session and delegates to the transport service (validation,
 // request-id correlation, sanitized settling). chat.request /
 // chat.cancel from the connector are NOT part of the C→S surface — they
 // fall through to the unknown-type branch and are ignored (the endpoint
@@ -454,8 +461,9 @@ function createWsHandler({ redis, logger = console, options = {} } = {}) {
             handleModelsList(session, msg).catch(() => {});
             return;
         }
-        if (msg.type === 'chat.response' || msg.type === 'chat.error') {
-            // Phase 4: a reply to a transport-owned chat.request. Validation,
+        if (msg.type === 'chat.delta' || msg.type === 'chat.response' || msg.type === 'chat.error') {
+            // Phase 4/5: a reply to a transport-owned chat.request (Phase 5
+            // streams N× chat.delta before the terminal frame). Validation,
             // request-id correlation and sanitized settling live in the
             // transport service — the route only binds the session identity
             // (a reply settles only the request sent on THIS session).
@@ -514,9 +522,11 @@ function createWsHandler({ redis, logger = console, options = {} } = {}) {
                 // immediately (failPendingFor is a no-op when this session
                 // did not own the pending refresh).
                 discovery.failPendingFor(session);
-                // Phase 4: pending inference on a dying session fails fast
+                // Phase 4/5: pending inference on a dying session fails fast
                 // with session_closed — never left waiting for the timeout
-                // (no-op when this session owned no pending requests).
+                // (no-op when this session owned no pending requests; for a
+                // streaming request already-fired onDelta calls stay with
+                // the caller — the terminal settle carries session_closed).
                 transport.failPendingFor(session);
                 // Mark offline only if this session was STILL the registered live
                 // session (a replacement session must not be clobbered offline).

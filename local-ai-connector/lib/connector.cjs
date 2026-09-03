@@ -14,7 +14,9 @@
 //   S→C chat.request { request_id, model, messages, params, timeout_ms }
 //                                              → connector fetches locally:
 //                                              POST {base}/v1/chat/completions
-//                                                (adapter; stream:false ONLY)
+//                                                (adapter; stream:false, or
+//                                                 stream:true when
+//                                                 params.stream === true)
 //   C→S chat.response { request_id, model, content, finish_reason, usage }
 //   C→S chat.error    { request_id, code, message }
 //   S→C chat.cancel   { request_id }           → abort the local fetch, free
@@ -29,8 +31,13 @@
 //     there is no field a cloud could use to point the runtime call
 //     elsewhere (AD-5). chat.request carries no url; any url-like extra
 //     fields are dropped at the validation seam (lib/chat.cjs).
-//   - Phase 4 inference is ALWAYS non-streaming: the adapter hardcodes
-//     stream:false; chat.delta does not exist in this session.
+//   - Phase 4 inference is non-streaming by default; Phase 5 adds
+//     params.stream === true → POST /v1/chat/completions with stream:true
+//     through the dedicated adapter function → N× C→S chat.delta
+//     {request_id, delta} + exactly ONE terminal chat.response
+//     (or chat.error). A stream request is executed at most once, holds
+//     one concurrency slot for its whole duration and cancels exactly
+//     like a non-streaming one (chat.cancel aborts the local fetch).
 //   - Concurrency: at most LIMITS.maxConcurrentRequests (default 2, §4)
 //     local runtime requests at once; overflow answers busy immediately.
 //   - request_id uniqueness: a request_id is executed at most ONCE per
@@ -242,15 +249,16 @@ function createConnectorSession({
     }
 
     /**
-     * One chat.request → ONE non-streaming local runtime call. All limits
-     * are enforced HERE (lib/chat.cjs) — never trusted from the cloud.
-     * Concurrency: §4 semaphore (default 2) → busy. Duplicate request_id
-     * (in-flight or already executed this session) → invalid_request,
-     * never re-executed. Once the seen-id store is full the session is
-     * fail-closed: NEW ids are refused invalid_request (memory bound
-     * without eviction — at-most-once is never weakened). The adapter
-     * owns the inference timeout; chat.cancel aborts the local fetch via
-     * the entry's AbortController.
+     * One chat.request → ONE local runtime call. All limits are enforced
+     * HERE (lib/chat.cjs) — never trusted from the cloud. Concurrency:
+     * §4 semaphore (default 2) → busy. Duplicate request_id (in-flight or
+     * already executed this session) → invalid_request, never re-executed.
+     * Once the seen-id store is full the session is fail-closed: NEW ids
+     * are refused invalid_request (memory bound without eviction —
+     * at-most-once is never weakened). The adapter owns the inference
+     * timeout; chat.cancel aborts the local fetch via the entry's
+     * AbortController. params.stream === true (Phase 5) switches to the
+     * streaming adapter call: N× chat.delta + ONE terminal chat.response.
      */
     function runChatRequest(msg) {
         if (state.phase !== 'ready') return;
@@ -265,7 +273,7 @@ function createConnectorSession({
             }
             return;
         }
-        const { requestId, model, messages, maxTokens, temperature, timeoutMs } = v.request;
+        const { requestId, model, messages, maxTokens, temperature, timeoutMs, stream } = v.request;
 
         // At-most-once per session lifecycle (§4 Phase-4 note).
         if (hasSeenRequestId(requestId) || state.chatInflight.has(requestId)) {
@@ -294,18 +302,56 @@ function createConnectorSession({
             model,
             startedAt: Date.now(),
             cancelledByCloud: false,
+            stream, // Phase 5: this request streams (chat.delta frames)
         };
         state.chatInflight.set(requestId, entry);
 
-        adapter.chatCompletion({
-            baseUrl: config.baseUrl,
-            model,
-            messages,
-            maxTokens,
-            temperature,
-            timeoutMs,
-            signal: entry.controller.signal,
-        }).then((result) => {
+        /**
+         * Terminal failure for this request (in-flight entry exists):
+         * sanitized chat.error + metadata log. A stream that already
+         * delivered deltas carries the sanitized error the same way —
+         * the cloud surfaces partial text + error (§4 Phase-5 note).
+         */
+        const finishChatError = (code) => {
+            sendChatError(requestId, code);
+            opLog.recordOp({ op: 'chat_completion', model, status: 'error', error_code: code, duration_ms: Date.now() - entry.startedAt, stream });
+            logger.warn(`[AI-CONNECTOR] chat failed: ${code} (${Date.now() - entry.startedAt}ms)`);
+        };
+
+        // Adapter call — the streaming variant for params.stream === true
+        // (Phase 5), the plain completion otherwise (Phase 4 unchanged).
+        const call = stream
+            ? adapter.chatCompletionStream({
+                baseUrl: config.baseUrl,
+                model,
+                messages,
+                maxTokens,
+                temperature,
+                timeoutMs,
+                signal: entry.controller.signal,
+                maxSseEventBytes: chat.LIMITS.maxSseEventBytes,
+                maxSseLineBytes: chat.LIMITS.maxSseLineBytes,
+                maxDeltaChars: chat.LIMITS.maxDeltaChars,
+                maxStreamedContentChars: chat.LIMITS.maxStreamedContentChars,
+                onDelta: (text) => {
+                    // In-order forwarding; the session-bound entry guards
+                    // against a late callback after cancel/close (the
+                    // entry is deleted the moment the request settles).
+                    if (!state.chatInflight.has(requestId)) return;
+                    send({ type: 'chat.delta', request_id: requestId, delta: text });
+                },
+            })
+            : adapter.chatCompletion({
+                baseUrl: config.baseUrl,
+                model,
+                messages,
+                maxTokens,
+                temperature,
+                timeoutMs,
+                signal: entry.controller.signal,
+            });
+
+        call.then((result) => {
             // Already settled (e.g. session stopped) — nothing to do.
             if (!state.chatInflight.has(requestId)) return;
             state.chatInflight.delete(requestId);
@@ -323,14 +369,16 @@ function createConnectorSession({
                 const serialized = JSON.stringify(frame);
                 // Frame guard: a response that would not fit the cloud's
                 // inbound frame cap fails with a sanitized error instead of
-                // killing the session (§4 Phase-4 note).
+                // killing the session (§4 Phase-4 note). A streamed terminal
+                // response can never exceed this: the cumulative cap
+                // (maxStreamedContentChars) already bounds the joined text.
                 if (Buffer.byteLength(serialized) > chat.LIMITS.maxResponseFrameBytes) {
                     sendChatError(requestId, 'response_too_large');
-                    opLog.recordOp({ op: 'chat_completion', model, status: 'error', error_code: 'response_too_large', duration_ms: durationMs });
+                    opLog.recordOp({ op: 'chat_completion', model, status: 'error', error_code: 'response_too_large', duration_ms: durationMs, stream });
                     return;
                 }
                 send(frame);
-                opLog.recordOp({ op: 'chat_completion', model, status: 'ok', duration_ms: durationMs, bytes: result.rawBytes });
+                opLog.recordOp({ op: 'chat_completion', model, status: 'ok', duration_ms: durationMs, bytes: result.rawBytes, stream });
                 logger.info(`[AI-CONNECTOR] chat ok (model ${model}, ${durationMs}ms)`);
                 return;
             }
@@ -339,27 +387,27 @@ function createConnectorSession({
             if (result.code === 'cancelled' && entry.cancelledByCloud) {
                 // Cloud-initiated cancel: the terminal state IS the cancel —
                 // nothing is sent back (§5); slot freed; session stays up.
-                opLog.recordOp({ op: 'chat_completion', model, status: 'cancelled', duration_ms: durationMs });
+                // (For a stream: deltas already sent stay sent; no further
+                // frame of any kind goes out for this id.)
+                opLog.recordOp({ op: 'chat_completion', model, status: 'cancelled', duration_ms: durationMs, stream });
                 logger.info(`[AI-CONNECTOR] chat cancelled (model ${model}, ${durationMs}ms)`);
                 return;
             }
-            sendChatError(requestId, result.code);
-            opLog.recordOp({ op: 'chat_completion', model, status: 'error', error_code: result.code, duration_ms: durationMs });
-            logger.warn(`[AI-CONNECTOR] chat failed: ${result.code} (${durationMs}ms)`);
+            finishChatError(result.code);
         }).catch(() => {
             // Safety net: the adapter resolves instead of rejecting; if it
             // ever throws, fail sanitized and free the slot.
             if (!state.chatInflight.has(requestId)) return;
             state.chatInflight.delete(requestId);
-            sendChatError(requestId, 'runtime_error');
-            opLog.recordOp({ op: 'chat_completion', model, status: 'error', error_code: 'runtime_error', duration_ms: Date.now() - entry.startedAt });
+            finishChatError('runtime_error');
         });
     }
 
     /**
      * chat.cancel (S→C, §5): find the request by request_id, abort the
-     * underlying local HTTP fetch, free the slot. Unknown/finished ids are
-     * ignored silently; the WS session is NEVER closed by a cancel.
+     * underlying local HTTP fetch (streaming included — the SSE read dies
+     * with the same AbortController), free the slot. Unknown/finished ids
+     * are ignored silently; the WS session is NEVER closed by a cancel.
      */
     function handleChatCancel(msg) {
         const requestId = chat.validateChatCancel(msg);

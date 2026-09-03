@@ -385,11 +385,70 @@ message] }`, `S→C chat.cancel { request_id }`. Fixed contract:
   unsolicited/mismatched chat frames. Inference state is ephemeral
   in-memory; nothing about chat is persisted (§8 PG state untouched).
 
-**Phase 5 streaming:** `chat.delta` from the connector → the backend
-re-emits OpenAI-style SSE frames → the existing SSE client
-(`client.ts:147`). The wire format Cloud↔Connector is the simplified own
-`{delta}`, not raw SSE passthrough — easier to parse, and the connector
-normalizes runtime differences (§6).
+**Phase-5 implementation note (2026-09-03):** streaming inference is
+implemented on the §4/§5 frames — `S→C chat.request` gains the strictly
+boolean `params.stream` (true switches the request to streaming);
+`C→S chat.delta { request_id, delta }` carries incremental TEXT only;
+exactly ONE terminal `chat.response` (or `chat.error`) closes the stream.
+Fixed contract:
+
+- **Adapter (`chatCompletionStream`):** the same fixed path/URL
+  discipline as Phase 4 (POST `{base}/v1/chat/completions`,
+  `redirect:'error'`, local-config base only — AD-5), body
+  `stream:true` reachable ONLY through the dedicated function (Phase 4
+  still hardcodes `stream:false`). The runtime SSE answer is parsed
+  incrementally under hard bounds: one `data:` line ≤ 64 KB (an
+  unterminated line aborts `response_too_large` — never unbounded
+  buffering); one joined SSE event ≤ 64 KB; one forwarded text
+  increment ≤ 16 KB (a bigger single chunk is split); cumulative
+  streamed text ≤ 32 768 chars — beyond it the fetch is ABORTED with a
+  sanitized error. Chunk normalization keeps ONLY
+  `choices[0].delta.content` (string), `finish_reason` (≤ 64 chars, no
+  control) and the three usage counters — role deltas, tool payloads
+  and runtime extras are dropped (text is the only thing forwarded).
+- **Ordering & terminals:** deltas fire in order; `[DONE]` is the clean
+  terminator (a body EOF after well-formed chunks is tolerated — a
+  runtime without a trailing `[DONE]` is not an error); an EMPTY
+  stream (`[DONE]` with no content chunks) is a clean completion with
+  EMPTY content — the terminal `chat.response` carries `content:''`; a
+  200 with NO SSE events at all is `bad_response`. A mid-stream HTTP
+  error BEFORE any delta keeps its Phase-4 sanitized code
+  (`model_not_found` / `context_length` / `runtime_error`); a failure
+  AFTER deltas resolves `stream_failed` on the connector side — the
+  caller surfaces partial text + a sanitized error (raw runtime detail
+  never crosses; §4 Phase-5 note).
+- **Session:** a stream request is executed at most once (same
+  fingerprinted never-evict seen-id store — saturation semantics
+  unchanged), holds one concurrency slot for its whole duration
+  (§4 semaphore), and cancels exactly like a non-streaming one:
+  `chat.cancel` aborts the local fetch (the SSE read dies with the same
+  AbortController), frees the slot and NO further frame of any kind is
+  sent for the id. Disconnect/stop aborts every in-flight stream via
+  `abortAllInflight` — no dangling fetches, timers or controllers; the
+  store/inflight maps reset with the lifecycle (fresh reconnect =
+  fresh at-most-once lifecycle). Local logging stays metadata-only with
+  a `stream` boolean added to the AD-6 record.
+- **Cloud transport:** `connectorChatStream` — the callAI-shaped
+  streaming seam (validation mirror, offline fail-closed `connector_offline`
+  per AD-12, cloud-generated UUID `request_id`, authoritative §5 timer →
+  `chat.cancel` + `timeout`); pending entries are session-bound as in
+  Phase 4. `chat.delta` frames are validated per-frame: `delta` must be
+  a string ≤ 16 KB; the cumulative sum ≤ 32 768 chars; any violation
+  (or a delta for a non-streaming request, or an unsolicited/late
+  delta) settles the request sanitized / is dropped at zero cost — a
+  hostile connector can neither blow the 64 KB inbound frame cap nor
+  exceed the content budget through many small deltas. An error frame
+  for a stream that already delivered deltas degrades to the fixed
+  `stream_failed` (timeout/cancelled keep their own codes); the
+  terminal `chat.response` carries the FULL content (empty string is
+  legal for an empty stream). All limits are enforced on the connector
+  AND re-enforced cloud-side — never trusted from the peer.
+- **Untouched:** Phase 4 non-streaming behavior, `/v1/models` discovery,
+  gpu-hub, worker sharing, `workspace_ai_providers` and the resolver
+  wiring (still reserved per §9 — no production caller sends a
+  streaming request yet; the re-emit OpenAI-SSE route
+  `POST /api/v1/ai/chat/stream` and the Web incremental rendering land
+  with the resolver/provider-binding step).
 
 ---
 
@@ -398,7 +457,7 @@ normalizes runtime differences (§6).
 | Concern | V1 answer |
 |---|---|
 | Plain request/response | `chat.request` → `chat.response` (blocking local POST, `stream:false`) |
-| Streaming | `chat.request{stream:true}` → N× `chat.delta` → terminal `chat.response` (or `chat.error`); backend buffers nothing |
+| Streaming | `chat.request{stream:true}` → N× `chat.delta` → terminal `chat.response` (or `chat.error`); the terminal response carries the FULL content (empty string = empty stream); backend buffers nothing |
 | Errors | `chat.error` with code + sanitized message; backend maps to the existing 503/`ai_unavailable` or per-call error paths; never leaks local host detail |
 | Timeout | Cloud-side timer per `request_id` (default = the existing `AI_FETCH_TIMEOUT_MS` 180 s chat window); on expiry → `chat.cancel` downstream + fail the caller; the connector aborts the local fetch on cancel |
 | Cancellation | `chat.cancel` frame; connector aborts the local runtime request (AbortController); late `chat.response` for a cancelled id is dropped by the cloud |
@@ -874,8 +933,12 @@ local-ai branch, `ai-service.js`/`ai-routes.cjs` transport branches,
 insertion points stay reserved and unchanged until the provider-binding
 phase. No production caller sends `chat.request` in step 1.
 
-### Phase 5 — Streaming
-- Connector: stream parsing of runtime SSE → `chat.delta` frames.
+### Phase 5 — Streaming (implemented, 2026-09-03 — see §4 Phase-5 note)
+- Connector: stream parsing of runtime SSE → `chat.delta` frames
+  (done — `chatCompletionStream` + session wiring; at-most-once,
+  cancel/timeout/disconnect semantics per §4 Phase-5 note).
+- Backend: `ai-connector/transport.js` `connectorChatStream` + WS route
+  `chat.delta` handling (done — validated, sanitized, session-bound).
 - Backend: re-emit OpenAI-style SSE for chat; route
   `POST /api/v1/ai/chat/stream` (greenfield — does not exist today).
 - Web: incremental rendering in `AiAssistantPage.tsx`.

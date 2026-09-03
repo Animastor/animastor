@@ -2,8 +2,8 @@
 // Local connector request log — METADATA-ONLY (AD-6, §10.3)
 // ======================================================
 // Never stores prompts, messages, or model responses. Safe fields only:
-// { ts, op, model, status, error_code, duration_ms, bytes }. Size-capped
-// ring buffer; no content ever enters this log by design.
+// { ts, op, model, status, error_code, duration_ms, bytes, stream }. 
+// Size-capped ring buffer; no content ever enters this log by design.
 // Status values: ok | error | cancelled (the AD-6 record shape).
 // ======================================================
 
@@ -25,6 +25,7 @@ function recordOp(fields = {}) {
         error_code: typeof fields.error_code === 'string' ? fields.error_code.slice(0, 64) : undefined,
         duration_ms: typeof fields.duration_ms === 'number' ? Math.max(0, Math.round(fields.duration_ms)) : undefined,
         bytes: typeof fields.bytes === 'number' ? Math.max(0, Math.round(fields.bytes)) : undefined,
+        stream: fields.stream === true ? true : undefined, // Phase 5 flag only
     };
     records.push(rec);
     if (records.length > MAX_RECORDS) records.splice(0, records.length - MAX_RECORDS);

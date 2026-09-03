@@ -601,7 +601,7 @@ describe('LAC-4 session: chat.request → chat.response/chat.error (connector si
                 endpoint: 'http://evil.example',
                 workspace_id: '00000000-0000-0000-0000-000000000000',
                 connector_id: '00000000-0000-0000-0000-000000000000',
-                params: { max_tokens: 32, temperature: 0.1, stream: true, bogus: 'x' },
+                params: { max_tokens: 32, temperature: 0.1, bogus: 'x' },
             })));
             await wait(120);
             const resp = sent.find((f) => f.type === 'chat.response');
@@ -610,7 +610,7 @@ describe('LAC-4 session: chat.request → chat.response/chat.error (connector si
             // hostile url fields changed nothing.
             expect(rt.requests).to.have.lengthOf(1);
             expect(rt.requests[0].path).to.equal('/v1/chat/completions');
-            expect(rt.lastBody.stream).to.equal(false); // stream:true ignored — forced false
+            expect(rt.lastBody.stream).to.equal(false); // no stream param → non-streaming
             expect(rt.lastBody.bogus).to.equal(undefined); // unknown params dropped
             session.stop();
         } finally {

@@ -12,8 +12,10 @@
 // `runtime_type` is a UI label, not a behavioral branch on the cloud side.
 //
 // Operation surface (finite and enumerable, §10.1):
-//   GET  {base}/v1/models            — discovery (Phase 3, explicit only)
-//   POST {base}/v1/chat/completions — non-streaming inference (Phase 4)
+//   GET  {base}/v1/models             — discovery (Phase 3, explicit only)
+//   POST {base}/v1/chat/completions  — non-streaming inference (Phase 4)
+//   POST {base}/v1/chat/completions  — streaming inference (Phase 5,
+//                                      stream:true, dedicated function)
 // Nothing else. No arbitrary path, no arbitrary method, no URL from any
 // frame ever reaches this seam.
 // ======================================================
@@ -45,7 +47,9 @@ module.exports = {
     getAdapter,
     discoverModels: openaiCompatible.discoverModels,
     chatCompletion: openaiCompatible.chatCompletion,
+    chatCompletionStream: openaiCompatible.chatCompletionStream,
     normalizeOpenAiModels: openaiCompatible.normalizeOpenAiModels,
     normalizeOpenAiChatCompletion: openaiCompatible.normalizeOpenAiChatCompletion,
+    normalizeOpenAiStreamChunk: openaiCompatible.normalizeOpenAiStreamChunk,
     isLoopbackBase: openaiCompatible.isLoopbackBase,
 };

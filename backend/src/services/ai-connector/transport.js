@@ -1,8 +1,8 @@
 // ======================================================
 // LLM Connector inference transport (LAC-4 — Local AI Connector V1 Phase 4)
 // ======================================================
-// The callAI-shaped seam for non-streaming inference over an established
-// connector WS session (§4 Phase-4 note, §5, §9):
+// The callAI-shaped seam for inference over an established connector WS
+// session (§4 Phase-4/Phase-5 notes, §5, §9):
 //
 //   caller → connectorChat(connectorId, {model, messages, params})
 //       → registry live-session lookup (offline → fail-closed explicit
@@ -13,6 +13,15 @@
 //       → C→S chat.response | chat.error  (correlated by request_id)
 //       → caller gets { ok, content, finish_reason, usage } or a sanitized
 //         { ok:false, code } — never a runtime detail, never a raw error.
+//
+//   caller → connectorChatStream(connectorId, {model, messages, params},
+//                                 { onDelta })            — Phase 5:
+//       → S→C chat.request { …, params.stream:true }
+//       → C→S N× chat.delta { request_id, delta }
+//       → C→S ONE terminal chat.response (or chat.error)
+//       → the caller's onDelta fires per increment; the final result
+//         carries the full content (deltas are echoed only through
+//         onDelta — nothing else is stored, §10.3).
 //
 // Multiplexing & lifecycle (§4/§5):
 //   - request_id is a cloud-generated UUID — unique by construction;
@@ -62,6 +71,9 @@ const LIMITS = {
     maxResponseChars: 32 * 1024, // content cap in chat.response
     maxFinishReasonChars: 64,
     maxErrorFrameMessageChars: 256,
+    // Phase 5 streaming (mirror of the connector-side limits):
+    maxDeltaChars: 16 * 1024, // one chat.delta increment
+    maxStreamedContentChars: 32 * 1024, // cumulative streamed text
 };
 
 // The chat.error code allowlist (§4 Phase-4 note) + the cloud-side
@@ -80,6 +92,11 @@ const CONNECTOR_CHAT_ERROR_CODES = new Set([
     'cancelled',
 ]);
 const GENERIC_CHAT_ERROR = 'runtime_error';
+// Connector-side codes that may arrive for a stream that ALREADY delivered
+// deltas (adapter §4 Phase-5 note: any mid-stream failure after content
+// surfaced resolves stream_failed upstream; before content the original
+// sanitized code is kept).
+const STREAM_FAILED_CODE = 'stream_failed';
 
 const CHAT_ROLES = new Set(['system', 'user', 'assistant']);
 
@@ -100,6 +117,7 @@ const SANITIZED_MESSAGES = {
     runtime_error: 'Local runtime error',
     response_too_large: 'Local response exceeded the size limit',
     cancelled: 'Request cancelled',
+    stream_failed: 'Local runtime stream failed after partial output',
     connector_offline: 'Local AI connector is offline',
     session_closed: 'Connector session closed before completion',
 };
@@ -181,13 +199,28 @@ function validatePayload({ model, messages, params = {} } = {}) {
         }
         cleanParams.temperature = params.temperature;
     }
-    // Unknown param keys are dropped — never forwarded (§4).
+    // Unknown param keys are dropped — never forwarded (§4). `stream` is
+    // call-shape: connectorChat never sets it, connectorChatStream always
+    // sets it true (mirrors the connector-side strict-boolean contract).
+    if (params.stream === true) cleanParams.stream = true;
     return { ok: true, model: trimmed, messages: cleanMessages, params: cleanParams };
 }
 
 /**
- * Send one non-streaming chat request to a LIVE connector over its WS
- * session and resolve on the correlated chat.response / chat.error.
+ * Send one (streaming when opts.onDelta is present) chat request to a LIVE
+ * connector over its WS session and resolve on the correlated terminal
+ * chat.response / chat.error.
+ *
+ * Streaming (Phase 5): params.stream:true is added to the frame; incoming
+ * chat.delta frames fire opts.onDelta(delta) in order; the terminal
+ * chat.response settles the promise with the FULL content (the joined
+ * text — the terminal frame always carries it, including the empty-string
+ * clean completion of a stream that produced no text). All limits are
+ * enforced HERE, never trusted from the connector: each delta ≤
+ * maxDeltaChars, cumulative text ≤ maxStreamedContentChars, per-frame JSON
+ * stays under the 64 KB inbound cap — violations settle the request
+ * response_too_large / invalid_request sanitized, and late frames for the
+ * settled id are dropped.
  *
  * @param {string} connectorId
  * @param {object} payload - { model, messages, params:{max_tokens, temperature} }
@@ -195,17 +228,24 @@ function validatePayload({ model, messages, params = {} } = {}) {
  * @param {number} [opts.timeoutMs] - the authoritative cloud timer
  *        (§5; default 180 s). On expiry: chat.cancel downstream + the
  *        caller fails with `timeout`.
+ * @param {Function} [opts.onDelta] - (delta:string) => void — presence
+ *        switches the request to streaming (chat.delta).
  * @param {object} [opts.logger]
  * @returns {Promise<{ok:true, content:string, finishReason:string|undefined,
  *                    usage:object|undefined, model:string, requestId:string}
- *                 |{ok:false, code:string, message:string}>}
- *          Never rejects — callers render sanitized codes only.
+ *                 |{ok:false, code:string, message:string, partial?:string}>}
+ *          Never rejects — callers render sanitized codes only. For a
+ *          stream that delivered deltas before failing, `partial` carries
+ *          the accumulated text (connector-side failures) — cloud-side
+ *          failures surface partial through onDelta having already fired.
  */
-async function connectorChat(connectorId, payload, { timeoutMs = DEFAULTS.requestTimeoutMs, logger = console } = {}) {
+async function connectorChat(connectorId, payload, { timeoutMs = DEFAULTS.requestTimeoutMs, onDelta = null, logger = console } = {}) {
     const v = validatePayload(payload);
     if (!v.ok) {
         return { ok: false, code: v.code, message: SANITIZED_MESSAGES[v.code] };
     }
+    const streaming = typeof onDelta === 'function';
+    if (streaming) v.params.stream = true;
 
     const session = registry.getLive(connectorId);
     if (!session || !session.ws || session.ws.readyState !== 1) {
@@ -226,12 +266,16 @@ async function connectorChat(connectorId, payload, { timeoutMs = DEFAULTS.reques
         resolve,
         timer: null,
         settled: false,
+        // Phase 5 streaming state:
+        stream: streaming,
+        onDelta: streaming ? onDelta : null,
+        received: 0, // cumulative validated delta chars
     };
     pending.set(requestId, entry);
 
     // §5: the cloud timer is authoritative — expiry cancels downstream and
     // fails the caller (the connector aborts its local fetch; any late
-    // terminal frame for this id is dropped by handleConnectorFrame).
+    // delta/terminal frame for this id is dropped by handleConnectorFrame).
     entry.timer = setTimeout(() => {
         if (entry.settled) return;
         entry.settled = true;
@@ -272,6 +316,20 @@ async function connectorChat(connectorId, payload, { timeoutMs = DEFAULTS.reques
         }
     });
     return promise;
+}
+
+/**
+ * Send one STREAMING chat request (Phase 5): chat.request with
+ * params.stream:true → N× chat.delta → ONE terminal chat.response
+ * (or chat.error). Thin wrapper over connectorChat — see its contract.
+ */
+function connectorChatStream(connectorId, payload, { timeoutMs, onDelta, logger } = {}) {
+    if (typeof onDelta !== 'function') {
+        // Programming error on the caller side — fail sanitized, never
+        // a non-streaming silent downgrade.
+        return Promise.resolve({ ok: false, code: 'invalid_request', message: SANITIZED_MESSAGES.invalid_request });
+    }
+    return connectorChat(connectorId, payload, { timeoutMs, onDelta, logger });
 }
 
 /**
@@ -321,9 +379,44 @@ function handleConnectorFrame(session, msg, { logger = console } = {}) {
         return { handled: false, result: null };
     }
 
+    if (msg.type === 'chat.delta') {
+        // Phase 5: an incremental TEXT frame for a PENDING STREAMING
+        // request on THIS session. Strictly validated: string delta within
+        // the per-delta cap; the cumulative sum stays within the streamed-
+        // content cap. Any violation settles the request response_too_large
+        // (never echoes the delta); deltas for a non-streaming request or
+        // after settlement are dropped at zero cost.
+        if (!entry.stream) {
+            logger.warn(`[AI-CONNECTOR] chat.delta for non-streaming ${requestId} — dropped`);
+            return { handled: false, result: null };
+        }
+        if (typeof msg.delta !== 'string') {
+            settle(requestId, { ok: false, code: 'invalid_request', message: SANITIZED_MESSAGES.invalid_request });
+            return { handled: true, result: null };
+        }
+        if (msg.delta.length > LIMITS.maxDeltaChars) {
+            settle(requestId, { ok: false, code: 'response_too_large', message: SANITIZED_MESSAGES.response_too_large });
+            return { handled: true, result: null };
+        }
+        if (entry.received + msg.delta.length > LIMITS.maxStreamedContentChars) {
+            settle(requestId, { ok: false, code: 'response_too_large', message: SANITIZED_MESSAGES.response_too_large });
+            return { handled: true, result: null };
+        }
+        entry.received += msg.delta.length;
+        try {
+            entry.onDelta(msg.delta);
+        } catch (_) { /* a consumer error never breaks the transport */ }
+        return { handled: true, result: null };
+    }
+
     if (msg.type === 'chat.response') {
         // content: required string within the response cap; over-limit →
-        // sanitized response_too_large (never the raw content).
+        // sanitized response_too_large (never the raw content). For a
+        // streaming request an empty string is a valid terminal (a stream
+        // that produced no text completes cleanly with empty content —
+        // §4 Phase-5 note); a non-streaming request keeps requiring text
+        // only through its own caller semantics (the connector always
+        // sends the full text; empty is passed through as-is either way).
         if (typeof msg.content !== 'string') {
             settle(requestId, { ok: false, code: 'bad_response', message: SANITIZED_MESSAGES.bad_response });
             return { handled: true, result: null };
@@ -353,10 +446,18 @@ function handleConnectorFrame(session, msg, { logger = console } = {}) {
         // error — a hostile or non-allowlisted code's message is discarded
         // entirely (only allowlisted codes may carry a sanitized message).
         const isAllowlisted = typeof msg.code === 'string' && CONNECTOR_CHAT_ERROR_CODES.has(msg.code);
-        const code = isAllowlisted ? msg.code : GENERIC_CHAT_ERROR;
-        const message = isAllowlisted
+        let code = isAllowlisted ? msg.code : GENERIC_CHAT_ERROR;
+        let message = isAllowlisted
             ? (sanitizeMessage(msg.message) || SANITIZED_MESSAGES[code])
             : SANITIZED_MESSAGES[code];
+        // §4 Phase-5 note: an error for a stream that ALREADY delivered
+        // deltas degrades to the fixed stream_failed (the caller already
+        // holds the partial text through onDelta) — before any delta the
+        // original sanitized code is kept (Phase 4 behavior unchanged).
+        if (entry.stream && entry.received > 0 && code !== 'timeout' && code !== 'cancelled') {
+            code = STREAM_FAILED_CODE;
+            message = SANITIZED_MESSAGES[code];
+        }
         settle(requestId, { ok: false, code, message });
         return { handled: true, result: null };
     }
@@ -392,6 +493,7 @@ function stats() {
 
 module.exports = {
     connectorChat,
+    connectorChatStream,
     handleConnectorFrame,
     failPendingFor,
     validatePayload,
@@ -401,4 +503,5 @@ module.exports = {
     LIMITS,
     CONNECTOR_CHAT_ERROR_CODES,
     SANITIZED_MESSAGES,
+    STREAM_FAILED_CODE,
 };
