@@ -583,8 +583,129 @@ describe('LAC-5 adapter: streaming POST /v1/chat/completions (stream:true)', fun
         expect(fin.ok).to.equal(true);
         expect(fin.text).to.equal(null);
         expect(fin.finishReason).to.equal('stop');
+        // Usage-only final chunk with choices EMPTY or ABSENT is legal (§4
+        // Phase-5 note) — no text, usage captured, stream not failed.
+        const usageOnly = normalizeOpenAiStreamChunk({ usage: FINAL_USAGE });
+        expect(usageOnly.ok).to.equal(true);
+        expect(usageOnly.text).to.equal(null);
+        expect(usageOnly.usage).to.deep.equal(FINAL_USAGE);
+        expect(normalizeOpenAiStreamChunk({ choices: [] }).ok).to.equal(true);
+        // Role-only / empty deltas yield no text but never fail the chunk.
+        expect(normalizeOpenAiStreamChunk(chunk(null, { delta: { role: 'assistant' } })).ok).to.equal(true);
+        expect(normalizeOpenAiStreamChunk({ choices: [{ delta: { content: '' } }] }).ok).to.equal(true);
         expect(normalizeOpenAiStreamChunk({ choices: 'nope' }).ok).to.equal(false);
         expect(normalizeOpenAiStreamChunk(null).ok).to.equal(false);
+    });
+
+    it('usage-only final chunk (choices ABSENT) completes the stream cleanly with usage', async () => {
+        const rt = await startStreamRuntime([
+            sse(chunk('done ')),
+            sse({ usage: FINAL_USAGE }), // no choices field at all
+        ]);
+        try {
+            const deltas = [];
+            const res = await chatCompletionStream({ baseUrl: rt.baseUrl, model: 'm', messages: MSGS, onDelta: (t) => deltas.push(t) });
+            expect(res.ok).to.equal(true);
+            expect(res.content).to.equal('done ');
+            expect(res.usage).to.deep.equal(FINAL_USAGE);
+            expect(deltas).to.deep.equal(['done ']);
+        } finally {
+            await rt.closeServer();
+        }
+    });
+
+    it('role-only and empty deltas stream through without text and without failure', async () => {
+        const rt = await startStreamRuntime([
+            // First event: role + content → text 'Hi' (not using chunk()
+            // helper because it spreads extra at the top level, not inside
+            // choices[0].delta).
+            sse({ id: 'cmpl-1', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { role: 'assistant', content: 'Hi' }, finish_reason: null }] }),
+            sse({ id: 'cmpl-2', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { role: 'assistant' } }] }),   // role-only → no text
+            sse({ id: 'cmpl-3', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {} }] }),                       // empty delta
+            sse(finishChunk('stop')),
+            DONE,
+        ]);
+        try {
+            const deltas = [];
+            const res = await chatCompletionStream({ baseUrl: rt.baseUrl, model: 'm', messages: MSGS, onDelta: (t) => deltas.push(t) });
+            expect(res.ok).to.equal(true);
+            expect(res.content).to.equal('Hi');
+            expect(res.finishReason).to.equal('stop');
+            expect(deltas).to.deep.equal(['Hi']); // only content-bearing deltas forwarded
+        } finally {
+            await rt.closeServer();
+        }
+    });
+
+    it('a single SSE line delivered across several TCP writes is parsed correctly', async () => {
+        // Deterministically split one event line across res.write calls with
+        // small delays (separate TCP segments → separate reader.read() calls)
+        // — the parser must accumulate the line buffer until the newline lands.
+        const rt = await startStreamRuntime(null, {
+            onRequest: (req, res) => {
+                res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+                const e = `data: ${JSON.stringify(chunk('frag'))}\n\n`;
+                let i = 0;
+                const writeNext = () => {
+                    if (i >= e.length) {
+                        setTimeout(() => res.end('data: [DONE]\n\n'), 20);
+                        return;
+                    }
+                    res.write(e.slice(i, i + 7));
+                    i += 7;
+                    setTimeout(writeNext, 2);
+                };
+                writeNext();
+            },
+        });
+        try {
+            const deltas = [];
+            const res = await chatCompletionStream({ baseUrl: rt.baseUrl, model: 'm', messages: MSGS, onDelta: (t) => deltas.push(t) });
+            expect(res.ok).to.equal(true);
+            expect(res.content).to.equal('frag');
+            expect(deltas).to.deep.equal(['frag']);
+        } finally {
+            await rt.closeServer();
+        }
+    });
+
+    it('a flood of `data:` lines with NO event terminator aborts bounded (response_too_large)', async function () {
+        this.timeout(15000);
+        // A hostile/broken runtime never sends the blank line that ends an
+        // SSE event. Each line alone is under the line cap, but the joined
+        // event exceeds maxSseEventBytes — the parser must abort instead of
+        // accumulating dataLines without bound.
+        const rt = await startStreamRuntime(null, {
+            onRequest: (req, res) => {
+                res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+                const line = 'data: ' + 'x'.repeat(1024) + '\n'; // 1KB per line
+                let sent = 0;
+                const iv = setInterval(() => {
+                    try {
+                        if (res.destroyed || res.writableEnded) {
+                            clearInterval(iv);
+                            return;
+                        }
+                        res.write(line);
+                    } catch (_) {
+                        clearInterval(iv);
+                        return;
+                    }
+                    sent += line.length;
+                    if (sent > 300 * 1024) { // 300KB total, no blank line
+                        clearInterval(iv);
+                        res.end();
+                    }
+                }, 1);
+            },
+        });
+        try {
+            const res = await chatCompletionStream({ baseUrl: rt.baseUrl, model: 'm', messages: MSGS, timeoutMs: 5000 });
+            expect(res.ok).to.equal(false);
+            expect(res.code).to.equal('response_too_large');
+        } finally {
+            await rt.closeServer();
+        }
     });
 });
 
@@ -1171,6 +1292,28 @@ describe('LAC-5 cloud: connectorChatStream + WS route (streaming inference)', fu
             const res = await p;
             expect(res.ok).to.equal(false);
             expect(res.code).to.equal('response_too_large');
+        } finally {
+            ws.close();
+            await query(`DELETE FROM ai_connectors WHERE connector_id = $1`, [connector.connector_id]);
+        }
+    });
+
+    it('a non-streaming connectorChat never forwards a caller-supplied params.stream (stream is call-shape)', async () => {
+        const { connector, token } = await createActivatedConnector(wsA, 'str-hstream');
+        const ws = await connect(srv.url);
+        try {
+            send(ws, HELLO(token));
+            await nextMessage(ws);
+            // The caller passes stream:true in params, but the call is made
+            // through connectorChat (no onDelta) → the frame must NOT carry
+            // stream, so the connector answers non-streaming (no deltas).
+            const p = transport.connectorChat(connector.connector_id, { ...CHAT(), params: { max_tokens: 8, stream: true } }, { timeoutMs: 5000 });
+            const req = await nextMessage(ws);
+            expect(req.params.stream).to.equal(undefined);
+            send(ws, { type: 'chat.response', request_id: req.request_id, model: 'm', content: 'non-stream answer' });
+            const res = await p;
+            expect(res.ok).to.equal(true);
+            expect(res.content).to.equal('non-stream answer');
         } finally {
             ws.close();
             await query(`DELETE FROM ai_connectors WHERE connector_id = $1`, [connector.connector_id]);

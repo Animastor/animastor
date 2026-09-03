@@ -245,7 +245,14 @@ async function connectorChat(connectorId, payload, { timeoutMs = DEFAULTS.reques
         return { ok: false, code: v.code, message: SANITIZED_MESSAGES[v.code] };
     }
     const streaming = typeof onDelta === 'function';
+    // `stream` is strictly CALL-SHAPE (§4 Phase-5 note): only the presence
+    // of onDelta switches a request to streaming. A caller-supplied
+    // params.stream is stripped on the non-streaming path so a plain
+    // connectorChat call can never be silently turned into a stream (which
+    // the connector would answer with chat.delta frames this side would have
+    // to drop) — streaming and non-streaming never mix.
     if (streaming) v.params.stream = true;
+    else delete v.params.stream;
 
     const session = registry.getLive(connectorId);
     if (!session || !session.ws || session.ws.readyState !== 1) {

@@ -129,11 +129,12 @@ function normalizeOpenAiChatCompletion(json) {
 function normalizeOpenAiStreamChunk(json) {
     if (!json || typeof json !== 'object' || Array.isArray(json)) return { ok: false };
     // `choices` is REQUIRED in a stream chunk: either a non-empty array
-    // (the delta/finish carrier) or an empty/absent array on the final
-    // usage-only chunk. A non-array choices value is malformed.
-    if (!Array.isArray(json.choices)) return { ok: false };
+    // (the delta/finish carrier) or an empty/ABSENT array on the final
+    // usage-only chunk (both are documented §4 Phase-5 note). A present
+    // non-array choices value is malformed.
+    if (json.choices != null && !Array.isArray(json.choices)) return { ok: false };
     const out = { ok: true, text: null };
-    if (json.choices.length > 0) {
+    if (Array.isArray(json.choices) && json.choices.length > 0) {
         const first = json.choices[0];
         if (!first || typeof first !== 'object' || Array.isArray(first)) return { ok: false };
         // delta.content: string (frequently absent/empty mid-stream).
@@ -665,17 +666,33 @@ async function chatCompletionStream({
                 const decoder = new TextDecoder();
                 let lineBuffer = '';
                 let dataLines = []; // `data:` lines of the event in progress
+                let eventBytes = 0; // joined-payload bytes of the current event
                 let oversizedEvent = false;
                 const processLine = (line) => {
                     if (dataLines.length > 0 && !line.startsWith('data:')) {
                         // Event boundary: join + consume the collected data.
                         const payload = dataLines.join('\n');
                         dataLines = [];
+                        eventBytes = 0;
                         const r = consumeData(payload);
                         return r;
                     }
                     if (line.startsWith('data:')) {
-                        dataLines.push(line.slice(5).replace(/^ /, ''));
+                        // Bound the event INCREMENTALLY: the per-event cap is
+                        // otherwise only checked at the event boundary — a
+                        // hostile/broken runtime emitting an endless run of
+                        // `data:` lines with no terminating blank line would
+                        // grow dataLines without bound (each line alone is
+                        // under the line cap). Abort once the collected event
+                        // exceeds maxSseEventBytes (§4 Phase-5 note: never
+                        // unbounded buffering).
+                        const part = line.slice(5).replace(/^ /, '');
+                        eventBytes += Buffer.byteLength(part, 'utf8');
+                        if (eventBytes > maxSseEventBytes) {
+                            abortByLimit();
+                            return { oversizedEvent: true, result: { ok: false, code: 'response_too_large', message: 'runtime SSE event exceeded size limit', partial: text } };
+                        }
+                        dataLines.push(part);
                     }
                     // Comment lines (':keep-alive'), event/id lines and
                     // everything else in the SSE frame are ignored.
