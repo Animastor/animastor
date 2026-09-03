@@ -51,15 +51,6 @@
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="@string/worker_mgmt_title"
-                        android:textSize="15sp"
-                        android:textStyle="bold"
-                        android:textColor="?attr/colorOnSurface" />
-
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
                         android:text="@string/worker_mgmt_desc"
                         android:textSize="12sp"
                         android:textColor="?attr/colorOnSurfaceVariant"

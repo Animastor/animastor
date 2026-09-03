@@ -537,7 +537,7 @@
 
     <!-- Private Worker Management (Experimental Beta — Phase 3, web parity: i18n worker_*) -->
     <string name="worker_mgmt_title">Приватные воркеры</string>
-    <string name="worker_mgmt_desc">Приватный воркер обрабатывает задачи только вашего рабочего пространства. Подключите свой GPU (локальный или внешний) к GPU Hub Animastor.</string>
+    <string name="worker_mgmt_desc">Создавайте и настраивайте свои личные воркеры, а при желании делитесь ими с другими.</string>
     <string name="worker_add">Добавить воркер</string>
     <string name="worker_empty">Воркеров пока нет. Нажмите «Добавить воркер», чтобы создать credential и подключить GPU.</string>
     <string name="worker_name">Имя воркера</string>
@@ -571,6 +571,7 @@
     <string name="worker_trouble_process">Проверьте, что процесс node worker.cjs запущен и пишет логи без ошибок.</string>
     <string name="worker_trouble_network">Проверьте сетевой доступ воркера к GPU Hub.</string>
     <string name="worker_rotate">Перевыпустить ключ</string>
+    <string name="worker_rotate_short">Ключ</string>
     <string name="worker_rotate_confirm">Перевыпустить ключ? Текущий воркер отключится, пока не получит новый credential.</string>
     <string name="worker_revoke">Отозвать</string>
     <string name="worker_revoke_confirm">Отозвать воркер? После этого он не сможет аутентифицироваться, забирать задачи или возвращать результаты. Действие необратимо.</string>

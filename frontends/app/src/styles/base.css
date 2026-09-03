@@ -1288,7 +1288,7 @@ button { font: inherit; color: inherit; }
   align-items: stretch;
   gap: 0.5rem; /* 8dp */
 }
-.worker__actions .btn { flex: 1 1 0; min-width: 0; }
+.worker__actions .btn { flex: 1 1 0; min-width: 0; padding: 0 0.5rem; }
 .worker__actions .btn--error { width: auto; }
 
 /* Private Worker Setup Center (Phase 3.1) — reuses card/btn/modal tokens */

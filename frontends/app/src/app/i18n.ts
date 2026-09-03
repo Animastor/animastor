@@ -132,7 +132,7 @@ const dict = {
     // Private Worker Management (Experimental Beta — Phase 3)
     // «Воркеры» — the page holds My / Shared with me / Community, not only private.
     worker_mgmt_title: 'Воркеры',
-    worker_mgmt_desc: 'Приватный воркер обрабатывает задачи только вашего рабочего пространства. Подключите свой GPU (локальный или внешний) к GPU Hub Animastor.',
+    worker_mgmt_desc: 'Создавайте и настраивайте свои личные воркеры, а при желании делитесь ими с другими.',
     worker_add: 'Добавить воркер',
     worker_empty: 'Воркеров пока нет. Нажмите «Добавить воркер», чтобы создать credential и подключить GPU.',
     worker_name: 'Имя воркера',
@@ -168,6 +168,7 @@ const dict = {
     worker_trouble_process: 'Проверьте, что процесс node worker.cjs запущен и пишет логи без ошибок.',
     worker_trouble_network: 'Проверьте сетевой доступ воркера к GPU Hub.',
     worker_rotate: 'Перевыпустить ключ',
+    worker_rotate_short: 'Ключ',
     worker_rotate_confirm: 'Перевыпустить ключ? Текущий воркер отключится, пока не получит новый credential.',
     worker_revoke: 'Отозвать',
     worker_revoke_confirm: 'Отозвать воркер? После этого он не сможет аутентифицироваться, забирать задачи или возвращать результаты. Действие необратимо.',
@@ -847,7 +848,7 @@ const dict = {
     worker_vbook: 'VBook',
     // Private Worker Management (Experimental Beta — Phase 3)
     worker_mgmt_title: 'Workers',
-    worker_mgmt_desc: 'A private worker processes only your workspace jobs. Connect your own GPU (local or external) to the Animastor GPU Hub.',
+    worker_mgmt_desc: 'Create and configure your own personal workers, and share them with others if you wish.',
     worker_add: 'Add Worker',
     worker_empty: 'No workers yet. Press “Add Worker” to issue a credential and connect a GPU.',
     worker_name: 'Worker name',
@@ -883,6 +884,7 @@ const dict = {
     worker_trouble_process: 'Check that the node worker.cjs process is running and its logs show no errors.',
     worker_trouble_network: 'Check the worker machine has network access to the GPU Hub.',
     worker_rotate: 'Rotate credential',
+    worker_rotate_short: 'Key',
     worker_rotate_confirm: 'Rotate the credential? The running worker disconnects until it receives the new credential.',
     worker_revoke: 'Revoke',
     worker_revoke_confirm: 'Revoke this worker? It will no longer authenticate, poll, or submit results. This is irreversible.',

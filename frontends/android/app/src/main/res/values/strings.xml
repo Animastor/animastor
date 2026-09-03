@@ -560,7 +560,7 @@
 
     <!-- Private Worker Management (Experimental Beta — Phase 3, web parity: i18n worker_*) -->
     <string name="worker_mgmt_title">Private Workers</string>
-    <string name="worker_mgmt_desc">A private worker processes only your workspace jobs. Connect your own GPU (local or external) to the Animastor GPU Hub.</string>
+    <string name="worker_mgmt_desc">Create and configure your own personal workers, and share them with others if you wish.</string>
     <string name="worker_add">Add Worker</string>
     <string name="worker_empty">No workers yet. Press “Add Worker” to issue a credential and connect a GPU.</string>
     <string name="worker_name">Worker name</string>
@@ -594,6 +594,7 @@
     <string name="worker_trouble_process">Check that the node worker.cjs process is running and its logs show no errors.</string>
     <string name="worker_trouble_network">Check the worker machine has network access to the GPU Hub.</string>
     <string name="worker_rotate">Rotate credential</string>
+    <string name="worker_rotate_short">Key</string>
     <string name="worker_rotate_confirm">Rotate the credential? The running worker disconnects until it receives the new credential.</string>
     <string name="worker_revoke">Revoke</string>
     <string name="worker_revoke_confirm">Revoke this worker? It will no longer authenticate, poll, or return results. This is irreversible.</string>

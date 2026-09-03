@@ -519,6 +519,7 @@ class PrivateWorkersFragment : Fragment(R.layout.fragment_private_workers) {
             delete.setOnClickListener { onDelete(w) }
         } else {
             rotate.setOnClickListener { onRotate(w) }
+            rotate.contentDescription = getString(R.string.worker_rotate)
             revoke.setOnClickListener { onRevoke(w) }
         }
         return row

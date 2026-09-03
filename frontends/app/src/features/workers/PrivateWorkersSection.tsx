@@ -15,7 +15,7 @@ import { useState, useCallback, useEffect } from 'preact/hooks';
 import { getJson, postJson, deleteJson, ApiError } from '../../api/client';
 import type { StrKey } from '../../app/i18n';
 import { t, tf } from '../../app/i18n';
-import { IconAdd } from '../../app/icons';
+import { IconAdd, IconReset } from '../../app/icons';
 import { authMe } from '../../state/authStore';
 import { Modal, toast } from '../../lib/ui';
 import {
@@ -188,8 +188,7 @@ export function PrivateWorkersSection() {
     <section class="page settings-page">
       <div class="settings-page__scroll">
         <div class="card card--stack">
-          <h3 class="card__title">{t('worker_mgmt_title')}</h3>
-          <p class="card__hint card__hint--wrap">{t('worker_mgmt_desc')}</p>
+          <p class="card__hint card__hint--wrap" style="margin-top:0">{t('worker_mgmt_desc')}</p>
 
           {/* «Добавить воркер» always sits ABOVE the three section selectors
               (Мои воркеры / Поделились со мной / Community). */}
@@ -299,8 +298,9 @@ export function PrivateWorkersSection() {
                     )}
                     {w.status !== 'REVOKED' && (
                       <>
-                        <button class="btn btn--outlined" disabled={busy} onClick={() => void onRotate(w)}>
-                          {busy ? t('play_loading') : t('worker_rotate')}
+                        <button class="btn btn--outlined" disabled={busy} onClick={() => void onRotate(w)}
+                          title={t('worker_rotate')} aria-label={t('worker_rotate')}>
+                          <IconReset width={18} height={18} /> {busy ? t('play_loading') : t('worker_rotate_short')}
                         </button>
                         <button class="btn btn--outlined btn--error" disabled={busy} onClick={() => void onRevoke(w)}>
                           {t('worker_revoke')}
