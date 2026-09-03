@@ -130,13 +130,17 @@ async function callAI(messages, options = {}, provider = null) {
 
 /**
  * Local AI Connector transport (LAC §9 — the callAI-shaped seam): routes
- * the completion through ai-connector/transport.connectorChat over the
- * connector's authenticated WS session. Only max_tokens/temperature
- * survive the params (Phase-4 contract); sanitizer discipline is enforced
- * connector-side AND cloud-side. Throws sanitized errors only.
+ * the completion through shared-pool.runSharedInference — the single
+ * reservation-aware entry — which calls ai-connector/transport.connectorChat
+ * over the connector's authenticated WS session and, for SHARED snapshots,
+ * owns the per-inference slot lifecycle (reserved before the call, released
+ * on success/error/timeout/cancel/disconnect via its finally). Only
+ * max_tokens/temperature survive the params (Phase-4 contract); sanitizer
+ * discipline is enforced connector-side AND cloud-side. Throws sanitized
+ * errors only.
  */
 async function callAIOverConnector(messages, options, provider) {
-    const { connectorChat, describeConnectorError } = require('./ai-connector/transport');
+    const sharedPool = require('./ai-connector/shared-pool');
     if (!provider.connectorId) {
         throw new Error('Local AI connector is not bound');
     }
@@ -144,18 +148,64 @@ async function callAIOverConnector(messages, options, provider) {
     if (!model) {
         throw new Error('Local AI model is not selected');
     }
-    const result = await connectorChat(provider.connectorId, {
+    const result = await sharedPool.runSharedInference(provider, {
         model,
         messages,
         params: {
             max_tokens: options.maxTokens || 8192,
             temperature: options.temperature ?? 0.3,
         },
-    }, { timeoutMs: options.timeout || 60000 });
+    }, { timeoutMs: options.timeout || 60000, signal: options.signal || undefined });
 
     if (!result.ok) {
         console.error(`[AI-SERVICE] connector call failed (code=${result.code})`);
-        throw new Error(describeConnectorError(result.code));
+        throw new Error(sharedPool.describeSharedError(result.code));
+    }
+    return {
+        content: result.content,
+        finishReason: result.finishReason || 'stop',
+        usage: result.usage || null,
+    };
+}
+
+/**
+ * STREAMING variant of the connector branch (Phase 2 consumer inference):
+ * identical snapshot/params contract, plus per-delta delivery through
+ * opts.onDelta and the same shared-slot lifecycle (reserved → streamed →
+ * released on the terminal frame). The connector transport switches the
+ * frame to params.stream:true; deltas are validated/sanitized cloud-side.
+ * @param {Array} messages
+ * @param {object} options - { model?, maxTokens?, temperature?, timeout?, signal? }
+ * @param {object} provider - connector snapshot (workspace binding or shared)
+ * @param {object} sink - { onDelta(delta) } (required)
+ */
+async function callAIStream(messages, options = {}, provider = null, sink = {}) {
+    if (!provider || provider.transport !== 'connector') {
+        throw new Error('Streaming AI is only available over a connector transport');
+    }
+    if (typeof sink.onDelta !== 'function') {
+        throw new Error('callAIStream requires an onDelta sink');
+    }
+    const sharedPool = require('./ai-connector/shared-pool');
+    const model = options.model || provider.model || '';
+    if (!model) {
+        throw new Error('Local AI model is not selected');
+    }
+    const result = await sharedPool.runSharedInference(provider, {
+        model,
+        messages,
+        params: {
+            max_tokens: options.maxTokens || 8192,
+            temperature: options.temperature ?? 0.3,
+        },
+    }, {
+        timeoutMs: options.timeout || 60000,
+        onDelta: sink.onDelta,
+        signal: options.signal || undefined,
+    });
+    if (!result.ok) {
+        console.error(`[AI-SERVICE] connector stream failed (code=${result.code})`);
+        throw new Error(sharedPool.describeSharedError(result.code));
     }
     return {
         content: result.content,
@@ -588,6 +638,7 @@ async function checkAIHealth(cfg, provider = null) {
 
 module.exports = {
     callAI,
+    callAIStream,
     parseJsonResponse,
     refineDraft,
     checkAIHealth,

@@ -28,16 +28,20 @@ module.exports = function(app, redis, deps) {
     // of truth for the key, so the kill switch cannot be bypassed.
     const workspaceAi = require('../services/workspace-ai-provider');
     const { safeFetch } = require('../services/url-safety');
-    const { connectorChat, describeConnectorError } = require('../services/ai-connector/transport');
+    const sharedPool = require('../services/ai-connector/shared-pool');
     async function resolveChatAI(bookId) {
         const provider = bookId
-            ? await workspaceAi.resolveAIForBook(bookId)
+            ? await workspaceAi.resolveAIForBook(bookId, { purpose: 'chat' })
             : await workspaceAi.resolveSystemFallback();
         // Local AI Connector snapshot (LAC §9): no endpoint/key — the fetch
         // is replaced by the connector WS transport. Model may fall back to
         // the connector's first DISCOVERED model (discovered ≠ loaded, §7) so
         // a binding without an explicit model still gets an honest answer
         // from the runtime instead of a cloud default model id.
+        // A SHARED snapshot (Phase 2) carries source:'shared' + the pool
+        // selection (always with model + connectorId — the pool never
+        // resolves without a usable model); `shared` rides through so the
+        // fetch site reserves/releases the per-inference pool slot.
         if (provider && provider.transport === 'connector') {
             let model = provider.model || null;
             if (!model && provider.connectorId) {
@@ -55,6 +59,8 @@ module.exports = function(app, redis, deps) {
                 apiKey: '',
                 model: model || '',
                 source: provider.source,
+                shared: provider.shared || null,
+                workspaceId: provider.workspaceId || null,
                 validatePublic: false,
             };
         }
@@ -63,6 +69,8 @@ module.exports = function(app, redis, deps) {
             apiKey: provider.apiKey || '',
             model: provider.model || process.env.AI_MODEL || 'qwen/qwen3-32b',
             source: provider.source,
+            shared: null,
+            workspaceId: null,
             // Only the user-controlled workspace endpoint is an SSRF surface;
             // operator-controlled env config (system fallback) is trusted.
             validatePublic: provider.source === 'workspace' && !!provider.endpoint,
@@ -354,6 +362,10 @@ module.exports = function(app, redis, deps) {
         // (messages live in PG: ai_chat_sessions.messages).
         let activeSessionId = null;
         let userContent = '';
+        // Consumer-side AI source provenance (Phase 2): 'private-local' |
+        // 'shared' | 'cloud' | 'system' — a safe token for the UI badge,
+        // never endpoint/owner detail.
+        let aiSource = null;
         try {
             const { session_id, message, messages, book_id, system, mode, scene_id, topic_id } = req.body || {};
 
@@ -468,25 +480,46 @@ module.exports = function(app, redis, deps) {
                 // Local AI Connector path (LAC §9): the completion rides the
                 // connector's authenticated WS session — no server-side URL,
                 // no Authorization header, no SSRF surface (AD-5). The cloud
-                // timer is authoritative (§5); connectorChat maps to the
-                // sanitized code surface (§4). Tool payloads are NOT
+                // timer is authoritative (§5); runSharedInference maps to the
+                // sanitized code surface (§4) and, for SHARED snapshots
+                // (Phase 2), owns the per-inference pool slot (reserved
+                // before the call; released on success/error/timeout/cancel/
+                // disconnect via its finally). Tool payloads are NOT
                 // forwarded (Phase-4 contract: only max_tokens/temperature
                 // survive) — content-embedded tool calls still go through
                 // extractToolCallsFromContent below.
                 const tokenBudget = tools.length > 0
                     ? Math.min(MAX_TOKENS_WITH_TOOLS, 8192) // connector LIMITS.maxMaxTokens
                     : MAX_TOKENS_PLAIN;
-                const cres = await connectorChat(ai.connectorId, {
-                    model: ai.model,
-                    messages: apiMessages,
-                    params: { max_tokens: tokenBudget, temperature: 0.3 },
-                }, { timeoutMs: AI_FETCH_TIMEOUT_MS });
+                // Shared capacity is borrowed: a consumer that walked away
+                // must not keep burning the owner's slot — res 'close' before
+                // the response completed aborts the request (the private
+                // path keeps its existing no-abort semantics unchanged).
+                let disconnectSignal = null;
+                let onConnClosed = null;
+                if (ai.source === 'shared') {
+                    const abort = new AbortController();
+                    disconnectSignal = abort.signal;
+                    onConnClosed = () => { if (!res.writableEnded) abort.abort(); };
+                    res.on('close', onConnClosed);
+                }
+                let cres;
+                try {
+                    cres = await sharedPool.runSharedInference(ai, {
+                        model: ai.model,
+                        messages: apiMessages,
+                        params: { max_tokens: tokenBudget, temperature: 0.3 },
+                    }, { timeoutMs: AI_FETCH_TIMEOUT_MS, signal: disconnectSignal });
+                } finally {
+                    if (onConnClosed) res.removeListener('close', onConnClosed);
+                }
                 if (!cres.ok) {
                     const code = cres.code || 'runtime_error';
-                    const status = code === 'connector_offline' ? 503 : (code === 'timeout' ? 504 : 502);
+                    const status = (code === 'connector_offline' || code === 'shared_unavailable' || code === 'busy')
+                        ? 503 : (code === 'timeout' || code === 'cancelled' ? 504 : 502);
                     console.error(`[AI] connector chat error: ${code}`);
                     return res.status(status).json({
-                        error: describeConnectorError(code),
+                        error: sharedPool.describeSharedError(code),
                         code,
                     });
                 }
@@ -498,6 +531,10 @@ module.exports = function(app, redis, deps) {
                     }],
                     usage: cres.usage || undefined,
                 };
+                // Consumer-side source provenance (Phase 2, minimal):
+                // 'private-local' | 'shared' — safe token only, no endpoint
+                // or owner detail rides the API response.
+                aiSource = ai.source === 'shared' ? 'shared' : 'private-local';
             } else {
                 const controller = new AbortController();
                 const timeout = setTimeout(() => controller.abort(), AI_FETCH_TIMEOUT_MS);
@@ -689,6 +726,7 @@ module.exports = function(app, redis, deps) {
                 patches_applied: patches.length,
                 validation_errors: validationErrors,
                 session_id: activeSessionId,
+                ai_source: aiSource || (ai.source === 'workspace' ? 'cloud' : (ai.source === 'system' ? 'system' : ai.source)),
             });
         } catch (err) {
             console.error('[AI CHAT] Error:', err.message);

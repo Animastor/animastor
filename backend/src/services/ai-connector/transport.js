@@ -161,12 +161,21 @@ function settle(requestId, result) {
     const entry = pending.get(requestId);
     if (!entry) return false;
     pending.delete(requestId);
+    cleanupEntry(entry);
+    entry.resolve(result);
+    return true;
+}
+
+/** Stop the cloud timer and detach the abort listener of a settled entry. */
+function cleanupEntry(entry) {
     if (entry.timer) {
         clearTimeout(entry.timer);
         entry.timer = null;
     }
-    entry.resolve(result);
-    return true;
+    if (entry.signal && entry.onAbort) {
+        entry.signal.removeEventListener('abort', entry.onAbort);
+        entry.onAbort = null;
+    }
 }
 
 /**
@@ -254,6 +263,12 @@ function validatePayload({ model, messages, params = {} } = {}) {
  *        caller fails with `timeout`.
  * @param {Function} [opts.onDelta] - (delta:string) => void — presence
  *        switches the request to streaming (chat.delta).
+ * @param {AbortSignal} [opts.signal] - consumer-side cancellation (Phase 2
+ *        consumer inference): on abort the transport sends chat.cancel
+ *        downstream and settles the caller with `cancelled` — the same
+ *        authoritative-cancel semantics as the §5 timeout path. A signal
+ *        that is already aborted settles immediately (the frame is never
+ *        sent).
  * @param {object} [opts.logger]
  * @returns {Promise<{ok:true, content:string, finishReason:string|undefined,
  *                    usage:object|undefined, model:string, requestId:string}
@@ -263,7 +278,12 @@ function validatePayload({ model, messages, params = {} } = {}) {
  *          the accumulated text (connector-side failures) — cloud-side
  *          failures surface partial through onDelta having already fired.
  */
-async function connectorChat(connectorId, payload, { timeoutMs = DEFAULTS.requestTimeoutMs, onDelta = null, logger = console } = {}) {
+async function connectorChat(connectorId, payload, { timeoutMs = DEFAULTS.requestTimeoutMs, onDelta = null, signal = null, logger = console } = {}) {
+    // Consumer cancellation that happened BEFORE the call: nothing is sent,
+    // nothing is registered — a plain sanitized `cancelled` answer.
+    if (signal && signal.aborted) {
+        return { ok: false, code: 'cancelled', message: SANITIZED_MESSAGES.cancelled };
+    }
     const v = validatePayload(payload);
     if (!v.ok) {
         return { ok: false, code: v.code, message: SANITIZED_MESSAGES[v.code] };
@@ -297,6 +317,9 @@ async function connectorChat(connectorId, payload, { timeoutMs = DEFAULTS.reques
         resolve,
         timer: null,
         settled: false,
+        // Phase 2 consumer cancellation state:
+        signal: signal || null,
+        onAbort: null,
         // Phase 5 streaming state:
         stream: streaming,
         onDelta: streaming ? onDelta : null,
@@ -317,6 +340,24 @@ async function connectorChat(connectorId, payload, { timeoutMs = DEFAULTS.reques
         logger.warn(`[AI-CONNECTOR] chat timeout (connector ${connectorId}, request ${requestId})`);
     }, effectiveTimeout);
     if (entry.timer.unref) entry.timer.unref();
+
+    // Phase 2 consumer cancellation: an aborted signal mirrors the timeout
+    // path exactly (chat.cancel downstream + sanitized `cancelled`) — the
+    // cloud timer and the consumer signal are two triggers of the SAME
+    // cancel machinery; the listener is detached on settle (cleanupEntry)
+    // and settle() is guarded by entry.settled against double-settles.
+    if (signal) {
+        entry.onAbort = () => {
+            if (entry.settled) return;
+            entry.settled = true;
+            try {
+                session.ws.send(JSON.stringify({ type: 'chat.cancel', request_id: requestId }));
+            } catch (_) { /* dead socket — failPendingFor owns the state */ }
+            settle(requestId, { ok: false, code: 'cancelled', message: SANITIZED_MESSAGES.cancelled });
+            logger.warn(`[AI-CONNECTOR] chat cancelled (connector ${connectorId}, request ${requestId})`);
+        };
+        signal.addEventListener('abort', entry.onAbort, { once: true });
+    }
 
     const frame = {
         type: 'chat.request',
@@ -355,13 +396,13 @@ async function connectorChat(connectorId, payload, { timeoutMs = DEFAULTS.reques
  * params.stream:true → N× chat.delta → ONE terminal chat.response
  * (or chat.error). Thin wrapper over connectorChat — see its contract.
  */
-function connectorChatStream(connectorId, payload, { timeoutMs, onDelta, logger } = {}) {
+function connectorChatStream(connectorId, payload, { timeoutMs, onDelta, signal, logger } = {}) {
     if (typeof onDelta !== 'function') {
         // Programming error on the caller side — fail sanitized, never
         // a non-streaming silent downgrade.
         return Promise.resolve({ ok: false, code: 'invalid_request', message: SANITIZED_MESSAGES.invalid_request });
     }
-    return connectorChat(connectorId, payload, { timeoutMs, onDelta, logger });
+    return connectorChat(connectorId, payload, { timeoutMs, onDelta, signal, logger });
 }
 
 /**
@@ -509,7 +550,7 @@ function failPendingFor(session) {
     for (const [requestId, entry] of pending) {
         if (entry.session === session) {
             entry.settled = true;
-            if (entry.timer) clearTimeout(entry.timer);
+            cleanupEntry(entry); // timer + abort listener (Phase 2 signal)
             pending.delete(requestId);
             entry.resolve({ ok: false, code: 'session_closed', message: SANITIZED_MESSAGES.session_closed });
             count += 1;

@@ -229,7 +229,14 @@ interface AiProviderMeta {
   status: ProviderStatus;
   last_tested_at: number | null;
 }
-interface AiProviderRead { provider: AiProviderMeta | null; has_workspace_provider: boolean }
+interface AiProviderRead {
+  provider: AiProviderMeta | null;
+  has_workspace_provider: boolean;
+  // Phase 2 LLM sharing: present only when no workspace provider exists —
+  // the shared AI pool may serve as the resolver's fallback (availability
+  // hint only, no endpoint/owner detail).
+  shared_ai?: { available: boolean };
+}
 interface AiProviderTest { ok: boolean; model?: string; status?: number; error?: string }
 
 function AIProviderSection() {
@@ -246,6 +253,7 @@ function AIProviderSection() {
   const [testing, setTesting] = useState(false);
   const [testSuccess, setTestSuccess] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [sharedAvailable, setSharedAvailable] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -255,6 +263,7 @@ function AIProviderSection() {
         if (!alive) return;
         const meta = res.provider ?? null;
         setSaved(meta);
+        setSharedAvailable(!meta && res.shared_ai?.available === true);
         if (meta) {
           if (meta.provider_type === 'local-ai') {
             // Local AI binding — managed in the Local AI section. The cloud
@@ -401,6 +410,9 @@ function AIProviderSection() {
                       : `${saved.endpoint}${saved.model ? ` · ${saved.model}` : ''} · ${saved.api_key_masked}`)
                   : t('ai_provider_none')}
               </p>
+              {!saved && sharedAvailable && (
+                <p class="card__hint card__hint--wrap">{t('ai_provider_shared_available')}</p>
+              )}
 
               {saved && statusPill && (
                 <p class="card__hint">

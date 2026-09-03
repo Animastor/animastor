@@ -55,7 +55,22 @@ module.exports = function(app) {
         if (!workspaceId) return;
         try {
             const meta = await workspaceAi.getProviderMeta(workspaceId);
-            res.json({ provider: meta, has_workspace_provider: !!meta });
+            // Consumer-side source hint (Phase 2 — minimal, no marketplace):
+            // when the workspace has no provider of its own, the shared AI
+            // pool may serve as the resolver's fallback. Slotless read-only
+            // eligibility scan (never reserves capacity, never touches a
+            // runtime). Carries availability ONLY — no endpoint names, no
+            // owner detail, no counts.
+            let sharedAi = null;
+            if (!meta) {
+                try {
+                    const sharedPool = require('../services/ai-connector/shared-pool');
+                    sharedAi = { available: !!(await sharedPool.selectSharedAI({ workspaceId })) };
+                } catch (_) {
+                    sharedAi = { available: false }; // pool read failure is not a settings failure
+                }
+            }
+            res.json({ provider: meta, has_workspace_provider: !!meta, ...(sharedAi ? { shared_ai: sharedAi } : {}) });
         } catch (err) {
             console.error('[SETTINGS-AI] GET failed:', err.message);
             res.status(500).json({ error: 'Failed to read AI provider' });

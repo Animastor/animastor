@@ -373,6 +373,7 @@ const dict = {
     ai_provider_last_tested: 'Последняя проверка',
     ai_provider_configured: 'Настроен',
     ai_provider_local_active: 'Активен провайдер Local AI (локальный коннектор) — управление в разделе «Local AI»',
+    ai_provider_shared_available: 'Доступен общий AI (Shared): пока свой провайдер не настроен, запросы обслуживают общие локальные AI-эндпоинты сообщества. Не отправляйте конфиденциальные данные, которым не доверяете.',
     // Local AI Connector (Local AI Connector V1 — Phase 6)
     local_ai_title: 'Local AI',
     local_ai_desc: 'Подключите локальный LLM-рантайм (Ollama, vLLM, llama.cpp, LM Studio) к вашему рабочему пространству. Коннектор сам устанавливает исходящее соединение — без проброса портов. Обмен публично не производится.',
@@ -1189,6 +1190,7 @@ const dict = {
     ai_provider_last_tested: 'Last tested',
     ai_provider_configured: 'Configured',
     ai_provider_local_active: 'Local AI (local connector) is the active provider — manage it in the Local AI section',
+    ai_provider_shared_available: 'Shared AI is available: with no personal provider configured, requests are served by community-shared Local AI endpoints. Do not send confidential data you do not trust this resource with.',
     // Local AI Connector (Local AI Connector V1 — Phase 6)
     local_ai_title: 'Local AI',
     local_ai_desc: 'Connect a local LLM runtime (Ollama, vLLM, llama.cpp, LM Studio) to your workspace. The connector dials out on its own — no port forwarding. Nothing is shared.',

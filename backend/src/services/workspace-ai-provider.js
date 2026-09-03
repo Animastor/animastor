@@ -452,12 +452,54 @@ async function deleteProvider(workspaceId) {
 // ── resolver (transport layer / callers) ────────────────────────────────
 
 /**
+ * Shared-pool stage (Phase 2 consumer inference — SH-AI-3, sharing doc
+ * §6.2 resolver stage 2): consulted when the workspace has NO usable
+ * provider row (no row / disabled row / undecryptable credential). The
+ * OWNER's row — cloud or local-ai connector — always wins first and its
+ * behavior is byte-identical to pre-sharing days (an explicitly bound
+ * local-ai connector that is offline keeps failing closed at the transport
+ * step per AD-12; the pool is never a silent substitution for an explicit
+ * binding).
+ *
+ * The returned snapshot is a SLOTLESS selection (selectSharedAI — the full
+ * eligibility ladder incl. "concurrency slot available" runs at selection
+ * time; the slot itself is reserved per inference at the transport branch
+ * by shared-pool.runSharedInference). It is NEVER cached: pool capacity
+ * must not ride the 30s resolver cache, and every request re-runs the
+ * eligibility ladder (a revoked policy depools consumers within one
+ * request, not one TTL).
+ *
+ * Pool failure degrades to null (→ system fallback) — never throws.
+ * @returns {Promise<object|null>} shared connector snapshot or null
+ */
+async function resolveSharedPoolStage(workspaceId, { purpose, model } = {}) {
+    try {
+        const sharedPool = require('./ai-connector/shared-pool');
+        return await sharedPool.selectSharedAI({ workspaceId, purpose, model });
+    } catch (err) {
+        console.warn(`[WORKSPACE-AI] shared pool stage failed for ${workspaceId}: ${err.message}`);
+        return null;
+    }
+}
+
+/**
  * Resolve the AI provider for a workspace: workspace row first, then the
- * GATED system fallback (admin kill switch enforced). Never throws on config
- * errors (degrades to the system fallback / noProvider).
+ * SHARED POOL (Phase 2, stage 2 — slotless, never cached), then the GATED
+ * system fallback (admin kill switch enforced). Never throws on config
+ * errors (degrades to the next stage / noProvider).
+ *
+ * Resolution chain (sharing doc §6.2):
+ *   1. workspace_ai_providers row (cloud or local-ai binding — untouched)
+ *   2. shared pool                (NEW — only when stage 1 yields nothing)
+ *   3. system provider / env      (kill-switch gated, untouched)
+ *   4. fail closed                ('none' / 'unconfigured', untouched)
+ *
+ * @param {string} workspaceId
+ * @param {{purpose?:string, model?:string}} [opts] - purpose/model ride the
+ *        shared-pool selection (private rows have no per-purpose routing).
  * @returns {Promise<{source:string, provider:string|null, endpoint:string|null, apiKey:string|null, model:string|null, workspaceId:string|null}>}
  */
-async function resolveAIForWorkspace(workspaceId) {
+async function resolveAIForWorkspace(workspaceId, opts = {}) {
     if (!workspaceId) return resolveSystemFallback();
 
     const cached = _cache.get(workspaceId);
@@ -465,22 +507,37 @@ async function resolveAIForWorkspace(workspaceId) {
         return cached.provider;
     }
 
-    let provider;
+    let provider = null;
     try {
         const row = await getRow(workspaceId);
         if (row && row.enabled !== false) {
             provider = buildWorkspaceProvider(row); // null on decrypt failure
         }
-        if (!provider) {
-            provider = await resolveSystemFallback();
-        }
-        provider.workspaceId = workspaceId;
     } catch (err) {
-        console.error(`[WORKSPACE-AI] resolve for ${workspaceId} failed, using system fallback:`, err.message);
-        provider = await resolveSystemFallback();
-        provider.workspaceId = workspaceId;
+        console.error(`[WORKSPACE-AI] resolve for ${workspaceId} failed, falling through:`, err.message);
+        provider = null;
     }
 
+    if (provider) {
+        // Stage 1 hit — the owner's own resource. Cached exactly as before
+        // (30s TTL, invalidated on writes). Behavior byte-identical.
+        provider.workspaceId = workspaceId;
+        cacheSet(workspaceId, provider);
+        return provider;
+    }
+
+    // Stage 2 — shared pool (Phase 2): slotless selection, NEVER cached
+    // (the pool is capacity, not configuration; every request re-checks
+    // the eligibility ladder).
+    const shared = await resolveSharedPoolStage(workspaceId, opts);
+    if (shared) {
+        shared.workspaceId = workspaceId;
+        return shared;
+    }
+
+    // Stage 3 — gated system fallback (unchanged; cached as before).
+    provider = await resolveSystemFallback();
+    provider.workspaceId = workspaceId;
     cacheSet(workspaceId, provider);
     return provider;
 }
@@ -491,14 +548,16 @@ async function resolveAIForWorkspace(workspaceId) {
  * allowCreate=false: resolution must never seed registry rows for ghost
  * book ids (old sessions pointing at deleted books) — when the book is
  * unregistered, the system fallback applies.
+ * opts ride through to resolveAIForWorkspace (Phase 2: purpose/model for
+ * the shared-pool stage).
  */
-async function resolveAIForBook(bookId) {
+async function resolveAIForBook(bookId, opts = {}) {
     if (!bookId) return resolveSystemFallback();
     try {
         const ownership = require('../middleware/workspace-ownership');
         const workspaceId = await ownership.resolveWorkspaceForBook(bookId, { allowCreate: false });
         if (!workspaceId) return resolveSystemFallback();
-        return await resolveAIForWorkspace(workspaceId);
+        return await resolveAIForWorkspace(workspaceId, opts);
     } catch (err) {
         console.error(`[WORKSPACE-AI] resolveForBook(${bookId}) failed, using system fallback:`, err.message);
         return resolveSystemFallback();

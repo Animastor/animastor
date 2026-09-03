@@ -1,14 +1,31 @@
 // ======================================================
-// LLM Sharing — shared pool resolver seam (SH-AI-2 — Phase 1 Control Plane)
+// LLM Sharing — shared pool resolver seam (SH-AI-2/SH-AI-3)
+// Phase 1 Control Plane + Phase 2 Consumer Inference
 // ======================================================
 // The architectural seam between the AI consumer abstraction and a future
-// distributed pool scheduler (docs/04-planning/llm-sharing-phase1-control-plane.md):
+// distributed pool scheduler (docs/04-planning/llm-sharing-phase1-control-
+// plane.md, docs/04-planning/llm-sharing-phase2-consumer-inference.md):
 //
-//   resolveSharedAI({ workspaceId, purpose, model })
+//   resolveSharedAI({ workspaceId, purpose, model })   (Phase 1 — acquires)
+//   selectSharedAI({ workspaceId, purpose, model })    (Phase 2 — slotless)
 //        ↓ eligible shared endpoints        (repo.listSharedEndpoints)
 //        ↓ availability / policy filtering (THIS module)
 //        ↓ selected endpoint                (deterministic V1 selector)
-//        ↓ connector transport              (existing ai-connector/transport)
+//        ↓ connector transport              (existing ai-connector/transport
+//                                            via runSharedInference —
+//                                            per-inference slot lifecycle)
+//
+// PHASE 2 CONSUMER FLOW (the wired resolver chain):
+//
+//   workspace_ai_providers → resolver → private local connector OR shared
+//   endpoint → SAME connector transport
+//
+// resolveAIForWorkspace consults selectSharedAI() as resolver stage 2 (after
+// the workspace provider, before the gated system fallback — sharing doc
+// §6.2). The shared snapshot is NEVER cached (it is resolved per request);
+// the concurrency slot is reserved PER INFERENCE by the transport branch
+// (runSharedInference / reserveSharedInference + releaseSharedAI) — so a
+// snapshot reused by an agent pipeline accounts each completion exactly.
 //
 // SEAM CONTRACT (the whole point of Phase 1): the consumer keeps working
 // through the EXISTING AI abstraction —
@@ -61,7 +78,6 @@
 
 const registry = require('../../services/ai-connector/registry');
 const endpointRepo = require('../../storage/postgres/repositories/ai-endpoint-repo');
-
 // Per-endpoint in-process slot counters (endpoint_id → current in-flight
 // count). Phase 1 seam: a gate, not a queue — overflow means "not eligible
 // right now", never a wait. Reset when the counter would go negative; a
@@ -190,14 +206,17 @@ function checkEligibility(entry, { workspaceId, requestedModel }) {
  * resolveSharedAI — the Phase 1 seam. Resolve one eligible shared endpoint
  * for a consumer request and return a CONSUMER-IDENTICAL connector snapshot
  * (the same shape buildConnectorProvider produces) plus sharing metadata.
+ * The returned snapshot holds ONE concurrency slot; the caller MUST call
+ * releaseSharedAI(snapshot) when done (or use withSharedAI below).
+ *
+ * Phase 2 note: the WIRED consumer flow (resolver stage → per-inference
+ * reservation) uses selectSharedAI + runSharedInference instead — a
+ * resolution-held slot cannot survive the 30s resolver cache or an agent
+ * pipeline reusing one snapshot for many calls. The eligibility ladder is
+ * SHARED between both entries (one implementation, §6 doc).
  *
  * Returns null when nothing is eligible — the CALLER decides the fallback
- * chain (Phase 1 does NOT wire this into resolveAIForWorkspace yet; the
- * consumer-side shared discovery is a later phase by design).
- *
- * The returned snapshot acquires one concurrency slot; the caller MUST call
- * releaseSharedAI(snapshot) when done (or use withSharedAI below). Failing
- * to release only makes the pool conservative, never broken.
+ * chain.
  *
  * The model in the snapshot is always present in the endpoint's discovered
  * models list — a strict contract that prevents the runtime from ever
@@ -205,11 +224,46 @@ function checkEligibility(entry, { workspaceId, requestedModel }) {
  *
  * @param {{workspaceId:string, purpose?:string, model?:string|null}} request
  * @returns {Promise<{source:'shared', transport:'connector', provider:'local-ai',
- *                     shared:{endpointId:string, endpointName:string, ownerWorkspaceId:string},
+ *                     shared:{endpointId:string, endpointName:string, ownerWorkspaceId:string,
+ *                             concurrencyLimit:number},
  *                     connectorId:string, endpoint:null, apiKey:null,
  *                     model:string, workspaceId:string, purpose?:string}|null>}
  */
-async function resolveSharedAI({ workspaceId, purpose, model } = {}) {
+async function resolveSharedAI(request = {}) {
+    const snapshot = await selectSharedAI(request);
+    if (!snapshot) return null;
+    acquireSlot(snapshot.shared.endpointId);
+    return snapshot;
+}
+
+/** Release the concurrency slot of a resolved shared snapshot. Safe always. */
+function releaseSharedAI(snapshot) {
+    if (snapshot && snapshot.shared && snapshot.shared.endpointId) {
+        releaseSlot(snapshot.shared.endpointId);
+    }
+}
+
+// ── Phase 2 — consumer inference (SH-AI-3) ───────────────────────────────
+// The consumer wiring (docs/04-planning/llm-sharing-phase2-consumer-
+// inference.md) needs a PER-REQUEST selection without a lingering slot and
+// a PER-INFERENCE reservation, so an agent pipeline (ONE snapshot, MANY
+// sequential/parallel callAI calls) accounts every in-flight completion
+// against the owner's concurrency_limit exactly.
+
+/**
+ * Select an eligible shared endpoint WITHOUT acquiring a slot. Identical
+ * eligibility ladder to resolveSharedAI (sharing on, endpoint on, connector
+ * live, not revoked, non-owner workspace, runtime_ok, model available in
+ * discovered, concurrency slot available) — the only difference is that the
+ * slot is NOT held: the returned snapshot is a selection ("plan"), and the
+ * caller reserves capacity per inference via reserveSharedInference().
+ *
+ * @returns {Promise<object|null>} the same consumer snapshot shape
+ *   resolveSharedAI produces (transport:'connector', endpoint:null,
+ *   apiKey:null, shared:{endpointId, endpointName, ownerWorkspaceId,
+ *   concurrencyLimit}) plus the selected model — or null.
+ */
+async function selectSharedAI({ workspaceId, purpose, model } = {}) {
     const candidates = await endpointRepo.listSharedEndpoints();
     for (const entry of candidates) {
         const check = checkEligibility(entry, { workspaceId, requestedModel: model });
@@ -217,7 +271,6 @@ async function resolveSharedAI({ workspaceId, purpose, model } = {}) {
         const selected = selectEndpoint([entry]);
         if (!selected) continue;
         const chosenModel = selectModel(selected, model);
-        acquireSlot(selected.endpoint.endpoint_id);
         return {
             source: 'shared',
             transport: 'connector',
@@ -226,6 +279,10 @@ async function resolveSharedAI({ workspaceId, purpose, model } = {}) {
                 endpointId: selected.endpoint.endpoint_id,
                 endpointName: selected.endpoint.name,
                 ownerWorkspaceId: selected.endpoint.workspace_id,
+                // Owner policy limit — needed by reserveSharedInference so an
+                // inference can re-check capacity at request time. Owner-
+                // independent metadata (no secret, no URL, no credential).
+                concurrencyLimit: Number(selected.policy.concurrency_limit) || 1,
             },
             connectorId: selected.endpoint.connector_id,
             endpoint: null, // NEVER a runtime URL — AD-5 boundary intact
@@ -238,10 +295,108 @@ async function resolveSharedAI({ workspaceId, purpose, model } = {}) {
     return null;
 }
 
-/** Release the concurrency slot of a resolved shared snapshot. Safe always. */
-function releaseSharedAI(snapshot) {
-    if (snapshot && snapshot.shared && snapshot.shared.endpointId) {
-        releaseSlot(snapshot.shared.endpointId);
+/**
+ * Per-inference reservation over an already-selected shared snapshot
+ * (selectSharedAI output). Checks the owner's concurrency limit and
+ * acquires one slot — call releaseSharedAI(snapshot) in a finally to
+ * release. A no-op "ok" for any NON-shared snapshot (private connector /
+ * cloud provider), so the transport branches can wrap every connector
+ * inference with the same reserve/release guard.
+ *
+ * @returns {{ok:true}|{ok:false, code:'busy'|'invalid'}}
+ */
+function reserveSharedInference(snapshot) {
+    if (!snapshot || !snapshot.shared || !snapshot.shared.endpointId) {
+        // Not a shared snapshot — nothing to reserve (private/cloud path).
+        return { ok: true };
+    }
+    if (snapshot.transport !== 'connector' || !snapshot.connectorId) {
+        return { ok: false, code: 'invalid' };
+    }
+    const limit = Number(snapshot.shared.concurrencyLimit) || 1;
+    if (inflightCount(snapshot.shared.endpointId) >= limit) {
+        return { ok: false, code: 'busy' };
+    }
+    acquireSlot(snapshot.shared.endpointId);
+    return { ok: true };
+}
+
+/** True when the snapshot came from the shared pool (selection or reservation). */
+function isSharedSnapshot(snapshot) {
+    return !!(snapshot && snapshot.source === 'shared' && snapshot.shared && snapshot.shared.endpointId);
+}
+
+// Sanitized, fixed strings for the Phase 2 shared-specific codes (same
+// discipline as transport.SANITIZED_MESSAGES — never raw runtime detail).
+const SHARED_MESSAGES = {
+    shared_unavailable: 'Shared AI is not available right now',
+};
+
+/**
+ * User-facing description of a shared-inference failure code: shared-pool
+ * codes first, then the connector transport codes. Sanitized by construction.
+ */
+function describeSharedError(code) {
+    if (SHARED_MESSAGES[code]) return SHARED_MESSAGES[code];
+    const { describeConnectorError } = require('./transport');
+    return describeConnectorError(code);
+}
+
+/**
+ * Run ONE chat completion over a connector snapshot with the correct
+ * reservation lifecycle — the ONLY inference entry the connector-transport
+ * consumer branches use (callAI / resolveChatAI / streaming):
+ *
+ *   - SHARED snapshot  → reserve the slot (busy → sanitized busy), call the
+ *     connector transport, ALWAYS release — success, connector error,
+ *     timeout, cancellation and session disconnect all settle connectorChat
+ *     and fall through the same finally. The pool cannot leak a slot.
+ *   - PRIVATE snapshot (workspace local-ai binding) → direct transport, NO
+ *     pool interaction (the private path behaves exactly as before Phase 2).
+ *
+ * Rides the existing ai-connector/transport — no new protocol, no direct
+ * cloud→runtime fetch (AD-5 intact). Streaming when opts.onDelta is present.
+ *
+ * @param {object} snapshot - a connector snapshot (workspace binding or
+ *        selectSharedAI() output). Null/invalid → shared_unavailable.
+ * @param {object} payload - { model, messages, params:{max_tokens, temperature} }
+ * @param {object} [opts] - { timeoutMs, onDelta, signal, logger } passed
+ *        through to transport.connectorChat (onDelta switches to streaming).
+ * @returns {Promise<{ok:true, content, finishReason?, usage?, model, requestId,
+ *                    shared?:{endpointId, endpointName}}
+ *                  |{ok:false, code, message, partial?}>}
+ */
+async function runSharedInference(snapshot, payload, opts = {}) {
+    const { connectorChat } = require('./transport');
+    const transportOpts = {
+        timeoutMs: opts.timeoutMs,
+        onDelta: opts.onDelta,
+        signal: opts.signal,
+        logger: opts.logger,
+    };
+    if (!isSharedSnapshot(snapshot)) {
+        if (!snapshot || !snapshot.connectorId) {
+            return { ok: false, code: 'shared_unavailable', message: SHARED_MESSAGES.shared_unavailable };
+        }
+        // Private connector binding — unchanged Phase 1..7 behavior.
+        return connectorChat(snapshot.connectorId, payload, transportOpts);
+    }
+    const reservation = reserveSharedInference(snapshot);
+    if (!reservation.ok) {
+        const code = reservation.code === 'busy' ? 'busy' : 'shared_unavailable';
+        return { ok: false, code, message: describeSharedError(code) };
+    }
+    try {
+        const result = await connectorChat(snapshot.connectorId, payload, transportOpts);
+        if (result.ok) {
+            // Provenance for the consumer surface: which shared endpoint
+            // served (safe fields only — never a runtime URL, never
+            // credential material).
+            result.shared = { endpointId: snapshot.shared.endpointId, endpointName: snapshot.shared.endpointName };
+        }
+        return result;
+    } finally {
+        releaseSharedAI(snapshot);
     }
 }
 
@@ -263,6 +418,12 @@ module.exports = {
     resolveSharedAI,
     releaseSharedAI,
     withSharedAI,
+    selectSharedAI,
+    reserveSharedInference,
+    isSharedSnapshot,
+    runSharedInference,
+    describeSharedError,
+    SHARED_MESSAGES,
     selectEndpoint,
     selectModel,
     checkEligibility,
