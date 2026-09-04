@@ -182,6 +182,16 @@ const STREAM_HANDLER = (req, res) => {
     }, 30);
 };
 
+// Streams deltas, then dies mid-stream (socket destroyed, no terminal
+// frame) — the runtime error AFTER content already surfaced.
+const STREAM_THEN_ERROR_HANDLER = (req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    const chunk = (content) => `data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content }, finish_reason: null }] })}\n\n`;
+    res.write(chunk('partial '));
+    setTimeout(() => res.write(chunk('output ')), 10);
+    setTimeout(() => { try { res.destroy(); } catch (_) {} }, 30);
+};
+
 // ── backend harness (WS + routes, injectable identity) ────────────────────
 
 function startBackend() {
@@ -576,6 +586,30 @@ describe('LLM Sharing Phase 2 — consumer resolver & shared inference (SH-AI-3)
         });
     });
 
+    it('7b. runtime error AFTER delivered deltas → stream_failed sanitized, slot released', async () => {
+        await withSpecialEndpoint(STREAM_THEN_ERROR_HANDLER, async (srt, s, specialEp) => {
+            const deltas = [];
+            const snap = await workspaceAi.resolveAIForWorkspace(wsB);
+            expect(snap.shared.endpointId).to.equal(specialEp.endpoint_id);
+            let threw = null;
+            await captureConsole(async () => {
+                try {
+                    await aiService.callAIStream(
+                        [{ role: 'user', content: 'hi' }], { maxTokens: 64 }, snap,
+                        { onDelta: (d) => deltas.push(d) }
+                    );
+                } catch (err) { threw = err; }
+            });
+            expect(deltas.join('')).to.equal('partial output '); // deltas stayed delivered
+            expect(threw).to.exist;
+            expect(threw.message).to.equal('Local AI stream failed after partial output'); // stream_failed
+            expect(inflightCount()).to.equal(0); // released after the failed stream
+            // The endpoint is selectable again immediately.
+            const again = await sharedPool.selectSharedAI({ workspaceId: wsB });
+            expect(again.shared.endpointId).to.equal(specialEp.endpoint_id);
+        });
+    });
+
     it('9. consumer cancellation (AbortSignal) sends chat.cancel downstream and releases the slot', async () => {
         await withSpecialEndpoint(HANG_HANDLER, async (srt, s, specialEp) => {
             const snap = await workspaceAi.resolveAIForWorkspace(wsB);
@@ -643,6 +677,35 @@ describe('LLM Sharing Phase 2 — consumer resolver & shared inference (SH-AI-3)
     });
 
     // ── 13. Owner exclusion (D3) ──────────────────────────────────────────
+
+    it('12b. consumer HTTP client walks away mid-inference → chat route aborts the shared call, slot released', async () => {
+        // Full route-level E2E: POST /api/v1/ai/chat over the shared pool,
+        // the HTTP client disconnects before the reply — the route's
+        // res.on('close') abort must settle the inference and free the
+        // slot (reserve → request → client disconnect → abort → release).
+        // Uses the existing ep1/ep2 fixtures (no withSpecialEndpoint) and
+        // DELAYED_HANDLER so inference is in-flight long enough to abort.
+        const saved = rt1.currentHandler;
+        rt1.currentHandler = DELAYED_HANDLER(5000);
+        try {
+            const controller = new AbortController();
+            const fetchPromise = fetch(`${srv.base}/api/v1/ai/chat`, {
+                method: 'POST',
+                headers: identityHeaders(idB()),
+                body: JSON.stringify({ book_id: `shai2-${stamp}-chatB`, message: 'hello', mode: 'chat' }),
+                signal: controller.signal,
+            }).then(() => null, (err) => err);
+            await waitFor(() => inflightCount() >= 1, { timeoutMs: 5000 });
+            expect(inflightCount()).to.equal(1);
+            controller.abort(); // the consumer walks away
+            const err = await fetchPromise;
+            expect(err).to.exist; // fetch failed (aborted client-side)
+            await waitFor(() => inflightCount() === 0, { timeoutMs: 3000 });
+            expect(inflightCount()).to.equal(0); // slot released on client disconnect
+        } finally {
+            rt1.currentHandler = saved;
+        }
+    });
 
     it('13. the owner never resolves their own endpoint through the pool', async () => {
         expect(await sharedPool.selectSharedAI({ workspaceId: wsA })).to.equal(null);

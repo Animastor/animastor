@@ -100,8 +100,13 @@ callAI / resolveChatAI / callAIStream          (transport branches)
 Released on: **success**, **chat.error** (runtime error), **timeout**
 (cloud timer → chat.cancel → `timeout`), **cancellation** (consumer
 AbortSignal → chat.cancel → `cancelled`), **disconnect**
-(`failPendingFor` → `session_closed`). Every exit settles `connectorChat`
-and falls through the same finally — the slot cannot leak. The Phase 1
+(`failPendingFor` → `session_closed`), and a **stream that fails after
+deltas were already delivered** (adapter mid-stream failure →
+`stream_failed`). Every exit settles `connectorChat` and falls through
+the same finally — the slot cannot leak. The chat route additionally
+aborts a shared inference when the HTTP client disconnects before the
+reply (`res.on('close')` → AbortSignal → chat.cancel), so a consumer
+that walks away stops burning the owner's slot (test 12b). The Phase 1
 in-process limitation is kept (no Redis/global scheduler); a leaked slot
 can only make the pool MORE conservative until a restart.
 
@@ -189,7 +194,9 @@ UI mirror, SSE chat route, usage counters/ledger, `expires_at` presets,
 - Settings hint: `backend/src/routes/settings-ai-routes.cjs` (GET provider
   `shared_ai`)
 - Web: `frontends/app/src/pages/SettingsPage.tsx` + `app/i18n.ts`
-- Tests: `backend/tests/ai-shared-inference.test.js` (21 cases)
+- Tests: `backend/tests/ai-shared-inference.test.js` (23 cases),
+  `backend/tests/ai-model-propagation.test.js` (14 cases — the model
+  propagation regression suite)
 - This document.
 
 ## 10. Known Limitations (accepted for Phase 2)
