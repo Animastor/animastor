@@ -30,6 +30,9 @@ const txtImporter = require('./services/txt-importer');
 const lazyBook = require('./book/lazy-book');
 const bookModel = require('./book/book-model.cjs');
 const { createBookDeletion } = require('./book/book-deletion.cjs');
+// Phase 6: Editor/Player boundaries — facades over the Canonical Book Model.
+const { createPlayerModel } = require('./player/index.cjs');
+const { createEditorModel } = require('./editor/index.cjs');
 const genSessionRepo = require('./storage/postgres/repositories/gen-session-repo');
 const bookSourceRepo = require('./storage/postgres/repositories/book-source-repo');
 const placeholderAudio = require('./services/placeholder-audio');
@@ -226,6 +229,9 @@ const routeDeps = {
         log: utils.log,
         setCancelFlag: (redisClient, id) => require('./runtime/scene-window').setCancelFlag(redisClient, id),
     }),
+    // Phase 6: Player/Editor boundaries — book access via the Canonical Book Model
+    playerModel: createPlayerModel({ bookModel }),
+    editorModel: createEditorModel({ bookModel, persistBook: book.saveBookBundle }),
 };
 
 require('./routes/book-routes.cjs')(app, redis, { ...routeDeps, taskHandler, bookDiff, windowGenerator });

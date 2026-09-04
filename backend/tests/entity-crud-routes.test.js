@@ -61,6 +61,10 @@ describe('ENTITY CRUD ROUTES — manual add/delete', () => {
         };
         require('../src/routes/book/entity-crud-routes.cjs')(app, {}, {
             book: bookModule,
+            editorModel: {                       // Phase 6: Editor boundary fake over the real module
+                read: (id) => bookModule.loadBook(id),
+                commit: (b, files) => bookModule.saveBookBundle(b, files),
+            },
             utils: { log: () => {} },
         });
     }
@@ -387,6 +391,10 @@ describe('ENTITY CRUD ROUTES — scene/unit delete deep cleanup', () => {
         calls = { pg: [], purgeScenes: [], cancellations: [], activeRemoved: [], reconcile: [], bump: [] };
         const deps = {
             book: bookModule,
+            editorModel: {                       // Phase 6: Editor boundary fake over the real module
+                read: (id) => bookModule.loadBook(id),
+                commit: (b, files) => bookModule.saveBookBundle(b, files),
+            },
             utils: { log: () => {} },
             config: { OUTPUT_DIR: tmpDir },
             storage: {

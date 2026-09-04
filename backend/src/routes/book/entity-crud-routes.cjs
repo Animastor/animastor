@@ -4,7 +4,9 @@
 //
 // Split out of book-routes.cjs (sub-registrar pattern —
 // see cache-routes.cjs / status-routes.cjs). Writes go
-// through the EXISTING book.loadBook / saveBookBundle
+// through the EXISTING Canonical Book Model persistence (Phase 6 editor
+// boundary: editorModel.read / editorModel.commit → book.loadBook /
+// saveBookBundle)
 // persistence — no parallel storage path. The existing
 // PATCH /characters/{id} /locations/{id} /voices/{id}
 // endpoints stay the edit path; these cover create/delete.
@@ -23,12 +25,14 @@ const { normalizeFieldValue, rebuildFullText } = require('./scene-patch-utils.cj
 const { chapterId, sceneId, unitId, generateBookId } = require('../../book/lazy-book/paths');
 
 module.exports = function (app, redis, deps) {
-    const { book, utils } = deps;
+    const { editorModel, utils } = deps;
     const { log } = utils;
     const cleanup = require('../../services/entity-cleanup.cjs')(redis, deps.config, deps);
 
+    // Phase 6: Editor boundary — model reads go through editorModel.read
+    // (Canonical Book Model), never through a raw backend loader.
     function loadBook(bookId) {
-        const b = book.loadBook(bookId);
+        const b = editorModel.read(bookId);
         if (!b) {
             const err = new Error('Book not found');
             err.statusCode = 404;
@@ -114,7 +118,7 @@ module.exports = function (app, redis, deps) {
             });
             oldBook.characters = chars;
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook);
             log(`[ADD CHARACTER] ${bookId}/${entityId} (name=${String(name).trim().slice(0, 40)})`);
             return res.json({ saved: true, book_id: bookId, character_id: entityId });
         } catch (err) {
@@ -151,7 +155,7 @@ module.exports = function (app, redis, deps) {
                 oldBook.behaviors = behaviors;
             }
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook);
             log(`[DELETE CHARACTER] ${bookId}/${characterId} (removed ${before.length - after.length} character(s))`);
             return res.json({ saved: true, book_id: bookId, character_id: characterId });
         } catch (err) {
@@ -185,7 +189,7 @@ module.exports = function (app, redis, deps) {
             locations[entityId] = buildLocation(body);
             oldBook.locations = locations;
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook);
             log(`[ADD LOCATION] ${bookId}/${entityId} (name=${String(name).trim().slice(0, 40)})`);
             return res.json({ saved: true, book_id: bookId, location_id: entityId });
         } catch (err) {
@@ -206,7 +210,7 @@ module.exports = function (app, redis, deps) {
             delete locations[locationId];
             oldBook.locations = locations;
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook);
             log(`[DELETE LOCATION] ${bookId}/${locationId}`);
             return res.json({ saved: true, book_id: bookId, location_id: locationId });
         } catch (err) {
@@ -244,7 +248,7 @@ module.exports = function (app, redis, deps) {
             };
             oldBook.voices = voices;
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook);
             log(`[ADD VOICE] ${bookId}/${entityId} (name=${String(name).trim().slice(0, 40)})`);
             return res.json({ saved: true, book_id: bookId, voice_id: entityId });
         } catch (err) {
@@ -265,7 +269,7 @@ module.exports = function (app, redis, deps) {
             delete voices[voiceId];
             oldBook.voices = voices;
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook);
             log(`[DELETE VOICE] ${bookId}/${voiceId}`);
             return res.json({ saved: true, book_id: bookId, voice_id: voiceId });
         } catch (err) {
@@ -312,7 +316,7 @@ module.exports = function (app, redis, deps) {
             }
             oldBook.behaviors = behaviors;
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook);
             log(`[ADD BEHAVIOR] ${bookId}/${characterId}`);
             return res.json({ saved: true, book_id: bookId, character_id: characterId });
         } catch (err) {
@@ -333,7 +337,7 @@ module.exports = function (app, redis, deps) {
             delete behaviors[characterId];
             oldBook.behaviors = behaviors;
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook);
             log(`[DELETE BEHAVIOR] ${bookId}/${characterId}`);
             return res.json({ saved: true, book_id: bookId, character_id: characterId });
         } catch (err) {
@@ -393,7 +397,7 @@ module.exports = function (app, redis, deps) {
             else chapters.push(newChapter);
             oldBook.chapters = chapters;
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook);
             log(`[ADD CHAPTER] ${bookId}/${newId} (after=${after_chapter_id || 'end'})`);
             return res.json({
                 saved: true, book_id: bookId, chapter_id: newId,
@@ -428,7 +432,7 @@ module.exports = function (app, redis, deps) {
             const after = chapters.filter((c) => !(c && (c.chapter_id === chapterId || c.chapter === chapterId)));
             oldBook.chapters = after;
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook);
 
             // Deep cleanup: for each scene in the deleted chapter, purge PG + Redis
             // + filesystem + in-flight dispatch (reuses the canonical purgeScene from
@@ -501,7 +505,7 @@ module.exports = function (app, redis, deps) {
             else scenes.push(newScene);
             ch.scenes = scenes;
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook);
             log(`[ADD SCENE] ${bookId}/${chapterId}/${newId} (after=${after_scene_id || 'end'})`);
             return res.json({
                 saved: true, book_id: bookId, chapter_id: chapterId,
@@ -534,7 +538,7 @@ module.exports = function (app, redis, deps) {
             }
             ch.scenes = after;
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook);
             // Deep cleanup: PostgreSQL + Redis + filesystem + in-flight dispatch
             // (reuses bookSync.purgeRemovedSceneRows / dispatch-engine / scheduler).
             // Cleanup is best-effort and surfaced in the response — a partial
@@ -588,7 +592,7 @@ module.exports = function (app, redis, deps) {
             sc.units = units;
             rebuildFullText(sc);
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook);
             log(`[ADD UNIT] ${bookId}/${chapterId}/${sceneId}/${newId} (after=${after_unit_id || 'end'})`);
             return res.json({
                 saved: true, book_id: bookId, chapter_id: chapterId,
@@ -622,7 +626,7 @@ module.exports = function (app, redis, deps) {
             // generation does not use stale text that included the deleted unit.
             rebuildFullText(sc);
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook);
             // Deep cleanup: PostgreSQL (image_units) + Redis (iu registry, in-flight,
             // GPU dedup) + filesystem (IU/preview PNG) + cancel in-flight + mark the
             // parent scene dirty for regeneration. Partial failures are surfaced in
@@ -661,7 +665,7 @@ module.exports = function (app, redis, deps) {
             const { title } = req.body || {};
             const label = title && String(title).trim() ? String(title).trim() : 'Новая книга';
             const bookId = generateBookId(label);
-            if (book.loadBook(bookId)) {
+            if (editorModel.read(bookId)) {
                 // Extremely unlikely (timestamp-suffixed), but never clobber.
                 return res.status(409).json({ error: `Book ${bookId} already exists` });
             }
@@ -716,7 +720,7 @@ module.exports = function (app, redis, deps) {
                 console.warn(`[CREATE BLANK BOOK] Ownership attach failed for ${bookId} (non-fatal): ${err.message}`);
             }
 
-            book.saveBookBundle(blankBook, null);
+            editorModel.commit(blankBook);
             log(`[CREATE BLANK BOOK] ${bookId} (title=${label.slice(0, 40)})`);
             return res.json({ saved: true, book_id: bookId, title: label });
         } catch (err) {

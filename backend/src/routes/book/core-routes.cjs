@@ -52,7 +52,7 @@ module.exports = function(app, redis, deps) {
         utils, saveChunk, getChunk, getAllChunks, getBookWindowStatus,
         detectAvailableMode, recoverChunksFromDisk, recoverAllBooksFromDisk,
         cleanupService, bookDiff, taskHandler, windowGenerator,
-        iuRepo, bookDeletion,
+        iuRepo, bookDeletion, editorModel,
     } = deps;
     const { log } = utils;
 
@@ -62,7 +62,7 @@ module.exports = function(app, redis, deps) {
     app.get('/api/v1/book/:bookId', async (req, res) => {
         try {
             const { bookId } = req.params;
-            const bookData = book.loadBook(bookId);
+            const bookData = editorModel.read(bookId);
             if (!bookData) return res.status(404).json({ error: 'Book not found' });
 
             // ── Enrich chapters (F5+F7): fill missing chapter_title + compute display indices ──
@@ -156,7 +156,7 @@ module.exports = function(app, redis, deps) {
                 return res.status(400).json({ error: 'bookId mismatch' });
             }
 
-            const oldBook = book.loadBook(bookId);
+            const oldBook = editorModel.read(bookId);
 
             if (oldBook) {
                 const oldChars = oldBook.characters;
@@ -222,10 +222,10 @@ module.exports = function(app, redis, deps) {
                 }
             }
 
-            book.saveBookBundle(updatedBookData, null);
+            editorModel.commit(updatedBookData, null);
             log(`[UPDATE BOOK] ${bookId}: ${updatedBookData.chapters?.length || 0} chapters saved`);
 
-            const newBook = book.loadBook(bookId) || updatedBookData;
+            const newBook = editorModel.read(bookId) || updatedBookData;
 
             try {
                 const diff = bookDiff.computeBookDiff(oldBook || { chapters: [] }, newBook);
@@ -282,7 +282,7 @@ module.exports = function(app, redis, deps) {
                 return res.status(400).json({ error: 'Provide "scene", "unit_id", or "fields"' });
             }
 
-            const oldBook = book.loadBook(bookId);
+            const oldBook = editorModel.read(bookId);
             if (!oldBook) return res.status(404).json({ error: 'Book not found' });
 
             const bookBeforePatch = JSON.parse(JSON.stringify(oldBook));
@@ -393,9 +393,9 @@ module.exports = function(app, redis, deps) {
                 targetChapter.chapter_title = chapter_title;
             }
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook, null);
 
-            const newBook = book.loadBook(bookId) || oldBook;
+            const newBook = editorModel.read(bookId) || oldBook;
             const diff = bookDiff.computeBookDiff(bookBeforePatch, newBook);
 
             if (diff.dirty_scenes.length > 0) {
@@ -443,7 +443,7 @@ module.exports = function(app, redis, deps) {
                 narration_voice
             } = req.body;
 
-            const oldBook = book.loadBook(bookId);
+            const oldBook = editorModel.read(bookId);
             if (!oldBook) return res.status(404).json({ error: 'Book not found' });
 
             const hasAnyField = title !== undefined || author !== undefined ||
@@ -484,7 +484,7 @@ module.exports = function(app, redis, deps) {
             oldBook.bible = bib;
 
             // Save — preserves all other files untouched
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook, null);
             log(`[PATCH METADATA] ${bookId}: title=${title !== undefined} author=${author !== undefined} lang=${language !== undefined} country=${country !== undefined} epoch=${epoch !== undefined} render=${render_style !== undefined} light=${lighting_default !== undefined} narration_voice=${narration_voice !== undefined}`);
 
             return res.json({ saved: true, book_id: bookId });
@@ -508,7 +508,7 @@ module.exports = function(app, redis, deps) {
                 return res.status(400).json({ error: 'Provide "fields" object' });
             }
 
-            const oldBook = book.loadBook(bookId);
+            const oldBook = editorModel.read(bookId);
             if (!oldBook) return res.status(404).json({ error: 'Book not found' });
 
             const bookBeforePatch = JSON.parse(JSON.stringify(oldBook));
@@ -528,9 +528,9 @@ module.exports = function(app, redis, deps) {
             }
             log(`[PATCH LOCATION] ${bookId}/${locationId}: fields=${Object.keys(fields).join(', ')}`);
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook, null);
 
-            const newBook = book.loadBook(bookId) || oldBook;
+            const newBook = editorModel.read(bookId) || oldBook;
             const diff = bookDiff.computeBookDiff(bookBeforePatch, newBook);
 
             if (diff.dirty_scenes.length > 0) {
@@ -573,7 +573,7 @@ module.exports = function(app, redis, deps) {
                 return res.status(400).json({ error: 'Provide "fields" object' });
             }
 
-            const oldBook = book.loadBook(bookId);
+            const oldBook = editorModel.read(bookId);
             if (!oldBook) return res.status(404).json({ error: 'Book not found' });
 
             const char = (oldBook.characters || []).find(c => c && c.id === characterId);
@@ -590,9 +590,9 @@ module.exports = function(app, redis, deps) {
             }
             log(`[PATCH CHARACTER] ${bookId}/${characterId}: fields=${Object.keys(fields).join(', ')}`);
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook, null);
 
-            const newBook = book.loadBook(bookId) || oldBook;
+            const newBook = editorModel.read(bookId) || oldBook;
             const diff = bookDiff.computeBookDiff(bookBeforePatch, newBook);
 
             if (diff.dirty_scenes.length > 0) {
@@ -632,7 +632,7 @@ module.exports = function(app, redis, deps) {
                 return res.status(400).json({ error: 'Provide "fields" object' });
             }
 
-            const oldBook = book.loadBook(bookId);
+            const oldBook = editorModel.read(bookId);
             if (!oldBook) return res.status(404).json({ error: 'Book not found' });
 
             const voices = oldBook.voices || {};
@@ -648,9 +648,9 @@ module.exports = function(app, redis, deps) {
             }
             log(`[PATCH VOICE] ${bookId}/${voiceId}: fields=${Object.keys(fields).join(', ')}`);
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook, null);
 
-            const newBook = book.loadBook(bookId) || oldBook;
+            const newBook = editorModel.read(bookId) || oldBook;
             const diff = bookDiff.computeBookDiff(bookBeforePatch, newBook);
 
             if (diff.dirty_scenes.length > 0) {
@@ -688,7 +688,7 @@ module.exports = function(app, redis, deps) {
                 return res.status(400).json({ error: 'Provide "fields" object' });
             }
 
-            const oldBook = book.loadBook(bookId);
+            const oldBook = editorModel.read(bookId);
             if (!oldBook) return res.status(404).json({ error: 'Book not found' });
 
             const behaviors = oldBook.behaviors || {};
@@ -702,7 +702,7 @@ module.exports = function(app, redis, deps) {
             }
             log(`[PATCH BEHAVIOR] ${bookId}/${characterId}: fields=${Object.keys(fields).join(', ')}`);
 
-            book.saveBookBundle(oldBook, null);
+            editorModel.commit(oldBook, null);
 
             return res.json({ saved: true, book_id: bookId, character_id: characterId });
         } catch (err) {
@@ -717,7 +717,7 @@ module.exports = function(app, redis, deps) {
     app.get('/api/v1/book/:bookId/cover', async (req, res) => {
         try {
             const { bookId } = req.params;
-            const bookData = book.loadBook(bookId);
+            const bookData = editorModel.read(bookId);
             if (!bookData) {
                 return res.status(404).json({ error: 'Book not found' });
             }

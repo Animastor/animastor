@@ -15,7 +15,7 @@ module.exports = function(app, redis, deps) {
         utils, saveChunk, getChunk, getAllChunks, getBookWindowStatus,
         detectAvailableMode, recoverChunksFromDisk, recoverAllBooksFromDisk,
         cleanupService, bookDiff, taskHandler, windowGenerator,
-        iuRepo, cleanBookRedisKeys,
+        iuRepo, cleanBookRedisKeys, playerModel,
     } = deps;
     const { log } = utils;
 
@@ -178,7 +178,9 @@ module.exports = function(app, redis, deps) {
                     const layerCfg = await layerConfig.get(redis, bookId);
                     const imagesEnabled = layerCfg?.image_enabled !== false;
                     if (imagesEnabled) {
-                        const coverCh = book.loadBook(bookId)?.chapters?.find(ch => ch.type === 'cover');
+                        // Phase 6: cover lookup reads through the Player boundary
+                        // (playerModel → Canonical Book Model).
+                        const coverCh = playerModel.loadBook(bookId)?.chapters?.find(ch => ch.type === 'cover');
                         if (coverCh && coverCh.scenes && coverCh.scenes.length > 0) {
                             const coverScene = coverCh.scenes[0];
                             // chapter_id for modern lazy-book chapters, `chapter`

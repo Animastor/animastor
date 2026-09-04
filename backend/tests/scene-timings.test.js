@@ -44,6 +44,7 @@ function stubDeps(tmpDir, iuRepo) {
         state: {}, audio: {}, video: {},
         image: { getSceneDuration: async () => 30 }, // 30s scene audio
         book: { loadBook: () => null },              // no book JSON → getEffectiveBuildId falls back to requested
+        playerModel: { loadBook: () => null },       // Phase 6: Player boundary fake (same source as book)
         orchestrator: {}, storage: {}, runtime: {}, activeScenes: {},
         layerConfig: {}, genScope: {}, placeholderAudio: {},
         utils: { log: noop },

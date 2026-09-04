@@ -390,6 +390,7 @@ describe('Worker visibility — /worker/counts acceptance (A vs B)', () => {
             orchestrator: { failStage: async () => ({ failed: true }) },
             taskHandler: { handleTaskResult: async () => {} },
             book: { loadBook: () => null },
+            playerModel: { loadBook: () => null },
         });
         await new Promise((resolve) => {
             server = app.listen(0, () => {

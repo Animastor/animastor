@@ -36,6 +36,7 @@ function stubDeps(tmpDir) {
         config: { OUTPUT_DIR: tmpDir },
         state: {}, audio: {}, image: {}, video: {},
         book: { loadBook: () => ({ manifest: { build_id: 'b1' } }) },
+        playerModel: { loadBook: () => ({ manifest: { build_id: 'b1' } }) }, // Phase 6 Player boundary fake
         orchestrator: {}, storage: {}, runtime: {}, activeScenes: {},
         layerConfig: {}, genScope: {}, placeholderAudio: {},
         utils: { log: noop },

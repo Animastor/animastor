@@ -1,6 +1,6 @@
 import type { JSX } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { getJson, postJson, deleteJson, postChatStream, ApiError } from '../api/client';
+import { getJson, postJson, deleteJson, postChatStream, mediaUrl, ApiError } from '../api/client';
 import type { AiChatResponse, AiMessage, ChatSessionApi, SessionMessageApi, BookData, BookChapter, BookScene } from '../api/models';
 import { unitIndex } from '../api/models';
 import { t, tf, currentLang, type StrKey } from '../app/i18n';
@@ -331,7 +331,7 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
       }
       apiMessagesRef.current = [...apiMessagesRef.current, { role: 'assistant', content: res?.reply || streamedText || '' }];
       const displayText = res?.reply?.trim() ? res.reply : (streamedText.trim() ? streamedText : buildToolResultMessage(res ?? ({} as AiChatResponse)));
-      const downloadUrl = (res && res.book_id) ? `/api/v1/book/${String(res.book_id).split('/')[0]}/download` : null;
+      const downloadUrl = (res && res.book_id) ? mediaUrl(`/book/${String(res.book_id).split('/')[0]}/download`) : null;
       setMessages((prev) => prev.map((m) => (m.id === assistantId
         ? { ...m, text: displayText, streaming: false, downloadUrl, source: res?.ai_source ?? m.source }
         : m)));

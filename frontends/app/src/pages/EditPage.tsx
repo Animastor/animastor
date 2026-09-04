@@ -29,7 +29,7 @@
 import type { JSX } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useSignal } from '@preact/signals';
-import { deleteJson, getJson, patchJson, postJson, putJson } from '../api/client';
+import { deleteJson, getJson, mediaUrl, patchJson, postJson, putJson } from '../api/client';
 import type {
   AppConfig, BehaviorReaction, BookChapter, BookData, BookScene, BookUnit, CharPassport, SceneTiming, WaveformData,
 } from '../api/models';
@@ -819,7 +819,7 @@ export function EditPage(props: { path?: string }) {
     const endMs = unit.end_ms ?? 0;
 
     if (!audioEl.current) {
-      const a = new Audio(`/api/v1/scene/${encodeURIComponent(bId)}/${encodeURIComponent(chId)}/${encodeURIComponent(scId)}/audio?build_id=${encodeURIComponent(bBuild)}`);
+      const a = new Audio(mediaUrl(`/scene/${encodeURIComponent(bId)}/${encodeURIComponent(chId)}/${encodeURIComponent(scId)}/audio?build_id=${encodeURIComponent(bBuild)}`));
       a.preload = 'auto';
       audioEl.current = a;
     }
@@ -2245,7 +2245,7 @@ export function EditPage(props: { path?: string }) {
   // (preview is a capped PNG; the zoom shows the full render).
   const openZoom = useCallback((item: CarouselItem | null) => {
     if (!item || !item.chapterId || !item.sceneId || !item.unit) return;
-    const url = `/api/v1/iu-image/${encodeURIComponent(bid)}/${encodeURIComponent(item.chapterId)}/${encodeURIComponent(item.sceneId)}/${encodeURIComponent(unitId(item.unit, item.index))}?build_id=${encodeURIComponent(bld)}`;
+    const url = mediaUrl(`/iu-image/${encodeURIComponent(bid)}/${encodeURIComponent(item.chapterId)}/${encodeURIComponent(item.sceneId)}/${encodeURIComponent(unitId(item.unit, item.index))}?build_id=${encodeURIComponent(bld)}`);
     setZoomFailed(false);
     setZoom({ url, label: `${t('navigate_unit')} ${item.index + 1}` });
   }, [bid, bld]);
@@ -2757,7 +2757,7 @@ function UnitPreview({ bid, bld, chapterId, sceneId, unitId, isCurrent, label }:
 // Shared preview URL (GET /preview/...?build_id=) — the same endpoint the
 // mobile carousel uses; desktop stage and rail reuse it unchanged.
 function previewUrl(bid: string, bld: string, chapterId: string, sceneId: string, unitId: string): string {
-  return `/api/v1/preview/${encodeURIComponent(bid)}/${encodeURIComponent(chapterId)}/${encodeURIComponent(sceneId)}/${encodeURIComponent(unitId)}?build_id=${encodeURIComponent(bld)}`;
+  return mediaUrl(`/preview/${encodeURIComponent(bid)}/${encodeURIComponent(chapterId)}/${encodeURIComponent(sceneId)}/${encodeURIComponent(unitId)}?build_id=${encodeURIComponent(bld)}`);
 }
 
 // ── Desktop preview stage + unit rail (plan §5.3) ──

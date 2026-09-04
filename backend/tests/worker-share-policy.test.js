@@ -1032,6 +1032,7 @@ describe('Share policies — /worker/counts acceptance (D3)', () => {
             orchestrator: { failStage: async () => ({ failed: true }) },
             taskHandler: { handleTaskResult: async () => {} },
             book: { loadBook: () => null },
+            playerModel: { loadBook: () => null },
         });
         await new Promise((resolve) => {
             server = app.listen(0, () => {

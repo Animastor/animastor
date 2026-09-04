@@ -128,6 +128,14 @@ export async function postMultipart<T>(path: string, file: File | Blob, fieldNam
   return request<T>(path, { method: 'POST', body: fd });
 }
 
+// Media URL for <img src>/<audio src>/<video src>/download links — the parts of
+// the Player/Editor that embed server media directly in the DOM and cannot go
+// through fetch(). Centralizes the /api/v1 base (same seam as request());
+// path is the endpoint-relative path WITH query string (e.g. build_id).
+export function mediaUrl(path: string): string {
+  return API_BASE + path;
+}
+
 // retryWithBackoff — numeric backoff 1s→2s→… capped at 5s, 3 attempts total
 // (mirrors PlaybackViewModel.retryWithBackoff: attempts=3, initialDelay=1s, maxDelay=5s).
 export async function retryWithBackoff<T>(fn: () => Promise<T>, attempts = 3, initialDelayMs = 1000, maxDelayMs = 5000): Promise<T> {

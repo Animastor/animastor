@@ -62,12 +62,18 @@ describe('BEHAVIOR CRUD ROUTES — manual Behavior editor', () => {
             patch(path, handler) { handlers.set('PATCH ' + path, handler); },
             delete(path, handler) { handlers.set('DELETE ' + path, handler); },
         };
+        const editorFacade = {                  // Phase 6: Editor boundary fake over the real module
+            read: (id) => bookModule.loadBook(id),
+            commit: (b, files) => bookModule.saveBookBundle(b, files),
+        };
         require('../src/routes/book/entity-crud-routes.cjs')(app, {}, {
             book: bookModule,
+            editorModel: editorFacade,
             utils: { log: () => {} },
         });
         require('../src/routes/book/core-routes.cjs')(app, {}, {
             book: bookModule,
+            editorModel: editorFacade,
             utils: { log: () => {} },
         });
     }

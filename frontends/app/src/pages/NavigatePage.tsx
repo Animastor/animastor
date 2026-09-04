@@ -1,6 +1,6 @@
 import type { JSX } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { getJson } from '../api/client';
+import { getJson, mediaUrl } from '../api/client';
 import type { BookChapter, BookData, BookScene, BookUnit } from '../api/models';
 import { unitIndex } from '../api/models';
 import { t } from '../app/i18n';
@@ -402,6 +402,6 @@ function UnitThumb({ bookId: bid, buildId: bld, chapterId, sceneId, unitId }: {
       </span>
     );
   }
-  const src = `/api/v1/preview/${encodeURIComponent(bid)}/${encodeURIComponent(chapterId)}/${encodeURIComponent(sceneId)}/${encodeURIComponent(unitId)}?build_id=${encodeURIComponent(bld)}`;
+  const src = mediaUrl(`/preview/${encodeURIComponent(bid)}/${encodeURIComponent(chapterId)}/${encodeURIComponent(sceneId)}/${encodeURIComponent(unitId)}?build_id=${encodeURIComponent(bld)}`);
   return <img class="nav-item__thumb" src={src} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />;
 }

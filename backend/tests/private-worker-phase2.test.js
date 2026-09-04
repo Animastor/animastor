@@ -781,6 +781,7 @@ describe('Private worker Phase 2 — PG persistence & callback re-verification',
             orchestrator: { failStage: async () => ({ failed: true }) },
             taskHandler: { handleTaskResult: async () => {} },
             book: { loadBook: () => null },
+            playerModel: { loadBook: () => null },
         });
         await new Promise((resolve) => {
             server = app.listen(0, () => {

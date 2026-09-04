@@ -20,7 +20,7 @@ module.exports = function(app, redis, deps) {
         runtime, activeScenes, layerConfig, genScope, placeholderAudio,
         utils, saveChunk, getChunk, getAllChunks, getBookWindowStatus,
         detectAvailableMode, recoverChunksFromDisk, recoverAllBooksFromDisk,
-        cleanupService, iuRepo, computeWaveform,
+        cleanupService, iuRepo, computeWaveform, playerModel,
     } = deps;
     const { log } = utils;
     const OUTPUT_DIR = config.OUTPUT_DIR;
@@ -100,10 +100,12 @@ module.exports = function(app, redis, deps) {
     // thin client: it may send a build_id (for its own cache keys) but the backend
     // never trusts it for addressing — it always resolves from the book manifest.
     // The requested value is used only as a fallback when the manifest can't be read.
+    // Phase 6: the manifest read goes through the Player boundary
+    // (playerModel → Canonical Book Model), not through a raw loader.
     function getEffectiveBuildId(bookId, requestedBuildId, logFn) {
         const _log = logFn || (() => {});
         try {
-            const loadedBook = book.loadBook(bookId);
+            const loadedBook = playerModel.loadBook(bookId);
             if (loadedBook && loadedBook.manifest && loadedBook.manifest.build_id) {
                 const manifestBuildId = loadedBook.manifest.build_id;
                 if (requestedBuildId && manifestBuildId !== requestedBuildId) {
@@ -401,7 +403,7 @@ module.exports = function(app, redis, deps) {
 
             if (ius.length === 0) {
                 try {
-                    const b = book.loadBook(book_id);
+                    const b = playerModel.loadBook(book_id);
                     if (b) {
                         for (const ch of b.chapters || []) {
                             if (ch.chapter_id !== chapter_id) continue;
@@ -925,7 +927,7 @@ module.exports = function(app, redis, deps) {
 
             if (ius.length === 0) {
                 try {
-                    const b = book.loadBook(bookId);
+                    const b = playerModel.loadBook(bookId);
                     if (b) {
                         const sceneData = book.findSceneRuntimeData(b, chapterId, sceneId);
                         if (sceneData && sceneData.payload) {
@@ -1106,7 +1108,7 @@ module.exports = function(app, redis, deps) {
             // Scene type from book JSON
             let sceneType = 'narration';
             try {
-                const b = book.loadBook(bookId);
+                const b = playerModel.loadBook(bookId);
                 if (b) {
                     for (const ch of b.chapters || []) {
                         if (ch.chapter_id !== chapterId) continue;
@@ -1179,7 +1181,7 @@ module.exports = function(app, redis, deps) {
 
             if (ius.length === 0) {
                 try {
-                    const b = book.loadBook(bookId);
+                    const b = playerModel.loadBook(bookId);
                     if (b) {
                         for (const ch of b.chapters || []) {
                             if (ch.chapter_id !== chapterId) continue;
