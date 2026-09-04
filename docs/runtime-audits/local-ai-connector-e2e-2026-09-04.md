@@ -141,3 +141,45 @@ heartbeat/discovery не деградируют, статус в PG коррек
 - Пустой ответ модели (все токены в reasoning) всё ещё даёт честное «не вернул результат» —
   фронтовый push пустого content остался (фиксится на бэке, но для чистоты стоит убрать и в
   `AiAssistantPage.tsx` при следующей сборке SPA).
+
+---
+
+## Shared AI E2E — потребление приватного endpoint чужим пользователем (тот же день)
+
+Код не менялся — только проверка работоспособности Sharing-фазы на живом VPS.
+
+### Конфигурация владельца (настроена через UI, сверена с PG)
+
+| Объект | Состояние |
+|---|---|
+| `ai_endpoints` «Test endpoint» (ollama) | enabled, привязан к connector, connector online |
+| `ai_endpoint_share_policies` | enabled, `public`, `concurrency_limit = 1` |
+| Дискаверед | 1 модель (`qwen3:1.7b`), `runtime_ok: true` |
+
+### Проверка eligibility-цепочки (shared-pool.js)
+
+Sharing on → endpoint enabled → connector live (WS) → runtime_ok → модель в discovered →
+**workspace потребителя ≠ workspace владельца (D3)** → слот в пределах лимита. Все ступени
+проверены против реального состояния PG и кода; превышение лимита возвращает `busy` (503).
+
+### Тест потребителя (штатные API, никакого прямого доступа)
+
+1. **Регистрация** временного пользователя через `POST /auth/register` → 201, свой личный workspace.
+2. **Создание книги** через `POST /book/import-text` → 200 (book в workspace потребителя).
+3. **Вопрос в чат ИИ** от имени потребителя (`POST /ai/chat/stream`, streaming):
+   - `meta` → **`ai_source: "shared"`, model `qwen3:1.7b`** — резолв ушёл в shared pool;
+   - ответ модели получен (первый delta ~57 s — CPU inference), `done` 200 OK;
+   - backend-лог подтверждает: inference через connector владельца → Ollama.
+4. Бейдж потребителя — «Shared AI», владельца — «Private AI»: источники отображаются честно
+   (транспорт потребителя идёт через pool, владелец по D3 ходит напрямую через private binding).
+
+### Уборка
+
+Тестовый пользователь + его workspace удалены из PG, книга удалена штатным API, сессия
+отозвана. Endpoint и share-политика владельца не изменялись.
+
+### Вывод
+
+**Shared AI PASS** — приватный CPU endpoint уже пригоден для раздачи одному-двум потребителям
+с лимитом одновременных запросов 1; узкое место — скорость CPU inference (~1–6 tok/s), а не
+протокол sharing. Для масштабирования (больше потребителей/лимит) сначала ресурсы VPS.
