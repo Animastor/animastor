@@ -213,6 +213,9 @@ export interface AiChatResponse {
   session_id?: string | null;
   tool_results?: ToolCallResult[] | null;
   patches_applied: number;
+  // Consumer-side source provenance (LLM Sharing Phase 3): safe token only —
+  // 'private-local' | 'shared' | 'cloud' | 'system'. Never endpoint/owner detail.
+  ai_source?: string | null;
 }
 
 export interface ChatSessionApi {

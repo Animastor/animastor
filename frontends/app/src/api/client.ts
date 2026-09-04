@@ -14,9 +14,11 @@ const BLOB_TIMEOUT_MS = 120_000;   // large media downloads
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
     this.name = 'ApiError';
   }
 }
@@ -135,6 +137,69 @@ export async function retryWithBackoff<T>(fn: () => Promise<T>, attempts = 3, in
     catch (e) { await new Promise((r) => setTimeout(r, delay)); delay = Math.min(delay * 2, maxDelayMs); }
   }
   return await fn();
+}
+
+// Streaming chat SSE (LLM Sharing Phase 3). POST + SSE: the response is a
+// text/event-stream of {meta, delta, done, error} frames (the production
+// backend contract — see docs/04-planning/llm-sharing-phase3-production-sse-ux.md).
+// The caller's signal drives cancellation (AbortSignal → browser closes the
+// connection → backend chat.cancel → slot release). No client timeout: the
+// stream is bounded server-side; the user cancels explicitly.
+export interface ChatStreamHandlers {
+  onMeta?: (meta: { session_id: string; ai_source: string; model?: string }) => void;
+  onDelta: (delta: string) => void;
+  onDone: (data: Record<string, unknown>) => void;
+  onError: (data: { error?: string; code?: string; partial?: string }) => void;
+}
+
+export async function postChatStream(path: string, body: unknown, handlers: ChatStreamHandlers, signal?: AbortSignal): Promise<void> {
+  const res = await fetch(API_BASE + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+    body: JSON.stringify(body ?? {}),
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    let msg = res.statusText;
+    let code: string | undefined;
+    try {
+      const j = await res.json();
+      msg = (j as any)?.error || (j as any)?.message || msg;
+      code = (j as any)?.code;
+    } catch { /* ignore */ }
+    throw new ApiError(msg, res.status, code);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const handleFrame = (frame: string) => {
+    let eventName = 'message';
+    let data = '';
+    for (const line of frame.split('\n')) {
+      if (line.startsWith('event:')) eventName = line.slice(6).trim();
+      else if (line.startsWith('data:')) data += line.slice(5).trim();
+    }
+    if (!data) return; // SSE comment / keep-alive
+    let parsed: any = null;
+    try { parsed = JSON.parse(data); } catch { return; }
+    if (eventName === 'meta') handlers.onMeta?.(parsed);
+    else if (eventName === 'delta') { if (typeof parsed?.delta === 'string') handlers.onDelta(parsed.delta); }
+    else if (eventName === 'done') handlers.onDone(parsed ?? {});
+    else if (eventName === 'error') handlers.onError(parsed ?? {});
+  };
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split('\n\n');
+      buffer = frames.pop() || '';
+      for (const frame of frames) handleFrame(frame);
+    }
+    if (buffer.trim()) handleFrame(buffer);
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 // SSE client for generation progress. Yields parsed event objects; reconnects with

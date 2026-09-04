@@ -2251,6 +2251,23 @@ button { font: inherit; color: inherit; }
   padding: 0.25rem; display: inline-flex; cursor: pointer;
 }
 .ai-bubble__copy:active { opacity: 1; }
+/* Phase 3 streaming states: source badge + honest terminal states. */
+.ai-bubble__meta {
+  display: flex; align-items: center; gap: 0.375rem;
+  margin-bottom: 0.25rem; flex-wrap: wrap;
+}
+.ai-bubble__source {
+  font-size: 0.625rem; font-weight: 700; letter-spacing: 0.04em;
+  text-transform: uppercase; padding: 0.0625rem 0.4375rem;
+  border-radius: 999px; background: var(--surface-dim); color: var(--text-2);
+}
+.ai-bubble__source--shared { background: var(--accent-container); color: var(--text); }
+.ai-bubble__state {
+  font-size: 0.625rem; font-weight: 600; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--text-2);
+  animation: ai-typing 1.2s infinite ease-in-out;
+}
+.ai-bubble--error { outline: 1px solid var(--outline); }
 .ai-bubble--typing {
   display: flex; align-items: center; gap: 0.3125rem;
   height: 2.5rem; padding: 0 1rem 0; min-width: 3.75rem;

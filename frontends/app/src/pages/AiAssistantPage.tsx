@@ -1,22 +1,29 @@
 import type { JSX } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { getJson, postJson, deleteJson } from '../api/client';
+import { getJson, postJson, deleteJson, postChatStream, ApiError } from '../api/client';
 import type { AiChatResponse, AiMessage, ChatSessionApi, SessionMessageApi, BookData, BookChapter, BookScene } from '../api/models';
 import { unitIndex } from '../api/models';
-import { t, tf, currentLang } from '../app/i18n';
+import { t, tf, currentLang, type StrKey } from '../app/i18n';
 import { bookId as generateBookId } from '../state/generateStore';
 import { position as positionSignal } from '../state/positionStore';
 import { bookResource, emitExternal, onResourceInvalidated } from '../state/resourceInvalidations';
 import { resilientReload, sharedRecovery } from '../state/resilientReloader';
 import { setSecondaryTitle } from '../app/titleStore';
 import { Modal, toast } from '../lib/ui';
-import { IconMic, IconMicOff, IconSend, IconMenu, IconAdd, IconSparkle, IconDownload, IconEdit, IconMap, IconFile, IconCheck, IconCopy, IconClose } from '../app/icons';
+import { IconMic, IconMicOff, IconSend, IconMenu, IconAdd, IconSparkle, IconDownload, IconEdit, IconMap, IconFile, IconCheck, IconCopy, IconClose, IconStop } from '../app/icons';
 import type { IconProps } from '../app/icons';
+import { sourceBadgeKey, streamErrorKey, isUserCancelled } from '../features/aiChat/chatStream';
 
 // AiAssistantPage — 1:1 with AiAssistantFragment. Chat with AI: session history
 // (/ai/sessions), mode chips (AssistantMode), typing indicator, position context
 // bar, voice input (Web Speech API = SpeechRecognizer equivalent; falls back to
 // a toast when unsupported, see 06-RISKS).
+// LLM Sharing Phase 3: messages ride the production SSE route (/ai/chat/stream)
+// — text appears incrementally over Private Local AI, Shared AI and cloud
+// providers; the send button becomes a working stop button (cancel → backend
+// chat.cancel → local runtime abort); the assistant bubble carries an honest
+// Private AI / Shared AI / Cloud AI source badge (safe token only — never
+// endpoint or owner detail).
 
 interface ChatMsg {
   id: number;
@@ -24,6 +31,13 @@ interface ChatMsg {
   isUser: boolean;
   isTyping?: boolean;
   downloadUrl?: string | null;
+  // Consumer-side source provenance (safe token from the stream meta/done):
+  // 'private-local' | 'shared' | 'cloud' | 'system'.
+  source?: string | null;
+  // Honest terminal states for the streaming lifecycle.
+  streaming?: boolean;
+  cancelled?: boolean;
+  failed?: boolean;
 }
 
 interface AssistantModeDef {
@@ -226,11 +240,28 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
     scrollToBottom();
   };
 
+  // Abort controller of the in-flight streaming request — the stop button
+  // and navigation both cancel through it (AbortSignal → backend chat.cancel).
+  const abortRef = useRef<AbortController | null>(null);
+  // True only when the USER pressed stop (distinguishes their cancel from a
+  // navigation/teardown abort — the bubble state differs).
+  const userCancelledRef = useRef(false);
+
+  const stopGeneration = useCallback(() => {
+    userCancelledRef.current = true;
+    abortRef.current?.abort();
+  }, []);
+
+  // Cancel the in-flight stream on unmount/navigation so the backend never
+  // keeps inferring (and never holds a shared slot) for a gone client.
+  useEffect(() => () => { abortRef.current?.abort(); }, []);
+
   const sendMessage = async () => {
     const text = input.trim();
     if (!text || sending) return;
     setInput('');
     setSending(true);
+    userCancelledRef.current = false;
     const userMsg: ChatMsg = { id: nextId++, text, isUser: true };
     apiMessagesRef.current = [...apiMessagesRef.current, { role: 'user', content: text }];
     setMessages((prev) => [...prev, userMsg]);
@@ -239,13 +270,22 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
     sessionAtSendRef.current = currentSessionId;
 
     const pos = positionSignal.value;
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    // The streaming assistant bubble — created on the first delta.
+    let assistantId: number | null = null;
+    let streamedText = '';
+    let donePayload: Record<string, unknown> | null = null;
+    const ensureBubble = (source?: string | null) => {
+      if (assistantId != null) return;
+      assistantId = nextId++;
+      setMessages((prev) => [...prev, { id: assistantId!, text: '', isUser: false, streaming: true, source: source ?? null }]);
+      setTyping(false);
+    };
+
     try {
-      // MUST be LONGER than the backend AI_FETCH_TIMEOUT_MS (180s): the
-      // backend aborts its own AI request at 180s and returns 504 with a
-      // user-facing explanation. A client timeout of exactly 180s races the
-      // server and shows a bare 'Request timeout' instead of that message.
-      const AI_CHAT_TIMEOUT_MS = 190_000;
-      const res = await postJson<AiChatResponse>('/ai/chat', {
+      await postChatStream('/ai/chat/stream', {
         messages: apiMessagesRef.current,
         book_id: bid || null,
         lang: currentLang(),
@@ -253,11 +293,23 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
         topic_id: 'book',
         scene_id: pos.sceneId,
         session_id: sessionAtSendRef.current,
-      }, AI_CHAT_TIMEOUT_MS);
-
-      if (sessionAtSendRef.current == null && res.session_id) {
-        setSession(res.session_id);
-      }
+      }, {
+        onMeta: (meta) => {
+          if (sessionAtSendRef.current == null && meta?.session_id) setSession(meta.session_id);
+          ensureBubble(meta?.ai_source ?? null);
+          if (meta?.ai_source) {
+            setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, source: meta.ai_source } : m)));
+          }
+        },
+        onDelta: (delta) => {
+          ensureBubble(null);
+          streamedText += delta;
+          setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, text: streamedText } : m)));
+          scrollToBottom();
+        },
+        onDone: (data) => { donePayload = data; },
+        onError: () => { /* handled via the promise result below */ },
+      }, controller.signal);
 
       // Discard the response if the user switched sessions while waiting
       // (1:1 with Android: sessionAtSend != null && currentSessionId != sessionAtSend).
@@ -265,34 +317,60 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
         return;
       }
 
-      apiMessagesRef.current = [...apiMessagesRef.current, { role: 'assistant', content: res.reply || '' }];
-      const displayText = res.reply?.trim() ? res.reply : buildToolResultMessage(res);
-      let downloadUrl: string | null = null;
-      if (res.book_id) {
-        let b = res.book_id;
-        if (b.includes('/api/v1/book/')) b = b.slice(b.indexOf('/api/v1/book/') + '/api/v1/book/'.length);
-        b = b.split('/')[0];
-        downloadUrl = `/api/v1/book/${b}/download`;
+      const res = donePayload as unknown as AiChatResponse | null;
+      if (assistantId == null) {
+        // No deltas and no terminal — an empty completion. Honest no-result.
+        ensureBubble((res as { ai_source?: string } | null)?.ai_source ?? null);
       }
-      setMessages((prev) => [...prev, { id: nextId++, text: displayText, isUser: false, downloadUrl }]);
-
-      // ── External invalidation (Android AiAssistantFragment parity): the
-      // assistant just mutated the book bundle server-side (patches applied to
-      // characters/locations/voices/behavior/units). Notify every surface
-      // holding book data (Edit tables, Navigator tree, Generator context bar)
-      // so they re-read the canonical JSON — the reactive "external mutation →
-      // invalidation event → reload" pipeline, not a browser reload.
-      if (res.patches_applied > 0) {
+      if (res && res.patches_applied > 0) {
         const patchedBookId = res.book_id || bid;
         if (patchedBookId) {
-          emitExternal(bookResource(patchedBookId));
-          // The assistant's own cached position-bar label is stale too.
+          emitExternal(bookResource(String(patchedBookId)));
           void refreshPositionLabel();
         }
       }
+      apiMessagesRef.current = [...apiMessagesRef.current, { role: 'assistant', content: res?.reply || streamedText || '' }];
+      const displayText = res?.reply?.trim() ? res.reply : (streamedText.trim() ? streamedText : buildToolResultMessage(res ?? ({} as AiChatResponse)));
+      const downloadUrl = (res && res.book_id) ? `/api/v1/book/${String(res.book_id).split('/')[0]}/download` : null;
+      setMessages((prev) => prev.map((m) => (m.id === assistantId
+        ? { ...m, text: displayText, streaming: false, downloadUrl, source: res?.ai_source ?? m.source }
+        : m)));
     } catch (e) {
-      setMessages((prev) => [...prev, { id: nextId++, text: tf('ai_error', (e as Error).message), isUser: false }]);
+      // Cancelled by the user (stop button) → keep the partial answer and
+      // mark the bubble cancelled — no error banner, no spinner.
+      if (isUserCancelled(e, { current: userCancelledRef.current })) {
+        if (assistantId != null) {
+          setMessages((prev) => prev.map((m) => (m.id === assistantId
+            ? { ...m, streaming: false, cancelled: true, text: m.text || streamedText }
+            : m)));
+          if (streamedText) {
+            apiMessagesRef.current = [...apiMessagesRef.current, { role: 'assistant', content: streamedText }];
+          }
+        } else {
+          setMessages((prev) => [...prev, { id: nextId++, text: t('ai_cancelled'), isUser: false, cancelled: true }]);
+        }
+      } else {
+        // Honest error states: known backend codes map to localized strings,
+        // everything else shows the sanitized backend message.
+        const err = e as Error;
+        const code = e instanceof ApiError ? e.code : undefined;
+        const known = streamErrorKey(code);
+        const msg = known ? t(known as StrKey) : tf('ai_error', err.message || 'stream failed');
+        if (assistantId != null) {
+          // Mid-stream failure: the partial answer stays visible, the error
+          // note is appended below it (nothing is lost, nothing hangs).
+          setMessages((prev) => prev.map((m) => (m.id === assistantId
+            ? { ...m, streaming: false, failed: true, text: m.text ? `${m.text}\n\n${msg}` : msg }
+            : m)));
+          if (streamedText) {
+            apiMessagesRef.current = [...apiMessagesRef.current, { role: 'assistant', content: streamedText }];
+          }
+        } else {
+          setMessages((prev) => [...prev, { id: nextId++, text: msg, isUser: false, failed: true }]);
+        }
+      }
     } finally {
+      abortRef.current = null;
       setTyping(false);
       setSending(false);
       scrollToBottom();
@@ -414,9 +492,13 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
           onKeyDown={(e) => { if (e.key === 'Enter') void sendMessage(); }}
           onInput={(e) => setInput((e.target as HTMLInputElement).value)}
         />
-        <button class="ai-input__btn ai-input__btn--send" aria-label={t('ai_send')}
-          disabled={sending || !input.trim()} onClick={() => void sendMessage()}>
-          <IconSend />
+        <button
+          class={'ai-input__btn ai-input__btn--send' + (sending ? ' ai-input__btn--stop' : '')}
+          aria-label={sending ? t('ai_cancel') : t('ai_send')}
+          disabled={sending ? false : !input.trim()}
+          onClick={() => (sending ? stopGeneration() : void sendMessage())}
+        >
+          {sending ? <IconStop /> : <IconSend />}
         </button>
       </div>
 
@@ -450,12 +532,23 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
 }
 
 // ─────────────────────────────────────────────────────
-// Chat bubble — item_chat_message.xml equivalent
+// Chat bubble — item_chat_message.xml equivalent. The assistant bubble can
+// carry an honest source badge (Private AI / Shared AI / …) and the honest
+// streaming terminal states (streaming / cancelled / failed).
 // ─────────────────────────────────────────────────────
 function ChatBubble({ msg, onCopy }: { msg: ChatMsg; onCopy: () => void }) {
+  const badgeKey = !msg.isUser ? sourceBadgeKey(msg.source) : null;
+  const stateNote = !msg.isUser && msg.cancelled ? t('ai_cancelled') : null;
   return (
     <div class={'ai-bubble-wrap ' + (msg.isUser ? 'ai-bubble-wrap--user' : 'ai-bubble-wrap--bot')}>
-      <div class={'ai-bubble' + (msg.isUser ? ' ai-bubble--user' : ' ai-bubble--bot')}>
+      <div class={'ai-bubble' + (msg.isUser ? ' ai-bubble--user' : ' ai-bubble--bot') + (msg.failed ? ' ai-bubble--error' : '')}>
+        {(badgeKey || msg.streaming || msg.cancelled) && (
+          <div class="ai-bubble__meta">
+            {badgeKey && <span class={'ai-bubble__source ai-bubble__source--' + msg.source}>{t(badgeKey as StrKey)}</span>}
+            {msg.streaming && <span class="ai-bubble__state">{t('ai_state_streaming')}</span>}
+            {msg.cancelled && !msg.text && <span class="ai-bubble__state">{stateNote}</span>}
+          </div>
+        )}
         <div class="ai-bubble__text" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.text) }} />
         {msg.downloadUrl && (
           <a class="ai-bubble__dl" href={msg.downloadUrl} download>{t('ai_download_book')}</a>
