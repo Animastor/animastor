@@ -13,6 +13,7 @@ module.exports = function(app, redis, deps) {
         detectAvailableMode, recoverChunksFromDisk, recoverAllBooksFromDisk,
         cleanupService, bookDiff, taskHandler, chatEngine,
         iuRepo, genSessionRepo, lazyBook, txtImporter, bookSourceRepo,
+        bookModel,
     } = deps;
     const { log } = utils;
 
@@ -374,7 +375,8 @@ module.exports = function(app, redis, deps) {
 
             // Load book data for context
             let bookData = null;
-            try { bookData = book.loadBook(bookId) || lazyBook.loadDraftBook(bookId); } catch (_) {}
+            // Phase 4: unified Book Model loader — lazy mode (canonical || draft fallback inside the facade)
+            try { bookData = bookModel.loadBook(bookId, { mode: 'lazy' }); } catch (_) {}
 
             const isLocked = bookData?.manifest?.locked === true;
             const sessionMode = mode || session.mode || 'chat';
@@ -917,7 +919,8 @@ module.exports = function(app, redis, deps) {
             const bookId = req.scopedBookId || book_id || session.book_id;
 
             let bookData = null;
-            try { bookData = book.loadBook(bookId) || lazyBook.loadDraftBook(bookId); } catch (_) {}
+            // Phase 4: unified Book Model loader — lazy mode (canonical || draft fallback inside the facade)
+            try { bookData = bookModel.loadBook(bookId, { mode: 'lazy' }); } catch (_) {}
 
             const isLocked = bookData?.manifest?.locked === true;
             const sessionMode = mode || session.mode || 'chat';

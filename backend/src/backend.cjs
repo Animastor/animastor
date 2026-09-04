@@ -28,6 +28,8 @@ const book = require('./book');
 const config = require('./config/runtime-config');
 const txtImporter = require('./services/txt-importer');
 const lazyBook = require('./book/lazy-book');
+const bookModel = require('./book/book-model.cjs');
+const { createBookDeletion } = require('./book/book-deletion.cjs');
 const genSessionRepo = require('./storage/postgres/repositories/gen-session-repo');
 const bookSourceRepo = require('./storage/postgres/repositories/book-source-repo');
 const placeholderAudio = require('./services/placeholder-audio');
@@ -207,6 +209,14 @@ const routeDeps = {
     cleanupService, taskHandler, bookDiff, windowGenerator, chatEngine,
     iuRepo, computeWaveform, journal,
     wfManager, sceneAssetsRepo,
+    // Phase 4: Canonical Book Model facade + deletion/purge boundary
+    bookModel,
+    bookDeletion: createBookDeletion({
+        book, redis, config, storage,
+        getAllChunks, getChunk, cleanBookRedisKeys,
+        log: utils.log,
+        setCancelFlag: (redisClient, id) => require('./runtime/scene-window').setCancelFlag(redisClient, id),
+    }),
 };
 
 require('./routes/book-routes.cjs')(app, redis, { ...routeDeps, taskHandler, bookDiff, windowGenerator });

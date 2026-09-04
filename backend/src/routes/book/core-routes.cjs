@@ -2,8 +2,6 @@
 // Core Book Routes — GET/PUT/PATCH/DELETE + Cover
 // ======================================================
 
-const path = require('path');
-const fs = require('fs');
 const sceneAssetsRepo = require('../../storage/postgres/repositories/scene-assets-repo');
 const { restoreSceneChunkStatus } = require('../../orchestration/scene-restoration');
 const { setDeep, findUnitInScene, normalizeFieldValue, rebuildFullText } = require('./scene-patch-utils.cjs');
@@ -54,7 +52,7 @@ module.exports = function(app, redis, deps) {
         utils, saveChunk, getChunk, getAllChunks, getBookWindowStatus,
         detectAvailableMode, recoverChunksFromDisk, recoverAllBooksFromDisk,
         cleanupService, bookDiff, taskHandler, windowGenerator,
-        iuRepo, cleanBookRedisKeys,
+        iuRepo, bookDeletion,
     } = deps;
     const { log } = utils;
 
@@ -737,125 +735,16 @@ module.exports = function(app, redis, deps) {
     // ======================================================
     // DELETE BOOK
     // ======================================================
+    // Phase 4: the route no longer implements the deletion cascade itself —
+    // ownership/cancel/runtime/derived-purge details live behind the
+    // bookDeletion.deleteBook(bookId) contract (src/book/book-deletion.cjs).
     app.delete('/api/v1/book/:bookId', async (req, res) => {
         try {
             const { bookId } = req.params;
             log('[DELETE-BOOK] Deleting', bookId);
 
-            await book.resetBook(bookId);
-            const snapshotPath = path.join(config.BOOKS_DIR || '/data/books', `${bookId}.snapshot.json`);
-            if (fs.existsSync(snapshotPath)) {
-                try { fs.unlinkSync(snapshotPath); } catch (_) {}
-            }
-
-            const OUTPUT_DIR = config.OUTPUT_DIR;
-            const chunkIds = await getAllChunks(bookId).catch(() => []);
-            const buildIds = new Set();
-            for (const cid of chunkIds) {
-                try {
-                    const chunk = await getChunk(cid);
-                    if (chunk?.build_id) buildIds.add(chunk.build_id);
-                } catch (_) {}
-            }
-            for (const buildId of buildIds) {
-                const buildPath = path.join(OUTPUT_DIR, buildId);
-                if (fs.existsSync(buildPath)) {
-                    try { fs.rmSync(buildPath, { recursive: true, force: true }); } catch (_) {}
-                }
-            }
-            if (fs.existsSync(OUTPUT_DIR)) {
-                for (const entry of fs.readdirSync(OUTPUT_DIR)) {
-                    if (entry.startsWith(bookId)) {
-                        const entryPath = path.join(OUTPUT_DIR, entry);
-                        try { fs.rmSync(entryPath, { recursive: true, force: true }); } catch (_) {}
-                    }
-                }
-            }
-
-            // ── КРИТИЧЕСКИ важно: сначала ОТМЕНИТЬ активные agent-сессии, потом чистить ──
-            // Если сначала почистить Redis и PG, running agent никогда не узнает об отмене:
-            //   - cleanBookRedisKeys удалит animastor:cancelled-workers:{bookId}
-            //   - DELETE agent_sessions удалит все сессии
-            // Агент продолжит работу — он не может обнаружить отмену.
-            //
-            // Сначала сигнализируем агенту через cancelled-workers (Redis) и статус сессий (PG),
-            // потом чистим Redis и PG. Агент увидит отмену на следующем checkCancelled().
-            try {
-                await redis.sadd(`animastor:cancelled-workers:${bookId}`, 'vbook');
-                log(`[DELETE-BOOK] Set cancelled-workers for ${bookId} — VBook agent will be stopped`);
-            } catch (redisErr) {
-                console.warn(`[DELETE-BOOK] Failed to set cancelled-workers: ${redisErr.message}`);
-            }
-            try {
-                await storage.postgres.query(
-                    `UPDATE agent_sessions SET status = 'cancelled', updated_at = $1 WHERE book_id = $2 AND status IN ('running', 'paused')`,
-                    [Math.floor(Date.now() / 1000), bookId]
-                );
-            } catch (pgErr) {
-                console.warn(`[DELETE-BOOK] Failed to cancel agent sessions: ${pgErr.message}`);
-            }
-
-            const windowModule = require('../../runtime/scene-window');
-            await windowModule.setCancelFlag(redis, bookId);
-            await redis.del('animastor:runtime:active-audio');
-            await redis.del('animastor:runtime:active-image');
-            await redis.del('animastor:runtime:active-video');
-            await cleanBookRedisKeys(redis, bookId);
-
-            // ── Clean ALL PG tables — each with individual try/catch so one
-            //    failure (e.g. table doesn't exist in an older schema) doesn't
-            //    block cleanup of the remaining tables.
-            const pgTables = [
-                // Per-layer & asset tables (book_id as plain TEXT, no FK)
-                'image_units',
-                'scenes',
-                'asset_states',
-                'asset_dependencies',
-                'generation_tasks',
-                'reconciliation_events',
-                'output_manifests',
-                'cache_entries',
-                'book_source',
-                'agent_sessions',
-                'book_generation_sessions',
-                'generation_cancellations',
-                'ai_chat_sessions',
-                'book_events',
-                'scene_assets',
-                // Coreference resolution tables
-                'character_resolution_runs',
-                'character_window_candidates',
-                'sentence_resolutions',
-                'character_mentions',
-                'character_aliases',
-                // Tables with FK to books — delete before books
-                'storyboard_elements',
-                'audio_layers',
-                'book_snapshots',
-                // books LAST (may have FK cascades)
-                'books',
-            ];
-            for (const table of pgTables) {
-                try {
-                    await storage.postgres.query(`DELETE FROM ${table} WHERE book_id = $1`, [bookId]);
-                } catch (tblErr) {
-                    // Table may not exist in older schemas — non-fatal
-                    console.warn(`[DELETE-BOOK] DB cleanup: ${table}: ${tblErr.message}`);
-                }
-            }
-
-            try {
-                const HUB_URL = process.env.HUB_URL || 'https://animastor.in/gpu';
-                const hubHeaders = { method: 'DELETE' };
-                const apiKey = process.env.GPU_HUB_API_KEY;
-                if (apiKey) {
-                    hubHeaders.headers = { 'x-api-key': apiKey };
-                }
-                await fetch(`${HUB_URL}/queue/clear?book_id=${bookId}`, hubHeaders).catch(() => {});
-            } catch (_) {}
-
-            log('[DELETE-BOOK] Book completely deleted:', bookId);
-            res.json({ deleted: true, book_id: bookId });
+            const result = await bookDeletion.deleteBook(bookId);
+            res.json(result);
         } catch (err) {
             console.error('[DELETE-BOOK] Error:', err.message);
             res.status(500).json({ error: err.message });

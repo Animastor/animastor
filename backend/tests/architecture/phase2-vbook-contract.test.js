@@ -164,12 +164,15 @@ describe('architecture: loadBook semantics (canonical vs lazy)', () => {
         expect(lazy).to.match(/draft/);
     });
 
-    it('canonical-first fallback (canonical || draft) is documented behavior for AI/chat context', () => {
-        // Two AI/chat paths already use canonical || draft as a fallback (not a
-        // new invention). This test records the SEMANTICS, not the exact site:
-        // canonical-first, draft only as fallback when canonical is absent.
+    it('AI/chat context loads go through the unified Book Model facade (Phase 4 seam)', () => {
+        // The historical inline fallback `book.loadBook(id) || lazyBook.loadDraftBook(id)`
+        // (canonical-first, draft as fallback) moved behind
+        // bookModel.loadBook(bookId, { mode: 'lazy' }) in Phase 4. The SEMANTICS
+        // are unchanged; the loader-choosing is no longer consumer-side.
         const ai = readSource(path.join(REPO_ROOT, 'backend', 'src', 'routes', 'ai-routes.cjs'));
-        expect(ai).to.match(/book\.loadBook\(bookId\)\s*\|\|\s*lazyBook\.loadDraftBook\(bookId\)/);
+        expect(ai).to.match(/bookModel\.loadBook\(bookId,\s*\{\s*mode:\s*'lazy'\s*\}\)/);
+        // The raw loader fallback chain must not reappear in AI/chat consumers.
+        expect(ai).to.not.match(/book\.loadBook\(bookId\)\s*\|\|\s*lazyBook\.loadDraftBook\(bookId\)/);
     });
 });
 
