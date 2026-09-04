@@ -233,6 +233,39 @@ module.exports = function(config) {
         return lines.join('\n');
     }
 
+    /**
+     * Compact structural summary of the book — bounded well below the Local AI
+     * Connector per-message cap (32 KB, lib/chat.cjs maxMessageChars). Used
+     * when the full book JSON cannot ride the system message (connector
+     * transport): structure, ids and titles survive; unit texts are omitted.
+     * @param {object|null} bookData
+     * @returns {string} '' when no book data
+     */
+    function buildCompactBookContext(bookData) {
+        if (!bookData) return '';
+        const MAX_CHAPTERS = 40;
+        const MAX_SCENES_PER_CHAPTER = 40;
+        const lines = [];
+        lines.push('Full book JSON is too large for this transport — use this structural summary instead.');
+        lines.push(`Book: ${bookData.book?.title || bookData.manifest?.title || 'Untitled'}`);
+        lines.push(`Locked: ${bookData.manifest?.locked === true}`);
+        const characters = Array.isArray(bookData.characters) ? bookData.characters : [];
+        if (characters.length > 0) {
+            const names = characters.slice(0, 30).map((c) => `${c.id || c.character_id || '?'}${c.name ? ` (${c.name})` : ''}`).join(', ');
+            lines.push(`Characters: ${names}`);
+        }
+        const chapters = Array.isArray(bookData.chapters) ? bookData.chapters : [];
+        lines.push(`Chapters: ${chapters.length}`);
+        chapters.slice(0, MAX_CHAPTERS).forEach((ch, i) => {
+            const scenes = Array.isArray(ch.scenes) ? ch.scenes : [];
+            lines.push(`- Chapter ${i + 1}${ch.chapter_id ? ` [${ch.chapter_id}]` : ''}${ch.title ? ` "${ch.title}"` : ''}: ${scenes.length} scene(s)`);
+            scenes.slice(0, MAX_SCENES_PER_CHAPTER).forEach((sc, j) => {
+                lines.push(`  - Scene ${j + 1} [${sc.scene_id || '?'}]${sc.scene_title ? ` "${sc.scene_title}"` : ''} (${sc.type || 'default'})`);
+            });
+        });
+        return lines.join('\n');
+    }
+
     // ── Tool definitions ──────────────────────────────
     const EDIT_BOOK_TOOL = {
         type: 'function',
@@ -501,6 +534,7 @@ module.exports = function(config) {
         loadSystemPrompt,
         buildChatSystemPrompt,
         buildBookContext,
+        buildCompactBookContext,
         getToolsForMode,
         parseAIResponse,
         resolvePath,

@@ -98,6 +98,12 @@ module.exports = function(app, redis, deps) {
     const MAX_TOKENS_WITH_TOOLS = 16384;
     const MAX_TOKENS_PLAIN = 4096;
 
+    // Local AI Connector per-message cap is 32 KB (lib/chat.cjs
+    // maxMessageChars, mirrored by transport). The base system prompt plus
+    // tool instructions must also fit, so the book context budget is kept
+    // below it; anything larger rides as the compact structural summary.
+    const CONNECTOR_BOOK_CONTEXT_BUDGET = 24 * 1024;
+
     function aiRequestBodyExtras(tools) {
         const hasTools = Array.isArray(tools) && tools.length > 0;
         return {
@@ -452,7 +458,17 @@ module.exports = function(app, redis, deps) {
             }
 
             const bookContext = chatEngine.buildBookContext(bookData);
-            if (bookContext) systemPrompt += '\n\n' + bookContext;
+            if (bookContext) {
+                // Connector per-message cap is 32 KB (local-ai-connector
+                // lib/chat.cjs maxMessageChars, mirrored by the transport) —
+                // the full book JSON for real books does not fit. Oversized
+                // context falls back to the compact structural summary so a
+                // private-local request fails closed on nothing else.
+                const withinConnectorBudget = bookContext.length <= CONNECTOR_BOOK_CONTEXT_BUDGET;
+                systemPrompt += '\n\n' + (ai.transport !== 'connector' || withinConnectorBudget
+                    ? bookContext
+                    : chatEngine.buildCompactBookContext(bookData));
+            }
 
             // Build API messages for AI call
             let apiMessages;
@@ -977,7 +993,14 @@ module.exports = function(app, redis, deps) {
             }
 
             const bookContext = chatEngine.buildBookContext(bookData);
-            if (bookContext) systemPrompt += '\n\n' + bookContext;
+            if (bookContext) {
+                // Same connector per-message cap as the non-streaming route —
+                // oversized book JSON falls back to the compact summary.
+                const withinConnectorBudget = bookContext.length <= CONNECTOR_BOOK_CONTEXT_BUDGET;
+                systemPrompt += '\n\n' + (ai.transport !== 'connector' || withinConnectorBudget
+                    ? bookContext
+                    : chatEngine.buildCompactBookContext(bookData));
+            }
 
             let apiMessages;
             if (hasMessagesArray) {
