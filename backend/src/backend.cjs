@@ -39,6 +39,15 @@ const filesystem = storage.filesystem;
 const layerConfig = storage.layerConfig;
 const genScope = storage.genScope;
 
+// Phase 5: Runtime Result Contract — composition-root wiring. Runtime reports
+// dispatch finalizations (completed/failed/cancelled) through the contracts
+// seam; orchestration consumes them via this injected callback. Runtime never
+// imports orchestration for result reporting.
+// Docs: docs/architecture/PHASE_5_ORCHESTRATION_RUNTIME.md
+const runtimeResultEmitter = require('./runtime/runtime-result-emitter');
+const { createRuntimeResultConsumer } = require('./orchestration/runtime-result-consumer');
+runtimeResultEmitter.setConsumer(createRuntimeResultConsumer());
+
 
 // ======================================================
 // [02] CORE INIT

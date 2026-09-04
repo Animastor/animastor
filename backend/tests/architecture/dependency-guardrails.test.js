@@ -162,10 +162,12 @@ describe('architecture: orchestration ↔ runtime cycle freeze', () => {
     // the EXACT edge set so the cycle cannot GROW while Phases 3/6 land.
     //
     // runtime → orchestration edges (top-level + lazy):
+    // Phase 5 removed the dead runtime-persistence.js:../orchestration/
+    // event-journal edge; the remaining set is pinned below.
+    // Docs: docs/architecture/PHASE_5_ORCHESTRATION_RUNTIME.md
     const RUNTIME_TO_ORCH_BASELINE = [
         'backend/src/runtime/dispatch-engine.js:../orchestration/event-journal',
         'backend/src/runtime/reconciliation-engine.js:../orchestration/event-journal',
-        'backend/src/runtime/runtime-persistence.js:../orchestration/event-journal',
         'backend/src/runtime/scene-window.js:../orchestration/orchestrator',
         'backend/src/runtime/runtime-scheduler.js:../orchestration/orchestrator',
         'backend/src/runtime/dispatch-engine.js:../orchestration/orchestrator',

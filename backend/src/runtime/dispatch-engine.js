@@ -14,6 +14,11 @@ const storage = require('../storage');
 const circuitBreaker = require('./circuit-breaker');
 const retryBudget = require('./retry-budget-manager');
 const crypto = require('crypto');
+// Phase 5: Runtime Result Contract — dispatch finalizations are reported to
+// orchestration through the contracts seam (runtime → contract → injected
+// consumer), NOT through an orchestration import.
+// Docs: docs/architecture/PHASE_5_ORCHESTRATION_RUNTIME.md
+const runtimeResultEmitter = require('./runtime-result-emitter');
 
 const logPrefix = '[DISPATCH]';
 
@@ -1170,6 +1175,29 @@ async function finalizeDispatch(redis, bookId, chapterId, sceneId, stage, option
     } catch (journalErr) {
         cleanupErrors.push(`journal:${journalErr.message}`);
         warn(`finalization journal write failed: ${journalErr.message}`);
+    }
+
+    // ── 6. Phase 5: report the finalization through the Runtime Result seam ──
+    // The emitter maps the dispatch-internal outcome (success|failure|cancelled)
+    // onto the contract status (completed|failed|cancelled); the outcome
+    // vocabulary stays inside runtime. Emission is best-effort and never throws.
+    try {
+        await runtimeResultEmitter.emitRuntimeResult({
+            bookId,
+            chapterId,
+            sceneId,
+            stage,
+            dispatchId,
+            outcome,
+            error: reason || null,
+            metadata: {
+                outcome,
+                finalizedAt: Date.now(),
+                cleanupErrors,
+            },
+        });
+    } catch (emitErr) {
+        warn(`runtime result emit failed: ${emitErr.message}`);
     }
 
     return { finalized: true, reason: outcome, cleanupErrors };

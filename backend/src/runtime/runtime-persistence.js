@@ -9,7 +9,9 @@ const state = require('../state');
 const runtimeMetrics = require('./runtime-metrics');
 const activeScenesIndex = require('./active-scenes-index');
 const circuitBreaker = require('./circuit-breaker');
-const journal = require('../orchestration/event-journal');
+// Phase 5: dead `../orchestration/event-journal` require removed (no journal
+// usage in this file) — one runtime→orchestration edge eliminated.
+// Docs: docs/architecture/PHASE_5_ORCHESTRATION_RUNTIME.md
 
 const logPrefix = '[PERSISTENCE]';
 
