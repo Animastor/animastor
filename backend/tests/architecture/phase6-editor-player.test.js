@@ -180,6 +180,20 @@ describe('T5: Editor/Player contours load through the facades', () => {
         expect(src).to.not.match(/\bbook\.loadBook\s*\(/);
         expect(src).to.match(/playerModel\.loadBook\(bookId\)/);
     });
+
+    it('generation-control routes keep their pinned loader calls (regenerate leg)', () => {
+        // routes/book/generation-routes.cjs is the generation-control leg
+        // (POST /book/:id/regenerate, cancel-generation, generate-next) — a
+        // generation-pipeline concern, deliberately NOT migrated to playerModel
+        // (docs/architecture/PHASE_6_EDITOR_PLAYER.md §6.1). Its direct
+        // book.loadBook calls are pinned here (same rule as the import leg in
+        // routes/generation-routes.cjs) so the leg cannot grow new facade
+        // bypasses silently.
+        const src = readSource(path.join(BACKEND_SRC, 'routes', 'book', 'generation-routes.cjs'));
+        const direct = [...src.matchAll(/\bbook\.loadBook\s*\(/g)].length;
+        expect(direct, 'routes/book/generation-routes.cjs direct book.loadBook count grew').to.equal(3);
+        expect(src).to.not.match(/\bbook\.saveBookBundle\s*\(/);
+    });
 });
 
 // ── T6 — frozen legacy edges on the contour routes ───────────────────────
@@ -224,6 +238,18 @@ describe('T6: contour routes do not gain new implementation-detail deps', () => 
             '../../book/lazy-book/paths',
             '../../services/entity-cleanup.cjs',
             '../../middleware/workspace-ownership',
+        ],
+        'routes/book/generation-routes.cjs': [
+            // Generation-control leg (regenerate / cancel / generate-next) —
+            // requires dispatch/runtime + PG repos + raw PG for its VBook
+            // session cancellation, all baselined legacy edges (§6.1).
+            '../../storage/postgres/repositories/scene-assets-repo',
+            '../../services/generation-progress',
+            '../../runtime/dispatch-engine',
+            '../../storage/postgres/repositories/task-repo',
+            '../../storage/postgres/repositories/book-repo',
+            '../../storage/postgres/repositories/generation-cancel-repo',
+            '../../storage/postgres/database',
         ],
     };
 

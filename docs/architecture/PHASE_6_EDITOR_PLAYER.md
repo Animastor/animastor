@@ -101,12 +101,12 @@ book.saveBookBundle })` in `backend.cjs`.
 
 Consumers migrated (Editor contour reads/saves):
 
-- `routes/book/core-routes.cjs` — all 10 `book.loadBook` reads and all 7
-  `book.saveBookBundle` writes now go through `editorModel.read/commit`
-  (GET book, PUT book, scene PATCH, metadata, locations, characters, voices,
-  behaviors, cover, source-coverage context).
-- `routes/book/entity-crud-routes.cjs` — all entity CRUD reads/commits +
-  blank-book create go through the facade.
+- `routes/book/core-routes.cjs` — every `book.loadBook` read (14 sites) and
+  every `book.saveBookBundle` write (7 sites) now goes through
+  `editorModel.read/commit` (GET book, PUT book, scene PATCH, metadata,
+  locations, characters, voices, behaviors, cover, source-coverage context).
+- `routes/book/entity-crud-routes.cjs` — all entity CRUD reads/commits
+  (2 read / 15 commit sites) + blank-book create go through the facade.
 
 ## 4. Frontend API seam
 
@@ -176,19 +176,25 @@ Architecture tests: `backend/tests/architecture/phase6-editor-player.test.js`
 Phase 6 creates the seam; it does **not** rewrite the routes. These remain,
 pinned by the T5/T6 baselines:
 
-Player contour (`routes/generation-routes.cjs`):
+Player contour (`routes/generation-routes.cjs` + `routes/book/generation-routes.cjs`):
 
-1. The **import/generation leg** (`POST /generate`, `POST /book/:id/regenerate`,
-   cancel/generate-next, hub result callbacks) still uses `book.loadBook`
-   directly (3 pinned call sites: `diskCopyExists`, `existingBook`,
-   `loadedBook` after save) and requires `runtime/scene-window`,
-   `runtime/job-schema`, `runtime/dispatch-engine`, `runtime/worker-health`,
-   PG repos (`book-repo`, `task-repo`, `generation-cancel-repo`), services
+1. The **import/generation leg** still reads the canonical book through the
+   raw loader, pinned in **two** files so it cannot grow silently:
+   - `routes/generation-routes.cjs` (`POST /generate`, hub result/error
+     callbacks) — 3 pinned call sites: `diskCopyExists`, `existingBook`,
+     `loadedBook` after save;
+   - `routes/book/generation-routes.cjs` (`POST /book/:id/regenerate`,
+     `cancel-generation`, `generate-next`) — 3 pinned call sites of its own
+     (T5), require set frozen by T6.
+   The leg requires `runtime/scene-window`, `runtime/job-schema`,
+   `runtime/dispatch-engine`, `runtime/worker-health`, PG repos (`book-repo`,
+   `task-repo`, `generation-cancel-repo`, `scene-assets-repo`), raw
+   `storage/postgres/database` (VBook session cancellation), services
    (`ai-service`, `workspace-ai-provider`, `progress-pubsub.cjs`,
-   `audio-orchestrator`, `video-orchestrator`), `middleware/auth-context`,
-   `middleware/workspace-ownership`, `video/video-timeline`. Splitting
-   generation away from playback serving is a **generation-pipeline
-   refactor** — explicitly out of scope.
+   `audio-orchestrator`, `video-orchestrator`, `generation-progress`),
+   `middleware/auth-context`, `middleware/workspace-ownership`,
+   `video/video-timeline`. Splitting generation away from playback serving
+   is a **generation-pipeline refactor** — explicitly out of scope.
 2. `routes/book/chunks-routes.cjs` keeps PG (`scene-assets-repo`) +
    `iu-progress-utils` — the playback queue merges derived PG progress with
    canonical content; separating the two is future work.
