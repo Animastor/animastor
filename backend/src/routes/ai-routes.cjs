@@ -96,6 +96,12 @@ module.exports = function(app, redis, deps) {
     // Tool-less conversation gets a small budget and no thinking — faster,
     // cheaper replies.
     const MAX_TOKENS_WITH_TOOLS = 16384;
+
+    // History entries with empty content (e.g. a UI-side "no result" turn
+    // pushed as {assistant, ''}) fail the connector's strict non-empty
+    // content validation — and would poison every later turn of the session.
+    // Dropped at the seam by both chat routes via this filter.
+    const hasNonEmptyContent = (m) => m && typeof m.content === 'string' && m.content.length > 0;
     const MAX_TOKENS_PLAIN = 4096;
 
     // Local AI Connector per-message cap is 32 KB (lib/chat.cjs
@@ -477,7 +483,7 @@ module.exports = function(app, redis, deps) {
                 // Frontend format: full history in `messages` array, `system` as system prompt
                 apiMessages = [
                     { role: 'system', content: systemPrompt },
-                    ...messages,
+                    ...messages.filter(hasNonEmptyContent),
                 ];
                 const lastUser = messages.filter(m => m.role === 'user').pop();
                 userContent = lastUser?.content || '';
@@ -1004,9 +1010,11 @@ module.exports = function(app, redis, deps) {
 
             let apiMessages;
             if (hasMessagesArray) {
+                // Same empty-content guard as the non-streaming route — one
+                // empty turn must not poison the rest of the session.
                 apiMessages = [
                     { role: 'system', content: systemPrompt },
-                    ...messages,
+                    ...messages.filter(hasNonEmptyContent),
                 ];
                 const lastUser = messages.filter(m => m.role === 'user').pop();
                 userContent = lastUser?.content || '';
