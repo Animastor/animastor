@@ -10,6 +10,9 @@
 //   T6  'cancelled' passes through the seam
 //   T7  no Job Protocol v2 regression
 //   T8  no new architectural cycle through services/event helpers
+//   T9  no dynamic/template require or import() can reach orchestration
+//   T10 runtime→services imports open no orchestration endpoint beyond the pins
+//   T11 runtime-result-emitter is the only producer of the runtime-result contract
 //
 // Docs: docs/architecture/PHASE_5_ORCHESTRATION_RUNTIME.md
 
@@ -22,6 +25,7 @@ const {
     rel,
     REPO_ROOT,
     requireSpecifiers,
+    resolveSpecifier,
 } = require('./helpers');
 
 const BACKEND_SRC = path.join(REPO_ROOT, 'backend', 'src');
@@ -338,5 +342,113 @@ describe('Phase 5 T8: the seam creates no new architectural cycle', () => {
             expect(src, `${rel(file)} must not use EventEmitter`).to.not.include('EventEmitter');
             expect(src, `${rel(file)} must not use Redis pub/sub`).to.not.match(/publish|subscribe/i);
         }
+    });
+});
+
+// ── T9–T11 — Final audit: full runtime/** boundary freeze ──
+// Static scan helpers only catch quoted specifiers. These guards close the
+// gaps for the Phase 5 close: computed/template requires, services-mediated
+// edges, and the single-egress rule for the runtime-result contract.
+describe('Phase 5 final audit: full runtime/** boundary', () => {
+    // requireSpecifiers()/LITERAL_REQUIRE_RE only see plain quoted specifiers.
+    // After stripping those, any surviving `require(` is computed, template or
+    // string-concatenated — the forms a future edit could use to smuggle an
+    // orchestration import past the pinned baseline above.
+    const LITERAL_REQUIRE_RE = /require\s*\(\s*(['"])([^'"]+)\1\s*\)|from\s+(['"])([^'"]+)\3/g;
+
+    it('T9: no dynamic/template/concat require or import() can reach orchestration from runtime/**', () => {
+        const hosts = [];
+        for (const file of listSourceFiles(RUNTIME_DIR)) {
+            const residual = readSource(file).replace(LITERAL_REQUIRE_RE, '');
+            if (/\brequire\s*\(/.test(residual) || /\bimport\s*\(/.test(residual)) {
+                hosts.push(rel(file));
+            }
+        }
+        expect(hosts, 'computed/template/concat require or import() is only allowed in runtime/index.js (lazyRequire)').to.deep.equal([
+            'backend/src/runtime/index.js',
+        ]);
+
+        // The one allowed host may only lazy-load runtime-internal './' modules.
+        const indexSrc = readSource(path.join(RUNTIME_DIR, 'index.js'));
+        const nonInternal = requireSpecifiers(indexSrc).filter((s) => !s.startsWith('./'));
+        expect(nonInternal, 'lazyRequire targets must stay runtime-internal (./...)').to.deep.equal([]);
+        expect(indexSrc, 'lazyRequire must never reference orchestration').to.not.include('../orchestration');
+    });
+
+    it('T10: runtime→services imports open no orchestration endpoint beyond the pinned direct edges', () => {
+        // For each runtime file, walk the services modules it imports
+        // (transitively within services/**) and collect any orchestration
+        // module they reach. That endpoint set must never exceed the direct
+        // runtime→orchestration edges already pinned in T2 — today the only
+        // bridge is services/placeholder-audio.js → orchestration/orchestrator,
+        // imported by two files that already hold that exact direct edge.
+        const orchEndpointOf = (svcFile) => requireSpecifiers(readSource(svcFile))
+            .filter((s) => /^\.\.\/orchestration\//.test(s))
+            .map((s) => s.replace(/^\.\.\//, '')); // 'orchestration/orchestrator'
+
+        const indirect = [];
+        for (const file of listSourceFiles(RUNTIME_DIR)) {
+            const queue = [];
+            for (const spec of requireSpecifiers(readSource(file))) {
+                if (!/^\.\.\/services\//.test(spec)) continue;
+                const target = resolveSpecifier(file, spec);
+                if (target) queue.push(target);
+            }
+            const seen = new Set(queue);
+            while (queue.length > 0) {
+                const svcFile = queue.shift();
+                for (const endpoint of orchEndpointOf(svcFile)) {
+                    indirect.push(`${rel(file)} → ${endpoint}`);
+                }
+                for (const spec of requireSpecifiers(readSource(svcFile))) {
+                    if (!spec.startsWith('./')) continue; // same-dir services hop
+                    const target = resolveSpecifier(svcFile, spec);
+                    if (target && !seen.has(target)) {
+                        seen.add(target);
+                        queue.push(target);
+                    }
+                }
+            }
+        }
+
+        expect(indirect.sort(), 'services-mediated runtime→orchestration endpoints (must stay inside the pinned direct set)').to.deep.equal([
+            'backend/src/runtime/reconciliation-engine.js → orchestration/orchestrator',
+            'backend/src/runtime/scene-window.js → orchestration/orchestrator',
+        ]);
+
+        // Every indirect endpoint must already be a direct pinned edge of the
+        // same runtime file — the services hop must never open a NEW endpoint.
+        const direct = new Map(); // file → Set(orchestration endpoints)
+        for (const file of listSourceFiles(RUNTIME_DIR)) {
+            for (const spec of requireSpecifiers(readSource(file))) {
+                if (!/^\.\.\/orchestration\//.test(spec)) continue;
+                const key = rel(file);
+                if (!direct.has(key)) direct.set(key, new Set());
+                direct.get(key).add(spec.replace(/^\.\.\//, ''));
+            }
+        }
+        for (const entry of indirect) {
+            const [file, endpoint] = entry.split(' → ');
+            expect(direct.get(file), `${file} must reach ${endpoint} directly before using it via services`).to.include(endpoint);
+        }
+    });
+
+    it('T11: runtime-result-emitter is the only module that can produce a runtime result', () => {
+        // The contract is materialized in exactly one place in src/: the
+        // emitter. No other runtime/orchestration/services module may require
+        // contracts/runtime-result and hand a result to orchestration on its
+        // own — the emitter is the single egress point for runtime results.
+        const producers = [];
+        for (const dir of [CONTRACTS_DIR, RUNTIME_DIR, ORCH_DIR, SERVICES_DIR]) {
+            for (const file of listSourceFiles(dir)) {
+                if (rel(file) === 'backend/src/contracts/runtime-result.js') continue;
+                for (const spec of requireSpecifiers(readSource(file))) {
+                    if (/contracts\/runtime-result$/.test(spec)) producers.push(rel(file));
+                }
+            }
+        }
+        expect(producers, 'only runtime/runtime-result-emitter.js may require the runtime-result contract').to.deep.equal([
+            'backend/src/runtime/runtime-result-emitter.js',
+        ]);
     });
 });

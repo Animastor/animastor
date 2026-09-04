@@ -54,7 +54,19 @@ Baseline was frozen by `dependency-guardrails.test.js` R5 (`RUNTIME_TO_ORCH_BASE
   `orchestrator.completeStage(...)` — this is the *services → runtime + services → orchestration* part of the cycle.
 - `services/provider-gateway.js` → `runtime/gpu-dispatcher` (expected direction).
 - `services/scene-asset-registry.js`, `services/placeholder-audio.js` → `orchestration/orchestrator` (lazy).
-- runtime has **no** `services` imports (checked).
+- runtime → `services` imports **do** exist and are one more leg of the cycle
+  (verified again in the final audit):
+  `runtime/scene-window.js` → `services/gen-scope`, `services/placeholder-audio`,
+  `services/generation-progress`, `services/audio-orchestrator`;
+  `runtime/runtime-scheduler.js` → `services/generation-progress`;
+  `runtime/reconciliation-engine.js` → `services/audio-orchestrator`,
+  `services/video-orchestrator`, `services/layer-config`, `services/placeholder-audio`.
+- Only one of those bridges back into orchestration:
+  `services/placeholder-audio.js` → `orchestration/orchestrator` (lazy). Both
+  runtime importers of `placeholder-audio` (`scene-window.js`,
+  `reconciliation-engine.js`) already hold the pinned direct
+  `runtime → orchestration/orchestrator` edge (R5/T2 baseline), so the services
+  hop opens **no new** orchestration endpoint.
 
 ### 2.4 Where results actually flow (execution paths)
 
@@ -217,7 +229,7 @@ removes is the runtime→orchestration edge on the **job-result path** and one
 dead edge. Future phases: journal port, executor port, scheduler/window write
 ports, then the services leg.
 
-## 8. Architecture tests (T1–T8)
+## 8. Architecture tests (T1–T11)
 
 `backend/tests/architecture/phase5-runtime-result.test.js`:
 
@@ -247,6 +259,13 @@ ports, then the services leg.
   orchestration/runtime/services; orchestration's consumer requires the
   contract (forward edge only); no services/event-helper module is involved
   in the seam.
+- **T9–T11** (final audit) — full `runtime/**` freeze: computed/template/concat
+  `require` and `import()` cannot reach orchestration (only the
+  `runtime/index.js` `lazyRequire` host, runtime-internal targets only);
+  runtime→services imports open no orchestration endpoint beyond the pinned
+  direct edges (the only bridge is `placeholder-audio` → `orchestrator`, and
+  its importers already hold that direct edge); the emitter is the only module
+  that requires the runtime-result contract (single egress point).
 
 ## 9. Honest status
 
@@ -255,3 +274,13 @@ reporting no longer needs orchestration imports, and one dead edge is gone.
 The orchestration↔runtime cycle as a whole **still exists** (§7) and is
 documented debt with a pinned baseline — it cannot grow, and the result path
 is now the first edge extracted from it.
+
+Final audit (Phase 5 close): re-scanned `runtime/**` — the frozen edge set
+matches the code 1:1 (no hidden static, dynamic, or services-mediated
+runtime→orchestration edge; the only services bridge, `placeholder-audio` →
+`orchestrator`, reaches endpoints already pinned directly). This document was
+corrected: §2.3 previously claimed runtime has no services imports; the
+runtime→services leg exists and is now accounted for above. Semantic reactions
+(state writes, re-dispatch policy) remain in the existing flows
+(task-handler → completeStage/failStage, reconciliation) and were **not**
+migrated into the consumer in Phase 5 (§6, §7).
