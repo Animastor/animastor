@@ -20,61 +20,15 @@ module.exports = function(app, redis, deps) {
     let sessionIdCounter = 0;
 
     // ── Workspace AI provider (Experimental Beta) ──────────────────────
-    // Resolve the provider for the book: its workspace's provider first,
-    // then the GATED system fallback (admin kill switch enforced). Transport
-    // separation: the routes only build endpoint/key/model — the fetch stays
-    // local (safeFetch, which also enforces the SSRF guard on USER-controlled
-    // endpoints). NO env re-fallback here: the resolver is the single source
-    // of truth for the key, so the kill switch cannot be bypassed.
-    const workspaceAi = require('../services/workspace-ai-provider');
+    // Phase 3: chat provider resolution lives on the Provider Gateway
+    // (services/provider-gateway.js) — the stable entry point consumers use
+    // instead of the resolver internals. This wrapper is behavior-identical
+    // to the pre-gateway resolveChatAI (moved verbatim into the gateway).
+    const providerGateway = require('../services/provider-gateway');
     const { safeFetch } = require('../services/url-safety');
     const sharedPool = require('../services/ai-connector/shared-pool');
     async function resolveChatAI(bookId) {
-        const provider = bookId
-            ? await workspaceAi.resolveAIForBook(bookId, { purpose: 'chat' })
-            : await workspaceAi.resolveSystemFallback();
-        // Local AI Connector snapshot (LAC §9): no endpoint/key — the fetch
-        // is replaced by the connector WS transport. Model may fall back to
-        // the connector's first DISCOVERED model (discovered ≠ loaded, §7) so
-        // a binding without an explicit model still gets an honest answer
-        // from the runtime instead of a cloud default model id.
-        // A SHARED snapshot (Phase 2) carries source:'shared' + the pool
-        // selection (always with model + connectorId — the pool never
-        // resolves without a usable model); `shared` rides through so the
-        // fetch site reserves/releases the per-inference pool slot.
-        if (provider && provider.transport === 'connector') {
-            let model = provider.model || null;
-            if (!model && provider.connectorId) {
-                try {
-                    const { getConnector } = require('../storage/postgres/repositories/ai-connector-repo');
-                    const row = await getConnector(provider.connectorId);
-                    const models = Array.isArray(row && row.models) ? row.models : [];
-                    if (models.length > 0) model = String(models[0]);
-                } catch (_) { /* transport reports the honest error below */ }
-            }
-            return {
-                transport: 'connector',
-                connectorId: provider.connectorId,
-                baseUrl: null,
-                apiKey: '',
-                model: model || '',
-                source: provider.source,
-                shared: provider.shared || null,
-                workspaceId: provider.workspaceId || null,
-                validatePublic: false,
-            };
-        }
-        return {
-            baseUrl: provider.endpoint || chatEngine.AI_API_BASE_URL,
-            apiKey: provider.apiKey || '',
-            model: provider.model || process.env.AI_MODEL || 'qwen/qwen3-32b',
-            source: provider.source,
-            shared: null,
-            workspaceId: null,
-            // Only the user-controlled workspace endpoint is an SSRF surface;
-            // operator-controlled env config (system fallback) is trusted.
-            validatePublic: provider.source === 'workspace' && !!provider.endpoint,
-        };
+        return providerGateway.chat.resolveProvider(bookId, { fallbackBaseUrl: chatEngine.AI_API_BASE_URL });
     }
 
     /** 503 guard — no usable AI provider (kill switch OFF / unconfigured). */
@@ -884,12 +838,10 @@ module.exports = function(app, redis, deps) {
 
     // Map a resolved chat provider to the SAFE consumer-facing source token
     // (Phase 2 §6 discipline: 'private-local' | 'shared' | 'cloud' | 'system'
-    // — never endpoint/owner detail).
+    // — never endpoint/owner detail). Phase 3: implemented on the Provider
+    // Gateway; this thin wrapper keeps the in-route call sites unchanged.
     function chatAiSourceToken(ai) {
-        if (ai.transport === 'connector') return ai.source === 'shared' ? 'shared' : 'private-local';
-        if (ai.source === 'workspace') return 'cloud';
-        if (ai.source === 'system') return 'system';
-        return ai.source || 'system';
+        return providerGateway.chat.sourceToken(ai);
     }
 
     app.post('/api/v1/ai/chat/stream', async (req, res) => {
