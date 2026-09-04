@@ -583,6 +583,17 @@ function _healthCacheKey(provider) {
  * @returns {Promise<number>} 1 if alive, 0 if not
  */
 async function checkAIHealth(cfg, provider = null) {
+    // Local AI Connector branch (LAC §9): a connector snapshot has NO apiKey
+    // by design — the HTTP probe below would silently answer for the wrong
+    // provider (global env key) or report 0 while local inference works.
+    // The honest capacity signal is the connector's own liveness (the same
+    // registry state the inference fails closed on). A Map lookup — no
+    // probe, no token spend, no cache needed.
+    if (provider && provider.transport === 'connector') {
+        const registry = require('./ai-connector/registry');
+        return !!provider.connectorId && registry.isLive(provider.connectorId) ? 1 : 0;
+    }
+
     // Workspace/personal provider keys are always usable; the env fallback is
     // gated behind the admin kill switch (system AI control).
     let apiKey = provider && provider.apiKey;
