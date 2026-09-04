@@ -341,7 +341,14 @@ must not leave the slot occupied.** This is guaranteed by:
   chat.response, chat.error all settle.
 - `releaseSharedAI` tolerating missing/partial snapshot fields safely.
 
-Phase 2 adds a contract test that stresses this lifecycle (see Part D, shared-pool lifecycle).
+**Status (Phase 2):** the no-stuck-slot lifecycle is correct by construction in the current
+implementation, but it is **not yet stabilized as an architectural test contract**. The
+lifecycle/concurrency contract (slot release on every terminal state, busy-reserve behavior,
+inflight observability) is deferred to separate work; the current
+`reserveSharedInference` / lifecycle behavior must **not** be artificially fitted to Phase 2
+just to satisfy a test. The snapshot contract (eligibility / model selection / endpoint
+selection / shared-snapshot recognition / sanitized errors) **is** stabilized and guarded by
+`tests/architecture/shared-pool-lifecycle.test.js`.
 
 ---
 
@@ -546,8 +553,15 @@ the **dangerous places** explicitly.
 6. **orchestration ↔ runtime cycle** still exists (Phase 1 baseline). Not touched in Phase 2.
 7. **LAC + workspace provider resolution** are getting tighter (recent commits). Contract still holds
    (two transports separated), but the boundary deserves watching in future phases.
-8. **Shared-pool slot lifecycle** is correct by construction today, but not yet covered by a dedicated
-   lifecycle contract test — added in Phase 2 (cheap, existing seams).
+8. **Shared-pool lifecycle / concurrency contract is not yet stabilized as an architectural test
+   contract.** The slot-release-on-every-terminal-state behavior is correct by construction today, but
+   the module's internal seam for probing slots (`acquireSlot` / `inflight` / `inflightCount`) is not
+   stable across the puzzles loaded by the arch test runner, so no lifecycle/concurrency suite lives in
+   Phase 2. The current `reserveSharedInference` / lifecycle behavior is **not** artificially fitted to
+   Phase 2. A full lifecycle/concurrency contract is deferred to separate work. Only the stable snapshot
+   contract (eligibility, model selection, deterministic endpoint selection, shared-snapshot
+   recognition, sanitized error description) is guarded, in
+   `tests/architecture/shared-pool-lifecycle.test.js`.
 
 ---
 
@@ -582,7 +596,8 @@ Phase 2 adds:
 
 - `tests/architecture/phase2-vbook-contract.test.js`
 - `tests/architecture/phase2-lac-transport-contract.test.js`
-- `tests/architecture/phase2-shared-pool-lifecycle.test.js`
+- `tests/architecture/shared-pool-lifecycle.test.js` (snapshot contract only; lifecycle/concurrency
+  contract deferred — see Current Gaps / Technical Debt)
 - `tests/architecture/phase2-job-protocol-v2.test.js`
 - `tests/architecture/phase2-hub-worker-boundary.test.js`
 
