@@ -8,6 +8,12 @@ Snapshots of known-working Animastor GPU instances.
 - `image-qwen/` — Image / Qwen Image
 - `video-ltx-2.3/` — Video / LTX 2.3
 
+## Point-in-time E2E validations
+
+- `phase-3.3-e2e-validation-2026-08-27.md` — Phase 3.3 E2E validation
+- `phase-3.4-e2e-blockers-2026-08-27.md` — Phase 3.4 blocker analysis
+- `local-ai-connector-e2e-2026-09-04.md` — Local AI Connector + Ollama E2E on the production VPS (CPU inference, registration → WS → discovery → chat non-streaming/streaming)
+
 These audits are reference snapshots for designing the profile-based
 runtime configuration and automated installers.
 

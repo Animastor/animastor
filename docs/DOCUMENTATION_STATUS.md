@@ -228,6 +228,7 @@
 | `README.md` | **Current** | Runtime audits overview |
 | `phase-3.3-e2e-validation-2026-08-27.md` | **Historical** | E2E validation results |
 | `phase-3.4-e2e-blockers-2026-08-27.md` | **Historical** | E2E blocker analysis |
+| `local-ai-connector-e2e-2026-09-04.md` | **Current** | Local AI Connector + Ollama E2E on VPS |
 | `audio-qwen/audit-2026-08-25.txt` | **Historical** | Audio Qwen runtime audit |
 | `image-qwen/animastor-image-qwen-runtime-audit-2026-08-26.md` | **Historical** | Image Qwen runtime audit |
 | `video-ltx-2.3/audit-2026-08-26.txt` | **Historical** | Video LTX 2.3 runtime audit |
