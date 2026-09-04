@@ -109,11 +109,15 @@ New seam: `backend/src/book/book-deletion.cjs` → `createBookDeletion(deps).del
 - `DELETE /api/v1/book/:bookId` (`backend/src/routes/book/core-routes.cjs`) no longer
   implements the cascade itself — it calls `bookDeletion.deleteBook(bookId)` and maps
   result/exception to HTTP.
-- The full cascade was moved **verbatim** (behavior preserved, no DB migrations):
-  1. canonical: disk bundle removal (`book.resetBook`) + snapshot file;
-  2. build output dirs;
-  3. cancel-first ordering (Redis `cancelled-workers` signal + PG agent-session
-     cancel **before** purge — the agent must observe cancellation);
+- The full cascade was moved **verbatim** (behavior preserved, no DB migrations),
+  with corrected ordering: the cancellation signal is sent FIRST, before any
+  canonical/runtime state is purged, so a running worker/agent observes it even
+  if a later cleanup step fails:
+  1. cancellation signal: Redis `cancelled-workers` set + PG agent-session status
+     cancel — before `book.resetBook` and before any other cleanup;
+  2. canonical: disk bundle removal (`book.resetBook`) + snapshot file;
+  3. build output dirs (build_ids come from Redis chunk keys, so this runs before
+     the Redis purge);
   4. runtime/ephemeral: scene-window cancel flag, active-audio/image/video keys,
      all book-keyed key families (`cleanBookRedisKeys`);
   5. derived PG: per-table deletes (`image_units` … `book_snapshots`, `books` last

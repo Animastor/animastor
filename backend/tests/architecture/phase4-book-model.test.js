@@ -12,7 +12,8 @@
 // T3 — full and lazy share the same Book identity semantics
 // T4 — Redis/runtime state is NOT part of canonical book data
 // T5 — consumers do not pick between independent book loaders
-// T6 — route/controller does not implement the deletion cascade
+// T6 — route/controller does not implement the deletion cascade; deletion
+//      sends the cancellation signal before any canonical reset (cancel < reset)
 // T7 — no new Book Model → Player/Editor/Generation/Provider Gateway deps
 //
 // Static checks follow the Phase 1 helpers (pure source scan, CI-safe).
@@ -269,6 +270,62 @@ describe('T6: route/controller does not implement the book deletion cascade', ()
         const backend = readSource(path.join(BACKEND_SRC, 'backend.cjs'));
         expect(backend).to.match(/createBookDeletion\(/);
         expect(backend).to.match(/bookDeletion:/);
+    });
+
+    it('cancellation signal is sent BEFORE canonical reset (book.resetBook)', async () => {
+        // Architectural contract regression: deleteBook() must deliver the
+        // cancellation signal — Redis cancelled-workers set + PG
+        // agent-session cancel — before it removes ANY canonical book state
+        // (book.resetBook). A running worker/agent must observe the cancel on
+        // its next checkCancelled() even if a later cleanup step fails.
+        const order = [];
+        const bookId = 'book-deletion-order';
+        const fakeRedis = {
+            sadd: async (key) => { order.push(`sadd:${key}`); return 1; },
+            del: async (...keys) => { order.push(`del:${keys.join(',')}`); return keys.length; },
+        };
+        const fakeStorage = {
+            postgres: {
+                query: async (sql) => {
+                    order.push(/UPDATE agent_sessions/.test(sql) ? 'cancel-agent-sessions' : 'pg-cleanup');
+                },
+            },
+        };
+        const fakeBook = {
+            resetBook: async (id) => { order.push(`resetBook:${id}`); },
+        };
+        const originalOutputDir = config.OUTPUT_DIR;
+        config.OUTPUT_DIR = path.join(tmpDir, 'deletion-output-nonexistent');
+        try {
+            const { deleteBook } = createBookDeletion({
+                book: fakeBook,
+                redis: fakeRedis,
+                storage: fakeStorage,
+                config,
+                getAllChunks: async () => [],
+                getChunk: async () => null,
+                cleanBookRedisKeys: async () => {},
+                log: () => {},
+                setCancelFlag: async () => { order.push('set-cancel-flag'); },
+            });
+
+            const result = await deleteBook(bookId);
+            expect(result.deleted).to.be.true;
+
+            const cancelIdx = order.findIndex((e) => e === `sadd:animastor:cancelled-workers:${bookId}`);
+            const pgCancelIdx = order.findIndex((e) => e === 'cancel-agent-sessions');
+            const resetIdx = order.findIndex((e) => e === `resetBook:${bookId}`);
+            expect(cancelIdx, 'cancelled-workers signal must be sent').to.be.gte(0);
+            expect(pgCancelIdx, 'agent-session cancel must be sent').to.be.gte(0);
+            expect(resetIdx, 'book.resetBook must be invoked').to.be.gte(0);
+            // Contract: cancellation < canonical reset.
+            expect(cancelIdx, 'cancelled-workers must be set BEFORE book.resetBook()')
+                .to.be.below(resetIdx);
+            expect(pgCancelIdx, 'agent-session cancel must precede book.resetBook()')
+                .to.be.below(resetIdx);
+        } finally {
+            config.OUTPUT_DIR = originalOutputDir;
+        }
     });
 });
 

@@ -7,17 +7,23 @@
 // here (moved verbatim from core-routes.cjs DELETE handler — behavior
 // preserved; internal detail is now hidden behind the contract).
 //
-// Deletion spans (behavior preserved exactly):
-//   Canonical     — disk bundle removal (book.resetBook) + snapshot file.
-//   Runtime       — Redis runtime state (cancelled-workers signal, active
-//                   audio/image/video, all book-keyed key families via
-//                   cleanBookRedisKeys), build output dirs, GPU-hub queue.
-//   Derived/PG    — cancel-first agent sessions, then per-table deletes
-//                   (derived indexes, assets, tasks, events; books LAST
-//                   for FK order).
+// Deletion ORDER (corrected Phase 4 contract) — the cancellation signal is
+// sent FIRST, before ANY canonical/runtime state is touched. Even if a
+// later cleanup step (resetBook, Redis, PG, snapshot) fails, cancellation
+// is already delivered to the running worker/agent.
+//   1. Cancellation signal — Redis cancelled-workers set + PG agent-session
+//      status cancel (agent observes it on its next checkCancelled()).
+//   2. Canonical cleanup   — disk bundle removal (book.resetBook) + snapshot.
+//   3. Build artifacts     — output-dir removal (build_ids come from Redis
+//      chunk keys, so this runs before the Redis purge below).
+//   4. Runtime (Redis)     — scene-window cancel flag, active audio/image/
+//      video keys, all book-keyed key families (cleanBookRedisKeys).
+//   5. Derived/PG cleanup  — per-table deletes (… books LAST for FK order).
+//   6. GPU-hub queue clear (best-effort, external runtime).
+//   7. Final result.
 //
-// This file owns the ORDER (cancel → runtime → derived/canonical) so future
-// decomposition only changes internals, not the contract.
+// This file owns the ORDER (cancellation → cleanup) so future decomposition
+// only changes internals, not the contract.
 
 const fs = require('fs');
 const path = require('path');
@@ -56,14 +62,44 @@ function createBookDeletion(deps) {
     async function deleteBook(bookId, options = {}) {
         const onEvent = typeof options.onEvent === 'function' ? options.onEvent : null;
 
-        // ── 1. Canonical: remove the disk bundle + snapshot file ──
+        // ── 1. Cancellation signal FIRST — before ANY canonical/runtime
+        //    state is deleted. КРИТИЧЕСКИ важно: сначала ОТМЕНИТЬ активные
+        //    agent-сессии, потом чистить. Если сначала почистить Redis, PG
+        //    или canonical bundle, running agent никогда не узнает об отмене:
+        //      - cleanBookRedisKeys удалит animastor:cancelled-workers:{bookId}
+        //      - DELETE agent_sessions удалит все сессии
+        //      - resetBook удалит саму книгу
+        //    Агент продолжит работу — он не может обнаружить отмену.
+        //    Поэтому сигнализируем агенту через cancelled-workers (Redis) и
+        //    статус сессий (PG) ДО удаления любого book state: агент увидит
+        //    отмену на следующем checkCancelled(). Даже если последующие шаги
+        //    (resetBook / Redis / PG / snapshot cleanup) упадут — cancellation
+        //    уже отправлен.
+        try {
+            await redis.sadd(`animastor:cancelled-workers:${bookId}`, 'vbook');
+            log(`[DELETE-BOOK] Set cancelled-workers for ${bookId} — VBook agent will be stopped`);
+        } catch (redisErr) {
+            console.warn(`[DELETE-BOOK] Failed to set cancelled-workers: ${redisErr.message}`);
+        }
+        try {
+            await storage.postgres.query(
+                `UPDATE agent_sessions SET status = 'cancelled', updated_at = $1 WHERE book_id = $2 AND status IN ('running', 'paused')`,
+                [Math.floor(Date.now() / 1000), bookId]
+            );
+        } catch (pgErr) {
+            console.warn(`[DELETE-BOOK] Failed to cancel agent sessions: ${pgErr.message}`);
+        }
+
+        // ── 2. Canonical: remove the disk bundle + snapshot file ──
         await book.resetBook(bookId);
         const snapshotPath = path.join(config.BOOKS_DIR || '/data/books', `${bookId}.snapshot.json`);
         if (fs.existsSync(snapshotPath)) {
             try { fs.unlinkSync(snapshotPath); } catch (_) {}
         }
 
-        // ── 2. Build output dirs (runtime artifacts on disk) ──
+        // ── 3. Build output dirs (runtime artifacts on disk) ──
+        // NOTE: must run before the Redis purge below — build_ids are derived
+        // from chunk keys that cleanBookRedisKeys removes.
         const OUTPUT_DIR = config.OUTPUT_DIR;
         const chunkIds = await getAllChunks(bookId).catch(() => []);
         const buildIds = new Set();
@@ -86,31 +122,6 @@ function createBookDeletion(deps) {
                     try { fs.rmSync(entryPath, { recursive: true, force: true }); } catch (_) {}
                 }
             }
-        }
-
-        // ── 3. Cancel-first ordering (runtime signal before purge) ──
-        // КРИТИЧЕСКИ важно: сначала ОТМЕНИТЬ активные agent-сессии, потом чистить.
-        // Если сначала почистить Redis и PG, running agent никогда не узнает об отмене:
-        //   - cleanBookRedisKeys удалит animastor:cancelled-workers:{bookId}
-        //   - DELETE agent_sessions удалит все сессии
-        // Агент продолжит работу — он не может обнаружить отмену.
-        //
-        // Сначала сигнализируем агенту через cancelled-workers (Redis) и статус
-        // сессий (PG), потом чистим Redis и PG. Агент увидит отмену на следующем
-        // checkCancelled().
-        try {
-            await redis.sadd(`animastor:cancelled-workers:${bookId}`, 'vbook');
-            log(`[DELETE-BOOK] Set cancelled-workers for ${bookId} — VBook agent will be stopped`);
-        } catch (redisErr) {
-            console.warn(`[DELETE-BOOK] Failed to set cancelled-workers: ${redisErr.message}`);
-        }
-        try {
-            await storage.postgres.query(
-                `UPDATE agent_sessions SET status = 'cancelled', updated_at = $1 WHERE book_id = $2 AND status IN ('running', 'paused')`,
-                [Math.floor(Date.now() / 1000), bookId]
-            );
-        } catch (pgErr) {
-            console.warn(`[DELETE-BOOK] Failed to cancel agent sessions: ${pgErr.message}`);
         }
 
         // ── 4. Runtime / ephemeral state (Redis) ──
