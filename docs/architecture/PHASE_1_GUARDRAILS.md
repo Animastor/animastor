@@ -50,7 +50,7 @@ Whitelist = ровно эти 17 путей, явно перечислен в `t
 
 ## 4. Redis ownership (задача 2)
 
-Реестр: `backend/tests/architecture/redis-registry.js`. Для каждой семьи: `owner` (автор) / `readers` / `writers` / `crossModule` (записывает ли кто-то чужое) / `note`. Компоненты: `backend`, `gpu-hub`, `worker`, `local-ai-connector`.
+Реестр: `backend/tests/architecture/redis-registry.js`. Для каждой семьи: `owner` (автор) / `readers` / `writers` / `crossModule` (записывает ли кто-то чужое) / `note`. Компоненты: `backend`, `gpu-hub`, `worker`, `ai-connector`.
 
 Ключевые семьи из аудита:
 

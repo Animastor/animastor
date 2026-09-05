@@ -14,7 +14,7 @@
 //                 Phase 1 documents it, fixes come in later phases)
 //   note        — short rationale / debt pointer
 //
-// Components: 'backend' | 'gpu-hub' | 'worker' | 'local-ai-connector'
+// Components: 'backend' | 'gpu-hub' | 'worker' | 'ai-connector'
 // (frontends never touch Redis directly).
 //
 // NOTE: more-specific patterns must sort AFTER the generic ones in the

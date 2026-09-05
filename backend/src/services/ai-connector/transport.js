@@ -57,7 +57,7 @@ const DEFAULTS = {
     requestTimeoutMs: 180 * 1000, // §5: the chat window (AI_FETCH_TIMEOUT_MS)
 };
 
-// Mirror of the connector-side limits (local-ai-connector/lib/chat.cjs).
+// Mirror of the connector-side limits (ai-connector/lib/chat.cjs).
 // Both sides enforce the SAME contract — the cloud validates before
 // sending, the connector re-validates defensively (§4 Phase-4 note).
 const LIMITS = {

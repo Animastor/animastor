@@ -2,7 +2,7 @@
 // PHASE 8 — LAC ↔ backend cross-side contract sync test
 // ======================================================
 // Pins the PUBLIC CONTRACT numbers shared between the LAC package
-// (local-ai-connector/) and the backend WS endpoint so the two sides
+// (ai-connector/) and the backend WS endpoint so the two sides
 // cannot silently drift apart — especially across a future physical
 // extraction of the package out of the monorepo.
 //
@@ -32,7 +32,7 @@ const { REPO_ROOT } = require('./helpers');
 
 // Single point of truth for the future extraction: if the package moves,
 // update this (or the resolution below) once.
-const LAC_DIR = path.join(REPO_ROOT, 'local-ai-connector');
+const LAC_DIR = path.join(REPO_ROOT, 'ai-connector');
 
 // The backend side under contract.
 const routes = require('../../src/routes/ai-connector-routes.cjs');

@@ -45,7 +45,7 @@ const aiService = require('../src/services/ai-service');
 const { createWsHandler, createAiConnectorRoutes } = require('../src/routes/ai-connector-routes.cjs');
 const { createAiEndpointRoutes } = require('../src/routes/ai-endpoint-routes.cjs');
 const { createMockRedis } = require('./mocks/redis-mock');
-const { createConnectorSession } = require('../../local-ai-connector/lib/connector.cjs');
+const { createConnectorSession } = require('../../ai-connector/lib/connector.cjs');
 
 const stamp = `shai2${Date.now()}`;
 

@@ -10,7 +10,7 @@
 //                       book/generation/PG (it talks HTTP to the hub only);
 //   R2  gpu-hub/      — must NOT gain code-level deps on backend/book/
 //                       generation domains (HTTP + shared Redis contract only);
-//   R3  local-ai-connector/ — must not depend on backend implementation;
+//   R3  ai-connector/ (LAC package) — must not depend on backend implementation;
 //   R4  backend book domain — must not import backend implementation
 //                       details outside its explicit allowlist;
 //   R5  backend orchestration ↔ runtime cycle — frozen: runtime→orchestration
@@ -26,7 +26,7 @@ const { listSourceFiles, readSource, rel, REPO_ROOT, requireSpecifiers } = requi
 
 const WORKER_DIR = path.join(REPO_ROOT, 'worker', 'worker');
 const HUB_DIR = path.join(REPO_ROOT, 'gpu-hub');
-const LAC_DIR = path.join(REPO_ROOT, 'local-ai-connector');
+const LAC_DIR = path.join(REPO_ROOT, 'ai-connector');
 const FRONTEND_APP_DIR = path.join(REPO_ROOT, 'frontends', 'app', 'src');
 const BACKEND_SRC = path.join(REPO_ROOT, 'backend', 'src');
 
@@ -214,7 +214,7 @@ describe('architecture: frontend fetch boundary', () => {
 });
 
 describe('architecture: no raw SQL outside backend storage', () => {
-    it('worker / gpu-hub / local-ai-connector never import pg or postgres code', () => {
+    it('worker / gpu-hub / ai-connector (LAC) never import pg or postgres code', () => {
         for (const dir of [WORKER_DIR, HUB_DIR, LAC_DIR]) {
             for (const file of listSourceFiles(dir)) {
                 const src = readSource(file);

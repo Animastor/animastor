@@ -47,10 +47,10 @@ const { createMockRedis } = require('./mocks/redis-mock');
 const {
     chatCompletionStream,
     normalizeOpenAiStreamChunk,
-} = require('../../local-ai-connector/lib/runtime-adapters/index.cjs');
-const chatLib = require('../../local-ai-connector/lib/chat.cjs');
-const { createConnectorSession } = require('../../local-ai-connector/lib/connector.cjs');
-const opLog = require('../../local-ai-connector/lib/log.cjs');
+} = require('../../ai-connector/lib/runtime-adapters/index.cjs');
+const chatLib = require('../../ai-connector/lib/chat.cjs');
+const { createConnectorSession } = require('../../ai-connector/lib/connector.cjs');
+const opLog = require('../../ai-connector/lib/log.cjs');
 
 const stamp = `lac5${Date.now()}`;
 

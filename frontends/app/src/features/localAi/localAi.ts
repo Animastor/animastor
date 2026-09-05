@@ -210,7 +210,7 @@ export function regTokenExpired(expiresAt: number | null | undefined, now: numbe
 
 /**
  * The copy-paste launch command shown in the one-time registration modal.
- * Mirrors local-ai-connector/README.md exactly (npx package). Display-only:
+ * Mirrors the animastor-ai-connector package README exactly (npx package). Display-only:
  * the command embeds the one-time token the user just received.
  */
 export function buildRunCommand(token: string, wsUrl: string, origin: string): string {

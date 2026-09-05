@@ -22,7 +22,7 @@ const path = require('path');
 const fs = require('fs');
 const { REPO_ROOT, BACKEND_SRC, listSourceFiles, readSource, rel } = require('./helpers');
 
-const LAC_DIR = path.join(REPO_ROOT, 'local-ai-connector');
+const LAC_DIR = path.join(REPO_ROOT, 'ai-connector');
 const WORKER_DIR = path.join(REPO_ROOT, 'worker', 'worker');
 const HUB_DIR = path.join(REPO_ROOT, 'gpu-hub');
 
@@ -58,7 +58,7 @@ describe('P7-T1: LAC stays an isolated package (extraction candidate)', () => {
         const offenders = [];
         for (const file of walkSource(LAC_DIR)) {
             for (const { spec, target } of relativeTargets(file)) {
-                if (!target.startsWith('local-ai-connector/')) offenders.push(`${rel(file)}: ${spec}`);
+                if (!target.startsWith('ai-connector/')) offenders.push(`${rel(file)}: ${spec}`);
             }
         }
         expect(offenders, 'LAC must stay a standalone distributable (Phase 7 audit §2.6)').to.deep.equal([]);
@@ -69,7 +69,7 @@ describe('P7-T1: LAC stays an isolated package (extraction candidate)', () => {
         for (const dir of [BACKEND_SRC, WORKER_DIR, HUB_DIR]) {
             for (const file of walkSource(dir)) {
                 for (const { spec, target } of relativeTargets(file)) {
-                    if (target.startsWith('local-ai-connector/')) offenders.push(`${rel(file)}: ${spec}`);
+                    if (target.startsWith('ai-connector/')) offenders.push(`${rel(file)}: ${spec}`);
                 }
             }
         }

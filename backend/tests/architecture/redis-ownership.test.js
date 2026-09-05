@@ -85,7 +85,7 @@ function specificity(f) {
 describe('architecture: Redis ownership', () => {
     it('registry has no duplicate patterns and valid components', () => {
         const seen = new Set();
-        const valid = ['backend', 'gpu-hub', 'worker', 'local-ai-connector'];
+        const valid = ['backend', 'gpu-hub', 'worker', 'ai-connector'];
         for (const f of REDIS_OWNERSHIP) {
             expect(seen.has(f.pattern), `duplicate family pattern ${f.pattern}`).to.equal(false);
             seen.add(f.pattern);

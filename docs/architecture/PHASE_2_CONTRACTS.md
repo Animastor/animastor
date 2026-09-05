@@ -506,7 +506,7 @@ the **dangerous places** explicitly.
 | shared-pool in-process state (`services/ai-connector/shared-pool.js` inflight Map) | backend (in-process) | backend | backend | Per-endpoint concurrency slot map. Not Redis. Backend restart clears it (fail-safe). |
 | LAC in-process state (`services/ai-connector/registry.js` sessions Map, `transport.js` pending Map, `discovery.js` pending Map) | backend (in-process) | backend | backend | LAC session/request/discovery state is in-memory only; not Redis. LAC itself is WS-only client. |
 
-**Components:** `backend`, `gpu-hub`, `worker`, `local-ai-connector`. Frontends never touch Redis.
+**Components:** `backend`, `gpu-hub`, `worker`, `ai-connector`. Frontends never touch Redis.
 
 ### 9.2 Dangerous places (documented, not changed)
 

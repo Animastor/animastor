@@ -96,7 +96,7 @@ object LocalAiHelpers {
 
     /**
      * The copy-paste launch command shown in the one-time registration
-     * dialog. Mirrors local-ai-connector/README.md (npx package). The
+     * dialog. Mirrors the animastor-ai-connector package README (npx package). The
      * command embeds the one-time token the user just received.
      */
     fun buildRunCommand(token: String, wsUrl: String, origin: String): String {

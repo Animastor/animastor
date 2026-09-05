@@ -76,7 +76,7 @@ function defaultWebSocketImpl() {
         // Lazy: only the CLI path needs the dependency; tests may inject.
         return require('ws').WebSocket;
     } catch (_) {
-        throw new Error('ws dependency not installed (run npm install in local-ai-connector)');
+        throw new Error('ws dependency not installed (run npm install in ai-connector)');
     }
 }
 

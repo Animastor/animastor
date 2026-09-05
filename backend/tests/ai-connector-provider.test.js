@@ -695,9 +695,9 @@ function waitFor(predicate, { timeoutMs = 5000, stepMs = 25 } = {}) {
     });
 }
 
-/** Lazy require of the local-ai-connector distributable session lib. */
+/** Lazy require of the ai-connector distributable session lib. */
 function getConnectorLib() {
-    return Promise.resolve(require('../../local-ai-connector/lib/connector.cjs'));
+    return Promise.resolve(require('../../ai-connector/lib/connector.cjs'));
 }
 
 /**

@@ -6,7 +6,7 @@
 // PG, no Redis — only this package's own modules and node builtins from
 // the LAC dependency allowlist. The runner lives in harness.cjs.
 //
-// Run: npm test   (from local-ai-connector/)
+// Run: npm test   (from ai-connector/)
 // ======================================================
 
 const path = require('path');

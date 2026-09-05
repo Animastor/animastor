@@ -59,7 +59,7 @@ const transport = require('../src/services/ai-connector/transport');
 const { createWsHandler, createAiConnectorRoutes } = require('../src/routes/ai-connector-routes.cjs');
 const { createAiEndpointRoutes } = require('../src/routes/ai-endpoint-routes.cjs');
 const { createMockRedis } = require('./mocks/redis-mock');
-const { createConnectorSession } = require('../../local-ai-connector/lib/connector.cjs');
+const { createConnectorSession } = require('../../ai-connector/lib/connector.cjs');
 const proxyquire = require('proxyquire');
 
 const stamp = `shai3${Date.now()}`;

@@ -56,7 +56,7 @@ if [ $# -eq 0 ]; then
     BACKEND_SRC="$ROOT_DIR/backend/src"
     GPU_HUB_SRC="$ROOT_DIR/gpu-hub"
     WORKER_SRC="$ROOT_DIR/worker"
-    LAC_SRC="$ROOT_DIR/local-ai-connector"
+    LAC_SRC="$ROOT_DIR/ai-connector"
 
     if [ -d "$BACKEND_SRC" ]; then
         check_dir "backend/src" "$BACKEND_SRC"
@@ -68,7 +68,7 @@ if [ $# -eq 0 ]; then
         check_dir "worker" "$WORKER_SRC"
     fi
     if [ -d "$LAC_SRC" ]; then
-        check_dir "local-ai-connector" "$LAC_SRC"
+        check_dir "ai-connector" "$LAC_SRC"
     fi
 else
     for area in "$@"; do

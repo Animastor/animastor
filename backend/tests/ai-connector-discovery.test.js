@@ -4,7 +4,7 @@
 // Coverage (docs/04-planning/local-ai-connector-v1.md §3.4, §4, §6, §7, §10,
 // §15-Phase-3, AD-5, AD-6, AD-7):
 //
-//   ADAPTER (connector-side seam, local-ai-connector/lib):
+//   ADAPTER (connector-side seam, ai-connector/lib):
 //     successful /v1/models; several models; empty list; unknown fields
 //     dropped; malformed JSON; wrong structure; oversized response;
 //     runtime timeout; connection refused; runtime HTTP error; hostile
@@ -50,9 +50,9 @@ const {
     discoverModels,
     normalizeOpenAiModels,
     getAdapter,
-} = require('../../local-ai-connector/lib/runtime-adapters/index.cjs');
-const { parseConfig } = require('../../local-ai-connector/lib/config.cjs');
-const { createConnectorSession } = require('../../local-ai-connector/lib/connector.cjs');
+} = require('../../ai-connector/lib/runtime-adapters/index.cjs');
+const { parseConfig } = require('../../ai-connector/lib/config.cjs');
+const { createConnectorSession } = require('../../ai-connector/lib/connector.cjs');
 
 const stamp = `lac3${Date.now()}`;
 
@@ -436,7 +436,7 @@ describe('LAC-3 adapter: openai-compatible /v1/models (connector side)', functio
 // 2. Connector config — loopback enforcement, no URL from outside
 // ══════════════════════════════════════════════════════════════════════════
 
-describe('LAC-3 connector config (local-ai-connector/lib/config)', () => {
+describe('LAC-3 connector config (ai-connector/lib/config)', () => {
     const baseArgs = ['--url', 'wss://animastor.example/api/v1/ai-connector/ws', '--token', 'llmc.aGVsbG8.aGVsbG8'];
 
     it('default base URL is loopback Ollama', () => {
@@ -494,7 +494,7 @@ describe('LAC-3 connector config (local-ai-connector/lib/config)', () => {
 // 3. Connector session — refresh → ONE local fetch; no auto probes
 // ══════════════════════════════════════════════════════════════════════════
 
-describe('LAC-3 connector session (local-ai-connector/lib/connector)', function () {
+describe('LAC-3 connector session (ai-connector/lib/connector)', function () {
     this.timeout(20000);
 
     it('models.refresh → exactly ONE /v1/models fetch → models.list; hostile URL fields ignored', async () => {

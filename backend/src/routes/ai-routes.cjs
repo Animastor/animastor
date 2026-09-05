@@ -421,7 +421,7 @@ module.exports = function(app, redis, deps) {
 
             const bookContext = chatEngine.buildBookContext(bookData);
             if (bookContext) {
-                // Connector per-message cap is 32 KB (local-ai-connector
+                // Connector per-message cap is 32 KB (ai-connector
                 // lib/chat.cjs maxMessageChars, mirrored by the transport) —
                 // the full book JSON for real books does not fit. Oversized
                 // context falls back to the compact structural summary so a

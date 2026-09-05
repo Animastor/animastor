@@ -9,7 +9,7 @@
 //     → ai-connector/transport.connectorChat (cloud-generated request_id,
 //       authoritative §5 timer)
 //     → real WS route (ai-connector-routes.cjs createWsHandler)
-//     → REAL connector distributable session (local-ai-connector/)
+//     → REAL connector distributable session (ai-connector/)
 //     → real OpenAI-compatible HTTP runtime (127.0.0.1 fake)
 //     → chat.response → HTTP reply
 //
@@ -213,7 +213,7 @@ function buildBackend() {
 
 // ── real connector session (the distributable) ────────────────────────────
 
-const { createConnectorSession } = require('../../local-ai-connector/lib/connector.cjs');
+const { createConnectorSession } = require('../../ai-connector/lib/connector.cjs');
 
 function startConnector(wsUrl, token, runtimeBaseUrl) {
     const session = createConnectorSession({

@@ -173,7 +173,7 @@ describe('regTokenExpired', () => {
   });
 });
 
-describe('buildRunCommand — mirrors the local-ai-connector CLI contract', () => {
+describe('buildRunCommand — mirrors the animastor-ai-connector CLI contract', () => {
   it('builds the npx command against the caller origin + ws path', () => {
     const cmd = buildRunCommand('llmcreg.abc.def', '/api/v1/ai-connector/ws', 'https://animastor.example');
     expect(cmd).toBe('npx animastor-ai-connector --url https://animastor.example/api/v1/ai-connector/ws --token llmcreg.abc.def');
