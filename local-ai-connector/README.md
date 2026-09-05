@@ -1,85 +1,210 @@
 # animastor-ai-connector
 
-Local AI Connector (V1, Phase 4) — outbound bridge between an Animastor
-workspace and a local OpenAI-compatible runtime (Ollama / vLLM / llama.cpp /
-LM Studio). The connector ALWAYS dials out to the cloud (outbound WebSocket);
-no inbound ports, no port forwarding.
+Local AI Connector — a small, security-first bridge that lets an
+**Animastor workspace use your own local AI models** (Ollama, vLLM,
+llama.cpp, LM Studio, or any OpenAI-compatible server) instead of — or
+alongside — cloud providers.
 
-Spec: `docs/04-planning/local-ai-connector-v1.md` (§3.4, §4, §5, §6, §7, §10, AD-5/AD-6/AD-7).
+The connector is a **long-lived local process** on YOUR machine. It always
+**dials out** with a single WebSocket to your Animastor backend; it never
+listens on any port, never needs port forwarding, and never exposes your
+machine to inbound connections from the internet.
 
-## What V1 (Phase 4) does
+```
+Animastor workspace  ──WS (LAC v1)──▶  animastor-ai-connector  ──HTTP──▶  local runtime
+        (cloud)                                   (your machine)          (Ollama, vLLM, …)
+```
 
-- registers/activates against Animastor over WebSocket (`hello` → `ready`),
-  exchanging the one-time `llmcreg.*` token for the persistent `llmc.*`
-  credential (disclosed exactly once, printed by the CLI on activation);
-- discovers models on the local runtime via `GET {base}/v1/models` —
-  **explicitly, only when the cloud asks** (`models.refresh`) — and reports
-  normalized model-id strings back (`models.list`);
-- heartbeats with discovered models + runtime reachability;
-- performs **non-streaming inference** on the cloud's explicit request:
-  `chat.request` → `POST {base}/v1/chat/completions` (`stream:false`
-  hardcoded) → `chat.response` / `chat.error` (sanitized allowlisted codes);
-  `chat.cancel` aborts the local fetch and frees the slot.
+## Why a connector?
 
-What it deliberately does NOT do: streaming (`chat.delta` is Phase 5),
-model loading, probes, filesystem/shell access, arbitrary HTTP (it is an
-allowlist adapter with exactly two paths, not a proxy — AD-5).
+- **Privacy:** prompts and completions go to *your* local model; the cloud
+  only relays bytes, it never stores them.
+- **Cost:** your own GPU, your own tokens.
+- **Control:** the connector enforces every limit locally — a compromised
+  or buggy server can never push oversized prompts, unbounded generation,
+  arbitrary URLs or duplicate requests through to your runtime.
 
-## Run
+## Requirements
+
+- **Node.js ≥ 18** (uses the built-in global `fetch` and `AbortController`)
+- A local OpenAI-compatible runtime reachable on loopback by default:
+  - Ollama → `http://127.0.0.1:11434` (the default)
+  - vLLM / llama.cpp / LM Studio → pass `--base-url`
+- The connector WS URL + a token issued by your Animastor workspace
+  (Local AI settings page shows the exact copy-paste command)
+
+## Installation & run
+
+No install step is needed — run it directly with npx:
 
 ```bash
-cd local-ai-connector
-npm install
-node index.cjs \
+npx animastor-ai-connector \
   --url wss://<your-animastor-host>/api/v1/ai-connector/ws \
-  --token llmcreg.<…>.<…> \
+  --token llmcreg.<one-time-registration-token> \
   --runtime-type ollama
 ```
 
-On first connect the one-time registration token is exchanged for the
-persistent `llmc.*` credential, printed once — store it (e.g. in
-`ANIMASTOR_CONNECTOR_TOKEN`) for subsequent runs.
+(Or install globally once: `npm i -g animastor-ai-connector`, then run
+`animastor-ai-connector …`.)
 
-## Options
+**First run (activation):** the one-time `llmcreg.*` registration token is
+exchanged for a persistent `llmc.*` credential, which is printed to your
+terminal **exactly once**:
 
-| Flag | Meaning |
+```
+Connector activated. Persistent credential (store it now, shown once):
+llmc.…
+```
+
+Store that credential safely (e.g. in the `ANIMASTOR_CONNECTOR_TOKEN`
+environment variable) — it is never shown again. Subsequent runs use it to
+re-authenticate without re-registering.
+
+Keep the process running while you want the workspace to see your models;
+stop it with Ctrl-C (SIGINT/SIGTERM are handled cleanly).
+
+## CLI options
+
+| Flag | Meaning | Default |
+|---|---|---|
+| `--url <wss://…>` | Animastor connector WebSocket endpoint | required* |
+| `--token <llmc.\|llmcreg.>` | persistent credential or one-time registration token | required* |
+| `--base-url <http://…>` | local runtime base URL | `http://127.0.0.1:11434` |
+| `--runtime-type <type>` | `ollama` \| `vllm` \| `llamacpp` \| `lmstudio` \| `openai-compatible` | `openai-compatible` |
+| `--allow-lan` | explicitly allow a NON-loopback runtime base URL (e.g. a GPU box on your LAN) | off (loopback only) |
+| `--heartbeat-interval-ms <ms>` | override the server-advertised heartbeat cadence (250–600 000) | from server (15 000 ms) |
+| `--log-file <path>` | accepted for compatibility; V1 keeps the metadata log in memory only | — |
+| `--help`, `-h` | usage | |
+
+\* also resolvable from the environment (see below).
+
+### Environment variables
+
+| Variable | Purpose |
 |---|---|
-| `--url` | Animastor connector WS endpoint (`wss://` mandatory off-loopback) |
-| `--token` | `llmcreg.*` (registration) or `llmc.*` (persistent) credential |
-| `--base-url` | local runtime base URL; default `http://127.0.0.1:11434` |
-| `--runtime-type` | `ollama` \| `vllm` \| `llamacpp` \| `lmstudio` \| `openai-compatible` |
-| `--allow-lan` | explicitly allow a non-loopback runtime base URL |
-| `--log-file` | accepted for compatibility; V1 keeps the metadata log in memory |
+| `ANIMASTOR_CONNECTOR_URL` | fallback for `--url` |
+| `ANIMASTOR_CONNECTOR_TOKEN` | fallback for `--token` — the recommended place to keep the persistent `llmc.*` credential |
 
-Env fallbacks: `ANIMASTOR_CONNECTOR_URL`, `ANIMASTOR_CONNECTOR_TOKEN`.
+CLI flags win over environment variables.
 
-## Security posture (summary)
+### Exit codes
 
-- The runtime base URL is LOCAL CONFIG ONLY — it can never come from the
-  cloud or any frame (AD-5). The adapter knows exactly two paths
-  (`GET {base}/v1/models`, `POST {base}/v1/chat/completions`); no redirects
-  are followed; responses are size-capped and strictly validated.
-- No automatic probes (AD-7): discovery runs only on explicit
-  `models.refresh`; inference runs only on explicit `chat.request`.
-- Every chat limit is enforced HERE (message count/size, prompt size,
-  max_tokens, temperature, timeout, response size, concurrency — default 2
-  in-flight, overflow → `busy`); a request_id executes at most once per
-  session lifecycle.
-- Logging is metadata-only (AD-6): op, status, error code, duration, byte
-  count — never prompts, responses, or credential material.
-- Credentials are validated by shape and never logged or echoed.
+- `0` — clean run / shutdown (SIGINT/SIGTERM, `--help`)
+- `2` — configuration error (invalid flags, bad URL/token shape, …)
 
-## Layout
+## What it does
+
+- **Registration & heartbeat:** activates via `hello`/`ready`, then sends
+  heartbeats with honest runtime facts (models, reachability). Reconnects
+  automatically with exponential backoff if the connection drops.
+- **Model discovery:** the workspace can ask for a model refresh at any
+  time; the connector performs exactly ONE `GET {base}/v1/models` per
+  request burst and reports normalized model ids. No polling, no probing.
+- **Inference:** on the workspace's explicit request the connector calls
+  `POST {base}/v1/chat/completions` on your runtime — non-streaming
+  (`chat.response`) or streaming (`chat.delta` × N + one terminal
+  `chat.response`). The workspace can cancel mid-flight (`chat.cancel`),
+  which aborts the local fetch immediately.
+
+## Security model
+
+- **Outbound-only:** one WebSocket out; zero listening sockets.
+- **Loopback by default:** the runtime base URL must be loopback unless you
+  explicitly opt in with `--allow-lan`. It can NEVER be set from the
+  server or from any network frame.
+- **Allowlist adapter, not a proxy:** the connector talks to your runtime
+  on exactly two paths (`GET /v1/models`, `POST /v1/chat/completions`).
+  No arbitrary path, no arbitrary method, redirects are refused. There is
+  no field in the protocol that can redirect the runtime call anywhere.
+- **No filesystem, no shell, no config files:** flags and env only; the
+  operation log is an in-memory ring buffer.
+- **Metadata-only logging:** op, status, sanitized error code, duration,
+  byte counts — never prompts, responses, or credentials.
+- **Every limit enforced locally** (defense in depth): message count/size,
+  prompt size, `max_tokens`, temperature, timeouts, response sizes,
+  concurrency (2 in-flight requests, overflow → `busy`), and at-most-once
+  execution per request id per session.
+- **Credential handling:** tokens are validated by shape and never echoed
+  to logs or errors. The persistent `llmc.*` credential is disclosed once
+  on activation (stdout), then only you hold it.
+
+## Credential handling (details)
+
+- `llmcreg.*` — one-time registration token (TTL ≤ 15 min), consumed at
+  activation; presenting it again fails.
+- `llmc.*` — persistent credential, kept by you; rotate/revoke it from the
+  Animastor workspace at any time (a rotated/revoked credential kills the
+  live session immediately).
+- Exactly one live session per connector: connecting a second time with
+  the same credential replaces the first session.
+
+## Supported runtimes
+
+| Runtime | `--runtime-type` | Notes |
+|---|---|---|
+| Ollama | `ollama` | default base URL matches |
+| vLLM | `vllm` | pass `--base-url` |
+| llama.cpp | `llamacpp` | OpenAI-compatible server mode; pass `--base-url` |
+| LM Studio | `lmstudio` | pass `--base-url` |
+| Any OpenAI-compatible | `openai-compatible` | default type |
+
+V1 treats the type as a label — the wire protocol is identical; all five
+go through the same OpenAI-compatible adapter.
+
+## Protocol version
+
+The connector speaks **LAC v1** (`protocol_version: 1`, fixed in the
+`hello` frame). The full wire specification — every frame type, field,
+limit, error code, lifecycle rule, and the breaking-change policy — is
+shipped with this package as [SPEC.md](SPEC.md).
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| `Configuration invalid: … token is required…` | Bad token shape — copy it again; the token must start with `llmc.` or `llmcreg.` (3 dot-separated segments) |
+| `url must use wss://` | Plain `ws://` is allowed only for loopback hosts; use `wss://` for your real server |
+| `base-url must be loopback` | You pointed at a LAN address without `--allow-lan` — add the flag if the machine is really yours |
+| Reconnect loop (`reconnecting in …ms`) | The server is unreachable or the credential was revoked/rotated — check the URL, re-check the token, check the workspace's Local AI status page |
+| `discovery failed: runtime_unreachable` | The local runtime is not running or is on a different port — check `--base-url` and that the runtime serves `/v1/models` |
+| Models never appear in the workspace | Discovery is explicit: press "refresh models" in the workspace once; the connector reports facts only from real observations |
+| `busy` errors at the workspace | The connector allows 2 concurrent local requests; queue or reduce parallelism |
+| Session dies right after start (`replaced`) | Another connector process authenticated with the same credential — only one live session per connector |
+
+Logs (metadata-only) go to stdout/stderr; the process writes no files.
+
+## Compatibility & versioning
+
+- **Package version** (semver, independent) and **protocol version**
+  (wire, currently 1) are separate: a package v1.x.y speaks protocol v1.
+- Breaking protocol changes require a `protocol_version` bump — the server
+  rejects mismatched versions fail-closed, so old connectors never
+  half-work against a new server (and vice versa).
+- Non-breaking additions (optional fields, new error codes, relaxed limits)
+  ride the existing protocol version; unknown frames/fields are ignored
+  by design on both sides.
+- Node < 18 is not supported (the CLI relies on built-in fetch).
+
+## Development
+
+Layout (zero-build CommonJS):
 
 ```
-index.cjs                     CLI entrypoint
-lib/config.cjs                strict, fail-closed config parsing (loopback default)
-lib/runtime-adapters/         the allowlist seam (AD-5)
-  index.cjs                     runtime-type → adapter registry
-  openai-compatible.cjs         V1 adapter: GET {base}/v1/models +
-                                POST {base}/v1/chat/completions + strict normalization
-lib/chat.cjs                  chat.request validation + limits (Phase 4)
-lib/connector.cjs             WS session (hello/ready/heartbeat, discovery,
-                              chat.request/chat.cancel — non-streaming)
-lib/log.cjs                   metadata-only operation log (AD-6)
+index.cjs                  CLI entrypoint
+lib/config.cjs             strict fail-closed config parsing
+lib/connector.cjs          WS session state machine
+lib/chat.cjs               chat.request validation + limits
+lib/log.cjs                metadata-only ring buffer log
+lib/runtime-adapters/      adapter allowlist (openai-compatible)
+test/                      package-owned test suite (node:test)
 ```
+
+Run the package test suite (no backend, no database needed):
+
+```bash
+npm test
+```
+
+Further background documentation lives in the
+[Animastor monorepo](https://github.com/Animastor/animastor) — this package
+is fully self-contained for use and operation.

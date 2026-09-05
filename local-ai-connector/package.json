@@ -1,18 +1,34 @@
 {
   "name": "animastor-ai-connector",
   "version": "0.1.0",
-  "description": "Local AI Connector — outbound bridge between an Animastor workspace and a local OpenAI-compatible runtime (Ollama / vLLM / llama.cpp / LM Studio). V1: registration, heartbeat, model discovery, non-streaming inference. No streaming, no proxy surface.",
+  "description": "Local AI Connector — outbound bridge between an Animastor workspace and a local OpenAI-compatible runtime (Ollama / vLLM / llama.cpp / LM Studio). Speaks LAC v1 over one outbound WebSocket: registration, heartbeat, model discovery, streaming and non-streaming inference.",
   "main": "index.cjs",
   "bin": {
     "animastor-ai-connector": "index.cjs"
   },
+  "files": [
+    "index.cjs",
+    "lib/",
+    "README.md",
+    "SPEC.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "start": "node index.cjs"
+    "start": "node index.cjs",
+    "test": "node test/run-all.cjs"
   },
   "engines": {
     "node": ">=18"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Animastor/animastor.git",
+    "directory": "local-ai-connector"
+  },
+  "bugs": {
+    "url": "https://github.com/Animastor/animastor/issues"
+  },
   "dependencies": {
     "ws": "^8.21.3"
   }
