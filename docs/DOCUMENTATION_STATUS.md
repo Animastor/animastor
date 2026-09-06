@@ -376,6 +376,21 @@ Five documents describe the overall system. They have different scopes and level
 | Other `private-worker-installer-*.md` | Supporting — specific aspects (dependency research, manifest resolver, phase 15, frontend integration, E2E acceptance) |
 | `docs/04-planning/INSTALLER_ARCHITECTURE.md` | Supporting — installer architecture (may overlap with `private-worker-installer-architecture.md`) |
 
+### 11. Modular / Package Architecture (`docs/architecture/`)
+
+| Document | Status | Canonical for |
+|----------|--------|---------------|
+| **`MODULAR_PRODUCT_ARCHITECTURE.md`** | **Current** | ✅ **The unified concept** — module principles, levels of modularity (L0–L5), npm/package architecture, versioning & release, contract registry, governance, transition plan (Phases 9+) |
+| **`PLUGIN_EXTENSION_ARCHITECTURE.md`** | **Current** | ✅ **Plugin/extension architecture** — extension points, manifest & capabilities, lifecycle, security model (child of the concept) |
+| `MODULAR_PRODUCT_ARCHITECTURE_FINAL_REVIEW.md` | **Current** | Measured audit + the executed Phase 1–7 roadmap |
+| `MODULAR_PRODUCT_ARCHITECTURE_RECONNAISSANCE.md`, `_V2.md` | Historical | Point-in-time audits (superseded by the Final Review) |
+| `PHASE_1_GUARDRAILS.md` … `PHASE_8F_FIRST_NPM_RELEASE.md` | **Current** | Execution records of the migration roadmap; the guard baselines they describe are active |
+| `architecture-map.md` | **Current** | As-is system map (Reconnaissance #1) |
+| `decisions.md` | **Current** | Architectural decisions D1–D14 confirmed by code |
+| `PHASE_2..7_*.md` contract/guard descriptions | **Current** | Boundary contracts (VBook, LAC/Worker/Hub, Provider Gateway, Book Model, Player/Editor) |
+| `roadmap.md` | Historical | Pre-Phase-1 directions (superseded by the Final Review roadmap) |
+| Other files in `docs/architecture/` | Historical/Supporting | Point-in-time audits, deployment and phase-specific notes |
+
 ---
 
-*End of documentation status map. Updated 31 August 2026.*
+*End of documentation status map. Updated 31 August 2026; §11 added 2026-09-06.*
