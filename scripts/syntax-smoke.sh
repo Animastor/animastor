@@ -57,6 +57,7 @@ if [ $# -eq 0 ]; then
     GPU_HUB_SRC="$ROOT_DIR/gpu-hub"
     WORKER_SRC="$ROOT_DIR/worker"
     LAC_SRC="$ROOT_DIR/ai-connector"
+    CONTRACTS_SRC="$ROOT_DIR/contracts"
 
     if [ -d "$BACKEND_SRC" ]; then
         check_dir "backend/src" "$BACKEND_SRC"
@@ -70,6 +71,9 @@ if [ $# -eq 0 ]; then
     if [ -d "$LAC_SRC" ]; then
         check_dir "ai-connector" "$LAC_SRC"
     fi
+    if [ -d "$CONTRACTS_SRC" ]; then
+        check_dir "contracts" "$CONTRACTS_SRC"
+    fi
 else
     for area in "$@"; do
         case "$area" in
@@ -81,6 +85,9 @@ else
                 ;;
             worker)
                 check_dir "worker" "$ROOT_DIR/worker"
+                ;;
+            contracts)
+                check_dir "contracts" "$ROOT_DIR/contracts"
                 ;;
             *)
                 echo -e "${YELLOW}Unknown area: ${area}${NC}"

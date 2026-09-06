@@ -92,6 +92,10 @@ services:
       - ./backend/ai:/app/ai
       - ./backend/src:/app/src
       - ./backend/tests:/app/tests
+      # Phase 9C: canonical Job Protocol v2 package (@animastor/contracts).
+      # job-schema.js (a facade) requires it at runtime; this read-only mount
+      # makes the package resolvable inside the container without a registry.
+      - ./contracts:/app/node_modules/@animastor/contracts:ro
     depends_on:
       postgres:
         condition: service_healthy

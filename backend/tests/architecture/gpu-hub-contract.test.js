@@ -25,6 +25,10 @@ const gpuHubPath = path.join(REPO_ROOT, 'gpu-hub', 'gpu-hub.js');
 const workerPath = path.join(REPO_ROOT, 'worker', 'worker', 'worker.cjs');
 const dispatcherPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'gpu-dispatcher.js');
 const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-schema.js');
+// Phase 9C: the canonical Job Protocol v2 implementation moved to the
+// @animastor/contracts package; backend/src/runtime/job-schema.js is a
+// compatibility facade re-exporting it.
+const contractsImplPath = path.join(REPO_ROOT, 'contracts', 'src', 'job-protocol-v2.js');
 
 function read(file) {
     return readSource(file);
@@ -52,23 +56,27 @@ describe('architecture: GPU Hub contract', () => {
         }
     });
 
-    it('protocol_version stays 2 in all three synced copies', () => {
-        const jobSchema = read(jobSchemaPath);
+    it('protocol_version stays 2 in all synced copies (contracts canonical + hub + worker)', () => {
+        // Phase 9C: the backend-side literal lives in the contracts package
+        // (canonical); job-schema.js is a facade without its own literal.
+        const contractsImpl = read(contractsImplPath);
         const hub = read(gpuHubPath);
         const worker = read(workerPath);
         const v = (src) => [...src.matchAll(/PROTOCOL_VERSION\s*=\s*(\d+)/g)].map((m) => Number(m[1]));
-        expect(v(jobSchema), 'backend/src/runtime/job-schema.js').to.deep.equal([2]);
+        expect(v(contractsImpl), 'contracts/src/job-protocol-v2.js (canonical)').to.deep.equal([2]);
         expect(v(hub), 'gpu-hub/gpu-hub.js').to.deep.equal([2]);
         expect(v(worker), 'worker/worker/worker.cjs').to.deep.equal([2]);
+        expect(read(jobSchemaPath), 'backend facade must not define its own literal').to.not.match(/PROTOCOL_VERSION\s*=\s*\d/);
     });
 
-    it('SYNC anchors between the three copies stay in place', () => {
+    it('SYNC anchors between the copies stay in place', () => {
         const hub = read(gpuHubPath);
         expect(hub).to.include('SYNC: backend/src/runtime/job-schema.js');
         expect(hub).to.include('SYNC: backend/src/services/worker-auth.js');
-        const js = read(jobSchemaPath);
-        expect(js).to.include('SYNC: backend/src/runtime/job-schema.js') // self-documenting header
-            || true; // job-schema documents its copies in prose; hub/worker carry the anchor
+        // Phase 9C: the facade documents the canonical location instead of
+        // carrying its own SYNC copy (the old self-anchor is gone by design).
+        expect(read(jobSchemaPath)).to.include('@animastor/contracts');
+        expect(read(contractsImplPath)).to.include('Job Protocol v2');
     });
 
     it('job envelope required identity fields stay pinned on /task', () => {
@@ -115,12 +123,15 @@ describe('architecture: GPU Hub contract', () => {
 });
 
 describe('architecture: Job protocol consistency (job-schema SYNC copies)', () => {
-    // The three services carry manually-synced copies of the job_id parse.
-    // Format contract (see job-schema.js header): `${assetId}:${type}`,
+    // Phase 9C: the grammar lives in @animastor/contracts (canonical) and is
+    // consumed by backend through the job-schema.js facade. The three
+    // services still carry manually-synced copies of the job_id parse
+    // (hub result keys, worker input-file naming) until Phase 9D.
+    // Format contract (see JOB_PROTOCOL_V2.md §3.3): `${assetId}:${type}`,
     // parsed from the end; bookId may contain '_', chapter/scene/index may not.
 
-    it('backend job-schema parses every JOB_TYPE shape', () => {
-        const schema = require(jobSchemaPath);
+    it('canonical contracts package parses every JOB_TYPE shape', () => {
+        const schema = require(contractsImplPath);
         expect(schema.PROTOCOL_VERSION).to.equal(2);
         expect(schema.JOB_TYPES).to.deep.equal(['audio', 'image', 'iu_image', 'video']);
         // representative parses
@@ -137,6 +148,15 @@ describe('architecture: Job protocol consistency (job-schema SYNC copies)', () =
         // invalid → null, never throw
         expect(schema.parseJobId('garbage')).to.equal(null);
         expect(schema.parseJobId('a_b_c:dungeon')).to.equal(null);
+    });
+
+    it('backend facade re-exports the canonical implementation (runtime identity)', () => {
+        const schema = require(jobSchemaPath);
+        const canonical = require(contractsImplPath);
+        expect(schema.PROTOCOL_VERSION).to.equal(canonical.PROTOCOL_VERSION);
+        expect(schema.JOB_TYPES).to.deep.equal(canonical.JOB_TYPES);
+        expect(schema.parseJobId).to.equal(canonical.parseJobId);
+        expect(schema.buildJobId).to.equal(canonical.buildJobId);
     });
 
     it('hub job_id parsing stays consistent with the backend job-schema', () => {

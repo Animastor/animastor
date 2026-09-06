@@ -1,0 +1,26 @@
+{
+  "name": "@animastor/contracts",
+  "version": "0.1.0",
+  "description": "Frozen wire contracts shared by Animastor components. Currently: Job Protocol v2 (backend <-> GPU Hub <-> Worker) — protocol constants, job_id grammar, envelope/error contract helpers. Canonical implementation; docs/architecture/JOB_PROTOCOL_V2.md is the normative specification.",
+  "main": "src/index.js",
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node tests/run-all.cjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Animastor/animastor.git",
+    "directory": "contracts"
+  },
+  "bugs": {
+    "url": "https://github.com/Animastor/animastor/issues"
+  }
+}

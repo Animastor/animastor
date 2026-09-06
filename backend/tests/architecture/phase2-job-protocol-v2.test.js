@@ -21,6 +21,9 @@ const path = require('path');
 const { readSource, rel, REPO_ROOT } = require('./helpers');
 
 const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-schema.js');
+// Phase 9C: canonical implementation lives in @animastor/contracts;
+// backend/src/runtime/job-schema.js is a compatibility facade re-export.
+const contractsImplPath = path.join(REPO_ROOT, 'contracts', 'src', 'job-protocol-v2.js');
 const gpuHubPath = path.join(REPO_ROOT, 'gpu-hub', 'gpu-hub.js');
 const workerPath = path.join(REPO_ROOT, 'worker', 'worker', 'worker.cjs');
 const dispatcherPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'gpu-dispatcher.js');
@@ -30,14 +33,16 @@ function read(file) {
 }
 
 describe('architecture: Job Protocol v2 contract (backend → hub → worker boundary)', () => {
-    it('protocol_version = 2 in all three synced copies', () => {
-        const jobSchema = read(jobSchemaPath);
+    it('protocol_version = 2 in all synced copies (contracts canonical + hub + worker)', () => {
+        const contractsImpl = read(contractsImplPath);
         const hub = read(gpuHubPath);
         const worker = read(workerPath);
         const v = (src) => [...src.matchAll(/PROTOCOL_VERSION\s*=\s*(\d+)/g)].map((m) => Number(m[1]));
-        expect(v(jobSchema), 'backend/src/runtime/job-schema.js').to.deep.equal([2]);
+        expect(v(contractsImpl), 'contracts/src/job-protocol-v2.js (canonical)').to.deep.equal([2]);
         expect(v(hub), 'gpu-hub/gpu-hub.js').to.deep.equal([2]);
         expect(v(worker), 'worker/worker/worker.cjs').to.deep.equal([2]);
+        // the backend facade re-exports and must not define its own literal
+        expect(read(jobSchemaPath), 'backend facade must not define its own literal').to.not.match(/PROTOCOL_VERSION\s*=\s*\d/);
     });
 
     it('hub enforces protocol_version mismatch as 409', () => {
@@ -53,20 +58,20 @@ describe('architecture: Job Protocol v2 contract (backend → hub → worker bou
     it('v2 envelope contract includes dispatch_id', () => {
         const hub = read(gpuHubPath);
         expect(hub).to.match(/dispatch_id/);
-        const js = read(jobSchemaPath);
-        expect(js).to.match(/dispatch_id/);
+        // Phase 9C: dispatch_id is part of the frozen envelope contract in
+        // the canonical package (the backend facade is a pure re-export).
+        expect(read(contractsImplPath)).to.match(/dispatch_id/);
     });
 
     it('job_id type family is anchored the same in backend, hub, worker', () => {
-        // All three copies must know the four job types. We pin the set by
-        // checking each copy mentions the four type tokens (audio, image,
-        // iu_image, video) and that the worker split regex still anchors on
-        // the same type family.
-        const js = read(jobSchemaPath);
+        // All copies must know the four job types. We pin the set by
+        // checking the canonical package + facade path, the hub, and the
+        // worker split regex against the same type family.
+        const canonical = read(contractsImplPath);
         const hub = read(gpuHubPath);
         const worker = read(workerPath);
         for (const token of ['audio', 'image', 'iu_image', 'video']) {
-            expect(js).to.include(token);
+            expect(canonical).to.include(token);
             // gpu-hub.js is a large file; the type family is referenced via
             // the queue key builders and the job-dedup/result key builders,
             // not necessarily as a standalone token in every scan window.
@@ -103,7 +108,10 @@ describe('architecture: Job Protocol v2 contract (backend → hub → worker bou
 });
 
 describe('architecture: Job ID format contract (canonical parse)', () => {
-    const schema = require(jobSchemaPath);
+    const schema = require(contractsImplPath);
+    // Phase 9C: require the canonical implementation. The backend facade
+    // (jobSchemaPath) re-exports the same objects (runtime identity is
+    // pinned by phase9c-contracts.test.js).
 
     it('canonical parse recognizes all four JOB_TYPES', () => {
         expect(schema.JOB_TYPES).to.deep.equal(['audio', 'image', 'iu_image', 'video']);

@@ -47,33 +47,42 @@ Beacon-канал (`POST /beacon`, worker → hub) входит в проток�
 hub ↔ backend (key families, `drainPolicyLane`, registry `hdel`) в этот
 контракт НЕ входит — это отдельный (hub-extraction) scope.
 
-## 2. Source of truth (de-facto canonical implementation)
+## 2. Source of truth (canonical implementation)
 
-**`backend/src/runtime/job-schema.js` — текущая de-facto canonical
-implementation Job Protocol v2** до появления `@animastor/contracts`:
+**`contracts/src/job-protocol-v2.js` (npm-пакет `@animastor/contracts`) —
+canonical implementation Job Protocol v2** (Phase 9C; до этого de-facto
+canonical был `backend/src/runtime/job-schema.js`):
 
-- `PROTOCOL_VERSION = 2` (`job-schema.js:25`);
-- `JOB_TYPES = ['audio', 'image', 'iu_image', 'video']` (`:27`);
-- `STAGE_BY_KIND` (`:28-33`);
-- `buildJobId / splitJobId / parseJobId / getStageForJobId` (`:38-126`) —
-  canonical job_id grammar.
+- `PROTOCOL_VERSION = 2`;
+- `JOB_TYPES = ['audio', 'image', 'iu_image', 'video']`;
+- `SYSTEM_JOB_TYPES = ['audio', 'image', 'video']` (transport-типы
+  scan-очередей hub);
+- `STAGE_BY_KIND`;
+- `buildJobId / splitJobId / parseJobId / getStageForJobId` — canonical
+  job_id grammar;
+- envelope-константы и advisory-хелперы (`TASK_ENVELOPE_REQUIRED_FIELDS`,
+  `RESULT_ENVELOPE_REQUIRED_FIELDS`, `ERROR_ENVELOPE_REQUIRED_FIELDS`,
+  `ERROR_TOKENS`, `validateTaskEnvelopeIdentity`,
+  `validateResultEnvelopeIdentity`).
 
-Сам файл в Phase 9A **не меняется**.
+**`backend/src/runtime/job-schema.js`** — compatibility facade,
+re-exporting contracts (все backend-импорты сохранены; Phase 9C).
 
-GPU Hub и Worker сейчас содержат **согласованные protocol copies**:
+GPU Hub и Worker пока содержат **собственные inline-копии** (миграция на
+require контракта заблокирована — см.
+`PHASE_9C_CONTRACTS_EXTRACTION_AUDIT.md`; план замены — Phase 9D):
 
 | Копия | Что дублирует | SYNC-якорь |
 |---|---|---|
-| `gpu-hub/gpu-hub.js:33` (+ повтор `:758`) | `PROTOCOL_VERSION = 2` | `// SYNC: backend/src/runtime/job-schema.js (PROTOCOL_VERSION)` |
+| `gpu-hub/gpu-hub.js:33` (+ повтор `:758`) | `PROTOCOL_VERSION = 2` | `// SYNC: backend/src/runtime/job-schema.js (PROTOCOL_VERSION)` — путь ведёт на backend-facade, реальный источник — contracts |
 | `gpu-hub/gpu-hub.js:53` | `SYSTEM_JOB_TYPES = ['audio','image','video']` (без `iu_image` — transport-типы scan-очередей) | — |
 | `worker/worker/worker.cjs:49` | `PROTOCOL_VERSION = 2` | комментарии/тесты |
 | `worker/worker/worker.cjs:611,625` | inline job_id suffix-split `/(:(iu_image|image|audio|video)$)/` (подмножество grammar — именование input-файлов) | — |
 
-Это **transitional synchronization**: копии фактически согласованы today и
-pinned архитектурными тестами (`phase2-job-protocol-v2.test.js`,
-`gpu-hub-contract.test.js`), но ни одна не является published contract.
-**Дальнейшая Phase 9C обязана заменить эти копии единым contracts source**
-(`@animastor/contracts`); до тех пор `job-schema.js` — единственный
+Паритет копий с canonical-пакетом закреплён архитектурными тестами
+(`phase2-job-protocol-v2.test.js`, `gpu-hub-contract.test.js`,
+`phase9c-contracts.test.js` — cross-side contract test). До замены копий на
+require контракта (Phase 9D) пакет `@animastor/contracts` — единственный
 authoritative reference для имплементации протокола.
 
 ## 3. Normative contract
@@ -81,14 +90,16 @@ authoritative reference для имплементации протокола.
 ### 3.1 protocol_version
 
 - Значение: `2`, integer literal, присутствует во всех трёх компонентах
-  (`job-schema.js:25`, `gpu-hub.js:33`, `worker.cjs:49`). **[NORMATIVE — FROZEN]**
+  (canonical `contracts/src/job-protocol-v2.js`, `gpu-hub.js:33`,
+  `worker.cjs:49`). **[NORMATIVE — FROZEN]**
 - Передаётся в: task payload (backend→hub→worker), beacon (worker→hub),
   result/error (worker→hub), hub→backend callbacks (hub добавляет своё
   значение `PROTOCOL_VERSION`).
 - Все три компонента отклоняют несовпадающую версию (см. §3.15).
 - Mixed-version rollout не поддерживается: изменение версии требует
   остановки выдачи задач старым worker'ам до bump
-  (комментарий `job-schema.js:22-24`). **[NORMATIVE — FROZEN]**
+  (комментарий в canonical `contracts/src/job-protocol-v2.js`).
+  **[NORMATIVE — FROZEN]**
 
 ### 3.2 Job envelope (backend → hub → worker)
 
@@ -125,7 +136,8 @@ POST /task body (автор всех полей — backend):
 ### 3.3 job_id grammar
 
 Формат: **`${assetId}:${type}`** — canonical
-`backend/src/runtime/job-schema.js`:
+`contracts/src/job-protocol-v2.js` (`@animastor/contracts`; backend
+потребляет через facade `backend/src/runtime/job-schema.js`):
 
 ```
 audio-чанк:     {bookId}_{chapterId}_{sceneId}_{NNNN}:audio    (NNNN = pad(4), /^\d{4}$/)
@@ -148,7 +160,7 @@ scene image:    {bookId}_{chapterId}_{sceneId}:image           (legacy; assetId 
   input-файлов. Hub job_id не парсит вовсе (поля book/chapter/scene/stage
   приходят в envelope из §3.2). **[CURRENT BEHAVIOR]**
 - Все job types, включая `iu_image`, закреплены в canonical `JOB_TYPES`
-  (`job-schema.js:27`) и в архитектурных тестах.
+  (`contracts/src/job-protocol-v2.js`) и в архитектурных тестах.
 
 ### 3.4 job_id vs job_type vs stage (тройная идентичность)
 
@@ -158,7 +170,7 @@ scene image:    {bookId}_{chapterId}_{sceneId}:image           (legacy; assetId 
 |---|---|---|---|
 | `job_id` suffix (asset type) | `audio, image, iu_image, video` | суффикс job_id; canonical `JOB_TYPES` | `...:iu_image` |
 | `job_type` (transport type) | `audio, image, video` | envelope; hub-очередь `queue:{job_type}...`; `SYSTEM_JOB_TYPES` (`gpu-hub.js:53`); dispatcher `validTypes` (`gpu-dispatcher.js:139`) | `image` |
-| `stage` | `audio, image, video` | envelope; result-key; backend `STAGE_BY_KIND` (`job-schema.js:28-33`) | `image` |
+| `stage` | `audio, image, video` | envelope; result-key; canonical `STAGE_BY_KIND` (`contracts/src/job-protocol-v2.js`) | `image` |
 
 - `iu_image` — **asset-type в job_id**, но транспортно ходит как
   `job_type = 'image'`, `stage = 'image'`
@@ -638,20 +650,28 @@ registry-проверка на `/task/next`).
 
 - Этот документ — published contract, который требует extraction-as-product
   (Phase 9 audit §4.1: «Job Protocol v2 должен стать published contract»).
-- **Phase 9C** создаст `packages/contracts` (`@animastor/contracts`):
-  constants (`PROTOCOL_VERSION`, `JOB_TYPES`, `SYSTEM_JOB_TYPES`), job_id
-  grammar (build/split/parse), JSON Schema envelope;
-  `backend/src/runtime/job-schema.js` станет facade/re-export (12 backend
-  consumers не меняются); SYNC-копии hub/worker заменяются require'ом
-  контракта. `protocol_version` остаётся 2.
+- **Phase 9C (выполнена)** создала `contracts/` (`@animastor/contracts`,
+  НЕ опубликован в registry): constants (`PROTOCOL_VERSION`, `JOB_TYPES`,
+  `SYSTEM_JOB_TYPES`), job_id grammar (build/split/parse), stage mapping,
+  envelope-константы + advisory-хелперы, error-токены; собственные
+  package-тесты (`contracts/tests/`); architecture guards
+  (`phase9c-contracts.test.js`, включая cross-side contract test).
+  `backend/src/runtime/job-schema.js` стал compatibility facade/re-export
+  (12 backend consumers не меняются). SYNC-копии hub/worker
+  **временно сохранены** (миграция заблокирована docker build-context /
+  zero-dep bundle freeze — см. `PHASE_9C_CONTRACTS_EXTRACTION_AUDIT.md`).
+  `protocol_version` остаётся 2.
 - **Phase 9D** физически переместит `worker/worker/` в standalone пакет
-  `animastor-worker`; архитектурные тесты обновят пути source-inspection;
+  `animastor-worker`; на том же этапе — перевод hub/worker копий на require
+  `@animastor/contracts` (через bundle-сборку/копирование пакета в их
+  build/deploy контур); архитектурные тесты обновят пути source-inspection;
   volume mounts docker-compose и `install-manifests source.repository` —
   на hub-API delivery (`/worker-bundle` уже существует).
-- До 9C/9D единственный механизм anti-drift — architecture tests
-  (`phase2-job-protocol-v2.test.js`, `gpu-hub-contract.test.js`,
-  `phase2-hub-worker-boundary.test.js`, `dependency-guardrails.test.js`,
-  `phase7-extraction-readiness.test.js`) + SYNC-комментарии.
+- До замены hub/worker копий на contracts (9D) anti-drift: architecture
+  tests (`phase2-job-protocol-v2.test.js`, `gpu-hub-contract.test.js`,
+  `phase9c-contracts.test.js` cross-side parity, `phase2-hub-worker-boundary.test.js`,
+  `dependency-guardrails.test.js`, `phase7-extraction-readiness.test.js`)
+  + SYNC-комментарии.
 - Изменения этого контракта после freeze: только через versioning policy
   (§4) с обновлением данного документа в том же PR.
 
