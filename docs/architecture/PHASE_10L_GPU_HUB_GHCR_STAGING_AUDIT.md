@@ -13,7 +13,7 @@
 | Item | Value |
 |---|---|
 | **Standalone repo** | `Animastor/animastor-gpu-hub` |
-| **CI HEAD** | `b95bfdcd7d576f023e257784a8dc36d57ce8a0aa` |
+| **CI HEAD** | `b95870f722dc6d192887f76612f46bf89860ec82` |
 | **Workflow** | `.github/workflows/ghcr-release.yml` — **ACTIVATED** (was disabled) |
 | **Trigger** | `workflow_dispatch` with `image_tag` input |
 | **Registry** | `ghcr.io` |
