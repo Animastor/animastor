@@ -213,10 +213,13 @@ describe('architecture: LAC liveness / registry contract', () => {
         expect(reg).to.include('unregister');
         // PG status is a trace; the live map is authoritative (documented
         // in shared-pool.js: 'the AUTHORITATIVE WS liveness, LAC §7 — PG status
-        // is a stale trace and is NEVER consulted here').
+        // is a stale trace and is NEVER consulted here'). The anchor is
+        // wrap-tolerant: the comment may line-break between the words
+        // (Phase 10J — the invariant, not the line layout, is frozen).
         const pool = read(sharedPool);
         expect(pool).to.match(/registry\.isLive/);
-        expect(pool).to.match(/is a stale trace/);
+        expect(pool).to.match(/is\s+a\s+stale\s*(?:\/\/)?\s*trace/);
+        expect(pool).to.match(/NEVER\s+consulted\s+here/);
     });
 
     it('LAC liveness mirror on Redis is backend-owned, not LAC itself', () => {

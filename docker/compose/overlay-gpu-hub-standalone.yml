@@ -1,0 +1,32 @@
+# ============================================================
+# OPTIONAL overlay — GPU Hub standalone image cutover (Phase 10J)
+# ============================================================
+# Use in the FUTURE, after the standalone image is published
+# (Animastor/animastor-gpu-hub CI). NOT active today — the default
+# docker-compose.yml still builds ./gpu-hub (transitional fixture).
+#
+# Usage (cutover day):
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker/compose/overlay-gpu-hub-standalone.yml \
+#     up -d gpu-hub
+#
+# RULES (Phase 10J audit §Docker cutover):
+#   - NEVER use a moving tag. Pin by digest or by
+#     immutable version tag AND record the digest in the cutover audit.
+#   - Set GPU_HUB_IMAGE in .env first, e.g.:
+#       GPU_HUB_IMAGE=ghcr.io/animastor/animastor-gpu-hub@sha256:<digest>
+#   - The service name, container name, networks, env, and the five
+#     artifact mounts stay IDENTICAL to the base compose (wire contract
+#     unchanged) — only the image source changes.
+#   - Runtime sources of the published image must be sha256-identical to
+#     the monorepo gpu-hub/ fixture at cutover time (verify before switch).
+#
+# This overlay intentionally does nothing until GPU_HUB_IMAGE is set to a
+# registry reference: without it the base compose default (local build)
+# stays authoritative.
+
+services:
+  gpu-hub:
+    image: ${GPU_HUB_IMAGE:?set GPU_HUB_IMAGE=<pinned digest ref> in .env}
+    build: !reset null

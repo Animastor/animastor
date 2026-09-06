@@ -1,18 +1,21 @@
 // ======================================================
 // PHASE 10D — GPU Hub package boundary guards
+// (anchors updated by Phase 10J to the post-10G registry architecture)
 // ======================================================
 // Phase 10D physically prepared gpu-hub/ as a standalone npm package
-// (@animastor/gpu-hub) WITHOUT changing production behavior: the monorepo
-// deployment (docker-compose, compose mounts, nginx /gpu/, worker-auth debt)
-// stays exactly as it was. These guards freeze the NEW package boundary:
+// (@animastor/gpu-hub) WITHOUT changing production behavior. Phase 10G then
+// migrated the package from the pre-publish `file:../contracts` seam to the
+// published registry dependency, and Phase 10H published the repo as
+// Animastor/animastor-gpu-hub. These guards freeze the CURRENT boundary:
 //
 //   PB1  Package identity: @animastor/gpu-hub@0.1.0, MIT, main=server.js.
 //   PB2  Manifest dependency set is frozen: express/cors/ioredis runtime +
-//        @animastor/contracts (file:../contracts, optional until registry
-//        publish — GATE recorded in the 10D audit). No devDependencies.
-//   PB3  Package-lock.json is in sync with the manifest and contains the
-//        @animastor/contracts file: link entry (no hidden monorepo-root
-//        dependency — hub resolves contracts from its own node_modules).
+//        @animastor/contracts ^0.1.0 as a REQUIRED registry dependency
+//        (Phase 10G; the file: seam is retired — reintroducing it fails).
+//        No devDependencies, no optionalDependencies.
+//   PB3  Package-lock.json is in sync with the manifest and resolves
+//        @animastor/contracts from the npm registry (integrity pinned,
+//        no file: link, no hidden monorepo-root fallback).
 //   PB4  npm pack contents are EXACTLY the frozen allowlist (9 files):
 //        runtime modules + package files only — no node_modules, backend,
 //        worker, frontend, workflows, install manifests, secrets, tests,
@@ -21,13 +24,20 @@
 //        bootstrap.js) — a new runtime file is a boundary decision and
 //        must update this guard.
 //   PB6  Docker deployment contract intact: Dockerfile present, standalone
-//        build (npm install of this package), EXPOSE 5000, CMD server.js;
-//        .dockerignore excludes node_modules/tests.
+//        build (npm install of this package resolves contracts from the
+//        registry), EXPOSE 5000, CMD server.js; .dockerignore excludes
+//        node_modules/tests. The compose gpu-hub service carries NO
+//        contracts mount (a mount would shadow the registry copy —
+//        Phase 10B seam retired in 10G).
 //   PB7  Contracts resolution: require('@animastor/contracts') from the hub
-//        tree resolves into the canonical <repo>/contracts implementation —
-//        never a copy (no second Job Protocol implementation).
+//        tree resolves to a registry-installed @animastor/contracts@0.1.0
+//        copy inside the hub's own node_modules (self-contained install —
+//        never the monorepo-root tree). No-fork is enforced by protocol
+//        parity (PROTOCOL_VERSION === monorepo canonical === 2), not by
+//        realpath.
 //
-// Docs: docs/architecture/PHASE_10D_GPU_HUB_PACKAGE_EXTRACTION_AUDIT.md
+// Docs: docs/architecture/PHASE_10D_GPU_HUB_PACKAGE_EXTRACTION_AUDIT.md,
+//       docs/architecture/PHASE_10G_GPU_HUB_REGISTRY_MIGRATION.md
 
 const { expect } = require('chai');
 const path = require('path');
@@ -67,17 +77,20 @@ describe('phase10d: GPU Hub package identity', () => {
         expect(pkg.main).to.equal('server.js');
     });
 
-    it('manifest declares exactly the frozen dependency set (express/cors/ioredis + canonical contracts)', () => {
-        expect(Object.keys(pkg.dependencies).sort()).to.deep.equal(['cors', 'express', 'ioredis']);
-        expect(pkg.optionalDependencies).to.deep.equal({ '@animastor/contracts': 'file:../contracts' });
-        // The canonical Job Protocol v2 source must never be vendored/copied:
-        // file: is the pre-registry seam (monorepo sibling); registry publish
-        // is the recorded 10D+ gate.
-        expect(pkg.optionalDependencies['@animastor/contracts']).to.equal('file:../contracts');
+    it('manifest declares exactly the frozen dependency set (express/cors/ioredis + REQUIRED canonical contracts)', () => {
+        // Phase 10G: contracts is a REQUIRED registry dependency — the
+        // pre-publish file:/optional seam is retired. Reintroducing a file:
+        // or optional form must fail (it would reintroduce a monorepo
+        // coupling into a published package).
+        expect(Object.keys(pkg.dependencies).sort()).to.deep.equal(
+            ['@animastor/contracts', 'cors', 'express', 'ioredis'],
+        );
+        expect(pkg.dependencies['@animastor/contracts'], 'contracts stays the canonical registry dependency').to.equal('^0.1.0');
+        expect(pkg.optionalDependencies, 'the file: seam must NOT return').to.be.undefined;
+        expect(pkg.devDependencies, 'devDependencies would widen the boundary').to.be.undefined;
     });
 
-    it('package stays runtime-only (no devDependencies, tests excluded from pack surface)', () => {
-        expect(pkg.devDependencies, 'devDependencies would widen the boundary').to.be.undefined;
+    it('package stays runtime-only (tests excluded from pack surface)', () => {
         expect(pkg.files).to.include.members(['gpu-hub.js', 'server.js', 'tarball.js', 'bootstrap.js']);
         expect(pkg.files).to.not.include('tests');
     });
@@ -95,11 +108,13 @@ describe('phase10d: GPU Hub lockfile + contracts dependency', () => {
         expect(lock.lockfileVersion).to.equal(3);
     });
 
-    it('lockfile records the @animastor/contracts file: dependency (no hidden monorepo-root resolution)', () => {
+    it('lockfile resolves @animastor/contracts from the npm registry (integrity-pinned, no file: seam, no monorepo-root fallback)', () => {
         expect(lock.packages['']).to.exist;
-        expect(lock.packages[''].optionalDependencies).to.deep.equal({ '@animastor/contracts': 'file:../contracts' });
-        expect(lock.packages['node_modules/@animastor/contracts']).to.exist;
-        expect(lock.packages['node_modules/@animastor/contracts'].resolved).to.equal('../contracts');
+        expect(lock.packages[''].dependencies).to.include({ '@animastor/contracts': '^0.1.0' });
+        const entry = lock.packages['node_modules/@animastor/contracts'];
+        expect(entry, 'contracts must be a resolved lockfile entry').to.exist;
+        expect(entry.resolved, 'registry resolution (Phase 10G)').to.equal('https://registry.npmjs.org/@animastor/contracts/-/contracts-0.1.0.tgz');
+        expect(entry.integrity, 'integrity hash must be pinned').to.be.a('string').and.include('sha512-');
     });
 
     it('hub-local node_modules link to contracts exists (installed tree resolves without monorepo root)', () => {
@@ -185,23 +200,32 @@ describe('phase10d: Docker deployment contract', () => {
         expect(src).to.include('tests');
     });
 
-    it('Dockerfile expects contracts at runtime via the compose mount seam (unchanged production behavior)', () => {
-        // The compose service mounts ./contracts →
-        // /app/node_modules/@animastor/contracts:ro (Phase 10B seam, kept in
-        // 10D for deployment compatibility). The Dockerfile itself must not
-        // vendor a protocol copy.
+    it('compose gpu-hub service carries NO contracts mount (Phase 10G: registry copy must not be shadowed)', () => {
+        // Phase 10B mounted ./contracts → /app/node_modules/@animastor/contracts:ro.
+        // Phase 10G switched the hub to the published registry package; a
+        // surviving mount would silently shadow the registry copy inside the
+        // container and reintroduce the monorepo coupling. It must stay gone.
         const compose = fs.readFileSync(path.join(REPO_ROOT, 'docker-compose.yml'), 'utf8');
-        expect(compose).to.include('./contracts:/app/node_modules/@animastor/contracts:ro');
+        const hubSection = compose.slice(compose.indexOf('  gpu-hub:'), compose.indexOf('  nginx:'));
+        expect(hubSection, 'contracts mount must NOT return in the gpu-hub service').to.not.include('@animastor/contracts');
     });
 });
 
 // ── PB7 — canonical contracts resolution ────────────────────────────────
 
 describe('phase10d: canonical contracts resolution', () => {
-    it('require.resolve(@animastor/contracts) from the hub tree lands in the canonical implementation', () => {
-        const resolved = require.resolve('@animastor/contracts', { paths: [HUB_DIR] });
-        const canonical = path.join(REPO_ROOT, 'contracts', 'src', 'index.js');
-        expect(fs.realpathSync(resolved)).to.equal(fs.realpathSync(canonical));
+    // Phase 10G/10H: the hub installs its OWN copy from the npm registry
+    // (self-contained package). Resolution must land inside the hub tree —
+    // NOT in the monorepo root (that would be the old root-fallback seam).
+    // Correctness of the copy (no fork) is guarded by protocol parity:
+    // hub PROTOCOL_VERSION === monorepo canonical contracts value (asserted
+    // here), plus the route/ownership freeze in the standalone suite.
+    const contractsCanonical = path.join(REPO_ROOT, 'contracts', 'src', 'index.js');
+
+    it('require.resolve(@animastor/contracts) from the hub tree lands inside the hub tree (registry install, not root fallback)', () => {
+        const resolved = fs.realpathSync(require.resolve('@animastor/contracts', { paths: [HUB_DIR] }));
+        expect(resolved.startsWith(fs.realpathSync(HUB_DIR) + path.sep),
+            `contracts must resolve inside ${HUB_DIR}, got ${resolved}`).to.be.true;
     });
 
     it('resolved package identity is @animastor/contracts@0.1.0 (no copy, no fork)', () => {
@@ -209,5 +233,15 @@ describe('phase10d: canonical contracts resolution', () => {
         const pkg = JSON.parse(fs.readFileSync(path.join(path.dirname(resolved), '..', 'package.json'), 'utf8'));
         expect(pkg.name).to.equal('@animastor/contracts');
         expect(pkg.version).to.equal('0.1.0');
+    });
+
+    it('protocol parity: hub copy PROTOCOL_VERSION === monorepo canonical contracts value', () => {
+        // require() has no `paths` option — resolve the hub-local file first,
+        // then load exactly that module (never the root symlink).
+        const hubEntry = require.resolve('@animastor/contracts', { paths: [HUB_DIR] });
+        const hubResolved = require(hubEntry);
+        const canonical = require(contractsCanonical);
+        expect(hubResolved.jobProtocolV2.PROTOCOL_VERSION,
+            'a hub-local contracts copy that diverges from canonical is a fork').to.equal(canonical.jobProtocolV2.PROTOCOL_VERSION);
     });
 });

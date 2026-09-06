@@ -278,7 +278,7 @@ BOOKS_DIR (/data/books)
 
 **Worker** (`worker/worker/worker.cjs`, 559 LOC): beacon every 10 s → poll `/task/next` → save input assets to ComfyUI input dir → `POST /prompt` → poll `/history` until output (per-job `timeout_ms` with video default 2 h) → read file from disk (OOM-safe) → `POST /task/result` (base64 data URL). Protocol v2 requires `dispatch_id`.
 
-**GPU Hub** (`gpu-hub/gpu-hub.js`, 829 LOC):
+**GPU Hub** (source of truth: standalone repo `Animastor/animastor-gpu-hub`, package `@animastor/gpu-hub@0.1.0`; the monorepo `gpu-hub/` directory is a transitional byte-parity fixture until the cutover — Phase 10J/10K):
 - Registries/queues in Redis (see §6).
 - 10 s interval: refresh heartbeats for running jobs; **per-job timeout** and **per-GPU timeout** → `notifyBackendError` (5 retries → fallback `animastor:error:{job}`).
 - Result flow: store `animastor:result:*` → forward to backend `/gpu/task/result` with 5 retries (if backend down, result stays in Redis; reconcile Phase A replays).

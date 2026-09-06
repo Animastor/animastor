@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Rebuild the local GPU Hub from the transitional monorepo fixture ./gpu-hub.
+# Phase 10J: the hub source of truth is Animastor/animastor-gpu-hub; after
+# the cutover this script becomes obsolete (image pull + redeploy instead
+# of a local build — see docker/compose/overlay-gpu-hub-standalone.yml).
 
 set -e
 

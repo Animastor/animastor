@@ -251,6 +251,13 @@
 │   └── fix-nodes-image.sh
 │
 ├── gpu-hub/
+│   # [TRANSITIONAL FIXTURE — Phase 10J] Source of truth for the GPU Hub is
+│   # the standalone repo Animastor/animastor-gpu-hub
+│   # (@animastor/gpu-hub@0.1.0). This directory is a byte-parity copy kept
+│   # until the cutover (Phase 10K): the default compose still builds the
+│   # hub from here, and monorepo hub test suites still point at it.
+│   # Runtime backend code does NOT import it (HTTP/Redis wire contract
+│   # only — guarded by tests/architecture/phase10j-*).
 │   ├── package.json
 │   ├── Dockerfile
 │   ├── server.js                                # [ENTRY]

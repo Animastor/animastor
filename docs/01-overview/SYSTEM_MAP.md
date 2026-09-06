@@ -43,7 +43,7 @@ Deployment (`docker-compose.yml`): `postgres` (PG 16), `redis` (7, persisted vol
 | **AI Chat** | `backend/src/services/chat-engine.cjs` | Tool-based assistant (chat/edit/director/import modes). |
 | **Generators** | `backend/src/{audio,image,video}/*` | ComfyUI workflow assembly and task submission to GPU. |
 | **Workflow / Connector Layer** | `backend/src/workflows/*`, `services/workflow-manager.js`, `backend/ai/workflows/`, `backend/ai/connectors/` | Loading and adapting ComfyUI JSON templates; connectors as declarative task descriptions. |
-| **GPU Hub** | `gpu-hub/gpu-hub.js` | Task queues in Redis, worker distribution, requeue on timeout, result delivery to backend. |
+| **GPU Hub** | standalone repo `Animastor/animastor-gpu-hub` (`@animastor/gpu-hub@0.1.0`); monorepo `gpu-hub/` is a transitional fixture until cutover (Phase 10J/10K) | Task queues in Redis, worker distribution, requeue on timeout, result delivery to backend. Backend ↔ Hub coupling is wire-level only (`HUB_URL` HTTP + shared Redis + `GPU_HUB_API_KEY`). |
 | **GPU Worker** | `worker/worker/worker.cjs` | CJS worker (Node 20+ with global fetch): polling Hub → ComfyUI → result (base64 / filesystem fallback). PW-2: private worker mode, PW-4: FAIL CLOSED. |
 | **Storage** | `backend/src/storage/*`, `book/*` | PostgreSQL (30+ tables), Redis (runtime), filesystem (multi-file books, assets). |
 | **Frontend (Web)** | `frontends/app/` (Preact + Vite) | Responsive SPA: MobileShell / DesktopShell; pages: File, Generator, Player, Editor, Navigator, Settings. |

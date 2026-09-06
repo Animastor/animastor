@@ -12,14 +12,16 @@
 //       NOT re-implement the grammar (no second divergent schema).
 //   C4. protocol_version = 2 pinned in the canonical source.
 //   C5. dependency direction: nothing code-depends on contracts except the
-//       backend facade, the hub (Phase 10B seam) and tests; worker/LAC stay
-//       copy-isolated.
+//       backend facade and tests; the hub consumes the PUBLISHED registry
+//       package (Phase 10G — no hub-side code seam into contracts/ sources).
+//       worker/LAC stay copy-isolated.
 //   C6. cross-side parity: contracts ↔ backend facade runtime identity;
 //       contracts JOB_TYPES ↔ worker split-regex family ↔ hub
 //       SYSTEM_JOB_TYPES (Backend ↔ Contracts ↔ Worker/GPU Hub).
 //   C7. deployment: the backend compose service mounts the package so the
-//       facade resolves inside the container; the gpu-hub service mounts it
-//       too (Phase 10B) so the hub resolves it in its container.
+//       facade resolves inside the container. The gpu-hub service carries
+//       NO contracts mount (Phase 10G: the hub installs the published
+//       package from the registry — a mount would shadow it).
 //
 // Normative spec: docs/architecture/JOB_PROTOCOL_V2.md (FROZEN).
 // Audit: docs/architecture/PHASE_9C_CONTRACTS_EXTRACTION_AUDIT.md
@@ -185,14 +187,13 @@ describe('Phase 9C: canonical protocol value', () => {
 
 // ── C5 — dependency direction ────────────────────────────────────────────
 describe('Phase 9C: dependency direction into contracts', () => {
-    it('only the backend facade and the hub require into contracts (production trees)', () => {
-        // Phase 10B: the hub is the second sanctioned production consumer —
-        // the backend facade (re-export) and gpu-hub.js (direct, compose
-        // mount seam). Backend business logic must still consume the
-        // facade, not the package directly; worker/LAC stay copy-isolated.
+    it('only the backend facade reaches contracts relatively; hub consumes the registry package (production trees)', () => {
+        // Phase 10G: the hub consumes the PUBLISHED registry package via its
+        // own manifest — it must NOT relatively reach into the monorepo
+        // contracts/ sources. The backend facade stays the single relative
+        // consumer; worker/LAC stay copy-isolated.
         const allowed = new Set([
             'backend/src/runtime/job-schema.js',
-            'gpu-hub/gpu-hub.js',
         ]);
         const offenders = [];
         for (const dir of [BACKEND_SRC, HUB_DIR, WORKER_DIR, LAC_DIR]) {
@@ -201,13 +202,22 @@ describe('Phase 9C: dependency direction into contracts', () => {
                     if (target.startsWith('contracts/') && !allowed.has(rel(file))) {
                         offenders.push(`${rel(file)}: ${spec}`);
                     }
-                    if (spec.includes('@animastor/contracts') && !allowed.has(rel(file))) {
-                        offenders.push(`${rel(file)}: ${spec}`);
-                    }
                 }
             }
         }
-        expect(offenders, 'backend business logic must consume the facade, not the package directly').to.deep.equal([]);
+        expect(offenders, 'backend business logic must consume the facade, not contracts sources directly').to.deep.equal([]);
+    });
+
+    it('no backend/src file bypasses the facade via the bare npm specifier (facade is the single choke point)', () => {
+        const offenders = [];
+        for (const file of listSourceFiles(BACKEND_SRC)) {
+            for (const spec of requireSpecifiers(readSource(file))) {
+                if (spec.includes('@animastor/contracts') && !rel(file).endsWith('runtime/job-schema.js')) {
+                    offenders.push(`${rel(file)}: ${spec}`);
+                }
+            }
+        }
+        expect(offenders, 'backend must import contracts only through the facade').to.deep.equal([]);
     });
 
     it('the facade stays the ONLY backend production consumer (single choke point)', () => {
@@ -301,12 +311,13 @@ describe('Phase 9C: contracts deployment wiring', () => {
         expect(compose).to.include('./contracts:/app/node_modules/@animastor/contracts:ro');
     });
 
-    it('gpu-hub compose service mounts the contracts package read-only (Phase 10B seam)', () => {
-        // The hub consumes the canonical package at runtime; the mount is
-        // the seam that makes '@animastor/contracts' resolvable inside its
-        // container (the ./gpu-hub build context stays untouched).
+    it('gpu-hub compose service carries NO contracts mount (Phase 10G: hub resolves the published registry package)', () => {
+        // The hub installs @animastor/contracts from the npm registry
+        // (Phase 10G); the Phase 10B compose mount was removed then. A
+        // surviving mount would SHADOW the registry copy inside the hub
+        // container and silently reintroduce the monorepo coupling.
         const compose = fs.readFileSync(path.join(REPO_ROOT, 'docker-compose.yml'), 'utf8');
         const hubSection = compose.slice(compose.indexOf('  gpu-hub:'), compose.indexOf('  nginx:'));
-        expect(hubSection, 'gpu-hub service must mount ./contracts read-only at the package path').to.include('./contracts:/app/node_modules/@animastor/contracts:ro');
+        expect(hubSection, 'contracts mount must NOT return in the gpu-hub service').to.not.include('@animastor/contracts');
     });
 });

@@ -103,7 +103,12 @@ services:
         condition: service_healthy
 
   gpu-hub:
+    # Phase 10J: transitional build from the monorepo fixture (default).
+    # Cutover: set GPU_HUB_IMAGE to the pinned standalone image and remove
+    # the `build:` line (or use docker/compose/overlay-gpu-hub-standalone.yml).
+    # NEVER use a moving tag — pin by digest (see the Phase 10J audit).
     build: ./gpu-hub
+    image: ${GPU_HUB_IMAGE:-animastor-gpu-hub:local}
     container_name: gpu-hub
     restart: unless-stopped
     networks:
