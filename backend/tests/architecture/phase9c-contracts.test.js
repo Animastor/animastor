@@ -12,12 +12,14 @@
 //       NOT re-implement the grammar (no second divergent schema).
 //   C4. protocol_version = 2 pinned in the canonical source.
 //   C5. dependency direction: nothing code-depends on contracts except the
-//       backend facade (+ tests); hub/worker/LAC stay copy-isolated.
+//       backend facade, the hub (Phase 10B seam) and tests; worker/LAC stay
+//       copy-isolated.
 //   C6. cross-side parity: contracts ↔ backend facade runtime identity;
 //       contracts JOB_TYPES ↔ worker split-regex family ↔ hub
 //       SYSTEM_JOB_TYPES (Backend ↔ Contracts ↔ Worker/GPU Hub).
 //   C7. deployment: the backend compose service mounts the package so the
-//       facade resolves inside the container.
+//       facade resolves inside the container; the gpu-hub service mounts it
+//       too (Phase 10B) so the hub resolves it in its container.
 //
 // Normative spec: docs/architecture/JOB_PROTOCOL_V2.md (FROZEN).
 // Audit: docs/architecture/PHASE_9C_CONTRACTS_EXTRACTION_AUDIT.md
@@ -138,13 +140,14 @@ describe('Phase 9C: backend job-schema stays a pure facade', () => {
         expect(offenders, 'a grammar implementation that does not delegate to contracts is a divergent schema').to.deep.equal([]);
     });
 
-    it('PROTOCOL_VERSION literal may only live in contracts (canonical) and the frozen hub/worker copies', () => {
-        // allowed definition sites: the canonical package, the frozen hub and
-        // worker copies, and the LAC wire protocol (ai-connector v1 — a
-        // different protocol, NOT Job Protocol v2).
+    it('PROTOCOL_VERSION literal may only live in contracts (canonical) and the worker generated copy', () => {
+        // allowed definition sites: the canonical package, the worker
+        // generated copy, and the LAC wire protocol (ai-connector v1 — a
+        // different protocol, NOT Job Protocol v2). Phase 10B removed the
+        // hub from this list: the hub consumes the canonical package via
+        // the compose mount seam and carries no local literal.
         const allowed = new Set([
             'contracts/src/job-protocol-v2.js',        // canonical
-            'gpu-hub/gpu-hub.js',                      // frozen copy (Phase 9C blocker)
             'worker/worker/job-protocol-v2.cjs',       // GENERATED from canonical (Phase 9D, B2)
             'backend/src/routes/ai-connector-routes.cjs', // LAC protocol v1 (separate contract)
         ]);
@@ -182,9 +185,14 @@ describe('Phase 9C: canonical protocol value', () => {
 
 // ── C5 — dependency direction ────────────────────────────────────────────
 describe('Phase 9C: dependency direction into contracts', () => {
-    it('only the backend facade requires into contracts (production trees)', () => {
+    it('only the backend facade and the hub require into contracts (production trees)', () => {
+        // Phase 10B: the hub is the second sanctioned production consumer —
+        // the backend facade (re-export) and gpu-hub.js (direct, compose
+        // mount seam). Backend business logic must still consume the
+        // facade, not the package directly; worker/LAC stay copy-isolated.
         const allowed = new Set([
             'backend/src/runtime/job-schema.js',
+            'gpu-hub/gpu-hub.js',
         ]);
         const offenders = [];
         for (const dir of [BACKEND_SRC, HUB_DIR, WORKER_DIR, LAC_DIR]) {
@@ -193,7 +201,7 @@ describe('Phase 9C: dependency direction into contracts', () => {
                     if (target.startsWith('contracts/') && !allowed.has(rel(file))) {
                         offenders.push(`${rel(file)}: ${spec}`);
                     }
-                    if (spec.includes('@animastor/contracts') && rel(file) !== 'backend/src/runtime/job-schema.js') {
+                    if (spec.includes('@animastor/contracts') && !allowed.has(rel(file))) {
                         offenders.push(`${rel(file)}: ${spec}`);
                     }
                 }
@@ -202,7 +210,7 @@ describe('Phase 9C: dependency direction into contracts', () => {
         expect(offenders, 'backend business logic must consume the facade, not the package directly').to.deep.equal([]);
     });
 
-    it('the facade stays the ONLY production consumer (single choke point)', () => {
+    it('the facade stays the ONLY backend production consumer (single choke point)', () => {
         const facade = read(jobSchemaPath);
         expect(facade.match(/require\('@animastor\/contracts'\)/g), 'exactly one package require in the facade').to.have.length(1);
     });
@@ -251,10 +259,13 @@ describe('Phase 9C: cross-side Job Protocol v2 parity', () => {
         }
     });
 
-    it('protocol_version = 2 in every synced copy (contracts + hub + worker generated copy)', () => {
+    it('protocol_version = 2 (contracts canonical; hub + worker consume it, no hub local literal)', () => {
+        // Phase 10B: the hub consumes the canonical package via the compose
+        // mount seam and carries NO local literal; the worker generated copy
+        // still carries the frozen literal.
         const v = (src) => [...src.matchAll(/PROTOCOL_VERSION\s*=\s*(\d+)/g)].map((m) => Number(m[1]));
         expect(v(read(CONTRACTS_IMPL_PATH)), 'contracts/src/job-protocol-v2.js').to.deep.equal([2]);
-        expect(v(read(gpuHubPath)), 'gpu-hub/gpu-hub.js').to.deep.equal([2]);
+        expect(v(read(gpuHubPath)), 'gpu-hub/gpu-hub.js (Phase 10B: no local literal)').to.deep.equal([]);
         expect(v(read(path.join(WORKER_DIR, 'job-protocol-v2.cjs'))), 'worker/worker/job-protocol-v2.cjs (generated)').to.deep.equal([2]);
         // worker.cjs itself must have NO local literal (it consumes the copy)
         expect(v(read(workerPath)), 'worker/worker/worker.cjs (no local literal)').to.deep.equal([]);
@@ -288,5 +299,14 @@ describe('Phase 9C: contracts deployment wiring', () => {
     it('backend compose service mounts the contracts package read-only', () => {
         const compose = fs.readFileSync(path.join(REPO_ROOT, 'docker-compose.yml'), 'utf8');
         expect(compose).to.include('./contracts:/app/node_modules/@animastor/contracts:ro');
+    });
+
+    it('gpu-hub compose service mounts the contracts package read-only (Phase 10B seam)', () => {
+        // The hub consumes the canonical package at runtime; the mount is
+        // the seam that makes '@animastor/contracts' resolvable inside its
+        // container (the ./gpu-hub build context stays untouched).
+        const compose = fs.readFileSync(path.join(REPO_ROOT, 'docker-compose.yml'), 'utf8');
+        const hubSection = compose.slice(compose.indexOf('  gpu-hub:'), compose.indexOf('  nginx:'));
+        expect(hubSection, 'gpu-hub service must mount ./contracts read-only at the package path').to.include('./contracts:/app/node_modules/@animastor/contracts:ro');
     });
 });

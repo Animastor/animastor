@@ -7,11 +7,13 @@
 // docs/architecture/GPU_HUB_CONTRACT.md).
 //
 // What this suite pins (nothing here defines new behavior):
-//   G1  GPU Hub never imports backend/worker/frontend/contracts code
-//       (directional isolation, mirrors R2/P7-T3 with an explicit allowlist).
-//   G2  Job Protocol version does not drift: the hub's literal equals the
-//       canonical @animastor/contracts value (runtime import equality) and
-//       the hub carries exactly ONE literal (no accidental second copy).
+//   G1  GPU Hub never imports backend/worker/frontend code
+//       (directional isolation, mirrors R2/P7-T3 with an allowlist; the
+//       SINGLE sanctioned package import is @animastor/contracts — the
+//       canonical Job Protocol v2 source, wired by the Phase 10B seam).
+//   G2  Job Protocol version does not drift: the hub's PROTOCOL_VERSION is
+//       IMPORTED from the canonical @animastor/contracts (runtime equality,
+//       Phase 10B) and the hub carries NO local protocol literal.
 //   G3  The HTTP route surface is EXACTLY the frozen 14-route set
 //       (set equality — removals AND additions both fail).
 //   G4  Redis ownership does not change: the hub-owned family set the hub
@@ -45,8 +47,13 @@ describe('phase10a: GPU Hub import isolation', () => {
             'gpu-hub must not require monorepo code — the seam is HTTP + shared Redis only (GPU_HUB_CONTRACT.md §2).').to.deep.equal([]);
     });
 
-    it('hub stays on its frozen npm dependency set (express, cors, ioredis + builtins)', () => {
-        const allowed = new Set(['express', 'cors', 'crypto', 'fs', 'path', 'ioredis', 'zlib', 'http', 'https', 'url']);
+    it('hub stays on its frozen npm dependency set (express, cors, ioredis + builtins + the canonical contracts package)', () => {
+        // Phase 10B: @animastor/contracts is the ONE sanctioned package
+        // import — the canonical Job Protocol v2 source, resolved via the
+        // docker-compose read-only mount (./contracts →
+        // /app/node_modules/@animastor/contracts, same seam as backend).
+        // Any OTHER new bare specifier is still an unreviewed seam decision.
+        const allowed = new Set(['express', 'cors', 'crypto', 'fs', 'path', 'ioredis', 'zlib', 'http', 'https', 'url', '@animastor/contracts']);
         const offenders = [];
         for (const file of listSourceFiles(HUB_DIR)) {
             const src = readSource(file);
@@ -55,7 +62,24 @@ describe('phase10a: GPU Hub import isolation', () => {
             }
         }
         expect(offenders,
-            'a new bare-specifier require in gpu-hub (e.g. @animastor/contracts) is a Phase 10B seam decision — wire it via the documented migration seam, not ad hoc.').to.deep.equal([]);
+            'a new bare-specifier require in gpu-hub is an unreviewed cross-package seam decision — wire it via a documented migration seam, not ad hoc.').to.deep.equal([]);
+    });
+
+    it('hub imports Job Protocol from @animastor/contracts — no local protocol implementation/literal allowed', () => {
+        // Phase 10B gate: the hub's protocol source MUST be the canonical
+        // package; a hand-synced local copy (inline literal or re-derived
+        // implementation) is exactly the Phase 9C residue class this phase
+        // removes.
+        const hub = require(path.join(HUB_DIR, 'gpu-hub.js'));
+        const src = readSource(path.join(HUB_DIR, 'gpu-hub.js'));
+        // the import seam itself
+        expect(src, 'gpu-hub.js must consume the canonical package').to.include("require('@animastor/contracts')");
+        // and carry NO local protocol literal (the 10A single-literal pin
+        // becomes a zero-literal pin after the migration)
+        const literals = [...src.matchAll(/PROTOCOL_VERSION\s*=\s*(\d+)/g)].map((m) => Number(m[1]));
+        expect(literals, 'gpu-hub.js must define NO protocol version literal (Phase 9C residue removed in 10B)').to.deep.equal([]);
+        // runtime value still equals the canonical one (sanity — same package)
+        expect(hub.PROTOCOL_VERSION).to.equal(require(CONTRACTS_IMPL).PROTOCOL_VERSION);
     });
 });
 
@@ -67,13 +91,13 @@ describe('phase10a: Job Protocol version freeze', () => {
     it('hub PROTOCOL_VERSION equals the canonical @animastor/contracts value (runtime equality)', () => {
         const hub = require(hubPath);
         const canonical = require(CONTRACTS_IMPL);
-        expect(hub.PROTOCOL_VERSION, 'gpu-hub literal must equal contracts canonical').to.equal(canonical.PROTOCOL_VERSION);
+        expect(hub.PROTOCOL_VERSION, 'gpu-hub protocol source must equal contracts canonical').to.equal(canonical.PROTOCOL_VERSION);
     });
 
-    it('hub carries exactly one PROTOCOL_VERSION literal (no accidental second copy)', () => {
+    it('hub carries NO local PROTOCOL_VERSION literal (canonical package is the only source)', () => {
         const src = readSource(hubPath);
         const literals = [...src.matchAll(/PROTOCOL_VERSION\s*=\s*(\d+)/g)].map((m) => Number(m[1]));
-        expect(literals, 'gpu-hub.js must define the protocol version exactly once').to.deep.equal([2]);
+        expect(literals, 'gpu-hub.js must not define a protocol version literal — it consumes @animastor/contracts').to.deep.equal([]);
     });
 
     it('worker generated copy and hub stay equal to the canonical value (no 3-way drift)', () => {
@@ -164,7 +188,11 @@ describe('phase10a: Redis ownership freeze (hub side)', () => {
         expect(src).to.include('WORKER_AUTH_MIRROR_KEY');
         expect(src).to.include('hget(WORKER_AUTH_MIRROR_KEY');
         expect(src).to.include('SYNC: backend/src/services/worker-auth.js');
-        expect(src).to.include('SYNC: backend/src/runtime/job-schema.js');
+        // Phase 10B: the protocol SYNC anchor on the backend facade is
+        // replaced by direct canonical consumption — the hub requires
+        // @animastor/contracts itself (the facade re-exports the same
+        // implementation).
+        expect(src).to.include("require('@animastor/contracts')");
     });
 });
 

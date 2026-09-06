@@ -84,8 +84,12 @@ describe('architecture: worker isolation', () => {
 });
 
 describe('architecture: GPU Hub dependency direction', () => {
-    it('hub requires only node builtins + its own files (no backend/book/generation code deps)', () => {
-        const allowed = new Set(['express', 'cors', 'crypto', 'fs', 'path', 'ioredis', 'zlib', 'http', 'https', 'url']);
+    it('hub requires only node builtins + its own files + the canonical contracts package (no backend/book/generation code deps)', () => {
+        // Phase 10B: @animastor/contracts is the sanctioned canonical Job
+        // Protocol v2 source (compose read-only mount seam). Backend
+        // coupling stays HTTP (BACKEND_URL) + shared Redis keys only — any
+        // OTHER new package/code dependency requires an ADR.
+        const allowed = new Set(['express', 'cors', 'crypto', 'fs', 'path', 'ioredis', 'zlib', 'http', 'https', 'url', '@animastor/contracts']);
         const offenders = [];
         for (const file of listSourceFiles(HUB_DIR)) {
             for (const spec of requireSpecifiers(readSource(file))) {

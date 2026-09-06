@@ -8,8 +8,9 @@
 // nobody accidentally widens the coupling:
 //
 //   1. hub routes stay the same set (additions are visible and deliberate);
-//   2. protocol_version stays = 2 in ALL THREE synced copies
-//      (backend job-schema, gpu-hub, worker);
+//   2. protocol_version stays = 2 with the canonical contracts package as
+//      the SINGLE source (backend facade + hub + worker consume it;
+//      Phase 10B removed the hub's last hand-synced literal);
 //   3. the job envelope fields the hub requires are pinned;
 //   4. backend dispatcher still POSTs /task; worker still calls
 //      /task/next, /task/result, /task/error, /beacon;
@@ -56,18 +57,21 @@ describe('architecture: GPU Hub contract', () => {
         }
     });
 
-    it('protocol_version stays 2 in all synced copies (contracts canonical + hub + worker generated copy)', () => {
+    it('protocol_version stays 2 (contracts canonical; hub consumes it with NO local literal)', () => {
         // Phase 9C: the backend-side literal lives in the contracts package
         // (canonical); job-schema.js is a facade without its own literal.
         // Phase 9D: the worker consumes the GENERATED copy of the canonical
         // implementation — the frozen literal lives there, not in worker.cjs.
+        // Phase 10B: the hub consumes the canonical package directly via the
+        // compose mount seam — it carries NO local literal either.
         const contractsImpl = read(contractsImplPath);
         const hub = read(gpuHubPath);
         const worker = read(workerPath);
         const workerProtocol = read(path.join(REPO_ROOT, 'worker', 'worker', 'job-protocol-v2.cjs'));
         const v = (src) => [...src.matchAll(/PROTOCOL_VERSION\s*=\s*(\d+)/g)].map((m) => Number(m[1]));
         expect(v(contractsImpl), 'contracts/src/job-protocol-v2.js (canonical)').to.deep.equal([2]);
-        expect(v(hub), 'gpu-hub/gpu-hub.js').to.deep.equal([2]);
+        expect(v(hub), 'gpu-hub/gpu-hub.js (Phase 10B: no local literal)').to.deep.equal([]);
+        expect(hub, 'gpu-hub must consume the canonical package').to.include("require('@animastor/contracts')");
         expect(v(workerProtocol), 'worker/worker/job-protocol-v2.cjs (generated from contracts)').to.deep.equal([2]);
         expect(v(worker), 'worker/worker/worker.cjs (no local literal)').to.deep.equal([]);
         expect(worker, 'worker.cjs must consume the generated copy').to.include('require("./job-protocol-v2.cjs")');
@@ -76,7 +80,11 @@ describe('architecture: GPU Hub contract', () => {
 
     it('SYNC anchors between the copies stay in place', () => {
         const hub = read(gpuHubPath);
-        expect(hub).to.include('SYNC: backend/src/runtime/job-schema.js');
+        // Phase 10B: the hub consumes the canonical package directly — the
+        // protocol anchor is now the contracts require (the old SYNC comment
+        // on the backend facade is gone by design; the facade re-exports the
+        // same implementation the hub imports).
+        expect(hub).to.include("require('@animastor/contracts')");
         expect(hub).to.include('SYNC: backend/src/services/worker-auth.js');
         // Phase 9C: the facade documents the canonical location instead of
         // carrying its own SYNC copy (the old self-anchor is gone by design).

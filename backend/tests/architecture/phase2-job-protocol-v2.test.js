@@ -5,8 +5,9 @@
 // Protocol version is NOT changed in Phase 2; this test re-anchors it as a
 // Phase 2 consumer boundary.
 //
-// Contract invariants (current, from job-schema.js + gpu-hub + worker):
-//   1. protocol_version = 2 in all three synced copies.
+// Contract invariants (current, from contracts + gpu-hub + worker):
+//   1. protocol_version = 2 from the canonical @animastor/contracts package
+//      (backend facade + hub consume it; worker consumes the generated copy).
 //   2. job_id format = ${assetId}:${type}, type ∈ {audio, image, iu_image, video}.
 //   3. parse shape per type is stable (audio chunk / iu_image / scene_image / scene_video).
 //   4. Mismatch is rejected (hub 409; worker reject).
@@ -37,14 +38,17 @@ function read(file) {
 }
 
 describe('architecture: Job Protocol v2 contract (backend → hub → worker boundary)', () => {
-    it('protocol_version = 2 in all synced copies (contracts canonical + hub + worker generated copy)', () => {
+    it('protocol_version = 2 from the canonical source only (hub consumes contracts, no local literal)', () => {
         const contractsImpl = read(contractsImplPath);
         const hub = read(gpuHubPath);
         const worker = read(workerPath);
         const workerProtocol = read(workerProtocolPath);
         const v = (src) => [...src.matchAll(/PROTOCOL_VERSION\s*=\s*(\d+)/g)].map((m) => Number(m[1]));
         expect(v(contractsImpl), 'contracts/src/job-protocol-v2.js (canonical)').to.deep.equal([2]);
-        expect(v(hub), 'gpu-hub/gpu-hub.js').to.deep.equal([2]);
+        // Phase 10B: the hub consumes the canonical package (compose mount
+        // seam) — it carries NO local literal.
+        expect(v(hub), 'gpu-hub/gpu-hub.js (Phase 10B: no local literal)').to.deep.equal([]);
+        expect(hub, 'gpu-hub must consume the canonical package').to.include("require('@animastor/contracts')");
         // Phase 9D: the worker has NO local literal — it consumes the
         // generated copy, which carries the frozen literal.
         expect(v(workerProtocol), 'worker/worker/job-protocol-v2.cjs (generated from contracts)').to.deep.equal([2]);

@@ -29,8 +29,14 @@ const path = require("path")
 const { buildTarGz, walkDir } = require("./tarball")
 const { buildBootstrapScript, buildWindowsBootstrapScript, BOOTSTRAP_VERSION } = require("./bootstrap")
 
-// SYNC: backend/src/runtime/job-schema.js (PROTOCOL_VERSION)
-const PROTOCOL_VERSION = 2;
+// Job Protocol v2 — @animastor/contracts is the SINGLE canonical runtime
+// source (contracts/src/job-protocol-v2.js; normative spec:
+// docs/architecture/JOB_PROTOCOL_V2.md). Phase 10B: the hub consumes the
+// canonical package and carries NO local protocol implementation/literal.
+// Resolution: repo-root node_modules symlink locally; inside the container
+// the docker-compose service mounts ./contracts read-only at
+// /app/node_modules/@animastor/contracts (same seam as the backend facade).
+const { PROTOCOL_VERSION } = require('@animastor/contracts').jobProtocolV2;
 
 // ======================================================
 // CONSTANTS
@@ -755,7 +761,8 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
 
     console.log("📥 Task:", job_id, type, "build:", build_id, "timeout_ms:", timeout_ms || "(default)", "workspace:", workspace_id || "(system pool)", policy_id ? `policy:${policy_id}` : "")
 
-    // SYNC: backend/src/runtime/job-schema.js (PROTOCOL_VERSION)
+    // Job Protocol v2 — PROTOCOL_VERSION is imported from @animastor/contracts
+    // (canonical source; no local literal — Phase 10B).
     if (protocol_version !== PROTOCOL_VERSION) {
       return res.status(409).json({
         error: "protocol_version_mismatch",

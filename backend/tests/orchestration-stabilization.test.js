@@ -142,6 +142,8 @@ describe('orchestration stabilization: protocol contract', () => {
         // Phase 9D: the worker consumes the GENERATED canonical copy of the
         // Job Protocol v2 (worker/worker/job-protocol-v2.cjs) — the frozen
         // literal lives there; worker.cjs itself carries no local literal.
+        // Phase 10B: the hub also consumes the canonical package directly
+        // (no local literal) — strict version 2 comes from @animastor/contracts.
         const workerProtocolSource = fs.readFileSync(
             path.join(__dirname, '../../worker/worker/job-protocol-v2.cjs'), 'utf8'
         );
@@ -150,7 +152,8 @@ describe('orchestration stabilization: protocol contract', () => {
         );
 
         expect(jobSchema.PROTOCOL_VERSION).to.equal(2);
-        expect(hubSource).to.match(/const PROTOCOL_VERSION = 2;/);
+        expect(hubSource).to.include("require('@animastor/contracts')");
+        expect(hubSource).to.not.match(/PROTOCOL_VERSION\s*=\s*\d/);
         expect(workerProtocolSource).to.match(/const PROTOCOL_VERSION = 2;/);
         expect(workerSource).to.include('require("./job-protocol-v2.cjs")');
         expect(hubSource).to.match(/app\.post\("\/task", requireApiKey/);
