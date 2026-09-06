@@ -172,7 +172,7 @@ fi
 # ======================================================
 # 7. NPM SETUP
 # ======================================================
-# The worker bundle is zero-dependency: worker.cjs uses the Node 20+ global
+# The worker bundle is zero-dependency: worker.cjs uses the Node 18+ global
 # fetch (see package.json — no runtime deps, nothing to npm-install here).
 
 if [ ! -f package.json ]; then

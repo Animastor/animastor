@@ -89,8 +89,8 @@
       "minimum": "20",
       "basis": "minimum_supported",
       "notes": [
-        "worker/worker/worker.cjs header: 'Node 20+ with global fetch is assumed'.",
-        "Discrepancy: worker/start-worker.sh installs Node 18 — open question 11."
+        "worker/worker/worker.cjs header: 'Node 18+ with global fetch is assumed' (engines: node >=18).",
+        "Installer enforces 20 as a conservative minimum; the bundle itself requires Node 18+."
       ]
     },
     "nvidia_driver": {
@@ -381,7 +381,7 @@
     },
     "provenance": {
       "evidence": [
-        "worker/worker/worker.cjs:1-4 (v2.0.0, Node 20+)",
+        "worker/worker/worker.cjs:1-4 (v2.1.0, Node 18+)",
         "worker/worker/.env.example",
         "gpu-hub/gpu-hub.js GET /worker-source"
       ]
