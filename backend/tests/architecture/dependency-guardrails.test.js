@@ -71,6 +71,16 @@ describe('architecture: worker isolation', () => {
             expect(src, `${rel(file)} must not open Redis connections`).to.not.match(/ioredis|new\s+Redis|createClient/);
         }
     });
+
+    it('canonical worker bundle declares ZERO runtime npm dependencies (standalone readiness)', () => {
+        // Phase 9B: the dead node-fetch dependency was removed — the worker
+        // uses the Node 20+ global fetch. The bundle must stay zero-dep so a
+        // clean checkout runs with `node worker.cjs` and no npm install.
+        const pkg = JSON.parse(fs.readFileSync(path.join(WORKER_DIR, 'package.json'), 'utf8'));
+        expect(pkg.dependencies, 'worker package.json must not declare runtime dependencies').to.not.exist;
+        expect(pkg.optionalDependencies, 'worker package.json must not declare optional dependencies').to.not.exist;
+        expect(pkg.version, 'worker package.json carries the canonical bundle version').to.match(/^\d+\.\d+\.\d+$/);
+    });
 });
 
 describe('architecture: GPU Hub dependency direction', () => {

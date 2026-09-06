@@ -172,14 +172,12 @@ fi
 # ======================================================
 # 7. NPM SETUP
 # ======================================================
+# The worker bundle is zero-dependency: worker.cjs uses the Node 20+ global
+# fetch (see package.json — no runtime deps, nothing to npm-install here).
 
 if [ ! -f package.json ]; then
   npm init -y >/dev/null
   npm pkg set type="module"
-fi
-
-if ! npm list node-fetch@3 >/dev/null 2>&1; then
-  npm install node-fetch@3
 fi
 
 # ======================================================
