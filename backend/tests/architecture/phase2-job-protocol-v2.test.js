@@ -73,7 +73,18 @@ describe('architecture: Job Protocol v2 contract (backend → hub → worker bou
             // We pin it by checking the type-suffix regex is present in the hub.
             expect(hub).to.match(new RegExp(':(iu_image|image|audio|video)'));
         }
-        expect(worker).to.match(/:(iu_image|image|audio|video)$/);
+        // Worker pins the job_id grammar as an inline split-regex literal
+        // (both occurrences: multi-image and single-image input-file naming).
+        // The literal source text is `/:(iu_image|image|audio|video)$/` —
+        // matched as a source substring (an end-anchored regex applied to the
+        // whole file source cannot match, since the type suffix sits mid-file).
+        const workerSplitLiterals = [...worker.matchAll(/job_id\.split\((\/:\(iu_image\|image\|audio\|video\)\$\/)\)/g)].map((m) => m[1]);
+        expect(workerSplitLiterals, 'worker job_id split regex literals').to.deep.equal(
+            ['/:(iu_image|image|audio|video)$/', '/:(iu_image|image|audio|video)$/']
+        );
+        // Negative control: the split literal must NOT appear with a wrong
+        // type family (guards the pin above against becoming vacuous).
+        expect(worker).to.not.include('/:(iu_image|image|audio)$/');
     });
 
     it('job envelope carries backend-authored identity fields (book_id, chapter_id, scene_id, stage)', () => {
