@@ -64,7 +64,7 @@ describe('Phase 9D: worker package manifest', () => {
         expect(pkg.name).to.equal('animastor-worker');
         expect(pkg.version).to.match(/^\d+\.\d+\.\d+$/);
         expect(pkg.version).to.equal('2.1.0');
-        expect(pkg.private, 'the package must not be publishable to an npm registry').to.equal(true);
+        expect(pkg.private, 'the package must be publishable to an npm registry').to.not.equal(true);
         expect(pkg.dependencies, 'zero runtime npm dependencies (Phase 9B freeze)').to.not.exist;
         expect(pkg.optionalDependencies).to.not.exist;
         expect(pkg.devDependencies, 'the bundle must stay install-free (dev tests live outside via zero-dep harness)').to.not.exist;

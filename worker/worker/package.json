@@ -1,9 +1,8 @@
 {
   "name": "animastor-worker",
   "version": "2.1.0",
-  "description": "Animastor Private GPU Worker runtime bundle. The version field is the canonical worker bundle version: the hub publishes it with the bundle artifact (GET /worker-bundle) and worker.cjs reports it in beacons when WORKER_VERSION is not set.",
+  "description": "Animastor GPU Worker runtime bundle. The version field is the canonical worker bundle version: the hub publishes it with the bundle artifact (GET /worker-bundle) and worker.cjs reports it in beacons when WORKER_VERSION is not set.",
   "main": "worker.cjs",
-  "private": true,
   "files": [
     "worker.cjs",
     "worker-env.cjs",
@@ -21,8 +20,17 @@
   "engines": {
     "node": ">=18"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Animastor/animastor.git",
+    "directory": "worker/worker"
+  },
+  "bugs": {
+    "url": "https://github.com/Animastor/animastor/issues"
+  },
+  "homepage": "https://animastor.in",
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "type": "module"
 }

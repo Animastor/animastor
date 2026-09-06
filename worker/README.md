@@ -41,6 +41,22 @@ cd worker && node worker.cjs
 Or via the operator script (`worker/start-worker.sh` at the repo root —
 installs Node if missing, detects the ComfyUI port, starts the daemon).
 
+## Install from npm
+
+```sh
+npm install animastor-worker
+```
+
+Then configure and run:
+
+```sh
+cp node_modules/animastor-worker/.env.example .env
+# edit .env — set HUB_URL, ANIMASTOR_WORKER_TOKEN, WORKER_TYPE, WORKER_ID
+node node_modules/animastor-worker/worker.cjs
+```
+
+The package has zero runtime dependencies.
+
 ## Job Protocol v2 (contract)
 
 The wire protocol is frozen and owned by the canonical package
@@ -78,6 +94,9 @@ node tests/run-all.cjs        # from worker/ — unit + parity + standalone boot
 - Zero runtime npm dependencies; requires only node builtins + files inside
   the bundle (no requires reaching into backend/gpu-hub/frontends/contracts).
 - No Redis/PG access — the hub HTTP contract is the only interface.
-- `private: true` — never published to an npm registry.
 - Version bumps here are the canonical worker bundle version (surfaced by
   the hub artifact and the installer compatibility resolver).
+
+## License
+
+MIT — see [LICENSE](../LICENSE) at the repository root.

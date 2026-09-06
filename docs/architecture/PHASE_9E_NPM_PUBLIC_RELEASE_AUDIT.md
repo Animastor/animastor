@@ -1,10 +1,11 @@
 # PHASE 9E — NPM Public Release Audit
 
-**Status:** PASS WITH PREPARATION
+**Status:** PUBLIC NPM READY
 **Date:** 2026-09-06
 **Package:** `animastor-worker@2.1.0`
 **Baseline commit:** `78774a3af4e08be6268704e313dd3293f01e9f01`
 **Scope:** npm public-release readiness of `worker/worker/package.json`
+**npm publish executed:** NO
 
 ---
 
@@ -12,65 +13,95 @@
 
 | Question | Answer |
 |---|---|
-| Package metadata ready for public npm? | **YES (with 2 metadata changes)** |
+| Package metadata ready for public npm? | **YES** |
 | Tarball clean of secrets/stray files? | **YES** |
 | Security audit passed? | **YES** |
-| License matches repo? | **NO — ISC vs MIT (fixable)** |
+| License matches repo? | **YES — MIT** |
 | README complete? | **YES** |
 | Standalone from tarball? | **YES** |
 | Protocol v2 intact? | **YES** |
 | Deployment channels intact? | **YES** |
 | Tests pass? | **YES (45/45)** |
-| Public ready? | **YES (after metadata changes)** |
+| Public npm ready? | **YES** |
 
 ---
 
-## 1. Package Metadata
+## 1. Changes Made
 
-| Field | Current | Required for Public npm |
+### `worker/worker/package.json`
+
+| Change | Before | After |
 |---|---|---|
-| `name` | `animastor-worker` | OK |
-| `version` | `2.1.0` | OK |
-| `private` | `true` | **BLOCKER** — must be `false` or removed |
-| `main` | `worker.cjs` | OK |
-| `files` | 6 runtime files + `.env.example` | OK |
-| `engines.node` | `>=18` | OK |
-| `license` | `ISC` | **MUST match repo: MIT** |
-| `type` | `module` | OK |
-| `scripts.start` | `node worker.cjs` | OK |
-| `scripts.test` | `node ../tests/run-all.cjs` | OK (tests not shipped) |
-| `dependencies` | none | OK (zero-dep) |
-| `devDependencies` | none | OK |
-| `optionalDependencies` | none | OK |
+| `private` | `true` | **removed** (defaults to `false`) |
+| `license` | `"ISC"` | `"MIT"` |
+| `description` | `"...Animastor Private GPU Worker..."` | `"...Animastor GPU Worker..."` |
+| `repository` | *(absent)* | `https://github.com/Animastor/animastor.git` (directory: `worker/worker`) |
+| `bugs` | *(absent)* | `https://github.com/Animastor/animastor/issues` |
+| `homepage` | *(absent)* | `https://animastor.in` |
 
-### Changes required
+### `worker/README.md`
 
-1. **Remove or set `"private": false`** — currently prevents `npm publish`.
-2. **Change `"license": "ISC"` → `"license": "MIT"`** — repo LICENSE is MIT.
-3. **(Recommended)** Add `repository`, `bugs`, `homepage` fields for npm discoverability.
+- Added **"Install from npm"** section with `npm install animastor-worker` instructions.
+- Added **"License"** section (MIT, links to repo LICENSE).
+- Removed stale `private: true` line from architecture invariants.
+
+### Test guards updated
+
+| File | Change |
+|---|---|
+| `backend/tests/architecture/phase9d-worker-package.test.js:67` | `expect(pkg.private).to.equal(true)` → `expect(pkg.private).to.not.equal(true)` |
+| `worker/tests/package.test.cjs:38` | `pkg.private === true` → `pkg.private !== true` |
 
 ---
 
-## 2. Tarball Contents
+## 2. Final Package Metadata
 
-`npm pack --dry-run` and real `npm pack` — 7 files, 17.5 kB unpacked:
+```json
+{
+  "name": "animastor-worker",
+  "version": "2.1.0",
+  "description": "Animastor GPU Worker runtime bundle...",
+  "main": "worker.cjs",
+  "files": ["worker.cjs", "worker-env.cjs", "worker-cleanup.cjs", "worker-cleanup-journal.cjs", "job-protocol-v2.cjs", ".env.example"],
+  "scripts": { "start": "node worker.cjs", "test": "node ../tests/run-all.cjs", "sync:protocol": "node ../tools/sync-protocol.cjs", "check:protocol": "node ../tools/sync-protocol.cjs --check" },
+  "engines": { "node": ">=18" },
+  "repository": { "type": "git", "url": "https://github.com/Animastor/animastor.git", "directory": "worker/worker" },
+  "bugs": { "url": "https://github.com/Animastor/animastor/issues" },
+  "homepage": "https://animastor.in",
+  "license": "MIT",
+  "type": "module"
+}
+```
 
-```
-.env.example           1.9 kB   config template (no secrets)
-job-protocol-v2.cjs   11.5 kB   generated protocol copy
-package.json           847 B    manifest
-worker-cleanup-journal.cjs  8.9 kB   crash-safe journal
-worker-cleanup.cjs     2.4 kB   artifact cleanup
-worker-env.cjs         1.7 kB   .env loader
-worker.cjs            29.5 kB   entrypoint
-```
+Key properties:
+- **`private`:** field removed → defaults to `false` → publishable
+- **`license`:** `MIT` — matches repo LICENSE
+- **`version`:** `2.1.0`
+- **`dependencies`:** none (zero-dep)
+- **`engines.node`:** `>=18`
+
+---
+
+## 3. Tarball Contents
+
+`npm pack --dry-run` and real `npm pack` — 7 files, 17.5 kB packed, 57.0 kB unpacked:
+
+| File | Size |
+|---|---|
+| `.env.example` | 1.9 kB |
+| `job-protocol-v2.cjs` | 11.5 kB |
+| `package.json` | 1.1 kB |
+| `worker-cleanup-journal.cjs` | 8.9 kB |
+| `worker-cleanup.cjs` | 2.4 kB |
+| `worker-env.cjs` | 1.7 kB |
+| `worker.cjs` | 29.5 kB |
 
 **Excluded:** `package-lock.json`, tests, tools, docs, `.git`, monorepo artifacts.
 No hidden files, no absolute paths, no debug fixtures.
 
 ---
 
-## 3. Security Audit
+## 4. Security Audit
 
 | Check | Result |
 |---|---|
@@ -83,39 +114,38 @@ No hidden files, no absolute paths, no debug fixtures.
 | Test fixtures | NONE |
 | Package scripts | `start`, `test`, `sync:protocol`, `check:protocol` — safe |
 | `ANIMASTOR_WORKER_TOKEN` | Runtime env var, never hardcoded |
+| External requires | NONE (only node builtins + `./`-relative) |
 
 ---
 
-## 4. License
+## 5. License
 
 | Source | License |
 |---|---|
 | Repo `LICENSE` | MIT |
-| `package.json` `license` | **ISC** (mismatch) |
-
-**Decision:** Change `license: "ISC"` → `license: "MIT"` in `package.json` to match the repo LICENSE. This is the minimal change needed for npm compliance.
+| `package.json` `license` | **MIT** ✓ |
 
 ---
 
-## 5. README
+## 6. README
 
-`worker/README.md` covers:
+`worker/README.md` now covers:
 - ✅ Installation (`cp .env.example .env`, `node worker.cjs`)
+- ✅ **npm install** (`npm install animastor-worker`)
 - ✅ Runtime requirements (Node ≥ 18, ComfyUI, token)
 - ✅ Standalone use instructions
 - ✅ Job Protocol v2 explanation
 - ✅ Test instructions
 - ✅ Delivery channels (4 documented)
 - ✅ Architecture invariants
-- ❌ No mention of npm install (`npm install animastor-worker`) — should add
-- ❌ No LICENSE section — should add
+- ✅ **License section** (MIT)
 
 ---
 
-## 6. Standalone Verification
+## 7. Standalone Verification
 
-1. `npm pack` → `animastor-worker-2.1.0.tgz`
-2. Extracted to `/tmp/animastor-worker-smoke/` (outside repo)
+1. `npm pack` → `animastor-worker-2.1.0.tgz` (17.5 kB)
+2. Extracted to `/tmp/animastor-npm-standalone/` (outside repo)
 3. `node worker.cjs` → **exit 1** (no credentials) — expected fail-closed behavior
 4. No monorepo requires, no crash, clean error messages
 5. All `require()` calls resolve to `./`-relative files or node builtins only
@@ -124,7 +154,7 @@ No hidden files, no absolute paths, no debug fixtures.
 
 ---
 
-## 7. Protocol Integrity
+## 8. Protocol Integrity
 
 - `node worker/tools/sync-protocol.cjs --check` → **exit 0** ("in sync")
 - Generated copy `worker/job-protocol-v2.cjs` byte-matches canonical source
@@ -133,7 +163,7 @@ No hidden files, no absolute paths, no debug fixtures.
 
 ---
 
-## 8. Deployment Compatibility
+## 9. Deployment Compatibility
 
 All 4 channels remain intact:
 
@@ -146,7 +176,7 @@ All 4 channels remain intact:
 
 ---
 
-## 9. Test Results
+## 10. Test Results
 
 | Suite | Result |
 |---|---|
@@ -157,45 +187,41 @@ All 4 channels remain intact:
 
 ---
 
-## 10. Blockers
+## 11. Guard Updates
 
-| # | Blocker | Severity | Fix |
+Two test guards explicitly asserted `private: true` as an architectural invariant. Updated to reflect the new public release policy:
+
+| Guard | File | Old assertion | New assertion |
 |---|---|---|---|
-| B1 | `private: true` prevents `npm publish` | **HIGH** | Set `"private": false` |
-| B2 | `license: "ISC"` mismatches repo MIT | **MEDIUM** | Change to `"license": "MIT"` |
+| D1 | `phase9d-worker-package.test.js:67` | `pkg.private === true` | `pkg.private !== true` |
+| package | `package.test.cjs:38` | `pkg.private === true` | `pkg.private !== true` |
+
+No other guards depend on `private: true`. No new guards needed — the existing test matrix covers all other invariants.
 
 ---
 
-## 11. Recommended Changes
+## 12. Blockers
 
-### `worker/worker/package.json`
+**None.** All previous blockers resolved:
 
-```diff
--  "private": true,
-+  "private": false,
-...
--  "license": "ISC",
-+  "license": "MIT",
-```
-
-Optional (recommended for npm discoverability):
-```diff
-+  "repository": {
-+    "type": "git",
-+    "url": "https://github.com/animastor/animastor.git",
-+    "directory": "worker/worker"
-+  },
-+  "bugs": {
-+    "url": "https://github.com/animastor/animastor/issues"
-+  },
-+  "homepage": "https://animastor.in",
-```
+| # | Blocker | Resolution |
+|---|---|---|
+| B1 | `private: true` prevents `npm publish` | **RESOLVED** — field removed |
+| B2 | `license: "ISC"` mismatches repo MIT | **RESOLVED** — changed to `"MIT"` |
 
 ---
 
-## 12. Next Step (Manual `npm publish`)
+## 13. Confirmation
 
-After applying the metadata changes:
+- **`npm publish` was NOT executed.**
+- **No npm tokens were created.**
+- **No runtime behavior was changed.**
+- **Protocol v2 untouched.**
+- **Deployment paths untouched.**
+
+---
+
+## 14. Next Step (Manual `npm publish`)
 
 ```sh
 cd worker/worker
@@ -209,11 +235,13 @@ npm pack
 # 3. Test install from tarball
 mkdir /tmp/test-install && cd /tmp/test-install
 npm init -y
-npm install ../../../path/to/animastor-worker-2.1.0.tgz
+npm install /path/to/animastor-worker-2.1.0.tgz
 node -e "console.log(require('animastor-worker/package.json').version)"
+# → 2.1.0
 
-# 4. Publish (when ready)
+# 4. Publish (when ready — requires npm auth)
+npm login
 npm publish
 ```
 
-**Note:** `npm publish` requires npm authentication (`npm login`). The package name `animastor-worker` must be available on the npm registry. If taken, consider `@animastor/worker` scope.
+**Note:** The package name `animastor-worker` must be available on the npm registry. If taken, consider `@animastor/worker` scope.

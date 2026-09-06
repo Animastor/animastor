@@ -35,7 +35,7 @@ describe('worker package — manifest (standalone package)', () => {
         expect.match(String(pkg.version), /^\d+\.\d+\.\d+$/);
         expect.notOk(pkg.dependencies, 'no runtime dependencies');
         expect.notOk(pkg.optionalDependencies, 'no optional dependencies');
-        expect.ok(pkg.private === true, 'the package must not be publishable to an npm registry');
+        expect.ok(pkg.private !== true, 'the package must be publishable to an npm registry');
         expect.ok(pkg.engines && pkg.engines.node, 'engines.node must document the required Node version');
         expect.include(pkg.description, 'canonical worker bundle version');
     });
