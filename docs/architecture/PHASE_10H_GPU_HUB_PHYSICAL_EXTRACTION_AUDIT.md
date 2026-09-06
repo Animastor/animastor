@@ -1,6 +1,6 @@
 # PHASE 10H — GPU Hub Physical Extraction Audit
 
-**Status: PASS**
+**Status: PASS (GitHub publication complete)**
 **Date:** 2026-09-06
 **Source commit (baseline HEAD):** `1916e80799914534ac7b4739953b8e702ace1c90`
 **Target repository:** `Animastor/animastor-gpu-hub` — independent repo, package `@animastor/gpu-hub@0.1.0`
@@ -128,18 +128,21 @@ Architectural replacement of these mounts is explicitly out of scope for 10H.
 4. **Monorepo-side test suites** still point at `gpu-hub/` paths inside the monorepo —
    they are unaffected while the monorepo copy remains (next phase decides the
    cutover/deletion).
-5. **GitHub push of the target repo** — local bare mirror
-   `/home/animastor/repos/animastor-gpu-hub.git` is filled and carries the `github`
-   remote (`git@github.com:Animastor/animastor-gpu-hub.git`); the repo must exist on
-   GitHub (same provisioning path as `animastor.git`) — `git push github master` from
-   the mirror completes publication.
+5. **GitHub push of the target repo** — RESOLVED after this audit was first written:
+   the empty repo `Animastor/animastor-gpu-hub` was created manually on GitHub and the
+   prepared extraction was published from the local bare mirror
+   (`git push github` → `git@github.com:Animastor/animastor-gpu-hub.git`).
+   Publication verified: GitHub `master` = `87982b674e4eece90015c28aa905524fcf664cd1`
+   (extraction HEAD), 39 commits (38 filter-repo history + Phase 10H metadata commit),
+   runtime files sha256-identical to monorepo `gpu-hub/`, clean clone passes `npm ci`
+   + 19/19 tests; no backend/worker/frontends/contracts sources in the tree.
 
 ## 10. Rollback plan
 
 - Monorepo: **no functional change was made** — `gpu-hub/`, compose, backend, worker
   are untouched; rollback = revert the audit-doc commit (docs-only).
 - Target repo: delete `/home/animastor/repos/animastor-gpu-hub.git` +
-  `/home/animastor/animastor-gpu-hub` and (once created) the GitHub repo. The monorepo
+  `/home/animastor/animastor-gpu-hub` and the GitHub repo `Animastor/animastor-gpu-hub`. The monorepo
   continues to build/deploy GPU Hub from `gpu-hub/` exactly as before.
 - The extraction is additive: until the next phase switches `docker-compose.yml` to the
   external image, both trees coexist byte-identically.
