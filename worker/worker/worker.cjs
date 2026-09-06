@@ -1,7 +1,11 @@
 // ======================================================
-// GPU Worker - v2.0.0 (fail-closed authorization, PW-4)
+// GPU Worker - v2.1.0 (fail-closed authorization, PW-4)
 // ======================================================
-// CJS (CommonJS) — Node 20+ with global fetch is assumed.
+// CJS (CommonJS) — Node 18+ with global fetch is assumed.
+// Job Protocol v2 comes from the GENERATED copy of the canonical
+// @animastor/contracts package (Phase 9D, blocker B2 — option B):
+//   worker/worker/job-protocol-v2.cjs  (regenerate: node worker/tools/sync-protocol.cjs)
+// It is byte-parity guarded against the canonical source — never edit it.
 
 const { execSync } = require("child_process");
 const os = require("os");
@@ -11,6 +15,7 @@ const path = require("path");
 const { cleanupJobArtifacts } = require("./worker-cleanup.cjs");
 const journal = require("./worker-cleanup-journal.cjs");
 const { loadDotEnv } = require("./worker-env.cjs");
+const { PROTOCOL_VERSION, JOB_ID_SPLIT_RE } = require("./job-protocol-v2.cjs");
 
 // Bundle self-containment: load ./.env next to the worker (cp .env.example
 // .env). Real environment variables always win over the file.
@@ -46,7 +51,8 @@ function readBundleVersion() {
 }
 const WORKER_VERSION = process.env.WORKER_VERSION || readBundleVersion();
 const WORKER_IMAGE_TAG = process.env.WORKER_IMAGE_TAG || null;
-const PROTOCOL_VERSION = 2;
+// PROTOCOL_VERSION comes from the generated copy of @animastor/contracts
+// (top of file) — the frozen Job Protocol v2 value (2) lives there only.
 
 const RESULT_TIMEOUT_MS = Number(process.env.RESULT_TIMEOUT_MS || 600000);
 // Видео-генерация длинная по своей природе (LTX: 5-10 мин, на слабом GPU —
@@ -608,7 +614,7 @@ async function workerLoop() {
       await journal.createJob({ jobId, dispatchId, log });
 
       if (task.assets?.images) {
-        const [jobBase] = task.job_id.split(/:(iu_image|image|audio|video)$/);
+        const [jobBase] = task.job_id.split(JOB_ID_SPLIT_RE);
         const scenePrefix = jobBase.replace(/_g\d+$/, '');
         for (const [unitId, base64] of Object.entries(task.assets.images)) {
           const filename = `${scenePrefix}_${unitId}.png`;
@@ -622,7 +628,7 @@ async function workerLoop() {
           log("info", `Multi-image ready: ${filename}`);
         }
       } else if (task.assets?.image) {
-        const [baseId] = task.job_id.split(/:(iu_image|image|audio|video)$/);
+        const [baseId] = task.job_id.split(JOB_ID_SPLIT_RE);
         const filename = `${baseId}.png`;
         const filePath = path.join(COMFY_INPUT_DIR, filename);
         createdInputFiles.push(filePath);

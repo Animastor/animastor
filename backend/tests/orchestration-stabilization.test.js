@@ -139,13 +139,20 @@ describe('orchestration stabilization: protocol contract', () => {
         const hubSource = fs.readFileSync(
             path.join(__dirname, '../../gpu-hub/gpu-hub.js'), 'utf8'
         );
+        // Phase 9D: the worker consumes the GENERATED canonical copy of the
+        // Job Protocol v2 (worker/worker/job-protocol-v2.cjs) — the frozen
+        // literal lives there; worker.cjs itself carries no local literal.
+        const workerProtocolSource = fs.readFileSync(
+            path.join(__dirname, '../../worker/worker/job-protocol-v2.cjs'), 'utf8'
+        );
         const workerSource = fs.readFileSync(
             path.join(__dirname, '../../worker/worker/worker.cjs'), 'utf8'
         );
 
         expect(jobSchema.PROTOCOL_VERSION).to.equal(2);
         expect(hubSource).to.match(/const PROTOCOL_VERSION = 2;/);
-        expect(workerSource).to.match(/const PROTOCOL_VERSION = 2;/);
+        expect(workerProtocolSource).to.match(/const PROTOCOL_VERSION = 2;/);
+        expect(workerSource).to.include('require("./job-protocol-v2.cjs")');
         expect(hubSource).to.match(/app\.post\("\/task", requireApiKey/);
         expect(hubSource).to.match(/worker_protocol_mismatch/);
         expect(hubSource).to.match(/redis\.lrem\("animastor:processing"/);

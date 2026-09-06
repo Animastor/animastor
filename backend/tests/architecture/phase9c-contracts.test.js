@@ -117,11 +117,17 @@ describe('Phase 9C: backend job-schema stays a pure facade', () => {
     it('no second divergent schema: grammar is defined ONLY in contracts (or delegates to it)', () => {
         // scan all production trees for grammar-function definitions
         const grammarDefRe = /function\s+(parseJobId|buildJobId|splitJobId|getStageForJobId)\b/;
+        // Phase 9D: the worker bundle carries a GENERATED verbatim copy of
+        // the canonical implementation (worker/worker/job-protocol-v2.cjs).
+        // It is not a divergent schema — byte parity is guarded by
+        // phase9d-worker-package.test.js — so it is excluded here.
+        const GENERATED_WORKER_COPY = 'worker/worker/job-protocol-v2.cjs';
         const offenders = [];
         for (const dir of [BACKEND_SRC, HUB_DIR, WORKER_DIR, LAC_DIR]) {
             for (const file of listSourceFiles(dir)) {
                 const src = readSource(file);
                 if (!grammarDefRe.test(src)) continue;
+                if (rel(file) === GENERATED_WORKER_COPY) continue;
                 // a local definition is only acceptable as a pure delegation
                 // wrapper — the file must require the backend facade/contracts
                 if (!/require\([^)]*job-schema/.test(src) && !/require\([^)]*contracts/.test(src)) {
@@ -139,7 +145,7 @@ describe('Phase 9C: backend job-schema stays a pure facade', () => {
         const allowed = new Set([
             'contracts/src/job-protocol-v2.js',        // canonical
             'gpu-hub/gpu-hub.js',                      // frozen copy (Phase 9C blocker)
-            'worker/worker/worker.cjs',                // frozen copy (Phase 9C blocker)
+            'worker/worker/job-protocol-v2.cjs',       // GENERATED from canonical (Phase 9D, B2)
             'backend/src/routes/ai-connector-routes.cjs', // LAC protocol v1 (separate contract)
         ]);
         const offenders = [];
@@ -219,12 +225,16 @@ describe('Phase 9C: cross-side Job Protocol v2 parity', () => {
 
     it('worker split-regex family stays equal to canonical JOB_TYPES', () => {
         const worker = read(workerPath);
-        const literals = [...worker.matchAll(/job_id\.split\((\/:\(iu_image\|image\|audio\|video\)\$\/)\)/g)].map((m) => m[1]);
-        // The worker literal is frozen; assert exact equality so ANY type-family
-        // change in contracts forces a conscious worker copy update (§3.15).
-        expect(literals, 'worker job_id split regex literals').to.deep.equal(
-            ['/:(iu_image|image|audio|video)$/', '/:(iu_image|image|audio|video)$/']
-        );
+        // Phase 9D: the worker no longer carries inline split literals —
+        // both input-file naming splits consume JOB_ID_SPLIT_RE from the
+        // generated canonical copy (worker/worker/job-protocol-v2.cjs),
+        // whose family is pinned separately below.
+        const usages = [...worker.matchAll(/job_id\.split\(JOB_ID_SPLIT_RE\)/g)].map((m) => m[0]);
+        expect(usages, 'worker job_id split usages of the generated copy').to.deep.equal([
+            'job_id.split(JOB_ID_SPLIT_RE)', 'job_id.split(JOB_ID_SPLIT_RE)',
+        ]);
+        const workerCopy = read(path.join(WORKER_DIR, 'job-protocol-v2.cjs'));
+        expect(workerCopy).to.include('JOB_ID_SPLIT_RE = /:(iu_image|image|audio|video)$/');
         // and the canonical split family must contain exactly the JOB_TYPES set
         const family = contractsImpl.JOB_ID_SPLIT_RE.source.replace(/^:\(/, '').replace(/\)\$$/, '');
         expect(family.split('|').sort()).to.deep.equal([...contractsImpl.JOB_TYPES].sort());
@@ -241,11 +251,13 @@ describe('Phase 9C: cross-side Job Protocol v2 parity', () => {
         }
     });
 
-    it('protocol_version = 2 in every synced copy (contracts + hub + worker)', () => {
+    it('protocol_version = 2 in every synced copy (contracts + hub + worker generated copy)', () => {
         const v = (src) => [...src.matchAll(/PROTOCOL_VERSION\s*=\s*(\d+)/g)].map((m) => Number(m[1]));
         expect(v(read(CONTRACTS_IMPL_PATH)), 'contracts/src/job-protocol-v2.js').to.deep.equal([2]);
         expect(v(read(gpuHubPath)), 'gpu-hub/gpu-hub.js').to.deep.equal([2]);
-        expect(v(read(workerPath)), 'worker/worker/worker.cjs').to.deep.equal([2]);
+        expect(v(read(path.join(WORKER_DIR, 'job-protocol-v2.cjs'))), 'worker/worker/job-protocol-v2.cjs (generated)').to.deep.equal([2]);
+        // worker.cjs itself must have NO local literal (it consumes the copy)
+        expect(v(read(workerPath)), 'worker/worker/worker.cjs (no local literal)').to.deep.equal([]);
     });
 
     it('frozen parse vectors behave identically in contracts and via the backend facade', () => {

@@ -1,17 +1,19 @@
 // ======================================================
-// Worker cleanup journal tests — crash-safe recovery
+// animastor-worker — cleanup journal tests (worker-cleanup-journal.cjs)
 // ======================================================
 // Тестирует worker-cleanup-journal.cjs (CREATED→GENERATED→DELIVERED→CLEANED)
 // и recoverCleanupJournal(): доставленные job дочищаются, недоставленные —
 // только input, частичный cleanup держит запись, corruption безопасен.
+// Порт из backend/tests/worker-cleanup-journal.test.js (Phase 9D:
+// package-owned unit tests moved into the package).
 
-const { expect } = require('chai');
 const fsp = require('fs').promises;
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { describe, it, expect } = require('./harness.cjs');
 
-const journal = require('../../worker/worker/worker-cleanup-journal.cjs');
+const journal = require('../worker/worker-cleanup-journal.cjs');
 
 const silentLog = () => {};
 
@@ -45,16 +47,16 @@ describe('worker-cleanup-journal — create + transitions', () => {
     it('new job creates a journal record with phase=created', async () => {
         const dir = await tmpDir();
         const rec = await journal.createJob({ journalDir: dir, jobId: 'b_c_s_1:image', dispatchId: 'd1', log: silentLog });
-        expect(rec).to.exist;
-        expect(rec.phase).to.equal('created');
-        expect(rec.input_files).to.deep.equal([]);
-        expect(rec.output_file).to.equal(null);
+        expect.exist(rec);
+        expect.equal(rec.phase, 'created');
+        expect.deepEqual(rec.input_files, []);
+        expect.equal(rec.output_file, null);
 
         const file = path.join(dir, `${journal.sanitizeFilePart('b_c_s_1:image')}__${journal.sanitizeFilePart('d1')}.json`);
-        expect(await exists(file)).to.equal(true);
+        expect.equal(await exists(file), true);
         // Атомарная запись не оставляет tmp-хвостов.
         const leftovers = fs.readdirSync(dir).filter((f) => f.endsWith('.tmp.json'));
-        expect(leftovers).to.deep.equal([]);
+        expect.deepEqual(leftovers, []);
     });
 
     it('image job: one input path is recorded', async () => {
@@ -64,7 +66,7 @@ describe('worker-cleanup-journal — create + transitions', () => {
         await journal.addInputFile({ journalDir: dir, jobId: 'b_c_s_1:image', dispatchId: 'd1', log: silentLog }, input);
         const file = path.join(dir, `${journal.sanitizeFilePart('b_c_s_1:image')}__${journal.sanitizeFilePart('d1')}.json`);
         const rec = journal.readRecord(file);
-        expect(rec.input_files).to.deep.equal([input]);
+        expect.deepEqual(rec.input_files, [input]);
     });
 
     it('video job: all reference images are recorded (dedup-safe)', async () => {
@@ -78,8 +80,8 @@ describe('worker-cleanup-journal — create + transitions', () => {
 
         const file = path.join(dir, `${journal.sanitizeFilePart('b_c_s_g1:video')}__${journal.sanitizeFilePart('d1')}.json`);
         const rec = journal.readRecord(file);
-        expect(rec.input_files).to.deep.equal(inputs);
-        expect(rec.input_files.length).to.equal(4);
+        expect.deepEqual(rec.input_files, inputs);
+        expect.equal(rec.input_files.length, 4);
     });
 
     it('generated stores the output path', async () => {
@@ -90,8 +92,8 @@ describe('worker-cleanup-journal — create + transitions', () => {
         await journal.setOutputAndGenerated(opts, output);
         const file = path.join(dir, `${journal.sanitizeFilePart('b_c_s_g1:video')}__${journal.sanitizeFilePart('d1')}.json`);
         const rec = journal.readRecord(file);
-        expect(rec.phase).to.equal('generated');
-        expect(rec.output_file).to.equal(output);
+        expect.equal(rec.phase, 'generated');
+        expect.equal(rec.output_file, output);
     });
 
     it('delivered is set after successful sendResult (transition order)', async () => {
@@ -101,7 +103,7 @@ describe('worker-cleanup-journal — create + transitions', () => {
         await journal.setDelivered(opts);
         const file = path.join(dir, `${journal.sanitizeFilePart('b_c_s_1:image')}__${journal.sanitizeFilePart('d1')}.json`);
         const rec = journal.readRecord(file);
-        expect(rec.phase).to.equal('delivered');
+        expect.equal(rec.phase, 'delivered');
     });
 });
 
@@ -113,12 +115,12 @@ describe('worker-cleanup-journal — recoverCleanupJournal', () => {
         const { opts } = await buildJournal(dir, { inputs: [input], output });
 
         const res = await journal.recoverCleanupJournal({ journalDir: dir, log: silentLog });
-        expect(res.found).to.equal(1);
-        expect(res.cleaned).to.equal(2);
-        expect(res.kept).to.equal(0);
-        expect(await exists(input)).to.equal(false);
-        expect(await exists(output)).to.equal(false);
-        expect(fs.readdirSync(dir).filter((f) => f.endsWith('.json'))).to.deep.equal([]);
+        expect.equal(res.found, 1);
+        expect.equal(res.cleaned, 2);
+        expect.equal(res.kept, 0);
+        expect.equal(await exists(input), false);
+        expect.equal(await exists(output), false);
+        expect.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith('.json')), []);
     });
 
     it('created recovery deletes input but keeps output', async () => {
@@ -128,11 +130,11 @@ describe('worker-cleanup-journal — recoverCleanupJournal', () => {
         await buildJournal(dir, { inputs: [input], output, delivered: false });
 
         const res = await journal.recoverCleanupJournal({ journalDir: dir, log: silentLog });
-        expect(res.cleaned).to.equal(1);
-        expect(await exists(input)).to.equal(false);
-        expect(await exists(output)).to.equal(true);
+        expect.equal(res.cleaned, 1);
+        expect.equal(await exists(input), false);
+        expect.equal(await exists(output), true);
         // всё удалилось (input), journal можно убрать
-        expect(fs.readdirSync(dir).filter((f) => f.endsWith('.json'))).to.deep.equal([]);
+        expect.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith('.json')), []);
     });
 
     it('generated recovery deletes input but keeps output', async () => {
@@ -143,11 +145,11 @@ describe('worker-cleanup-journal — recoverCleanupJournal', () => {
 
         const file = path.join(dir, `${journal.sanitizeFilePart('book_ch_sc_0001:audio')}__${journal.sanitizeFilePart('dispatch-test-1')}.json`);
         const rec = journal.readRecord(file);
-        expect(rec.phase).to.equal('generated');
+        expect.equal(rec.phase, 'generated');
 
         const res = await journal.recoverCleanupJournal({ journalDir: dir, log: silentLog });
-        expect(await exists(input)).to.equal(false);
-        expect(await exists(output)).to.equal(true);
+        expect.equal(await exists(input), false);
+        expect.equal(await exists(output), true);
     });
 
     it('partial cleanup keeps the journal for the next recovery', async () => {
@@ -159,18 +161,18 @@ describe('worker-cleanup-journal — recoverCleanupJournal', () => {
         await buildJournal(dir, { inputs: [input, blocked], output });
 
         const res = await journal.recoverCleanupJournal({ journalDir: dir, log: silentLog });
-        expect(res.cleaned).to.equal(2); // ok.png + result.mp4
-        expect(res.kept).to.equal(1);
-        expect(await exists(input)).to.equal(false);
-        expect(await exists(output)).to.equal(false);
+        expect.equal(res.cleaned, 2); // ok.png + result.mp4
+        expect.equal(res.kept, 1);
+        expect.equal(await exists(input), false);
+        expect.equal(await exists(output), false);
         // journal остался, т.к. blocked не удалился
-        expect(fs.readdirSync(dir).filter((f) => f.endsWith('.json')).length).to.equal(1);
+        expect.equal(fs.readdirSync(dir).filter((f) => f.endsWith('.json')).length, 1);
 
         // Следующий recovery: убираем препятствие → cleanup завершается.
         await fsp.rmdir(blocked);
         const res2 = await journal.recoverCleanupJournal({ journalDir: dir, log: silentLog });
-        expect(res2.kept).to.equal(0);
-        expect(fs.readdirSync(dir).filter((f) => f.endsWith('.json'))).to.deep.equal([]);
+        expect.equal(res2.kept, 0);
+        expect.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith('.json')), []);
     });
 
     it('ENOENT is safe — already-deleted files count as cleaned', async () => {
@@ -179,17 +181,17 @@ describe('worker-cleanup-journal — recoverCleanupJournal', () => {
         await buildJournal(dir, { inputs: [ghost], output: null });
 
         const res = await journal.recoverCleanupJournal({ journalDir: dir, log: silentLog });
-        expect(res.cleaned).to.equal(1);
-        expect(res.failed).to.equal(undefined);
-        expect(fs.readdirSync(dir).filter((f) => f.endsWith('.json'))).to.deep.equal([]);
+        expect.equal(res.cleaned, 1);
+        expect.equal(res.failed, undefined);
+        expect.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith('.json')), []);
     });
 
     it('repeated recovery is safe (no journals left → no-op)', async () => {
         const dir = await tmpDir();
         await journal.recoverCleanupJournal({ journalDir: dir, log: silentLog });
         const res = await journal.recoverCleanupJournal({ journalDir: dir, log: silentLog });
-        expect(res.found).to.equal(0);
-        expect(res.kept).to.equal(0);
+        expect.equal(res.found, 0);
+        expect.equal(res.kept, 0);
     });
 
     it('corrupt journal does not break startup and is kept for diagnostics', async () => {
@@ -199,11 +201,11 @@ describe('worker-cleanup-journal — recoverCleanupJournal', () => {
         await buildJournal(dir, { jobId: 'good_job:image', dispatchId: 'dispatch-good', inputs: [goodInput], output: null });
 
         const res = await journal.recoverCleanupJournal({ journalDir: dir, log: silentLog });
-        expect(res.found).to.equal(2);
-        expect(res.corrupt).to.equal(1);
-        expect(await exists(path.join(dir, 'broken__dispatch-x.json'))).to.equal(true);
+        expect.equal(res.found, 2);
+        expect.equal(res.corrupt, 1);
+        expect.equal(await exists(path.join(dir, 'broken__dispatch-x.json')), true);
         // хорошая запись обработана
-        expect(await exists(goodInput)).to.equal(false);
+        expect.equal(await exists(goodInput), false);
     });
 
     it('missing journal means no orphan deletion', async () => {
@@ -211,8 +213,8 @@ describe('worker-cleanup-journal — recoverCleanupJournal', () => {
         const orphan = (await writeFiles(dir, ['orphan.png']))[0];
 
         const res = await journal.recoverCleanupJournal({ journalDir: dir, log: silentLog });
-        expect(res.found).to.equal(0);
-        expect(await exists(orphan)).to.equal(true);
+        expect.equal(res.found, 0);
+        expect.equal(await exists(orphan), true);
     });
 
     it('audio works without any input file', async () => {
@@ -224,8 +226,8 @@ describe('worker-cleanup-journal — recoverCleanupJournal', () => {
         await journal.setDelivered(opts);
 
         const res = await journal.recoverCleanupJournal({ journalDir: dir, log: silentLog });
-        expect(res.cleaned).to.equal(1);
-        expect(await exists(output)).to.equal(false);
+        expect.equal(res.cleaned, 1);
+        expect.equal(await exists(output), false);
     });
 
     it('video recovery deletes all reference images + one mp4', async () => {
@@ -235,8 +237,8 @@ describe('worker-cleanup-journal — recoverCleanupJournal', () => {
         await buildJournal(dir, { jobId: 'b_c_s_g1:video', dispatchId: 'd-vid', inputs, output });
 
         const res = await journal.recoverCleanupJournal({ journalDir: dir, log: silentLog });
-        expect(res.cleaned).to.equal(4);
-        for (const p of inputs) expect(await exists(p)).to.equal(false);
-        expect(await exists(output)).to.equal(false);
+        expect.equal(res.cleaned, 4);
+        for (const p of inputs) expect.equal(await exists(p), false);
+        expect.equal(await exists(output), false);
     });
 });

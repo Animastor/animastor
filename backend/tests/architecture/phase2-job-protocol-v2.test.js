@@ -26,6 +26,10 @@ const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-sch
 const contractsImplPath = path.join(REPO_ROOT, 'contracts', 'src', 'job-protocol-v2.js');
 const gpuHubPath = path.join(REPO_ROOT, 'gpu-hub', 'gpu-hub.js');
 const workerPath = path.join(REPO_ROOT, 'worker', 'worker', 'worker.cjs');
+// Phase 9D: the worker consumes the GENERATED copy of the canonical
+// contracts implementation (worker/worker/job-protocol-v2.cjs) instead of
+// inline literals — parity-guarded by phase9d-worker-package.test.js.
+const workerProtocolPath = path.join(REPO_ROOT, 'worker', 'worker', 'job-protocol-v2.cjs');
 const dispatcherPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'gpu-dispatcher.js');
 
 function read(file) {
@@ -33,14 +37,19 @@ function read(file) {
 }
 
 describe('architecture: Job Protocol v2 contract (backend → hub → worker boundary)', () => {
-    it('protocol_version = 2 in all synced copies (contracts canonical + hub + worker)', () => {
+    it('protocol_version = 2 in all synced copies (contracts canonical + hub + worker generated copy)', () => {
         const contractsImpl = read(contractsImplPath);
         const hub = read(gpuHubPath);
         const worker = read(workerPath);
+        const workerProtocol = read(workerProtocolPath);
         const v = (src) => [...src.matchAll(/PROTOCOL_VERSION\s*=\s*(\d+)/g)].map((m) => Number(m[1]));
         expect(v(contractsImpl), 'contracts/src/job-protocol-v2.js (canonical)').to.deep.equal([2]);
         expect(v(hub), 'gpu-hub/gpu-hub.js').to.deep.equal([2]);
-        expect(v(worker), 'worker/worker/worker.cjs').to.deep.equal([2]);
+        // Phase 9D: the worker has NO local literal — it consumes the
+        // generated copy, which carries the frozen literal.
+        expect(v(workerProtocol), 'worker/worker/job-protocol-v2.cjs (generated from contracts)').to.deep.equal([2]);
+        expect(v(worker), 'worker/worker/worker.cjs (no local literal)').to.deep.equal([]);
+        expect(worker, 'worker.cjs must consume the generated copy').to.include('require("./job-protocol-v2.cjs")');
         // the backend facade re-exports and must not define its own literal
         expect(read(jobSchemaPath), 'backend facade must not define its own literal').to.not.match(/PROTOCOL_VERSION\s*=\s*\d/);
     });
@@ -70,6 +79,7 @@ describe('architecture: Job Protocol v2 contract (backend → hub → worker bou
         const canonical = read(contractsImplPath);
         const hub = read(gpuHubPath);
         const worker = read(workerPath);
+        const workerProtocol = read(workerProtocolPath);
         for (const token of ['audio', 'image', 'iu_image', 'video']) {
             expect(canonical).to.include(token);
             // gpu-hub.js is a large file; the type family is referenced via
@@ -78,18 +88,20 @@ describe('architecture: Job Protocol v2 contract (backend → hub → worker bou
             // We pin it by checking the type-suffix regex is present in the hub.
             expect(hub).to.match(new RegExp(':(iu_image|image|audio|video)'));
         }
-        // Worker pins the job_id grammar as an inline split-regex literal
-        // (both occurrences: multi-image and single-image input-file naming).
-        // The literal source text is `/:(iu_image|image|audio|video)$/` —
-        // matched as a source substring (an end-anchored regex applied to the
-        // whole file source cannot match, since the type suffix sits mid-file).
-        const workerSplitLiterals = [...worker.matchAll(/job_id\.split\((\/:\(iu_image\|image\|audio\|video\)\$\/)\)/g)].map((m) => m[1]);
-        expect(workerSplitLiterals, 'worker job_id split regex literals').to.deep.equal(
-            ['/:(iu_image|image|audio|video)$/', '/:(iu_image|image|audio|video)$/']
-        );
+        // Phase 9D: the worker no longer pins the job_id grammar as inline
+        // split-regex literals — it consumes JOB_ID_SPLIT_RE from the
+        // generated canonical copy (both occurrences: multi-image and
+        // single-image input-file naming). The literal itself is pinned in
+        // the generated copy.
+        const workerSplitUsages = [...worker.matchAll(/job_id\.split\(JOB_ID_SPLIT_RE\)/g)].map((m) => m[0]);
+        expect(workerSplitUsages, 'worker job_id split via generated copy').to.deep.equal([
+            'job_id.split(JOB_ID_SPLIT_RE)', 'job_id.split(JOB_ID_SPLIT_RE)',
+        ]);
+        expect(workerProtocol).to.match(/JOB_ID_SPLIT_RE = \/:\(iu_image\|image\|audio\|video\)\$\//);
         // Negative control: the split literal must NOT appear with a wrong
-        // type family (guards the pin above against becoming vacuous).
+        // type family anywhere (guards the pin against becoming vacuous).
         expect(worker).to.not.include('/:(iu_image|image|audio)$/');
+        expect(workerProtocol).to.not.include('/:(iu_image|image|audio)$/');
     });
 
     it('job envelope carries backend-authored identity fields (book_id, chapter_id, scene_id, stage)', () => {

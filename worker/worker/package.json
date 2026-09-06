@@ -1,10 +1,25 @@
 {
   "name": "animastor-worker",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Animastor Private GPU Worker runtime bundle. The version field is the canonical worker bundle version: the hub publishes it with the bundle artifact (GET /worker-bundle) and worker.cjs reports it in beacons when WORKER_VERSION is not set.",
   "main": "worker.cjs",
+  "private": true,
+  "files": [
+    "worker.cjs",
+    "worker-env.cjs",
+    "worker-cleanup.cjs",
+    "worker-cleanup-journal.cjs",
+    "job-protocol-v2.cjs",
+    ".env.example"
+  ],
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node worker.cjs",
+    "test": "node ../tests/run-all.cjs",
+    "sync:protocol": "node ../tools/sync-protocol.cjs",
+    "check:protocol": "node ../tools/sync-protocol.cjs --check"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "keywords": [],
   "author": "",

@@ -56,16 +56,21 @@ describe('architecture: GPU Hub contract', () => {
         }
     });
 
-    it('protocol_version stays 2 in all synced copies (contracts canonical + hub + worker)', () => {
+    it('protocol_version stays 2 in all synced copies (contracts canonical + hub + worker generated copy)', () => {
         // Phase 9C: the backend-side literal lives in the contracts package
         // (canonical); job-schema.js is a facade without its own literal.
+        // Phase 9D: the worker consumes the GENERATED copy of the canonical
+        // implementation — the frozen literal lives there, not in worker.cjs.
         const contractsImpl = read(contractsImplPath);
         const hub = read(gpuHubPath);
         const worker = read(workerPath);
+        const workerProtocol = read(path.join(REPO_ROOT, 'worker', 'worker', 'job-protocol-v2.cjs'));
         const v = (src) => [...src.matchAll(/PROTOCOL_VERSION\s*=\s*(\d+)/g)].map((m) => Number(m[1]));
         expect(v(contractsImpl), 'contracts/src/job-protocol-v2.js (canonical)').to.deep.equal([2]);
         expect(v(hub), 'gpu-hub/gpu-hub.js').to.deep.equal([2]);
-        expect(v(worker), 'worker/worker/worker.cjs').to.deep.equal([2]);
+        expect(v(workerProtocol), 'worker/worker/job-protocol-v2.cjs (generated from contracts)').to.deep.equal([2]);
+        expect(v(worker), 'worker/worker/worker.cjs (no local literal)').to.deep.equal([]);
+        expect(worker, 'worker.cjs must consume the generated copy').to.include('require("./job-protocol-v2.cjs")');
         expect(read(jobSchemaPath), 'backend facade must not define its own literal').to.not.match(/PROTOCOL_VERSION\s*=\s*\d/);
     });
 
@@ -169,7 +174,12 @@ describe('architecture: Job protocol consistency (job-schema SYNC copies)', () =
 
     it('worker job_id split stays consistent with the backend job-schema', () => {
         const worker = read(workerPath);
-        expect(worker).to.include('/:(iu_image|image|audio|video)$/');
+        // Phase 9D: the split family lives in the generated canonical copy;
+        // worker.cjs consumes JOB_ID_SPLIT_RE from it (no inline literal).
+        expect(worker).to.include('job_id.split(JOB_ID_SPLIT_RE)');
+        expect(worker).to.not.include('/:(iu_image|image|audio|video)$/');
+        expect(read(path.join(REPO_ROOT, 'worker', 'worker', 'job-protocol-v2.cjs')))
+            .to.include('JOB_ID_SPLIT_RE = /:(iu_image|image|audio|video)$/');
     });
 
     it('protocol_version mismatch is rejected with 409 on every entry point', () => {
