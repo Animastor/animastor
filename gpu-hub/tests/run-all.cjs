@@ -142,8 +142,8 @@ check('bare requires stay on the frozen npm specifier set + @animastor/contracts
 
 check('package.json declares exactly the frozen dependency set', () => {
   const pkg = readPkg();
-  assert(JSON.stringify(Object.keys(pkg.dependencies || {}).sort()) === JSON.stringify(['cors', 'express', 'ioredis']), 'unexpected dependencies');
-  assert(JSON.stringify(Object.keys(pkg.optionalDependencies || {})) === JSON.stringify(['@animastor/contracts']), 'unexpected optionalDependencies');
+  assert(JSON.stringify(Object.keys(pkg.dependencies || {}).sort()) === JSON.stringify(['@animastor/contracts', 'cors', 'express', 'ioredis']), 'unexpected dependencies');
+  assert(!pkg.optionalDependencies, 'optionalDependencies removed — contracts is now a regular dependency');
   assert(!pkg.devDependencies, 'devDependencies appeared — keep the package runtime-only');
 });
 
@@ -171,9 +171,9 @@ check('hub carries NO local PROTOCOL_VERSION literal', () => {
   assert(literals.length === 0, `local protocol literal(s) found: ${literals.join(', ')}`);
 });
 
-check('@animastor/contracts resolves inside the package tree (file:../contracts or provided node_modules)', () => {
+check('@animastor/contracts resolves inside the package tree (registry or provided node_modules)', () => {
   const resolved = require.resolve('@animastor/contracts', { paths: [PKG_ROOT] });
-  assert(resolved.includes('contracts'), `unexpected resolution: ${resolved}`);
+  assert(resolved.includes('@animastor/contracts'), `unexpected resolution: ${resolved}`);
 });
 
 // ── 4. protocol parity ───────────────────────────────────────────────────

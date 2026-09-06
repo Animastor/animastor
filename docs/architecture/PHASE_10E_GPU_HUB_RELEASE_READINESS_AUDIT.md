@@ -1,9 +1,14 @@
 # PHASE 10E — GPU Hub Release Readiness Audit
 
-**Status: BLOCKED — @animastor/contracts registry dependency is the single blocker**
+**Status: RESOLVED — Blocker B1 closed by Phase 10G (contracts registry migration)**
 **HEAD:** `6accd235f6cd1f63073b11012e37e4c99e9b66cf`
 **Predecessors:** 10A (contract freeze) → 10B (canonical Job Protocol v2) → 10C (extraction readiness) → 10D (package boundary)
 **Principle:** *Determine if @animastor/gpu-hub is ready for independent npm publish; fix what is safe to fix; document blockers honestly.*
+
+> **Phase 10G update:** Blocker B1 is now closed. `@animastor/contracts@0.1.0` was published
+> to npm in Phase 10F. GPU Hub dependency was migrated from `file:../contracts` (optional)
+> to `"@animastor/contracts": "^0.1.0"` (regular dependency) in Phase 10G. Docker bind mount
+> for contracts was removed from the gpu-hub service. All tests pass.
 
 ---
 
@@ -190,9 +195,9 @@ Guard `PB4` (set-equality) + banned-pattern scan: **PASS** — tarball surface m
 
 ## 7. Blockers
 
-| # | Blocker | Why | Required Action | Can Fix Now? |
-|---|---|---|---|---|
-| **B1** | `@animastor/contracts` not published to registry | Package requires contracts at load time (`gpu-hub.js:39`); `file:../contracts` doesn't resolve outside monorepo; `optionalDependencies` skip doesn't prevent runtime crash | Publish `@animastor/contracts@0.1.0` to npm (or private registry), then update `gpu-hub/package.json` `optionalDependencies` → `dependencies` with semver range | **NO** — requires external registry action |
+| # | Blocker | Why | Required Action | Can Fix Now? | Status |
+|---|---|---|---|---|---|
+| **B1** | `@animastor/contracts` not published to registry | Package requires contracts at load time (`gpu-hub.js:39`); `file:../contracts` doesn't resolve outside monorepo; `optionalDependencies` skip doesn't prevent runtime crash | Publish `@animastor/contracts@0.1.0` to npm (or private registry), then update `gpu-hub/package.json` `optionalDependencies` → `dependencies` with semver range | **NO** — requires external registry action | **CLOSED** (Phase 10F/10G) |
 
 ### Non-blockers (deferred by design)
 
@@ -207,30 +212,30 @@ Guard `PB4` (set-equality) + banned-pattern scan: **PASS** — tarball surface m
 
 ## 8. Verdict
 
-**PHASE 10E: BLOCKED**
+**PHASE 10E: RESOLVED (via Phase 10G)**
 
 | Dimension | Status |
 |---|---|
 | Package identity | ✅ READY |
-| Registry dependency | ❌ BLOCKED (B1) |
-| Clean install | ⚠️ Installs but cannot load without contracts |
+| Registry dependency | ✅ RESOLVED (Phase 10G: `@animastor/contracts: ^0.1.0`) |
+| Clean install | ✅ WORKS (registry-resolved) |
 | npm pack | ✅ READY |
-| Docker | ✅ PASS (monorepo preserved) |
+| Docker | ✅ PASS (contracts mount removed for gpu-hub; backend mount preserved) |
 | API/Redis/security | ✅ PASS (no regression) |
 | Tests | ✅ PASS (all suites green except known pre-existing LAC) |
 
 ### Final determination
 
 ```
-BLOCKED — @animastor/contracts must be published to a registry before
-@animastor/gpu-hub can be independently published. This is the single
-hard blocker. All other release dimensions are ready.
+RESOLVED — All blockers closed. @animastor/gpu-hub is ready for independent
+npm publish after physical extraction to a separate repository.
 ```
 
-### Required next step
+### Required next steps
 
-1. Publish `@animastor/contracts@0.1.0` to npm (or configured registry)
-2. Update `gpu-hub/package.json`: `optionalDependencies` → `dependencies`, `"@animastor/contracts": "^0.1.0"`
-3. Regenerate `package-lock.json`
-4. Re-run this audit to confirm clean install works end-to-end
-5. Then: `npm publish @animastor/gpu-hub@0.1.0`
+1. ~~Publish `@animastor/contracts@0.1.0` to npm~~ ✅ DONE (Phase 10F)
+2. ~~Update `gpu-hub/package.json`: `optionalDependencies` → `dependencies`~~ ✅ DONE (Phase 10G)
+3. ~~Regenerate `package-lock.json`~~ ✅ DONE (Phase 10G)
+4. ~~Re-run this audit to confirm clean install works end-to-end~~ ✅ DONE (Phase 10G)
+5. Physical extraction of GPU Hub to separate repository
+6. Then: `npm publish @animastor/gpu-hub@0.1.0`

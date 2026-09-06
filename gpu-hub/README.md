@@ -2,7 +2,7 @@
 
 GPU Hub — standalone HTTP orchestration boundary between the Animastor backend and GPU workers. It owns the Redis-backed task queues, dispatches GPU jobs, relays results/errors back to the backend, and serves worker onboarding artifacts (bootstrap installer, worker bundle, workflows).
 
-Job Protocol v2 is consumed from the canonical [`@animastor/contracts`](../contracts) package — the hub carries no local protocol copy.
+Job Protocol v2 is consumed from the canonical [`@animastor/contracts`](https://www.npmjs.com/package/@animastor/contracts) package — the hub carries no local protocol copy.
 
 ## Standalone run
 
@@ -11,7 +11,7 @@ npm ci
 npm start          # node server.js
 ```
 
-Inside the monorepo `@animastor/contracts` resolves via the declared `file:../contracts` dependency. Outside the monorepo (until the package is published to a registry) provide the package at `node_modules/@animastor/contracts` manually — e.g. via a bind mount, exactly like `docker-compose.yml` does.
+`@animastor/contracts` resolves from npm registry as a regular dependency. No special setup required.
 
 Tests:
 

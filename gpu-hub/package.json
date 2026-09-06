@@ -30,11 +30,9 @@
     "test": "node tests/run-all.cjs"
   },
   "dependencies": {
+    "@animastor/contracts": "^0.1.0",
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "ioredis": "^5.10.0"
-  },
-  "optionalDependencies": {
-    "@animastor/contracts": "file:../contracts"
   }
 }

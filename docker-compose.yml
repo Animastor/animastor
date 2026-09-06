@@ -120,12 +120,6 @@ services:
       # section value.
       - SHARE_FEATURES_ENABLED=${SHARE_FEATURES_ENABLED:-0}
     volumes:
-      # Phase 10B: canonical Job Protocol v2 package (@animastor/contracts).
-      # gpu-hub.js requires it at runtime; this read-only mount makes the
-      # package resolvable inside the container (same seam as the backend
-      # service above) without a registry package and without widening the
-      # ./gpu-hub Docker build context.
-      - ./contracts:/app/node_modules/@animastor/contracts:ro
       # Experimental Beta onboarding: hub serves worker.cjs at GET /gpu/worker-source
       # (self-contained file, no secrets — same as worker/worker/worker.cjs).
       # DEPRECATED (Setup Contract Phase 3): kept for the old instruction;
