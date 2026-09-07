@@ -147,8 +147,8 @@ object BetaSettingsHelpers {
             token = token,
             workerType = workerType,
             workerId = workerName.trim().replace(Regex("\\s+"), "-").lowercase(),
-            sourceUrl = "$hubUrl/worker-source",
-            downloadCommand = "curl -o worker.cjs $hubUrl/worker-source",
+            sourceUrl = "$hubUrl/worker-bundle",
+            downloadCommand = "curl -o worker-bundle.tar.gz $hubUrl/worker-bundle && tar -xzf worker-bundle.tar.gz && rm worker-bundle.tar.gz",
             runCommand = "node worker.cjs"
         )
     }

@@ -36,8 +36,7 @@ function findWorkerManifest(manifests, workerEntryId) {
  * Deploy the worker bundle into workerDir.
  * Source order (never invented): repo checkout `worker/worker/` first, then
  * an explicit `bundleDir` (a verified hub worker-bundle tarball the engine
- * extracted beforehand), then the hub's GET /worker-source (worker.cjs only;
- * deprecated single-file channel).
+ * extracted beforehand). If both fail, the install returns status 'failed'.
  * Ownership details are returned for the uninstall manifest: dir_created,
  * files the installer actually copied (files_installed) vs files that were
  * already on disk and were kept (files_kept).
@@ -67,15 +66,6 @@ function installWorkerBundle(io, { workerDir, manifest, repoRoot = null, bundleD
             io.fs.copyFileSync(path.join(bundleDir, f), dest);
             installed.push(f);
             continue;
-        }
-        if (f === 'worker.cjs' && hubUrl && httpFetchText) {
-            const url = `${hubUrl.replace(/\/$/, '')}/worker-source`;
-            const res = httpFetchText(url);
-            if (res && res.status === 200 && res.text) {
-                io.fs.writeFileSync(dest, res.text);
-                installed.push(f);
-                continue;
-            }
         }
         failed.push(f);
     }

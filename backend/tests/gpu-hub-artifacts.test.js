@@ -6,14 +6,12 @@
 // GET /workflow/:id           baseline workflow JSON (manifest allowlist)
 // GET /installer              self-contained installer package (tar.gz)
 // GET /installer/sha256       installer checksum metadata
-// GET /worker-source          DEPRECATED single-file endpoint (still works)
 //
 // Invariants under test:
 //   - artifacts are deterministic (same content ⇒ same sha256);
 //   - .env / secrets are NEVER part of the bundle;
 //   - legacy/excluded workflows (old_*.json) are never served;
-//   - path traversal is impossible;
-//   - the old /worker-source keeps working (no breaking change).
+//   - path traversal is impossible.
 
 const { expect } = require('chai');
 const crypto = require('crypto');
@@ -501,22 +499,6 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
             const a = await (await fetch(url, { headers: { host: 'app.animastor.in' } })).text();
             const b = await (await fetch(url, { headers: { host: 'app.animastor.in' } })).text();
             expect(a).to.equal(b);
-        });
-    });
-
-    // ══════════════════════════════════════════════════════════════════
-    // Legacy endpoint (must keep working — no breaking changes)
-    // ══════════════════════════════════════════════════════════════════
-
-    describe('GET /worker-source (deprecated)', () => {
-        it('still serves worker.cjs and is marked deprecated', async () => {
-            hub = await startHub(ARTIFACT_CONFIG);
-            const res = await fetch(`${hub.base}/worker-source`);
-            expect(res.status).to.equal(200);
-            expect(res.headers.get('deprecation')).to.equal('true');
-            expect(res.headers.get('link')).to.contain('/worker-bundle');
-            const body = await res.text();
-            expect(body).to.equal(fs.readFileSync(REAL_WORKER_SOURCE, 'utf8'));
         });
     });
 });

@@ -112,15 +112,13 @@ describe('phase10a: Job Protocol version freeze', () => {
 // ── G3 — HTTP route surface is exactly the frozen set ───────────────────
 
 describe('phase10a: GPU Hub route surface freeze', () => {
-    // Frozen set — GPU_HUB_CONTRACT.md §3 (14 routes incl. deprecated
-    // /worker-source and the artifact family).
+    // Frozen set — GPU_HUB_CONTRACT.md §3 (13 routes, /worker-source removed Phase 10T).
     const FROZEN_ROUTES = [
         ['POST', '/beacon'],
         ['POST', '/task'],
         ['GET', '/task/next'],
         ['POST', '/task/result'],
         ['POST', '/task/error'],
-        ['GET', '/worker-source'],
         ['GET', '/worker-bundle'],
         ['GET', '/worker-bundle/sha256'],
         ['GET', '/workflow/:id'],
@@ -131,19 +129,12 @@ describe('phase10a: GPU Hub route surface freeze', () => {
         ['DELETE', '/queue/clear'],
     ].map(([m, p]) => `${m} ${p}`).sort();
 
-    it('route surface is EXACTLY the frozen 14-route set (additions and removals both fail)', () => {
+    it('route surface is EXACTLY the frozen 13-route set (additions and removals both fail)', () => {
         const src = readSource(path.join(HUB_DIR, 'gpu-hub.js'));
         const found = [...src.matchAll(/app\.(post|get|delete|put)\(\s*"([^"]+)"/g)]
             .map((m) => `${m[1].toUpperCase()} ${m[2]}`)
             .sort();
         expect(found, 'route surface changed — GPU_HUB_CONTRACT.md §3 is FROZEN; update the contract doc + this guard in the same commit').to.deep.equal(FROZEN_ROUTES);
-    });
-
-    it('deprecated /worker-source is still served (backward-compat requirement until coordinated deprecation)', () => {
-        const src = readSource(path.join(HUB_DIR, 'gpu-hub.js'));
-        expect(src).to.include('Deprecation');
-        expect(src).to.include('successor-version');
-        expect(src).to.include('worker_source_unavailable');
     });
 });
 

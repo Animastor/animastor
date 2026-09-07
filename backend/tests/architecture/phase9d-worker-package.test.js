@@ -215,10 +215,9 @@ describe('Phase 9D: install manifests ship the runtime set', () => {
 
 // ── D7 — deployment wiring unchanged (compat channels stay on the path) ──
 describe('Phase 9D: deployment wiring unchanged', () => {
-    it('hub volume mounts stay pinned to worker/worker/ (rollback-safe extraction)', () => {
-        const compose = fs.readFileSync(path.join(REPO_ROOT, 'docker-compose.yml'), 'utf8');
-        expect(compose).to.include('./worker/worker/worker.cjs:/app/worker-source/worker.cjs:ro');
-        expect(compose).to.include('./worker/worker:/app/worker-bundle:ro');
+    it('local dev overlay keeps the worker-bundle mount pinned (rollback-safe extraction)', () => {
+        const overlay = fs.readFileSync(path.join(REPO_ROOT, 'docker/compose/overlay-gpu-hub-local.yml'), 'utf8');
+        expect(overlay).to.include('./worker/worker:/app/worker-bundle:ro');
     });
 });
 

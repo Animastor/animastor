@@ -33,7 +33,12 @@ const fs = require('fs');
 const path = require('path');
 
 const MANIFEST_SCHEMA_VERSION = '1.0.0';
-const MANIFEST_ROOT = path.join(__dirname, '..', '..', 'ai', 'install-manifests');
+// Priority: baked-in (container) > repo checkout (development)
+const MANIFEST_ROOT = (() => {
+    const bakedIn = path.join('/app', 'artifacts', 'install-manifests');
+    try { if (require('fs').existsSync(bakedIn)) return bakedIn; } catch (_) {}
+    return path.join(__dirname, '..', '..', 'ai', 'install-manifests');
+})();
 
 const BASIS_VALUES = Object.freeze([
     'required',

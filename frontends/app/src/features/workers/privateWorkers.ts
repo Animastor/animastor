@@ -120,8 +120,8 @@ export function buildSetupContract(token: string, workerType: WorkerType, worker
       'worker_setup_step_4',
       'worker_setup_step_5',
     ],
-    sourceUrl: `${HUB_URL}/worker-source`,
-    downloadCommand: `curl -o worker.cjs ${HUB_URL}/worker-source`,
+    sourceUrl: `${HUB_URL}/worker-bundle`,
+    downloadCommand: `curl -o worker-bundle.tar.gz ${HUB_URL}/worker-bundle && tar -xzf worker-bundle.tar.gz && rm worker-bundle.tar.gz`,
     runCommand: 'node worker.cjs',
     prereqs: [
       'worker_prereq_node',

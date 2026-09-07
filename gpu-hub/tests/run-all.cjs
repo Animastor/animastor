@@ -191,10 +191,10 @@ check('hub PROTOCOL_VERSION equals the canonical @animastor/contracts value', ()
 
 console.log('\n[5/6] route freeze');
 
-check('route surface is EXACTLY the frozen 14-route set (additions and removals both fail)', () => {
+check('route surface is EXACTLY the frozen 13-route set (additions and removals both fail)', () => {
   const FROZEN_ROUTES = [
     'POST /beacon', 'POST /task', 'GET /task/next', 'POST /task/result',
-    'POST /task/error', 'GET /worker-source', 'GET /worker-bundle',
+    'POST /task/error', 'GET /worker-bundle',
     'GET /worker-bundle/sha256', 'GET /workflow/:id', 'GET /installer',
     'GET /installer/bundle', 'GET /installer/sha256', 'GET /health',
     'DELETE /queue/clear',
@@ -205,13 +205,6 @@ check('route surface is EXACTLY the frozen 14-route set (additions and removals 
     .sort();
   assert(JSON.stringify(found) === JSON.stringify(FROZEN_ROUTES),
     `route surface drifted.\nfound:    ${JSON.stringify(found)}\nfrozen:   ${JSON.stringify(FROZEN_ROUTES)}`);
-});
-
-check('deprecated /worker-source backward-compat markers intact', () => {
-  const src = readSource(path.join(PKG_ROOT, 'gpu-hub.js'));
-  for (const marker of ['Deprecation', 'successor-version', 'worker_source_unavailable']) {
-    assert(src.includes(marker), `missing marker: ${marker}`);
-  }
 });
 
 // ── 6. Redis ownership ───────────────────────────────────────────────────

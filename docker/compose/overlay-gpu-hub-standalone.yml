@@ -1,26 +1,22 @@
 # ============================================================
-# OPTIONAL overlay — GPU Hub standalone image cutover (Phase 10J)
+# GPU Hub standalone image cutover (Phase 10J / 10T)
 # ============================================================
-# Use in the FUTURE, after the standalone image is published
-# (Animastor/animastor-gpu-hub CI). NOT active today — the default
-# docker-compose.yml still builds ./gpu-hub (transitional fixture).
+# Use when GPU_HUB_IMAGE is set to a pinned GHCR digest.
+# The GHCR image contains baked-in artifacts (Phase 10T).
 #
-# Usage (cutover day):
+# Usage:
 #   docker compose \
 #     -f docker-compose.yml \
 #     -f docker/compose/overlay-gpu-hub-standalone.yml \
 #     up -d gpu-hub
 #
-# RULES (Phase 10J audit §Docker cutover):
-#   - NEVER use a moving tag. Pin by digest or by
-#     immutable version tag AND record the digest in the cutover audit.
+# RULES:
+#   - NEVER use a moving tag. Pin by digest or immutable version tag.
 #   - Set GPU_HUB_IMAGE in .env first, e.g.:
 #       GPU_HUB_IMAGE=ghcr.io/animastor/animastor-gpu-hub@sha256:<digest>
-#   - The service name, container name, networks, env, and the five
-#     artifact mounts stay IDENTICAL to the base compose (wire contract
-#     unchanged) — only the image source changes.
-#   - Runtime sources of the published image must be sha256-identical to
-#     the monorepo gpu-hub/ fixture at cutover time (verify before switch).
+#   - The GHCR image contains baked-in artifacts (worker bundle,
+#     workflows, installer, manifests) at /app/artifacts/.
+#   - No bind mounts needed — the image is self-contained.
 #
 # This overlay intentionally does nothing until GPU_HUB_IMAGE is set to a
 # registry reference: without it the base compose default (local build)

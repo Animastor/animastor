@@ -753,7 +753,7 @@
       "options": [
         {
           "kind": "animastor-origin",
-          "endpoint": "GET {HUB_URL}/worker-source"
+          "endpoint": "GET {HUB_URL}/worker-bundle"
         },
         {
           "kind": "repository",
@@ -789,7 +789,7 @@
       "evidence": [
         "worker/worker/worker.cjs:1-4 (v2.1.0, Node 18+)",
         "worker/worker/.env.example",
-        "gpu-hub/gpu-hub.js GET /worker-source"
+        "gpu-hub/gpu-hub.js GET /worker-bundle"
       ]
     }
   },

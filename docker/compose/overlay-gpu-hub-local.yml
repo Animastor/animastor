@@ -1,0 +1,23 @@
+# ============================================================
+# GPU Hub local development overlay (Phase 10T)
+# ============================================================
+# Use for local development without GPU_HUB_IMAGE.
+# Adds bind mounts from monorepo for artifact delivery.
+#
+# Usage:
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker/compose/overlay-gpu-hub-local.yml \
+#     up -d gpu-hub
+#
+# This overlay adds the artifact mounts that were removed from
+# the base compose in Phase 10T (bake-in). Production uses the
+# GHCR image with baked-in artifacts instead.
+
+services:
+  gpu-hub:
+    volumes:
+      - ./worker/worker:/app/worker-bundle:ro
+      - ./backend/ai/workflows:/app/workflows:ro
+      - ./backend/src/installer:/app/installer-src:ro
+      - ./backend/ai/install-manifests:/app/install-manifests:ro

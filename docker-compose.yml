@@ -124,20 +124,10 @@ services:
       # and the share_policy heartbeat markers. Must match the backend
       # section value.
       - SHARE_FEATURES_ENABLED=${SHARE_FEATURES_ENABLED:-0}
-    volumes:
-      # Experimental Beta onboarding: hub serves worker.cjs at GET /gpu/worker-source
-      # (self-contained file, no secrets — same as worker/worker/worker.cjs).
-      # DEPRECATED (Setup Contract Phase 3): kept for the old instruction;
-      # canonical artifact is the full bundle below (GET /gpu/worker-bundle).
-      - ./worker/worker/worker.cjs:/app/worker-source/worker.cjs:ro
-      # Setup Contract Phase 3 artifacts (all secret-free, read-only):
-      # GET /gpu/worker-bundle — full worker runtime bundle (tar.gz; .env never included)
-      - ./worker/worker:/app/worker-bundle:ro
-      # GET /gpu/workflow/:id — baseline workflows (allowlist from install manifests)
-      - ./backend/ai/workflows:/app/workflows:ro
-      # GET /gpu/installer — self-contained installer package (tar.gz)
-      - ./backend/src/installer:/app/installer-src:ro
-      - ./backend/ai/install-manifests:/app/install-manifests:ro
+    # Phase 10T: Artifacts are baked into the GHCR image.
+    # For local development without GPU_HUB_IMAGE, use:
+    #   docker compose -f docker-compose.yml -f docker/compose/overlay-gpu-hub-local.yml up
+    # which adds bind mounts from the monorepo.
 
   nginx:
     image: nginx:alpine

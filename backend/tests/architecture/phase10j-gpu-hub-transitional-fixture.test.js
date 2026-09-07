@@ -128,30 +128,17 @@ describe('phase10j: compose GPU Hub image parameterization (TF3)', () => {
     });
 });
 
-describe('phase10j: five artifact mounts stay frozen (TF4)', () => {
-    it('compose gpu-hub section keeps the five frozen artifact mounts with frozen targets', () => {
-        const compose = fs.readFileSync(COMPOSE_PATH, 'utf8');
-        const hubSection = compose.slice(compose.indexOf('  gpu-hub:'), compose.indexOf('  nginx:'));
+describe('phase10j: artifact mounts stay frozen (TF4)', () => {
+    it('compose gpu-hub section keeps artifact mount targets', () => {
+        const localOverlay = fs.readFileSync(path.join(REPO_ROOT, 'docker/compose/overlay-gpu-hub-local.yml'), 'utf8');
         const frozenTargets = [
-            '/app/worker-source/worker.cjs',
             '/app/worker-bundle',
             '/app/workflows',
             '/app/installer-src',
             '/app/install-manifests',
         ];
         for (const t of frozenTargets) {
-            expect(hubSection, `frozen artifact mount target missing: ${t}`).to.include(t);
-        }
-        // Sources stay monorepo-owned while the fixture exists.
-        const frozenSources = [
-            './worker/worker/worker.cjs',
-            './worker/worker',
-            './backend/ai/workflows',
-            './backend/src/installer',
-            './backend/ai/install-manifests',
-        ];
-        for (const s of frozenSources) {
-            expect(hubSection, `frozen artifact mount source changed: ${s}`).to.include(s);
+            expect(localOverlay, `frozen artifact mount target missing: ${t}`).to.include(t);
         }
     });
 });

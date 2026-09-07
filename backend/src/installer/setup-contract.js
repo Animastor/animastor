@@ -53,11 +53,16 @@ function getInstallerVersion() {
 
 /**
  * Read the canonical worker bundle version from the bundle's own
- * package.json (repo checkout). In container deployments the worker tree
- * may not be mounted into the backend — then the hub probe is the only
- * source (probeHubArtifacts carries the version the hub actually serves).
+ * package.json. Checks baked-in artifacts first (container), then
+ * repo checkout (development), then hub probe (network).
  */
 function getWorkerBundleVersion() {
+    // Priority: baked-in > repo checkout > null (hub probe is primary source)
+    const bakedIn = path.join('/app', 'artifacts', 'worker-bundle', 'package.json');
+    try {
+        const pkg = JSON.parse(fs.readFileSync(bakedIn, 'utf8'));
+        if (typeof pkg.version === 'string' && pkg.version) return pkg.version;
+    } catch (_) { /* not in container */ }
     try {
         const file = path.join(__dirname, '..', '..', '..', 'worker', 'worker', 'package.json');
         const pkg = JSON.parse(fs.readFileSync(file, 'utf8'));

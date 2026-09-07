@@ -1283,34 +1283,6 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   })
 
   // ======================================================
-  // WORKER SOURCE (Experimental Beta — onboarding) — DEPRECATED
-  // ======================================================
-  // DEPRECATED (Private Worker Setup Contract Phase 3): serves worker.cjs
-  // ONLY. The worker requires additional runtime files (worker-cleanup.cjs,
-  // worker-cleanup-journal.cjs, package*.json, .env.example), so a
-  // single-file install is broken. Canonical replacement: GET /worker-bundle
-  // (full versioned bundle, sha256 published at /worker-bundle/sha256).
-  // Kept for backward compatibility with the old instruction; no secrets
-  // here — same file as worker/worker/worker.cjs, mounted read-only.
-
-  const WORKER_SOURCE_PATH =
-    config.WORKER_SOURCE_PATH || "/app/worker-source/worker.cjs";
-
-  app.get("/worker-source", (req, res) => {
-    fs.readFile(WORKER_SOURCE_PATH, (err, buf) => {
-      if (err) {
-        return res.status(404).json({ error: "worker_source_unavailable" });
-      }
-      res.setHeader("Content-Type", "application/javascript; charset=utf-8");
-      res.setHeader("Content-Disposition", 'attachment; filename="worker.cjs"');
-      res.setHeader("Cache-Control", "no-store");
-      res.setHeader("Deprecation", "true");
-      res.setHeader("Link", '</worker-bundle>; rel="successor-version"');
-      res.send(buf);
-    });
-  });
-
-  // ======================================================
   // SETUP CONTRACT ARTIFACTS (Private Worker — Phase 3)
   // ======================================================
   // Public download endpoints behind the UI-safe setup contract metadata
@@ -1325,13 +1297,24 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   //   GET /installer              installer package (tar.gz, self-contained)
   //   GET /installer/sha256       installer checksum + version metadata
 
-  const WORKER_BUNDLE_DIR = config.WORKER_BUNDLE_DIR || "/app/worker-bundle";
-  const WORKFLOW_DIR = config.WORKFLOW_DIR || "/app/workflows";
-  const INSTALLER_SRC_DIR = config.INSTALLER_SRC_DIR || "/app/installer-src";
-  const INSTALLER_MANIFESTS_DIR =
-    config.INSTALLER_MANIFESTS_DIR || "/app/install-manifests";
-  const INSTALLER_WORKFLOWS_DIR =
-    config.INSTALLER_WORKFLOWS_DIR || "/app/workflows";
+  // Artifact directories — prefer baked-in (artifacts/), fallback to mounts.
+  // After Phase 10T, the GHCR image contains artifacts/ with all required files.
+  // Local development still uses bind mounts via docker-compose.yml.
+  const ARTIFACT_BASE = path.join(__dirname, 'artifacts');
+
+  function resolveArtifactDir(bakedInName, mountFallback, configKey) {
+    // Priority: config override > baked-in > mount fallback
+    if (config[configKey]) return config[configKey];
+    const bakedPath = path.join(ARTIFACT_BASE, bakedInName);
+    if (fs.existsSync(bakedPath)) return bakedPath;
+    return mountFallback;
+  }
+
+  const WORKER_BUNDLE_DIR = resolveArtifactDir('worker-bundle', '/app/worker-bundle', 'WORKER_BUNDLE_DIR');
+  const WORKFLOW_DIR = resolveArtifactDir('workflows', '/app/workflows', 'WORKFLOW_DIR');
+  const INSTALLER_SRC_DIR = resolveArtifactDir('installer-src', '/app/installer-src', 'INSTALLER_SRC_DIR');
+  const INSTALLER_MANIFESTS_DIR = resolveArtifactDir('install-manifests', '/app/install-manifests', 'INSTALLER_MANIFESTS_DIR');
+  const INSTALLER_WORKFLOWS_DIR = resolveArtifactDir('workflows', '/app/workflows', 'INSTALLER_WORKFLOWS_DIR');
 
   // Versions have ONE canonical source each (no manual duplication):
   //   worker bundle → worker/worker/package.json (mounted as WORKER_BUNDLE_DIR)
