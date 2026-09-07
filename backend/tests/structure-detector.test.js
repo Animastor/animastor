@@ -2,9 +2,14 @@ const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-// BOOKS_DIR must be set before lazy-book is loaded (runtime-config reads it at
-// require time). Always use a fresh temp dir so tests never touch real books.
-process.env.BOOKS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'vbook-unit-'));
+// Bind the booksRoot port + structure-detector BEFORE any book domain module
+// loads (the package boundary no longer reads env at require time). Always use
+// a fresh temp dir so tests never touch real books.
+require('./vbook-test-bindings.cjs');
+const config = require('../src/config/runtime-config');
+const { configureBooksRoot } = require('../src/book/books-root');
+config.BOOKS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'vbook-unit-'));
+configureBooksRoot(() => config.BOOKS_DIR);
 const sd = require('../src/services/structure-detector');
 const parser = require('../src/book/lazy-book/parser');
 const chapterUtils = require('../src/book/lazy-book/chapter-utils');

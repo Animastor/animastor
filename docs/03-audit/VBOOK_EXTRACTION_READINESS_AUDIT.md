@@ -3,6 +3,14 @@
 **Status:** READ-ONLY audit. No production code changed, no refactor performed, no package created, no files moved. Only this document was added.
 **Date:** 2026-09-06
 **Baseline:** HEAD `7cf3f849` (post Phase-Next reconnaissance)
+
+> **Preparation status (2026-09-07):** the preparation set (A1–A5, B1) has been
+> executed against a re-verified HEAD — all §1/§2/§3 findings confirmed current.
+> `booksRoot` and `structureDetector` are injectable ports now; the package
+> skeleton + schema + boundary guards exist. See
+> `docs/architecture/VBOOK_RUNTIME_RELOCATION_CHECKLIST.md` (PREPARATION
+> COMPLETE → READY FOR PHYSICAL MOVE). The physical move (Phase C) is the next,
+> separate task.
 **Predecessors:** `docs/architecture/PHASE_NEXT_MODULE_EXTRACTION_RECONNAISSANCE.md` (ranked VBook #1), `PHASE_7_EXTRACTION_READINESS.md` §2.1/§4.4, `PHASE_2_CONTRACTS.md` §2–§4, `PHASE_4_BOOK_MODEL.md`, `MODULAR_PRODUCT_ARCHITECTURE.md` §5/§24 (C1/C2)/§26/§30.
 **Method:** full require-graph enumeration of all 15 files in `backend/src/book/` (3,520 LOC), full reads of every outward dependency (`structure-detector.js` 1231 LOC, `language-detector.js` 148, `character-identity.js` 294, `snake-guard.js` 614, `scene-title-utils.js` 53), consumer-by-consumer usage analysis, test-suite inventory (28 host test files), guard-test inspection. Every claim is measured at HEAD.
 

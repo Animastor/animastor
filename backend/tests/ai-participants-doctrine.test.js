@@ -21,6 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+require('./vbook-test-bindings.cjs');
 const bookModule = require('../src/book/index');
 const chatEngine = require('../src/services/chat-engine.cjs')({});
 const { validateBundleObject } = require('../src/book/bundle-validator.cjs');

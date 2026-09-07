@@ -10,21 +10,20 @@
 // re-pointing bug) → re-import still finds the book on disk by hash +
 // ownership.
 
-// ── Redirect lazy-book to a temp dir BEFORE any lazy-book module loads ───
+// ── Redirect the book domain to a temp dir for THIS suite ────────────────
+// booksRoot port: the root is a live provider over config.BOOKS_DIR, so the
+// redirect below is a describe-scoped config re-point + a re-binding of the
+// port — no env pre-require hack, no require-cache purge.
 const _testBooksDir = require('fs').mkdtempSync(
     require('path').join(require('os').tmpdir(), 'animastor-txt-dedup-')
 );
-process.env.BOOKS_DIR = _testBooksDir;
-// Clear cached paths.js + lazy-book barrel so draft.js picks up the temp dir
-for (const key of Object.keys(require.cache)) {
-    if (key.includes('/lazy-book/paths.js') || key.endsWith('/lazy-book/index.js')) {
-        delete require.cache[key];
-    }
-}
-// The real books dir used by modules loaded before this file (config was
-// cached by other test files with the default BOOKS_DIR=/data/books).
-// We must purge stale test books from there during setup + teardown.
-const _realBooksDir = require('../src/config/runtime-config').BOOKS_DIR;
+require('./vbook-test-bindings.cjs');
+const { configureBooksRoot } = require('../src/book/books-root');
+const config = require('../src/config/runtime-config');
+// The books dir other modules loaded before this file still resolve against
+// (config was cached with the default BOOKS_DIR=/data/books). Purge stale
+// test books from there during setup + teardown.
+const _realBooksDir = config.BOOKS_DIR;
 
 const { expect } = require('chai');
 const express = require('express');
@@ -179,6 +178,13 @@ describe('TXT Import Ownership Dedup', () => {
     let server;
 
     before(async () => {
+        // Redirect the book domain to the temp dir for the duration of this
+        // suite (describe-scoped, restored in the suite's after hook). A live
+        // provider over config.BOOKS_DIR keeps read-per-call semantics; the
+        // explicit re-bind guards against a stale port binding captured by
+        // an earlier test file.
+        config.BOOKS_DIR = _testBooksDir;
+        configureBooksRoot(() => config.BOOKS_DIR);
         await postgres.initialize();
 
         // ── Purge stale state from prior runs ──
@@ -241,6 +247,8 @@ describe('TXT Import Ownership Dedup', () => {
         await cleanup();
         if (server) await new Promise((r) => server.close(r));
         if (fs.existsSync(_testBooksDir)) fs.rmSync(_testBooksDir, { recursive: true, force: true });
+        // Restore the pre-suite config value so later suites are unaffected.
+        config.BOOKS_DIR = _realBooksDir;
     });
 
     describe('Scenario 1: sureg reuses existing owned book', () => {

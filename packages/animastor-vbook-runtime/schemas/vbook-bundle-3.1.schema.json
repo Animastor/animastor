@@ -1,0 +1,122 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://animastor.dev/schemas/vbook-bundle-3.1.schema.json",
+    "title": "VBook Bundle 3.1",
+    "description": "Canonical VBook 3.1 bundle contract (audit A1). Mirrors backend/src/book/bundle-validator.cjs — the de-facto code contract — rule by rule: what the validator rejects, this schema rejects, and vice versa. Documented strictness deltas (schema-only rules per audit §4.2): (1) manifest production fields vbook_version/state/source are enum-checked here but only producer-pinned in the validator; (2) the validator's unit-id scan is currently a no-op (its filter pre-selects matching ids), so unit-id grammar is schema-enforced and recorded as a conscious validator gap; (3) JSON-serializability (NaN/circular) is validator-side pre-write hardening and cannot be expressed in a schema of parsed JSON. On disk the bundle is a directory (manifest.json, book.json, optional bible/characters/locations/voices/behaviors JSON, chapters/*); this document describes the in-memory bundle object that buildBookFromBundle/saveBookBundle exchange.",
+    "type": "object",
+    "required": ["manifest", "locations", "voices", "behaviors", "characters"],
+    "properties": {
+        "manifest": { "$ref": "#/$defs/manifest" },
+        "book": { "$ref": "#/$defs/bookMeta" },
+        "bible": { "type": ["object", "null"] },
+        "locations": { "$ref": "#/$defs/stringKeyedMap" },
+        "voices": { "$ref": "#/$defs/voicesMap" },
+        "behaviors": { "$ref": "#/$defs/stringKeyedMap" },
+        "characters": { "$ref": "#/$defs/charactersArray" },
+        "chapters": { "$ref": "#/$defs/chaptersArray" }
+    },
+    "$defs": {
+        "manifest": {
+            "type": "object",
+            "required": ["book_id"],
+            "properties": {
+                "book_id": { "type": "string", "minLength": 1 },
+                "vbook_version": { "const": "3.1" },
+                "state": { "enum": ["RAW_IMPORTED", "BOOTSTRAPPED", "ACTIVE"] },
+                "source": { "enum": ["TXT", "AI_IMPORT"] }
+            }
+        },
+        "bookMeta": {
+            "type": ["object", "null"],
+            "properties": {
+                "book_id": { "type": "string" },
+                "version": { "type": "string" },
+                "title": { "type": ["string", "null"] },
+                "author": { "type": ["string", "null"] },
+                "language": { "type": ["string", "null"] },
+                "structure": {
+                    "type": "object",
+                    "properties": {
+                        "has_prologue": { "type": "boolean" },
+                        "has_epilogue": { "type": "boolean" },
+                        "chapters_order": {
+                            "anyOf": [
+                                { "type": "null" },
+                                { "type": "array", "items": { "type": "string" } }
+                            ]
+                        }
+                    }
+                },
+                "defaults": { "type": "object" }
+            }
+        },
+        "stringKeyedMap": {
+            "type": "object"
+        },
+        "voicesMap": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "properties": {
+                    "instruction": { "type": "string" }
+                }
+            }
+        },
+        "charactersArray": {
+            "type": "array",
+            "items": { "type": "object" }
+        },
+        "chapterId": {
+            "anyOf": [
+                { "not": { "type": "string" } },
+                { "type": "string", "pattern": "^ch-[a-f0-9]{6,}$" }
+            ]
+        },
+        "sceneId": {
+            "anyOf": [
+                { "not": { "type": "string" } },
+                { "type": "string", "pattern": "^sc-[a-f0-9]{6,}$" }
+            ]
+        },
+        "unitId": {
+            "anyOf": [
+                { "not": { "type": "string" } },
+                { "type": "string", "pattern": "^iu-[a-f0-9]{6,}$" }
+            ]
+        },
+        "participants": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+        },
+        "scene": {
+            "type": "object",
+            "properties": {
+                "scene_id": { "$ref": "#/$defs/sceneId" },
+                "participants": { "$ref": "#/$defs/participants" },
+                "units": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "$ref": "#/$defs/unitId" }
+                        }
+                    }
+                }
+            }
+        },
+        "chapter": {
+            "type": "object",
+            "properties": {
+                "chapter_id": { "$ref": "#/$defs/chapterId" },
+                "scenes": {
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/scene" }
+                }
+            }
+        },
+        "chaptersArray": {
+            "type": ["array", "null"],
+            "items": { "$ref": "#/$defs/chapter" }
+        }
+    }
+}

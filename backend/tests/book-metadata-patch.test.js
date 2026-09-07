@@ -15,6 +15,7 @@ const path = require('path');
 const os = require('os');
 
 const bookModule = require('../src/book/index');
+require('./vbook-test-bindings.cjs');
 const config = require('../src/config/runtime-config');
 
 // Override BOOKS_DIR to a temp directory

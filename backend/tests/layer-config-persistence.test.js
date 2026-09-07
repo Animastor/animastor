@@ -14,6 +14,7 @@ const os = require('os');
 const path = require('path');
 
 const layerConfig = require('../src/services/layer-config');
+require('./vbook-test-bindings.cjs');
 const config = require('../src/config/runtime-config');
 const book = require('../src/book');
 

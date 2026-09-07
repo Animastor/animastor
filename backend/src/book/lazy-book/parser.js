@@ -76,8 +76,41 @@ function injectChapterMarkers(text) {
 // The legacy array contract is preserved:
 //   { title, startLine, endLine, startOffset, endOffset, length }
 // plus new fields: { type, label, number }.
+//
+// ── structure-detector PORT (@animastor/vbook-runtime preparation) ──────
+// This module does not require the host's structure-detector directly.
+// The host composition root (backend.cjs) binds the real implementation
+// once at startup via setStructureDetector(); standalone package tests
+// inject a stub. Fail-closed: until a detector is bound, splitIntoChapters
+// throws instead of guessing a structure.
+//
+// Port contract (the seed of the future C13 Parser contract):
+//   detector.buildDeterministicMap(sourceText) → ChapterMap
+//     { title?, author?, hasPrologue, hasEpilogue, parts,
+//       segments: [{ type, label, title, number, headerLine,
+//                    startOffset, endOffset, source }] }
 
-const structureDetector = require('../../services/structure-detector');
+let structureDetector = null;
+
+/**
+ * Bind the structure-detector implementation for this process.
+ * Expects an object exposing at least buildDeterministicMap(sourceText).
+ * Host composition root binds the real services/structure-detector; the
+ * package's own tests bind a stub.
+ */
+function setStructureDetector(detector) {
+    if (!detector || typeof detector.buildDeterministicMap !== 'function') {
+        throw new Error('vbook: structureDetector must expose buildDeterministicMap(sourceText)');
+    }
+    structureDetector = detector;
+}
+
+function getStructureDetector() {
+    if (!structureDetector) {
+        throw new Error('vbook: structureDetector is not bound — call setStructureDetector() at the composition root before parsing');
+    }
+    return structureDetector;
+}
 
 function offsetToLine(lines, offset) {
     let acc = 0;
@@ -90,7 +123,7 @@ function offsetToLine(lines, offset) {
 }
 
 function splitIntoChapters(text) {
-    const map = structureDetector.buildDeterministicMap(text);
+    const map = getStructureDetector().buildDeterministicMap(text);
     const lines = text.split('\n');
     const chapters = [];
 
@@ -190,4 +223,5 @@ module.exports = {
     splitIntoChapters, splitIntoScenes, splitIntoUnits,
     firstMeaningfulChapter, detectLanguage,
     injectChapterMarkers,
+    setStructureDetector, getStructureDetector,
 };

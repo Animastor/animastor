@@ -45,8 +45,8 @@ const fs = require('fs');
 const path = require('path');
 const AdmZip = require('adm-zip');
 
-const config = require('../config/runtime-config');
 const { validateBundleFile } = require('./bundle-validator.cjs');
+const { getBooksRoot } = require('./books-root');
 
 // Last line of defense before disk: every bundle resource that saveBookBundle
 // is about to write must satisfy the canonical JSON contract. A failure THROWS
@@ -89,7 +89,9 @@ function assertBundleFilesWritable(book) {
 // ======================================================
 
 function getBooksDir() {
-    return config.BOOKS_DIR;
+    // booksRoot port: the host (composition root) supplies the filesystem
+    // root; this module never reads host env/config directly.
+    return getBooksRoot();
 }
 
 function getBookDir(bookId) {

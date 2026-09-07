@@ -126,17 +126,35 @@ describe('architecture: Local AI Connector isolation', () => {
 
 describe('architecture: Book domain dependency boundary', () => {
     // R4: backend/src/book/** may import: node builtins, its own files, and
-    // the explicit allowlist below. Everything else is an implementation
-    // detail leak (existing violations are baselined).
+    // the explicit allowlist below — the audited extraction companions that
+    // move into @animastor/vbook-runtime with the book domain (audit §1.1).
+    // The former runtime-config + structure-detector entries were REMOVED by
+    // the @animastor/vbook-runtime preparation: booksRoot and the detector
+    // are now injectable ports (books-root.js / parser.js), so those edges
+    // are forbidden, not allowed.
+    // NOTE: the allowlist holds PACKAGE-BOUNDARY edges only — requires that
+    // leave the book directory. Intra-package files (e.g. lazy-book →
+    // ../books-root, the booksRoot port module) resolve to backend/src/book/
+    // and are excluded by the resolved-target check below, so the package
+    // can grow internal structure without touching this baseline.
+    // Docs: docs/03-audit/VBOOK_EXTRACTION_READINESS_AUDIT.md,
+    //       docs/architecture/VBOOK_RUNTIME_RELOCATION_CHECKLIST.md
     const BOOK_ALLOWLIST = [
-        '../config/runtime-config',       // book/index.js — config constants
-        '../../config/runtime-config',    // lazy-book/paths.js — config constants
         '../../services/language-detector',
-        '../../services/structure-detector',
         '../../utils/character-identity',
         '../../utils/scene-title-utils',
         '../../utils/snake-guard',
     ];
+    const BOOK_DIR_FOR_GUARD = path.join(BACKEND_SRC, 'book');
+
+    function resolvesInsideBookDir(fromFile, spec) {
+        const base = path.resolve(path.dirname(fromFile), spec);
+        const candidates = [base, base + '.js', base + '.cjs', path.join(base, 'index.js'), path.join(base, 'index.cjs')];
+        for (const c of candidates) {
+            if (fs.existsSync(c) && fs.statSync(c).isFile() && c.startsWith(BOOK_DIR_FOR_GUARD + path.sep)) return true;
+        }
+        return false;
+    }
 
     it('book domain imports stay inside its allowlist (no new implementation-detail edges)', () => {
         const bookDir = path.join(BACKEND_SRC, 'book');
@@ -145,6 +163,7 @@ describe('architecture: Book domain dependency boundary', () => {
             for (const spec of requireSpecifiers(readSource(file))) {
                 if (!spec.startsWith('.')) continue; // builtins / npm fine
                 if (spec.startsWith('./')) continue; // intra-domain fine
+                if (resolvesInsideBookDir(file, spec)) continue; // intra-package (e.g. books-root port)
                 if (BOOK_ALLOWLIST.includes(spec)) continue;
                 offenders.push(`${rel(file)}: ${spec}`);
             }

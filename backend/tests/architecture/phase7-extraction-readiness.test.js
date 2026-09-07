@@ -158,8 +158,14 @@ describe('P7-T4: VBook internals are not reached by new direct consumers', () =>
         // backend.cjs book-model.cjs + the two facades are the ALLOWED
         // consumer-facing entries (Phase 4/6); they are excluded here because
         // they are pinned by their own suites (phase4/phase6).
+        // backend.cjs books-root + lazy-book/parser are the VBook PORT
+        // BINDINGS (@animastor/vbook-runtime preparation): the composition
+        // root is the only place allowed to bind configureBooksRoot() and
+        // setStructureDetector() — pinned by vbook-package-boundary.test.js.
         const allowed = new Set([
             'backend/src/backend.cjs: ./book/book-model.cjs',
+            'backend/src/backend.cjs: ./book/books-root',
+            'backend/src/backend.cjs: ./book/lazy-book/parser',
             'backend/src/editor/index.cjs: ../book/book-model.cjs',
             'backend/src/player/index.cjs: ../book/book-model.cjs',
         ]);

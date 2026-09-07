@@ -24,6 +24,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+require('./vbook-test-bindings.cjs');
 const bookModule = require('../src/book/index');
 const config = require('../src/config/runtime-config');
 

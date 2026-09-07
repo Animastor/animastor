@@ -13,6 +13,7 @@ const os = require('os');
 const path = require('path');
 const { createMockRedis } = require('./mocks/redis-mock');
 
+require('./vbook-test-bindings.cjs');
 const config = require('../src/config/runtime-config');
 const layerConfig = require('../src/services/layer-config');
 const reconciliation = require('../src/runtime/reconciliation-engine');

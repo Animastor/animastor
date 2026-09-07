@@ -1,8 +1,8 @@
 const path = require('path');
 const crypto = require('crypto');
-const config = require('../../config/runtime-config');
+const { getBooksRoot } = require('../books-root');
 
-function getBooksDir() { return config.BOOKS_DIR; }
+function getBooksDir() { return getBooksRoot(); }
 function getBookDir(bookId) { return path.join(getBooksDir(), bookId); }
 function getSourcePath(bookDir) { return path.join(bookDir, 'source.txt'); }
 function getManifestPath(bookDir) { return path.join(bookDir, 'manifest.json'); }

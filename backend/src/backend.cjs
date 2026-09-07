@@ -26,6 +26,19 @@ const runtime = require('./runtime');
 const activeScenes = require('./runtime/active-scenes-index');
 const book = require('./book');
 const config = require('./config/runtime-config');
+
+// ── VBook package boundary ports (@animastor/vbook-runtime preparation) ──
+// The book domain must not read host config/env: the composition root
+// injects the filesystem root (booksRoot) and the structure-detector
+// implementation once, before any book operation. The live provider keeps
+// today's read-per-call semantics of config.BOOKS_DIR.
+// Docs: docs/03-audit/VBOOK_EXTRACTION_READINESS_AUDIT.md §2.6/§3.3,
+//       docs/architecture/VBOOK_RUNTIME_RELOCATION_CHECKLIST.md
+const { configureBooksRoot } = require('./book/books-root');
+configureBooksRoot(() => config.BOOKS_DIR);
+const { setStructureDetector } = require('./book/lazy-book/parser');
+setStructureDetector(require('./services/structure-detector'));
+
 const txtImporter = require('./services/txt-importer');
 const lazyBook = require('./book/lazy-book');
 const bookModel = require('./book/book-model.cjs');

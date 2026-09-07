@@ -19,6 +19,7 @@ const {
     detectLanguageWithConfidence,
     extractSample,
 } = require('../src/services/language-detector');
+require('./vbook-test-bindings.cjs');
 const lazyBook = require('../src/book/lazy-book');
 const config = require('../src/config/runtime-config');
 
