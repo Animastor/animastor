@@ -372,7 +372,7 @@
     },
     "provenance": {
       "evidence": [
-        "packages/animastor-worker/worker/worker.cjs:1-4 (v2.1.0, Node 18+)",
+        "packages/animastor-worker/worker/worker.cjs:1-4 (v2.1.1, Node 18+)",
         "packages/animastor-worker/worker/.env.example",
         "gpu-hub/gpu-hub.js GET /worker-bundle"
       ]

@@ -169,8 +169,7 @@ describe('Phase 10T.1: local-dev overlay mounts', () => {
       expect(overlay, `mount target ${t} missing from local overlay`).to.include(t);
     }
     const frozenSources = [
-      // canonical worker bundle source (relocated with the package);
-      // legacy ./worker/worker stays valid until the move commit
+      // canonical worker bundle source (relocated with the package)
       './packages/animastor-worker/worker',
       './backend/ai/workflows',
       './backend/src/installer',

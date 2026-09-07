@@ -10,16 +10,14 @@
 // the bundle — NOT a second, hand-maintained implementation:
 //
 //   canonical source : packages/animastor-contracts/src/job-protocol-v2.js   (@animastor/contracts)
-//   generated output : worker/job-protocol-v2.cjs inside the package
-//                      boundary (worker/ until the relocation commit,
-//                      packages/animastor-worker/ after it)
+//   generated output : packages/animastor-worker/worker/job-protocol-v2.cjs
+//                      inside the package boundary
 //
 // The tool is RELOCATION-INDEPENDENT: both the canonical source and the
 // bundle target are resolved from this file's own location (sibling
 // `worker/` dir for the target; the contracts package is found by trying
-// the repo-root depths that exist before and after the physical move), so
-// the physical `git mv worker/worker packages/animastor-worker` requires no
-// generator edits. There is exactly ONE canonical protocol source
+// the repo-root depths that exist before and after the physical move).
+// There is exactly ONE canonical protocol source
 // (@animastor/contracts) and ONE generated copy — never duplicate either.
 //
 // The copy is guarded by:
@@ -27,14 +25,14 @@
 //               to the canonical source (verifyBody below);
 //   - version:  the header records the @animastor/contracts version and the
 //               canonical source sha256 at generation time;
-//   - tests:    worker/tests/job-protocol.test.cjs (runtime parity) and
+//   - tests:    packages/animastor-worker/tests/job-protocol.test.cjs (runtime
+//               parity) and
 //               backend/tests/architecture/phase9d-worker-package.test.js
 //               (repo-level guard, incl. negative control).
 //
 // Usage:
-//   node <boundary>/tools/sync-protocol.cjs           # regenerate if out of sync
-//   node <boundary>/tools/sync-protocol.cjs --check   # verify only; exit 1 on drift
-// (boundary = worker/ until the relocation commit, packages/animastor-worker/ after)
+//   node packages/animastor-worker/tools/sync-protocol.cjs           # regenerate if out of sync
+//   node packages/animastor-worker/tools/sync-protocol.cjs --check   # verify only; exit 1 on drift
 //
 // If packages/animastor-contracts/src/job-protocol-v2.js changes, regenerate and commit both
 // files together (worker.cjs consumes the copy; hub/backend keep their own
@@ -79,7 +77,7 @@ const GENERATED_HEADER = `// ===================================================
 //   source:    packages/animastor-contracts/src/job-protocol-v2.js
 //   sha256:    {{CANONICAL_SHA256}}
 //   generated: {{CONTRACTS_VERSION}} snapshot
-// Generator:  worker/tools/sync-protocol.cjs (Phase 9D — blocker B2, option B)
+// Generator:  packages/animastor-worker/tools/sync-protocol.cjs (Phase 9D — blocker B2, option B)
 //
 // The worker bundle ships with zero runtime npm dependencies (Phase 9B
 // freeze) and is delivered to GPU machines without an npm registry, so it
@@ -91,7 +89,7 @@ const GENERATED_HEADER = `// ===================================================
 //   backend/tests/architecture/phase9d-worker-package.test.js
 //
 // Regenerate after any change to the canonical source:
-//   node worker/tools/sync-protocol.cjs
+//   node packages/animastor-worker/tools/sync-protocol.cjs
 
 // ===8<=== canonical source (verbatim, do not edit) ====================
 `;

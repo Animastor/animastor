@@ -66,7 +66,7 @@ describe('Phase 9D: worker package manifest', () => {
         const pkg = JSON.parse(fs.readFileSync(path.join(BUNDLE_DIR, 'package.json'), 'utf8'));
         expect(pkg.name).to.equal('animastor-worker');
         expect(pkg.version).to.match(/^\d+\.\d+\.\d+$/);
-        expect(pkg.version).to.equal('2.1.0');
+        expect(pkg.version).to.equal('2.1.1');
         expect(pkg.private, 'the package must be publishable to an npm registry').to.not.equal(true);
         expect(pkg.dependencies, 'zero runtime npm dependencies (Phase 9B freeze)').to.not.exist;
         expect(pkg.optionalDependencies).to.not.exist;
@@ -164,13 +164,8 @@ describe('Phase 9D: generated Job Protocol v2 copy (blocker B2, option B)', () =
         expect(copy).to.include('GENERATED FILE — DO NOT EDIT BY HAND');
         expect(copy).to.include('@animastor/contracts');
         expect(copy).to.include(`sha256:    ${sha256(canonical)}`);
-        // header declares provenance (generator path) — the relocation
-        // renames the tool dir (worker/tools → packages/animastor-worker/
-        // tools) and the header flips with the next regeneration
-        expect(copy).to.satisfy(
-            (s) => s.includes('worker/tools/sync-protocol.cjs') || s.includes('packages/animastor-worker/tools/sync-protocol.cjs'),
-            'header must name the sync-protocol.cjs generator (canonical or legacy path)'
-        );
+        // header declares provenance (generator path) — canonical after relocation
+        expect(copy).to.include('packages/animastor-worker/tools/sync-protocol.cjs');
     });
 
     it('regeneration is deterministic and idempotent (no diffs on re-run)', function () {
@@ -215,10 +210,7 @@ describe('Phase 9D: install manifests ship the runtime set', () => {
                 const m = JSON.parse(fs.readFileSync(path.join(typeDir, file), 'utf8'));
                 expect(m.worker_bundle.files.sort(), `${type}/${file}`).to.deep.equal(RUNTIME_FILES);
                 expect(m.worker_bundle.source.options.map((o) => o.path), `${type}/${file} repo path`)
-                    .to.satisfy(
-                        (paths) => paths.includes('packages/animastor-worker/worker/') || paths.includes('worker/worker/'),
-                        'manifests must list the canonical bundle repo path (or legacy pre-move path)'
-                    );
+                    .to.include('packages/animastor-worker/worker/');
             }
         }
     });
@@ -228,12 +220,10 @@ describe('Phase 9D: install manifests ship the runtime set', () => {
 describe('Phase 9D: deployment wiring unchanged', () => {
     it('local dev overlay keeps the worker-bundle mount pinned (rollback-safe extraction)', () => {
         const overlay = fs.readFileSync(path.join(REPO_ROOT, 'docker/compose/overlay-gpu-hub-local.yml'), 'utf8');
-        // Mount SOURCE follows the package relocation (canonical
-        // packages/animastor-worker/worker; legacy worker/worker until the
-        // move commit). The container TARGET /app/worker-bundle is frozen —
+        // Mount SOURCE is the canonical package location after relocation.
+        // The container TARGET /app/worker-bundle is frozen —
         // never change it: the hub resolves artifacts there.
-        const mountRe = /- \.\/(?:packages\/animastor-worker\/worker|worker\/worker):\/app\/worker-bundle:ro/;
-        expect(overlay).to.match(mountRe);
+        expect(overlay).to.include('- ./packages/animastor-worker/worker:/app/worker-bundle:ro');
     });
 });
 

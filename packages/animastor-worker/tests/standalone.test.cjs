@@ -64,7 +64,7 @@ describe('worker package — standalone boot smoke', () => {
                 encoding: 'utf8',
             });
             const output = String(res.stdout || '') + String(res.stderr || '');
-            expect.include(output, 'Worker version: 2.1.0');
+            expect.include(output, 'Worker version: 2.1.1');
             expect.include(output, 'Protocol version: 2');
             // signal of the canonical copy in action: startup proceeded past
             // the config section (task rejects / waits use the same constant)

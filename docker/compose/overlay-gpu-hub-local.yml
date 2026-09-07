@@ -17,9 +17,7 @@
 services:
   gpu-hub:
     volumes:
-      # Worker bundle source: canonical packages/animastor-worker/worker/
-      # (relocation target); ./worker/worker stays valid until the physical
-      # move commit lands — flip to the canonical source with it.
+      # Worker bundle source: packages/animastor-worker/worker/
       - ./packages/animastor-worker/worker:/app/worker-bundle:ro
       - ./backend/ai/workflows:/app/workflows:ro
       - ./backend/src/installer:/app/installer-src:ro

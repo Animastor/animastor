@@ -26,8 +26,7 @@ const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-sch
 // backend/src/runtime/job-schema.js is a compatibility facade re-export.
 const contractsImplPath = path.join(REPO_ROOT, 'packages', 'animastor-contracts', 'src', 'job-protocol-v2.js');
 const gpuHubPath = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub', 'gpu-hub.js');
-// Worker bundle path follows the package relocation (worker/worker today,
-// packages/animastor-worker/worker after the move) — resolved via helpers.
+// Worker bundle path (packages/animastor-worker/worker) — resolved via helpers.
 const WORKER_DIR = require('./helpers').WORKER_BUNDLE_DIR;
 const workerPath = path.join(WORKER_DIR, 'worker.cjs');
 // Phase 9D: the worker consumes the GENERATED copy of the canonical

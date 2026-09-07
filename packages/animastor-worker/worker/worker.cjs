@@ -1,10 +1,10 @@
 // ======================================================
-// GPU Worker - v2.1.0 (fail-closed authorization, PW-4)
+// GPU Worker - v2.1.1 (fail-closed authorization, PW-4)
 // ======================================================
 // CJS (CommonJS) — Node 18+ with global fetch is assumed.
 // Job Protocol v2 comes from the GENERATED copy of the canonical
 // @animastor/contracts package (Phase 9D, blocker B2 — option B):
-//   worker/worker/job-protocol-v2.cjs  (regenerate: node worker/tools/sync-protocol.cjs)
+//   packages/animastor-worker/worker/job-protocol-v2.cjs  (regenerate: node packages/animastor-worker/tools/sync-protocol.cjs)
 // It is byte-parity guarded against the canonical source — never edit it.
 
 const { execSync } = require("child_process");

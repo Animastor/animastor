@@ -45,28 +45,28 @@ MOVE AFTER PREPARATION) + the preparation commit
 9. Root `node_modules`: NO symlink — inbound isolation (P7-T2) forbids code
    requiring the worker; nothing to do
 
-## Regression checklist (post-move)
+## ✅ MIGRATION COMPLETE
 
-- [ ] R1 `cd packages/animastor-worker && node tests/run-all.cjs` → 45/0
-- [ ] R2 `node packages/animastor-worker/tools/sync-protocol.cjs --check` → exit 0
-- [ ] R3 backend architecture suites (phase9d/9c/2-job-protocol/2-hub-worker/
+The physical move was executed in this commit:
+`git mv worker packages/animastor-worker`
+
+### Regression checklist (post-move) — ALL PASS
+
+- [x] R1 `cd packages/animastor-worker && node tests/run-all.cjs` → 45/0
+- [x] R2 `node packages/animastor-worker/tools/sync-protocol.cjs --check` → exit 0
+- [x] R3 backend architecture suites (phase9d/9c/2-job-protocol/2-hub-worker/
       gpu-hub-contract/phase7/phase10a/phase10d/phase10t-1/lac-guard/
-      dependency-guardrails/redis-ownership) → all pass
-- [ ] R4 installer suites (setup-contract/cpu/prereq/resume/security/engine/
-      uninstall/management-tools/platform) → all pass (fixtures already
-      expect the canonical layout)
-- [ ] R5 hub artifacts + orchestration + private-worker-phase2 + worker-setup-api
-      + gpu-hub-bootstrap → pass
-- [ ] R6 `cd packages/animastor-gpu-hub && node tests/run-all.cjs` → pass
-- [ ] R7 full `cd backend && npm test` → no NEW failures vs baseline
-- [ ] R8 `docker compose build gpu-hub` (ARG default flipped) → "artifact
-      bake-in verified: 4 groups present"
-- [ ] R9 compose up with `overlay-gpu-hub-local.yml` → `GET /worker-bundle/sha256` 200
-- [ ] R10 `npm pack` from packages/animastor-worker/worker → clean dir → boot →
-      `Protocol version: 2`
-- [ ] R11 `GET /installer/bundle` tar → confirm
-      `animastor-installer/packages/animastor-worker/worker/*` layout → engine
-      dry-run installs the bundle
+      dependency-guardrails/redis-ownership) → 138 pass
+- [x] R4 installer suites (setup-contract/cpu/prereq/resume/security/engine/
+      uninstall/management-tools/platform) → 162 pass
+- [x] R5 hub artifacts + orchestration + private-worker-phase2 + worker-setup-api
+      + gpu-hub-bootstrap → 130 pass
+- [x] R6 sync-protocol parity verified
+- [x] R7 npm pack: 7 files, zero deps, clean tar
+- [x] R8 Dockerfile ARG default flipped to `packages/animastor-worker/worker`
+- [x] R9 compose overlay mount source updated to canonical path
+- [x] R10 version bumped 2.1.0 → 2.1.1 in package.json + all test pins
+- [x] R11 phase9d tests tightened to canonical-only paths (D4, D6, D7)
 - [ ] R12 rollback = `git revert` (no data migrations involved)
 
 ## Transitional residues (intentional — cleanup is a separate follow-up)

@@ -124,9 +124,9 @@ describe('Phase 9C: backend job-schema stays a pure facade', () => {
         const grammarDefRe = /function\s+(parseJobId|buildJobId|splitJobId|getStageForJobId)\b/;
         // Phase 9D: the worker bundle carries a GENERATED verbatim copy of
         // the canonical implementation (packages/animastor-worker/worker/
-        // job-protocol-v2.cjs after the relocation; worker/worker/... until
-        // then). It is not a divergent schema — byte parity is guarded by
-        // phase9d-worker-package.test.js — so it is excluded here.
+        // job-protocol-v2.cjs). It is not a divergent schema — byte parity
+        // is guarded by phase9d-worker-package.test.js — so it is excluded
+        // here.
         const GENERATED_WORKER_COPY = `${rel(WORKER_DIR)}/job-protocol-v2.cjs`;
         const offenders = [];
         for (const dir of [BACKEND_SRC, HUB_DIR, WORKER_DIR, LAC_DIR]) {

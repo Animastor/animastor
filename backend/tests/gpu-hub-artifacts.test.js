@@ -127,7 +127,7 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
             expect(res.headers.get('content-type')).to.contain('application/gzip');
             expect(res.headers.get('content-disposition')).to.contain('animastor-worker-');
             expect(res.headers.get('cache-control')).to.equal('no-store');
-            expect(res.headers.get('x-animastor-artifact-version')).to.equal('2.1.0');
+            expect(res.headers.get('x-animastor-artifact-version')).to.equal('2.1.1');
 
             const buf = Buffer.from(await res.arrayBuffer());
             const entries = parseTar(zlib.gunzipSync(buf));
@@ -155,7 +155,7 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
             const buf = Buffer.from(await res.arrayBuffer());
             const meta = await (await fetch(`${hub.base}/worker-bundle/sha256`)).json();
             expect(meta.artifact).to.equal('worker-bundle');
-            expect(meta.version).to.equal('2.1.0');
+            expect(meta.version).to.equal('2.1.1');
             expect(meta.sha256).to.equal(sha256(buf));
             expect(meta.signature).to.equal(null); // future extension, not invented
             expect(res.headers.get('x-animastor-sha256')).to.equal(meta.sha256);

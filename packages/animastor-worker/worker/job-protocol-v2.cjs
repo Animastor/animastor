@@ -6,7 +6,7 @@
 //   source:    packages/animastor-contracts/src/job-protocol-v2.js
 //   sha256:    b005fafc01614e643e325b3433f657c6bd197ee6f76dca4d36eb1bf7de2b5a84
 //   generated: 0.1.0 snapshot
-// Generator:  worker/tools/sync-protocol.cjs (Phase 9D — blocker B2, option B)
+// Generator:  packages/animastor-worker/tools/sync-protocol.cjs (Phase 9D — blocker B2, option B)
 //
 // The worker bundle ships with zero runtime npm dependencies (Phase 9B
 // freeze) and is delivered to GPU machines without an npm registry, so it
@@ -18,7 +18,7 @@
 //   backend/tests/architecture/phase9d-worker-package.test.js
 //
 // Regenerate after any change to the canonical source:
-//   node worker/tools/sync-protocol.cjs
+//   node packages/animastor-worker/tools/sync-protocol.cjs
 
 // ===8<=== canonical source (verbatim, do not edit) ====================
 // ======================================================

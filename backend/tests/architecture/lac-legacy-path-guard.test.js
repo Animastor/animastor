@@ -22,9 +22,8 @@ const path = require('path');
 const { REPO_ROOT } = require('./helpers');
 
 // Structural roots only (no file lists) — resilient to repo evolution.
-// The worker package relocates to packages/animastor-worker/ (canonical);
-// the legacy worker/worker entry existsSync-filters out once the physical
-// move commit lands.
+// The worker package relocated to packages/animastor-worker/ (canonical);
+// the legacy 'worker' entry existsSync-filters out.
 const PRODUCTION_ROOTS = [
     'backend/src',
     'gpu-hub',
