@@ -3,6 +3,9 @@
 # Validates that all 4 artifact groups are present and correct inside the
 # production image (or a local /app/artifacts tree).
 #
+# Dependencies: bash, node (available in node:20-slim image).
+# No python required.
+#
 # Usage:
 #   ./scripts/check-artifacts.sh                 # check local filesystem
 #   docker exec gpu-hub /app/scripts/check-artifacts.sh  # inside container
@@ -17,6 +20,11 @@ ERRORS=0
 
 fail() { echo "FAIL: $*" >&2; ERRORS=$((ERRORS + 1)); }
 pass() { echo "  ok: $*"; }
+
+node_json() {
+  # Usage: node_json <script> — run a node one-liner that prints a value
+  node -e "$1" 2>/dev/null
+}
 
 echo "=== Phase 10T.1 artifact integrity check ==="
 echo "ARTIFACT_BASE=$ARTIFACT_BASE"
@@ -37,7 +45,7 @@ echo
 echo "[2/6] worker bundle version"
 WB_PKG="$ARTIFACT_BASE/worker-bundle/package.json"
 if [ -f "$WB_PKG" ]; then
-  WB_VER=$(python3 -c "import json; print(json.load(open('$WB_PKG'))['version'])" 2>/dev/null || echo "")
+  WB_VER=$(node_json "const p=require('$WB_PKG'); process.stdout.write(p.version||'')")
   if [ -n "$WB_VER" ]; then
     pass "worker bundle version=$WB_VER"
   else
@@ -54,20 +62,15 @@ if [ -n "${WB_VER:-}" ]; then
   for manifest in "$ARTIFACT_BASE/install-manifests"/*/*.json; do
     [ -f "$manifest" ] || continue
     mname=$(basename "$manifest")
-    MIN_VER=$(python3 -c "
-import json, sys
-m = json.load(open('$manifest'))
-wb = m.get('worker_bundle', {})
-print(wb.get('min_version', '0.0.0'))
-" 2>/dev/null || echo "0.0.0")
-    # Simple semver compare: major.minor.patch
-    comp=$(python3 -c "
-def parse(v):
-    parts = v.split('.')
-    return (int(parts[0]), int(parts[1]), int(parts[2]) if len(parts)>2 else 0)
-a, b = parse('$WB_VER'), parse('$MIN_VER')
-print('ok' if a >= b else 'fail')
-" 2>/dev/null || echo "ok")
+    MIN_VER=$(node_json "
+      const m=require('$manifest');
+      process.stdout.write((m.worker_bundle||{}).min_version||'0.0.0');
+    ")
+    comp=$(node_json "
+      function parse(v){const p=v.split('.').map(Number);return(p[0]||0)*10000+(p[1]||0)*100+(p[2]||0)}
+      const a=parse('$WB_VER'),b=parse('$MIN_VER');
+      process.stdout.write(a>=b?'ok':'fail');
+    ")
     if [ "$comp" = "ok" ]; then
       pass "$mname: worker $WB_VER >= min_version $MIN_VER"
     else
@@ -84,53 +87,34 @@ echo "[4/6] workflow SHA256 integrity"
 for manifest in "$ARTIFACT_BASE/install-manifests"/*/*.json; do
   [ -f "$manifest" ] || continue
   mname=$(basename "$manifest")
-  python3 -c "
-import json, hashlib, os, sys
-
-manifest = json.load(open('$manifest'))
-artifacts = manifest.get('workflows', {}).get('artifacts', [])
-wf_dir = '$ARTIFACT_BASE/workflows'
-errors = 0
-for wf in artifacts:
-    wf_id = wf['id'].replace('workflow:', '')
-    expected = wf.get('baseline_sha256')
-    fpath = os.path.join(wf_dir, wf_id + '.json')
-    if not expected:
-        continue
-    if not os.path.isfile(fpath):
-        print(f'FAIL: {wf_id}.json missing in {wf_dir}', file=sys.stderr)
-        errors += 1
-        continue
-    actual = hashlib.sha256(open(fpath, 'rb').read()).hexdigest()
-    if actual != expected:
-        print(f'FAIL: {wf_id}.json SHA256 mismatch: {actual} != {expected}', file=sys.stderr)
-        errors += 1
-if errors == 0:
-    print(f'  ok: {os.path.basename(\"$manifest\")}: all {len(artifacts)} workflow SHA256 match')
-else:
-    sys.exit(1)
-" 2>&1 || fail "$mname: SHA256 mismatch"
+  node_json "
+    const fs=require('fs'),crypto=require('crypto'),path=require('path');
+    const m=JSON.parse(fs.readFileSync('$manifest','utf8'));
+    const arts=(m.workflows||{}).artifacts||[];
+    const wfDir='$ARTIFACT_BASE/workflows';
+    let errors=0;
+    for(const wf of arts){
+      const id=wf.id.replace('workflow:','');
+      const expected=wf.baseline_sha256;
+      if(!expected) continue;
+      const fp=path.join(wfDir,id+'.json');
+      if(!fs.existsSync(fp)){console.error('FAIL:'+id+'.json missing');errors++;continue;}
+      const actual=crypto.createHash('sha256').update(fs.readFileSync(fp)).digest('hex');
+      if(actual!==expected){console.error('FAIL:'+id+'.json SHA256 mismatch: '+actual+' != '+expected);errors++;}
+    }
+    if(errors===0)console.log('  ok: '+path.basename('$manifest')+': all '+arts.length+' workflow SHA256 match');
+    process.exit(errors>0?1:0);
+  " 2>&1 || fail "$mname: SHA256 mismatch"
 done
 echo
 
 # ── 5. No monorepo artifact paths in production image ───────────────────────
 echo "[5/6] no monorepo artifact path leaks"
-LEAK_PATTERNS=(
-  "/app/worker-bundle"
-  "/app/workflows"
-  "/app/installer-src"
-  "/app/install-manifests"
-)
-LEAK_FOUND=0
-for pattern in "${LEAK_PATTERNS[@]}"; do
-  # Check that no runtime JS file hardcodes the mount path as primary source.
-  # The resolveArtifactDir() fallback uses these, which is acceptable —
-  # but the baked-in path must exist so the fallback is never reached.
+for pattern in /app/worker-bundle /app/workflows /app/installer-src /app/install-manifests; do
   if [ -d "$ARTIFACT_BASE" ]; then
     pass "pattern $pattern: baked-in exists (fallback unreachable)"
   else
     fail "pattern $pattern: baked-in missing — fallback would be used"
-    LEAK_FOUND=1
   fi
 done
 echo

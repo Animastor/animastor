@@ -34,6 +34,10 @@ RUN set -e; \
       { echo "FATAL: worker-bundle/package.json missing"; exit 1; }; \
     echo "artifact bake-in verified: 4 groups present"
 
+# Integrity validator — usable via: docker exec <container> /app/scripts/check-artifacts.sh
+COPY scripts/check-artifacts.sh /app/scripts/check-artifacts.sh
+RUN chmod +x /app/scripts/check-artifacts.sh
+
 EXPOSE 5000
 
 CMD ["node", "server.js"]
