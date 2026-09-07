@@ -10,15 +10,17 @@
  * against the same sources — this runner ADDS package-boundary checks, it
  * does not replace the canonical suites.
  *
- * Check groups (Phase 10D):
+ * Check groups (Phase 10T.1):
  *   1. package smoke       — package identity + runtime modules load
  *   2. dependency isolation— no monorepo imports; frozen npm specifier set
  *   3. canonical contracts — protocol consumed from @animastor/contracts,
  *                            no local literal
  *   4. protocol parity     — hub vs worker vs contracts PROTOCOL_VERSION
- *   5. route freeze        — EXACT frozen 14-route HTTP surface
+ *   5. route freeze        — EXACT frozen 13-route HTTP surface
  *   6. Redis ownership     — hub-owned constants frozen; backend-owned
  *                            animastor:worker-auth never written by the hub
+ *   7. artifact bake-in    — 4 artifact groups present; runtime resolution
+ *                            uses /app/artifacts; no monorepo mount leaks
  */
 
 const fs = require('fs');
@@ -71,7 +73,7 @@ function readSource(p) {
 
 // ── 1. package smoke ─────────────────────────────────────────────────────
 
-console.log('\n[1/6] package smoke');
+console.log('\n[1/7] package smoke');
 
 check('package identity is @animastor/gpu-hub@0.1.0', () => {
   const pkg = readPkg();
@@ -116,7 +118,7 @@ check('buildHubApp factory constructs with a stub Redis (no eager connections)',
 
 // ── 2. dependency isolation ──────────────────────────────────────────────
 
-console.log('\n[2/6] dependency isolation');
+console.log('\n[2/7] dependency isolation');
 
 check('runtime files never require monorepo code (backend/worker/frontend/parent escapes)', () => {
   const banned = /require\(\s*['"][^'"]*(backend\/src|backend\/ai|worker\/worker|frontends|\.\.\/)+/;
@@ -158,7 +160,7 @@ check('hub sources stay pg/postgres-free', () => {
 
 // ── 3. canonical contracts import ────────────────────────────────────────
 
-console.log('\n[3/6] canonical contracts import');
+console.log('\n[3/7] canonical contracts import');
 
 check('gpu-hub.js consumes @animastor/contracts (the single protocol source)', () => {
   const src = readSource(path.join(PKG_ROOT, 'gpu-hub.js'));
@@ -178,7 +180,7 @@ check('@animastor/contracts resolves inside the package tree (registry or provid
 
 // ── 4. protocol parity ───────────────────────────────────────────────────
 
-console.log('\n[4/6] protocol parity');
+console.log('\n[4/7] protocol parity');
 
 check('hub PROTOCOL_VERSION equals the canonical @animastor/contracts value', () => {
   const hub = require(path.join(PKG_ROOT, 'gpu-hub.js'));
@@ -189,7 +191,7 @@ check('hub PROTOCOL_VERSION equals the canonical @animastor/contracts value', ()
 
 // ── 5. route freeze ──────────────────────────────────────────────────────
 
-console.log('\n[5/6] route freeze');
+console.log('\n[5/7] route freeze');
 
 check('route surface is EXACTLY the frozen 13-route set (additions and removals both fail)', () => {
   const FROZEN_ROUTES = [
@@ -209,7 +211,7 @@ check('route surface is EXACTLY the frozen 13-route set (additions and removals 
 
 // ── 6. Redis ownership ───────────────────────────────────────────────────
 
-console.log('\n[6/6] Redis ownership');
+console.log('\n[6/7] Redis ownership');
 
 check('hub-owned key constants keep their frozen values', () => {
   const src = readSource(path.join(PKG_ROOT, 'gpu-hub.js'));
@@ -235,6 +237,56 @@ check('hub still reads the mirror + SYNC anchors intact (frozen worker-auth debt
   const src = readSource(path.join(PKG_ROOT, 'gpu-hub.js'));
   for (const anchor of ['WORKER_AUTH_MIRROR_KEY', 'hget(WORKER_AUTH_MIRROR_KEY', 'SYNC: backend/src/services/worker-auth.js']) {
     assert(src.includes(anchor), `SYNC anchor missing: ${anchor}`);
+  }
+});
+
+// ── 7. artifact bake-in ────────────────────────────────────────────────────
+
+console.log('\n[7/7] artifact bake-in');
+
+check('resolveArtifactDir() checks baked-in artifacts/ first, then mount fallback', () => {
+  const src = readSource(path.join(PKG_ROOT, 'gpu-hub.js'));
+  // Must define ARTIFACT_BASE as path.join(__dirname, 'artifacts')
+  assert(src.includes("path.join(__dirname, 'artifacts')") || src.includes('path.join(__dirname, "artifacts")'),
+    'ARTIFACT_BASE must resolve to __dirname/artifacts');
+  // Must call fs.existsSync on the baked-in path
+  assert(src.includes('fs.existsSync(bakedPath)'), 'resolveArtifactDir must check fs.existsSync(bakedPath)');
+  // Must have all 5 resolveArtifactDir calls
+  const calls = [...src.matchAll(/resolveArtifactDir\(/g)];
+  assert(calls.length >= 5, `expected >=5 resolveArtifactDir calls, found ${calls.length}`);
+});
+
+check('frozen mount fallback paths match docker/compose/overlay-gpu-hub-local.yml targets', () => {
+  const src = readSource(path.join(PKG_ROOT, 'gpu-hub.js'));
+  const frozenFallbacks = [
+    '/app/worker-bundle',
+    '/app/workflows',
+    '/app/installer-src',
+    '/app/install-manifests',
+  ];
+  for (const fb of frozenFallbacks) {
+    assert(src.includes(`'${fb}'`) || src.includes(`"${fb}"`),
+      `mount fallback ${fb} missing from resolveArtifactDir calls`);
+  }
+});
+
+check('no /worker-source references in runtime code', () => {
+  const offenders = [];
+  for (const file of RUNTIME_FILES) {
+    const src = readSource(path.join(PKG_ROOT, file));
+    if (src.includes('/worker-source')) offenders.push(file);
+  }
+  assert(offenders.length === 0, `/worker-source still referenced in: ${offenders.join(', ')}`);
+});
+
+check('Dockerfile contains multi-stage artifact bake-in', () => {
+  const dockerfile = readSource(path.join(PKG_ROOT, 'Dockerfile'));
+  assert(dockerfile.includes('AS stager'), 'Dockerfile missing stager stage');
+  assert(dockerfile.includes('COPY --from=stager'), 'Dockerfile missing COPY --from=stager');
+  assert(dockerfile.includes('/app/artifacts/'), 'Dockerfile missing /app/artifacts/ target');
+  // Must verify all 4 groups at build time
+  for (const d of ['worker-bundle', 'workflows', 'installer-src', 'install-manifests']) {
+    assert(dockerfile.includes(d), `Dockerfile missing artifact group: ${d}`);
   }
 });
 

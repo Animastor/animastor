@@ -1,0 +1,28 @@
+# Root .dockerignore — optimised for gpu-hub multi-stage build (Phase 10T.1).
+# Build context is the repo root; only worker/ and backend/ are needed.
+node_modules
+.git
+.github
+*.log
+
+# Frontends — never part of the GPU Hub image.
+frontends/
+
+# Documentation — not needed in build context.
+docs/
+*.md
+!gpu-hub/README.md
+
+# Docker compose overlays — not needed in build context.
+docker/compose/
+
+# Test suites — not needed in production image.
+backend/tests/
+gpu-hub/tests/
+**/tests/
+
+# Config / env files that must never leak into image.
+.env
+.env.*
+*.pem
+*.key

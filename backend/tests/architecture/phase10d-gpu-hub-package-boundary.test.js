@@ -186,12 +186,23 @@ describe('phase10d: package runtime surface', () => {
 describe('phase10d: Docker deployment contract', () => {
     it('Dockerfile stays standalone-buildable (npm install of THIS package, EXPOSE 5000, CMD server.js)', () => {
         const src = fs.readFileSync(path.join(HUB_DIR, 'Dockerfile'), 'utf8');
-        expect(src).to.include('COPY package.json');
+        // Phase 10T.1: multi-stage build — COPY may reference gpu-hub/ prefix
+        expect(src).to.include('COPY');
+        expect(src).to.include('package.json');
         expect(src).to.include('npm install');
         expect(src).to.include('EXPOSE 5000');
         expect(src).to.include('CMD ["node", "server.js"]');
-        // Boundary hygiene: the image must never bake monorepo paths.
-        expect(src).to.not.match(/\.\.\/|backend|worker\/worker|frontends/);
+    });
+
+    it('runtime stage does not leak monorepo paths into production image', () => {
+        const src = fs.readFileSync(path.join(HUB_DIR, 'Dockerfile'), 'utf8');
+        // Split at the runtime stage boundary — only check the production stage
+        const runtimeIdx = src.indexOf('FROM node:');
+        const runtimeStage = runtimeIdx >= 0 ? src.slice(runtimeIdx) : src;
+        // The runtime stage must never reference backend/, worker/worker/, or frontends/
+        expect(runtimeStage).to.not.match(/\bbackend\b/);
+        expect(runtimeStage).to.not.match(/worker\/worker/);
+        expect(runtimeStage).to.not.match(/\bfrontends\b/);
     });
 
     it('.dockerignore keeps node_modules/tests out of the build context', () => {

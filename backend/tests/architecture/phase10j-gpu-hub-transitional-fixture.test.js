@@ -105,7 +105,9 @@ describe('phase10j: compose GPU Hub image parameterization (TF3)', () => {
     });
 
     it('default build stays the local fixture (production NOT yet switched)', () => {
-        expect(hubSection, 'transitional default: build from ./gpu-hub must remain until cutover').to.include('build: ./gpu-hub');
+        // Phase 10T.1: build context is now repo root (context: .) for multi-stage
+        // artifact bake-in. The Dockerfile path is still gpu-hub/Dockerfile.
+        expect(hubSection, 'transitional default: build must reference gpu-hub/Dockerfile').to.include('dockerfile: gpu-hub/Dockerfile');
     });
 
     it('image reference is parameterized with a local default (no :latest anywhere)', () => {
