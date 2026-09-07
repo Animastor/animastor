@@ -11,9 +11,9 @@
 //   - Hot-reload orchestration
 // ======================================================
 
-const connectorLoader = require('../workflows/connector-loader');
-const workflowLoader = require('../workflows/workflow-loader');
-const entitySchema = require('../workflows/entity-schema');
+const connectorLoader = require('animastor-comfyui-workflow-connector').connectorLoader;
+const workflowLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
+const entitySchema = require('animastor-comfyui-workflow-connector').entitySchema;
 
 const logPrefix = '[WF-MANAGER]';
 

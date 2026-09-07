@@ -3,7 +3,7 @@
 // ======================================================
 
 const { execSync } = require('child_process');
-const wfLoader = require('../workflows/workflow-loader');
+const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
 
 let _ffmpegChecked = false;
 let _ffmpegAvailable = false;
@@ -24,7 +24,7 @@ function isFFmpegAvailable() {
 function applyAudioValue(wf, workflowName, entityKey, value) {
   const connector = wfLoader.getConnector(workflowName);
   if (connector) {
-    const cl = require('../workflows/connector-loader');
+    const cl = require('animastor-comfyui-workflow-connector').connectorLoader;
     return cl.setValue(wf, connector, entityKey, value);
   }
   return false;
@@ -33,7 +33,7 @@ function applyAudioValue(wf, workflowName, entityKey, value) {
 function getAudioNodeId(workflowName, entityKey) {
   const connector = wfLoader.getConnector(workflowName);
   if (connector) {
-    const cl = require('../workflows/connector-loader');
+    const cl = require('animastor-comfyui-workflow-connector').connectorLoader;
     return cl.getNodeId(connector, entityKey);
   }
   return null;

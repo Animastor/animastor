@@ -1,0 +1,31 @@
+{
+  "name": "animastor-comfyui-workflow-connector",
+  "version": "0.1.0",
+  "description": "Animastor ComfyUI Workflow Connector — declarative mapping core between Animastor entities (prompts, images, audio, parameters) and ComfyUI workflow JSON. Loads workflows + connectors, validates compatibility (content-sensitive sha256 + node-class checks), applies entity-keyed bindings and builds runnable workflow JSON. Zero host dependencies: fs/path/crypto only; asset directories and logger are injected by the host.",
+  "main": "src/index.js",
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "mocha --exit tests/*.test.js",
+    "test:connector-core": "mocha --exit tests/connector-core.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Animastor/animastor.git",
+    "directory": "packages/animastor-comfyui-workflow-connector"
+  },
+  "bugs": {
+    "url": "https://github.com/Animastor/animastor/issues"
+  },
+  "devDependencies": {
+    "chai": "^6.2.2",
+    "mocha": "^11.7.5"
+  }
+}

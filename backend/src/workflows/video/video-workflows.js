@@ -7,7 +7,7 @@
 // modifying backend code.
 
 const book = require('../../book');
-const wfLoader = require('../workflow-loader');
+const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
 const profileOverride = require('../../services/profile-override');
 const { tokensToString } = require('../../book/lazy-book/appearance');
 const { resolveAssembly, DEFAULT_VIDEO_DEFAULTS } = require('../../image/assembly-profile');

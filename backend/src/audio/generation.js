@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const gpu = require('../runtime/gpu-dispatcher');
 const jobSchema = require('../runtime/job-schema');
-const wfLoader = require('../workflows/workflow-loader');
+const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
 const { resolveAssembly } = require('../image/assembly-profile');
 const profileOverride = require('../services/profile-override');
 const { audioProfileNameFromConnector } = require('./connector-utils');
@@ -485,7 +485,7 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
             const connector = wfLoader.getConnector(workflowName);
             const defaultInstruct = resolveAudioAssembly().defaults.defaultInstruct || "";
             if (connector) {
-                const cl = require('../workflows/connector-loader');
+                const cl = require('animastor-comfyui-workflow-connector').connectorLoader;
                 cl.setValue(wfAudio, connector, 'dialogueScript', segment.text);
                 cl.setValue(wfAudio, connector, 'defaultInstruct', defaultInstruct);
             } else {
@@ -512,7 +512,7 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
             }
 
             if (connector) {
-                const cl = require('../workflows/connector-loader');
+                const cl = require('animastor-comfyui-workflow-connector').connectorLoader;
                 if (c1Voice) cl.setValue(wfAudio, connector, 'character1Voice', c1Voice);
                 if (c2Voice) cl.setValue(wfAudio, connector, 'character2Voice', c2Voice);
                 cl.setValue(wfAudio, connector, 'roleName1', speakerId || "speaker");
@@ -534,7 +534,7 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
             }
 
             if (connector) {
-                const cl = require('../workflows/connector-loader');
+                const cl = require('animastor-comfyui-workflow-connector').connectorLoader;
                 cl.setValue(wfAudio, connector, 'narrationText', segment.text);
                 if (vi) {
                     cl.setValue(wfAudio, connector, 'voiceInstruction', vi);

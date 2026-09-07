@@ -1,22 +1,21 @@
 // ======================================================
 // Workflow Loader — v2.0.0 (Connector-aware)
+// animastor-comfyui-workflow-connector package
 // ======================================================
-// Loads ComfyUI JSON workflows and their corresponding connectors from the AI
-// tree (backend/ai/workflows + backend/ai/connectors), alongside skills, rules
-// and assembly profiles.
+// Loads ComfyUI JSON workflows and their corresponding connectors from the
+// HOST-INJECTED directories, alongside skills, rules and assembly profiles.
 //
 // The connector layer abstracts workflow internals (nodeId, fields)
-// so backend code never references them directly.
+// so host code never references them directly.
 
 const fs = require('fs');
 const path = require('path');
 const connectorLoader = require('./connector-loader');
 
 // Directory resolution order: explicit injection (configure) → env (WF_DIR)
-// → host default (backend/ai/workflows). The default is a HOST concern —
-// it moves out of the module when the connector core is extracted.
-const DEFAULT_WF_DIR = path.join(__dirname, '../../ai/workflows');
-let WF_DIR = process.env.WF_DIR || DEFAULT_WF_DIR;
+// → no default. The default is a HOST concern (extraction §1.3): the host
+// passes its asset directories at boot via configure() / the package API.
+let WF_DIR = process.env.WF_DIR || null;
 let loggerRef = console;
 
 const logPrefix = '[WORKFLOWS]';
@@ -31,9 +30,19 @@ function warn(msg) { loggerRef.warn(`${logPrefix} ${msg}`); }
  *
  * @param {{ workflowsDir?: string, logger?: object }} [options]
  */
-function configure({ workflowsDir, logger } = {}) {
-    if (workflowsDir) WF_DIR = workflowsDir;
+function configure({ workflowsDir, connectorsDir, logger } = {}) {
+    if (workflowsDir) {
+        WF_DIR = workflowsDir;
+        loggerRef = logger || loggerRef;
+    }
     if (logger) loggerRef = logger;
+    // Dirs go together at host boot (extraction §2): when the host injects
+    // both, the connectors dir must switch in the SAME call (loadWorkflows()
+    // validates connectors in one step). When only the workflows dir is
+    // injected, the connector dir keeps its current resolution (env/injected).
+    if (workflowsDir && connectorsDir) {
+        connectorLoader.configure({ connectorsDir, logger });
+    }
 }
 
 /**

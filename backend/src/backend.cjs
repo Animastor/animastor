@@ -362,7 +362,16 @@ app.get('/health', async (req, res) => {
 async function startServer() {
     // Load workflow templates (connectors are required — failure is fatal)
     try {
-        const wfLoader = require('./workflows/workflow-loader');
+        const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
+        // Host-owned asset directories are injected (extraction §1.3/§2):
+        // the package has no host default — the backend passes the AI tree
+        // paths at boot. Env WF_DIR / CONNECTOR_DIR still take precedence
+        // only when configure() has not set the dirs (package resolution
+        // order: explicit injection → env).
+        wfLoader.configure({
+            workflowsDir: path.join(__dirname, '../ai/workflows'),
+            connectorsDir: path.join(__dirname, '../ai/connectors'),
+        });
         await wfLoader.loadWorkflows();
         log('[STARTUP] Workflows loaded');
     } catch (wfErr) {

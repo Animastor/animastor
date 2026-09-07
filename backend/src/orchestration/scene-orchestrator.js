@@ -341,7 +341,7 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchI
         }
     } catch (_) {}
 
-    const wfLoader = require('../workflows/workflow-loader');
+    const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
     const videoResult = await video.generateVideoAnimation(sceneData, bookData, buildId, wfLoader.workflows, dispatchId);
 
     if (!videoResult.success) {

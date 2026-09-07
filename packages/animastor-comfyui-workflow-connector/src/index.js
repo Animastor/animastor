@@ -1,10 +1,10 @@
 // ======================================================
-// Connector API — minimal public surface of the future
-// animastor-comfyui-workflow-connector module (extraction readiness)
+// Connector API — public surface of the
+// animastor-comfyui-workflow-connector package
 // ======================================================
 // A small dependency-injected adapter over the mapping core
 // (workflow-loader + connector-loader + entity-schema). It presents the
-// API the extracted module will expose to its host:
+// API the package exposes to its host:
 //
 //   createWorkflowConnector({ workflowsDir, connectorsDir, logger })
 //     .listWorkflows()   → [{ name, hash, type, label, hasConnector, compatible }]
@@ -17,8 +17,9 @@
 //   - ComfyUI node ids, field paths and the raw connector JSON format are
 //     NOT part of this API. Binding application happens inside build().
 //   - No dispatch, no queues, no GPU Hub, no DB/Redis, no business logic:
-//     this file may only depend on the mapping core + node builtins
-//     (guarded by tests/architecture/comfyui-connector-core-boundary.test.js).
+//     this package may only depend on node builtins
+//     (guarded by tests/connector-core.test.js + the host architecture
+//     suite tests/architecture/comfyui-connector-core-boundary.test.js).
 //   - The host owns WHERE assets live (injected dirs) and HOW jobs are
 //     dispatched (gpu-dispatcher stays host-side).
 
@@ -125,8 +126,8 @@ function toConnectorView(connector) {
  * @returns the API object (listWorkflows/getWorkflow/getConnector/validate/build/…)
  */
 function createWorkflowConnector({ workflowsDir, connectorsDir, logger } = {}) {
-    if (workflowsDir) wfLoader.configure({ workflowsDir, logger });
-    if (connectorsDir || logger) connectorLoader.configure({ connectorsDir, logger });
+    wfLoader.configure({ workflowsDir, logger });
+    connectorLoader.configure({ connectorsDir, logger });
 
     // Load templates + connectors (connectors are mandatory: throws when a
     // workflow lacks one — the same fail-closed semantics the host startup
@@ -253,4 +254,12 @@ module.exports = {
     ConnectorMissingError,
     IncompatibleWorkflowError,
     BuildError,
+
+    // Compatibility surface (extraction §6.1): the loader singletons remain
+    // reachable so host consumers migrated from backend/src/workflows/*
+    // keep their exact call shapes. The createWorkflowConnector() factory
+    // is the preferred long-term API.
+    workflowLoader: wfLoader,
+    connectorLoader,
+    entitySchema: require('./entity-schema'),
 };

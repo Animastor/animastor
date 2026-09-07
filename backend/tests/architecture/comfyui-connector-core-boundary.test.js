@@ -1,58 +1,60 @@
 // ======================================================
 // ComfyUI Workflow Connector core — extraction boundary guard
 // ======================================================
-// Freezes the boundary of the future animastor-comfyui-workflow-connector
-// module (docs/architecture/COMFYUI_WORKFLOW_CONNECTOR_EXTRACTION_READINESS.md):
+// Freezes the boundary of the extracted
+// animastor-comfyui-workflow-connector package
+// (docs/architecture/COMFYUI_WORKFLOW_CONNECTOR_EXTRACTION_READINESS.md):
 //
-//   CB-T1 — core purity: src/workflows/{workflow-loader,connector-loader,
-//           entity-schema,connector-api}.js depend only on node builtins
-//           and each other (no host imports).
-//   CB-T2 — the connector core is consumed ONLY through its documented
-//           import set; new consumers must be registered consciously
-//           (baseline = extraction migration list).
-//   CB-T3 — the public API surface hides ComfyUI internals: connector-api.js
-//           must not re-export raw node-id lookups.
+//   CB-T1 — package purity: packages/animastor-comfyui-workflow-connector/
+//           src/{workflow-loader,connector-loader,entity-schema,index}.js
+//           depend only on node builtins and each other (no host imports),
+//           and the package is consumed ONLY through its documented import
+//           set (the frozen consumer baseline = extraction migration list).
+//   CB-T2 — the public API surface hides ComfyUI internals: the package
+//           index must not re-export raw node-id lookups.
 
 const { expect } = require('chai');
 const path = require('path');
 const fs = require('fs');
 const { REPO_ROOT, BACKEND_SRC, listSourceFiles, readSource, rel, requireSpecifiers, resolveSpecifier } = require('./helpers');
 
-const CORE_DIR = path.join(BACKEND_SRC, 'workflows');
+const PKG_DIR = path.join(REPO_ROOT, 'packages', 'animastor-comfyui-workflow-connector');
+const PKG_SRC = path.join(PKG_DIR, 'src');
+const PKG_NAME = 'animastor-comfyui-workflow-connector';
 // video-workflows.js is business-side multi-image assembly (host concern);
-// it stays OUT of the extraction and out of this guard.
+// it stays OUT of the package and out of this guard.
 const CORE_FILES = [
     'workflow-loader.js',
     'connector-loader.js',
     'entity-schema.js',
-    'connector-api.js',
+    'index.js',
 ];
 
 function stripComments(src) {
     return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 }
 
-// ── CB-T1 — core purity ──────────────────────────────────────────────────
+// ── CB-T1 — package purity ───────────────────────────────────────────────
 describe('CB-T1: connector core depends only on node builtins + itself', () => {
-    it('core files require nothing outside the core', () => {
+    it('package source files require nothing outside the core', () => {
         const allowed = new Set([
-            './workflow-loader', './connector-loader', './entity-schema', './connector-api',
+            './workflow-loader', './connector-loader', './entity-schema', './index', './connector-api',
             'fs', 'path', 'crypto',
         ]);
         const offenders = [];
         for (const f of CORE_FILES) {
-            const src = readSource(path.join(CORE_DIR, f));
+            const src = readSource(path.join(PKG_SRC, f));
             for (const spec of requireSpecifiers(src)) {
-                if (!allowed.has(spec)) offenders.push(`${rel(path.join(CORE_DIR, f))}: ${spec}`);
+                if (!allowed.has(spec)) offenders.push(`${rel(path.join(PKG_SRC, f))}: ${spec}`);
             }
         }
-        expect(offenders, 'the extraction core must not reach into the host (backend business layer, Redis, GPU dispatch)').to.deep.equal([]);
+        expect(offenders, 'the extracted package must not reach into the host (backend business layer, Redis, GPU dispatch)').to.deep.equal([]);
     });
 
-    it('no backend source file requires INTO the core except the registered consumer set', () => {
-        // Baseline = the exact migration list for physical extraction: when
-        // the module is extracted, each of these files switches to the
-        // package import and its entry is consciously updated here.
+    it('no backend source file requires the old backend/src/workflows core or unregistered package consumers', () => {
+        // Baseline = the frozen extraction migration list (§6.2): each of
+        // these files consumes the package; new consumers must be
+        // registered consciously here.
         const CONSUMER_BASELINE = [
             'backend/src/audio/connector-utils.js',
             'backend/src/audio/generation.js',
@@ -62,39 +64,44 @@ describe('CB-T1: connector core depends only on node builtins + itself', () => {
             'backend/src/orchestration/scene-orchestrator.js',
             'backend/src/services/profile-override.js',
             'backend/src/services/workflow-manager.js',
+            'backend/src/workflows/video/video-workflows.js',
             'backend/src/backend.cjs',
         ];
 
         const offenders = [];
         for (const file of listSourceFiles(BACKEND_SRC)) {
             const r = rel(file);
-            if (r.startsWith('backend/src/workflows/')) continue; // core itself
             for (const spec of requireSpecifiers(readSource(file))) {
+                // Old core location must be gone from production imports.
                 const target = resolveSpecifier(file, spec);
-                if (!target) continue;
-                const t = rel(target);
-                const isCore =
-                    (t.startsWith('backend/src/workflows/') &&
-                        CORE_FILES.some((f) => t.endsWith('/' + f))) ||
-                    /workflow-loader|connector-loader|entity-schema/.test(spec);
-                if (!isCore) continue;
-                if (!CONSUMER_BASELINE.includes(r)) offenders.push(`${r}: ${spec}`);
+                if (target) {
+                    const t = rel(target);
+                    if (t.startsWith('backend/src/workflows/') &&
+                        CORE_FILES.some((f) => t.endsWith('/' + f))) {
+                        offenders.push(`${r}: ${spec} (stale backend/src/workflows import)`);
+                        continue;
+                    }
+                }
+                // Package specifier consumers must be registered.
+                if (spec === PKG_NAME) {
+                    if (!CONSUMER_BASELINE.includes(r)) offenders.push(`${r}: ${spec}`);
+                }
             }
         }
-        expect(offenders, 'a new module reached into the connector core — register the consumer consciously (extraction migration list)').to.deep.equal([]);
+        expect(offenders, 'a stale workflows import or a new unregistered package consumer was found — register the consumer consciously (extraction migration list)').to.deep.equal([]);
     });
 });
 
 // ── CB-T2 — API surface hides ComfyUI internals ─────────────────────────
 describe('CB-T2: the public API surface hides ComfyUI internals', () => {
-    it('connector-api.js does not re-export raw node-id / field lookups', () => {
-        const src = stripComments(readSource(path.join(CORE_DIR, 'connector-api.js')));
+    it('the package index does not re-export raw node-id / field lookups', () => {
+        const src = stripComments(readSource(path.join(PKG_SRC, 'index.js')));
         expect(src).to.not.match(/getNodeId|getGuideBindings/);
         expect(src).to.not.match(/module\.exports[^\n]*applyBinding/);
     });
 
-    it('connector-api.js exposes the minimal public API (factory + typed errors)', () => {
-        const src = readSource(path.join(CORE_DIR, 'connector-api.js'));
+    it('the package index exposes the minimal public API (factory + typed errors)', () => {
+        const src = readSource(path.join(PKG_SRC, 'index.js'));
         expect(src).to.include('createWorkflowConnector');
         expect(src).to.include('listWorkflows');
         expect(src).to.include('getWorkflow');

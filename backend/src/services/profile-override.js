@@ -15,7 +15,7 @@
 // There is NO 'default' profile — only real model profiles (qwen-image,
 // ltx-2.3, qwen-tts). Clearing an override (null) restores the connector default.
 
-const wfLoader = require('../workflows/workflow-loader');
+const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
 
 const REDIS_KEY = 'animastor:prompt-profiles';
 

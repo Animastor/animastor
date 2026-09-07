@@ -207,7 +207,7 @@ describe('orchestration stabilization: executor acceptance', () => {
         '../src/orchestration/scene-restoration',
         '../src/orchestration/orchestrator',
         '../src/storage/postgres/repositories/scene-assets-repo',
-        '../src/workflows/workflow-loader',
+        'animastor-comfyui-workflow-connector',
         '../src/services/video-orchestrator',
         '../src/config/runtime-config',
     ];
@@ -291,7 +291,7 @@ describe('orchestration stabilization: executor acceptance', () => {
         stub('../src/storage/postgres/repositories/scene-assets-repo', {
             getDirtyUnitIds: async () => [],
         });
-        stub('../src/workflows/workflow-loader', { workflows: {} });
+        stub('animastor-comfyui-workflow-connector', { workflowLoader: { workflows: {} } });
 
         return { calls, sceneData, loadedBook };
     }

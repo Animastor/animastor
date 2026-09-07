@@ -1,10 +1,12 @@
 # ComfyUI Workflow Connector — Extraction Readiness
 
-**Status:** PREPARATION COMPLETE. No physical extraction performed, no package created, no production files moved.
-**Date:** 2026-09-07
-**Candidate:** `animastor-comfyui-workflow-connector`
+**Status:** EXTRACTED. The narrow core is physically extracted as the
+`animastor-comfyui-workflow-connector` package (`packages/animastor-comfyui-workflow-connector`);
+host consumers switched to the package specifier; old `backend/src/workflows/*` core files deleted.
+**Date:** 2026-09-07 (extraction commit follows the preparation commit `9322ce7`)
+**Candidate:** `animastor-comfyui-workflow-connector` (now a real package — `packages/`)
 **Basis:** `COMFYUI_WORKFLOW_CONNECTOR_RECONNAISSANCE.md` (2026-09-06, read-only recon) + this preparation phase.
-**Verdict:** the module is **READY for physical extraction** without behavior change — see §9.
+**Verdict:** the module was **READY for physical extraction** without behavior change — see §9; extraction is now DONE (§12).
 
 ---
 
@@ -14,10 +16,10 @@
 
 | Component | Current location | LOC | Notes |
 |---|---|---|---|
-| workflow-loader | `backend/src/workflows/workflow-loader.js` | ~120 | load/list/hash workflows; fail-closed semantics; `configure()` DI added |
-| connector-loader | `backend/src/workflows/connector-loader.js` | ~950 | connector registry, validation, compatibility, binding application, hash; `configure()` DI + `validateConnector` export added |
-| entity-schema | `backend/src/workflows/entity-schema.js` | 340 | entity catalog (public vocabulary), pure data |
-| public API facade | `backend/src/workflows/connector-api.js` | ~250 | **new** — the module's future `index.js`; factory + typed errors |
+| workflow-loader | `packages/animastor-comfyui-workflow-connector/src/workflow-loader.js` (was `backend/src/workflows/workflow-loader.js`) | ~120 | load/list/hash workflows; fail-closed semantics; `configure()` DI added |
+| connector-loader | `packages/animastor-comfyui-workflow-connector/src/connector-loader.js` (was `backend/src/workflows/connector-loader.js`) | ~950 | connector registry, validation, compatibility, binding application, hash; `configure()` DI + `validateConnector` export added |
+| entity-schema | `packages/animastor-comfyui-workflow-connector/src/entity-schema.js` (was `backend/src/workflows/entity-schema.js`) | 340 | entity catalog (public vocabulary), pure data |
+| public API facade | `packages/animastor-comfyui-workflow-connector/src/index.js` (was `backend/src/workflows/connector-api.js`) | ~250 | the package entry point; factory + typed errors + compat re-exports |
 | workflow JSON assets | `backend/ai/workflows/*.json` (7 active; `old_*` ignored by loader) | — | module data; OR host-injected dirs |
 | connector JSON assets | `backend/ai/connectors/conn-*.json` (7) | — | module data; OR host-injected dirs |
 | workflow hashing | `computeWorkflowHash` + `stableStringify` (connector-loader) | — | content-sensitive, fully key-sorted; fixed in this phase (§8) |
@@ -111,7 +113,7 @@ Typed errors: `WorkflowNotFoundError` (`WORKFLOW_NOT_FOUND`), `ConnectorMissingE
 
 ---
 
-## 6. Migration order (physical extraction, when approved)
+## 6. Migration order (physical extraction — EXECUTED, see §12 for the actual record)
 
 1. **Create package** `packages/animastor-comfyui-workflow-connector` (repo-root `node_modules` symlink pattern, same as `@animastor/contracts`; mind the docker build-context caveat documented in `backend/src/runtime/job-schema.js`).
    Move: `workflow-loader.js`, `connector-loader.js`, `entity-schema.js`, `connector-api.js` (→ `index.js`), fixtures + `tests/workflows/connector-core.test.js` (import paths + fixture dir only).
@@ -144,7 +146,7 @@ Typed errors: `WorkflowNotFoundError` (`WORKFLOW_NOT_FOUND`), `ConnectorMissingE
 
 ## 9. Readiness verdict
 
-**READY.** The narrow core (trio + API + assets + hash/compat/binding) can be physically extracted as `animastor-comfyui-workflow-connector` with **zero system behavior change**:
+**READY — and EXTRACTED (§12).** The narrow core (trio + API + hash/compat/binding) was physically extracted as `animastor-comfyui-workflow-connector` with **zero system behavior change**:
 
 - core has zero host dependencies (CB-T1 enforced);
 - all 9 host consumers are enumerated and frozen (CB-T1 baseline = migration list §6.2);
@@ -158,17 +160,56 @@ Typed errors: `WorkflowNotFoundError` (`WORKFLOW_NOT_FOUND`), `ConnectorMissingE
 
 | Suite | What it proves | Status |
 |---|---|---|
-| `backend/tests/workflows/connector-core.test.js` (34) | loading (injected dirs), connector loading, malformed connector, missing connector fail-closed, entity schema, hash determinism/content-sensitivity, compatibility (pass/missing-node/class-drift), binding application (incl. multi-binding), public API (list/get/getConnector/validate/build, typed errors, node-id hiding, determinism), core purity | ✅ 34/34 |
-| `backend/tests/architecture/comfyui-connector-core-boundary.test.js` (4) | CB-T1 core purity + consumer freeze; CB-T2 API surface hides ComfyUI internals | ✅ 4/4 |
-| Full backend suite (`npm test`) | no regression anywhere; host suites (audio-profile, profile-override, image-ghost) keep passing against the touched loaders | ✅ 357/357 |
-| Architecture suite (`npm run test:arch`) | all pre-existing guards intact (323 incl. the 4 new) | ✅ 323/323 |
+| `packages/animastor-comfyui-workflow-connector/tests/connector-core.test.js` (34) | loading (injected dirs), connector loading, malformed connector, missing connector fail-closed, entity schema, hash determinism/content-sensitivity, compatibility (pass/missing-node/class-drift), binding application (incl. multi-binding), public API (list/get/getConnector/validate/build, typed errors, node-id hiding, determinism), core purity | ✅ 34/34 |
+| `backend/tests/architecture/comfyui-connector-core-boundary.test.js` (4) | CB-T1 package purity + consumer freeze (incl. stale-import detector); CB-T2 API surface hides ComfyUI internals | ✅ 4/4 |
+| Full backend suite (`npm test`) | no regression anywhere; host suites (audio-profile, profile-override, image-ghost) keep passing against the package | ✅ 323/323 |
+| Architecture suite (`npm run test:arch`) | all pre-existing guards intact (323 incl. the 4 boundary tests) | ✅ 323/323 |
 
-Post-extraction acceptance: suites above pass **unchanged** (import paths only) + `npm run test:connector-core` inside the new package + full backend `npm test` green.
+Post-extraction acceptance (§12): suites above pass **unchanged in semantics** (import paths only) + `npm run test:connector-core` inside the new package + full backend `npm test` green.
+
+## 12. Extraction record (physical move — DONE)
+
+Commit after `9322ce7` ("ComfyUI Workflow Connector: extraction preparation phase"):
+
+1. **Package created:** `packages/animastor-comfyui-workflow-connector`
+   — `package.json` (main `src/index.js`, dev deps mocha/chai for the package-owned suite),
+   `README.md`, `LICENSE` (copied from repo root), `src/{workflow-loader,connector-loader,entity-schema,index}.js`
+   (git-mv), `tests/connector-core.test.js` + `tests/fixtures/{workflows,connectors}/` (git-mv).
+   Package resolution mirrors `@animastor/contracts`: repo-root/host `node_modules` symlink
+   + read-only docker-compose mount into the backend container
+   (`./packages/animastor-comfyui-workflow-connector:/app/node_modules/animastor-comfyui-workflow-connector:ro`).
+   Package dev-deps resolve via `backend/node_modules` symlinks (no duplicate tree).
+2. **Compat surface in `src/index.js`:** `createWorkflowConnector` + typed errors + `workflowLoader`,
+   `connectorLoader`, `entitySchema` re-exports so every migrated consumer keeps its exact call shape.
+3. **Host switch (§6.2 list + 1 internal edge):** all 9 frozen consumers now require the package
+   specifier (`require('animastor-comfyui-workflow-connector').workflowLoader / .connectorLoader / .entitySchema`).
+   The host-side business file `backend/src/workflows/video/video-workflows.js` (NOT part of the package)
+   was switched to the package too, as was `tests/orchestration-stabilization.test.js` (module-cache stub)
+   and the host suites `audio-profile` / `profile-override` / `image-ghost-no-jobs-sent` (loader require + host-dir injection in `before()`).
+4. **Host boot injects dirs:** `backend.cjs startServer()` calls
+   `wfLoader.configure({ workflowsDir, connectorsDir })` with `<backend>/ai/{workflows,connectors}` —
+   the package itself now has NO host default dir (resolution: injection → env `WF_DIR`/`CONNECTOR_DIR` → none).
+   `backend/package.json` `test:connector-core` now delegates to the package suite.
+5. **Old files deleted:** `backend/src/workflows/{workflow-loader,connector-loader,entity-schema,connector-api}.js`
+   and `backend/tests/workflows/` (suite + fixtures moved). Only the host business file
+   `backend/src/workflows/video/video-workflows.js` remains under that path (explicitly out of scope, §1.2).
+6. **Guards updated:** `comfyui-connector-core-boundary.test.js` now points CB-T1 at the package source,
+   flags STALE `backend/src/workflows/*` core imports, and freezes the package-specifier consumer
+   baseline (9 host consumers + video-workflows); `phase3-provider-gateway.test.js` loader pin +
+   seam require assertion switched to the package.
+7. **Assets stayed host-side (§6.3 option B):** `backend/ai/{workflows,connectors}` untouched;
+   dirs injected at boot; fixtures for package tests live inside the package.
+8. **Verification (all green):** package suite 34/34; architecture suite 323/323; full backend suite
+   323/323; zero stale `backend/src/workflows/*` core imports in production code; clean standalone
+   package import from the backend (no host state needed); all 7 existing connector/workflow JSON
+   pairs validate COMPATIBLE through the package; hash (content-sensitive, key-order-stable),
+   `validateConnector` export, fresh-load (no phantoms), DI and typed errors re-verified against
+   the §8 preparation-phase fixes — no regression.
 
 ## 11. Rollback strategy
 
 - Physical extraction is a pure move + import swap; rollback = `git revert` of the extraction commit (files return, imports restore, guards restore). No data migration, no protocol change, no persisted state involved (hashes are ephemeral, §8).
-- Keep `backend/src/workflows/*.js` as one-line re-export shims for ONE release cycle if the consumer switch (§6.2) and the package creation land in separate deployments; delete shims in the next release (Phase 9D pattern).
+- Shims were NOT kept (single-commit move + switch); rollback is the revert itself.
 - Rollback trigger: any failure in the §10 post-extraction acceptance, or any behavior diff observed in the host suites.
 
 ---

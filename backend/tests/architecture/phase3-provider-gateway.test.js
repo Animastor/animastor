@@ -33,7 +33,7 @@ const chatEnginePath = path.join(REPO_ROOT, 'backend', 'src', 'services', 'chat-
 const sharedPoolPath = path.join(REPO_ROOT, 'backend', 'src', 'services', 'ai-connector', 'shared-pool.js');
 const gpuDispatcherPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'gpu-dispatcher.js');
 const audioGenPath = path.join(REPO_ROOT, 'backend', 'src', 'audio', 'generation.js');
-const workflowLoaderPath = path.join(REPO_ROOT, 'backend', 'src', 'workflows', 'workflow-loader.js');
+const workflowLoaderPath = path.join(REPO_ROOT, 'packages', 'animastor-comfyui-workflow-connector', 'src', 'workflow-loader.js');
 
 function read(file) { return readSource(file); }
 
@@ -260,7 +260,7 @@ describe('architecture: Phase 3 gateway surface', () => {
     it('the ComfyUI provider seam exists as the provider-specific generation entry', () => {
         const seam = read(comfyuiSeamPath);
         expect(seam).to.match(/PROVIDER_NAME/);
-        expect(seam).to.include("require('../workflows/workflow-loader')");
+        expect(seam).to.include("require('animastor-comfyui-workflow-connector')");
         expect(seam).to.match(/loadWorkflow|getConnector/);
         expect(seam).to.not.match(/require\(['"][^'"]*(ai-service|chat-engine|ai-caller|shared-pool)['"]\)/);
     });

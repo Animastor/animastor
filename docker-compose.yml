@@ -96,6 +96,10 @@ services:
       # job-schema.js (a facade) requires it at runtime; this read-only mount
       # makes the package resolvable inside the container without a registry.
       - ./contracts:/app/node_modules/@animastor/contracts:ro
+      # Extraction: canonical ComfyUI Workflow Connector package. The backend
+      # requires it as 'animastor-comfyui-workflow-connector'; this read-only
+      # mount resolves it in-container (backend build context = ./backend).
+      - ./packages/animastor-comfyui-workflow-connector:/app/node_modules/animastor-comfyui-workflow-connector:ro
     depends_on:
       postgres:
         condition: service_healthy

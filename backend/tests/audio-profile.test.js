@@ -18,9 +18,17 @@ before(() => { helpers.log = () => {}; });
 after(() => { helpers.log = origLog; });
 
 // buildMergedDialogueWorkflow needs the real TTS workflows loaded (loadWorkflows
-// is normally called at backend startup, not on require).
-const wfLoader = require('../src/workflows/workflow-loader');
-before(() => { wfLoader.loadWorkflows(); });
+// is normally called at backend startup, not on require). The host-owned
+// asset dirs are injected explicitly (package resolution: injection → env).
+const path = require('path');
+const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
+before(() => {
+    wfLoader.configure({
+        workflowsDir: path.join(__dirname, '../ai/workflows'),
+        connectorsDir: path.join(__dirname, '../ai/connectors'),
+    });
+    wfLoader.loadWorkflows();
+});
 
 describe('audioProfileNameFromConnector', () => {
     it('reads the audio profile from the connector profile field', () => {

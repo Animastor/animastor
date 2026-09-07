@@ -2,7 +2,7 @@
 // Image Connector Utilities
 // ======================================================
 
-const wfLoader = require('../workflows/workflow-loader');
+const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
 const profileOverride = require('../services/profile-override');
 
 const WORKFLOW_NAME = 'img-qwen-image';
@@ -10,7 +10,7 @@ const WORKFLOW_NAME = 'img-qwen-image';
 function getImageNodeId(entityKey) {
   const connector = wfLoader.getConnector(WORKFLOW_NAME);
   if (connector) {
-    const cl = require('../workflows/connector-loader');
+    const cl = require('animastor-comfyui-workflow-connector').connectorLoader;
     const nodeId = cl.getNodeId(connector, entityKey);
     if (nodeId) return nodeId;
   }
@@ -20,7 +20,7 @@ function getImageNodeId(entityKey) {
 function applyImageValue(wf, entityKey, value) {
   const connector = wfLoader.getConnector(WORKFLOW_NAME);
   if (connector) {
-    const cl = require('../workflows/connector-loader');
+    const cl = require('animastor-comfyui-workflow-connector').connectorLoader;
     return cl.setValue(wf, connector, entityKey, value);
   }
   return false;

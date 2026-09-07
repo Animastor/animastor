@@ -19,7 +19,7 @@
 // POST /task). Nothing in this module touches the LLM transports (agent
 // callAI / chat SSE / connector WS / shared-pool).
 
-const wfLoader = require('../workflows/workflow-loader');
+const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
 const jobSchema = require('../runtime/job-schema');
 const gpuDispatcher = require('../runtime/gpu-dispatcher');
 
@@ -40,7 +40,7 @@ const WORKFLOW_NAMES = {
 /**
  * Load a fresh deep copy of a ComfyUI workflow by name.
  * Returns the workflow JSON (mutable clone — callers patch node inputs,
- * exactly as workflows/workflow-loader.getWorkflow does today).
+ * exactly as the workflow connector package's getWorkflow does today).
  * @param {string} name - workflow name (see WORKFLOW_NAMES)
  * @returns {object} workflow JSON clone
  * @throws when the workflow is not loaded

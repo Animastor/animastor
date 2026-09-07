@@ -11,7 +11,7 @@
     "start": "node src/backend.cjs",
     "test": "mocha --exit tests/**/*.test.js",
     "test:arch": "mocha --exit tests/architecture/*.test.js",
-    "test:connector-core": "mocha --exit tests/workflows/connector-core.test.js",
+    "test:connector-core": "cd ../packages/animastor-comfyui-workflow-connector && npm test",
     "test:coverage": "nyc --reporter=html --reporter=text mocha --exit tests/**/*.test.js",
     "test:syntax": "bash ../scripts/syntax-smoke.sh",
     "pretest": "bash ../scripts/syntax-smoke.sh"

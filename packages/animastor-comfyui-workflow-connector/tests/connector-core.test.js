@@ -1,41 +1,38 @@
 // ======================================================
-// Connector core — package-owned test suite (extraction readiness)
+// Connector core — package test suite
+// animastor-comfyui-workflow-connector
 // ======================================================
 // Proves the workflow/connector core works standalone: loading, entity
 // schema, validation, hashing, compatibility, binding application, build —
 // with ZERO DB / Redis / GPU Hub / business dependencies. Directories and
 // logger are dependency-injected; assets are local fixtures.
 //
-// This suite is the seed of the future
-// animastor-comfyui-workflow-connector package test suite: after physical
-// extraction it must pass UNCHANGED (only import paths + fixture dir move).
+// Extracted from backend/tests/workflows/connector-core.test.js
+// (extraction readiness): import paths + fixture dir only.
 const { expect } = require('chai');
 const path = require('path');
 const fs = require('fs');
 const FIXTURES = path.join(__dirname, 'fixtures');
 const WF_DIR = path.join(FIXTURES, 'workflows');
 const CONN_DIR = path.join(FIXTURES, 'connectors');
-const HOST_WF_DIR = path.resolve(__dirname, '../../ai/workflows');
-const HOST_CONN_DIR = path.resolve(__dirname, '../../ai/connectors');
-const workflowLoader = require('../../src/workflows/workflow-loader');
-const connectorLoader = require('../../src/workflows/connector-loader');
-const entitySchema = require('../../src/workflows/entity-schema');
-const connectorApi = require('../../src/workflows/connector-api');
+const workflowLoader = require('../src/workflow-loader');
+const connectorLoader = require('../src/connector-loader');
+const entitySchema = require('../src/entity-schema');
+const connectorApi = require('../src/index');
 const noopLogger = { log() {}, warn() {}, error() {} };
 /**
  * The mapping core is a process-wide singleton registry. Fixture-based
- * tests use INJECTED dirs; a root-level after() restores the real asset
- * dirs + registry so the host-owned suites (audio-profile,
- * profile-override, …) keep passing when the whole backend suite runs.
+ * tests use INJECTED dirs; a root-level after() restores the fixture dirs
+ * + registry so every suite in this package starts from a known state.
  */
 function useFixtures() {
     workflowLoader.configure({ workflowsDir: WF_DIR, logger: noopLogger });
     connectorLoader.configure({ connectorsDir: CONN_DIR, logger: noopLogger });
 }
-after(function restoreHostState() {
-    workflowLoader.configure({ workflowsDir: HOST_WF_DIR, logger: console });
-    connectorLoader.configure({ connectorsDir: HOST_CONN_DIR, logger: console });
-    try { workflowLoader.loadWorkflows(); } catch (err) { /* host state is host suites' concern */ }
+after(function restoreFixtureState() {
+    workflowLoader.configure({ workflowsDir: WF_DIR, logger: noopLogger });
+    connectorLoader.configure({ connectorsDir: CONN_DIR, logger: noopLogger });
+    try { workflowLoader.loadWorkflows(); } catch (err) { /* fixture state only */ }
 });
 
 /** Strip comments so textual assertions judge code, not prose. */
@@ -274,8 +271,8 @@ describe('connector core: fail-closed loading semantics', () => {
     after(() => {
         fs.rmSync(orphanDir, { recursive: true, force: true });
         fs.rmSync(orphanConn, { recursive: true, force: true });
-        workflowLoader.configure({ workflowsDir: HOST_WF_DIR, logger: console });
-        connectorLoader.configure({ connectorsDir: HOST_CONN_DIR, logger: console });
+        workflowLoader.configure({ workflowsDir: WF_DIR, logger: noopLogger });
+        connectorLoader.configure({ connectorsDir: CONN_DIR, logger: noopLogger });
         try { workflowLoader.loadWorkflows(); } catch (err) { /* root after() restores too */ }
     });
     it('loadWorkflows() throws when a workflow has no connector (host startup contract)', () => {
@@ -285,10 +282,10 @@ describe('connector core: fail-closed loading semantics', () => {
 // ─── T9 — core purity: no host dependencies ─────────
 describe('connector core: standalone purity', () => {
     it('the mapping trio + API require only node builtins and each other', () => {
-        const coreDir = path.resolve(__dirname, '../../src/workflows');
-        const coreFiles = ['workflow-loader.js', 'connector-loader.js', 'entity-schema.js', 'connector-api.js'];
+        const coreDir = path.resolve(__dirname, '../src');
+        const coreFiles = ['workflow-loader.js', 'connector-loader.js', 'entity-schema.js', 'index.js'];
         const allowed = new Set([
-            './workflow-loader', './connector-loader', './entity-schema', './connector-api',
+            './workflow-loader', './connector-loader', './entity-schema', './index', './connector-api',
             'fs', 'path', 'crypto',
         ]);
         const offenders = [];
@@ -307,7 +304,7 @@ describe('connector core: standalone purity', () => {
         // blown up long before this assertion — the fixture-based suite
         // above IS the proof. This assertion pins the contract textually.
         const apiSrc = stripComments(
-            fs.readFileSync(path.resolve(__dirname, '../../src/workflows/connector-api.js'), 'utf8')
+            fs.readFileSync(path.resolve(__dirname, '../src/index.js'), 'utf8')
         );
         expect(apiSrc).to.not.match(/redis|gpu-dispatcher|postgres|require\(['"]pg|job-schema|sendUnified|dispatch/i);
     });

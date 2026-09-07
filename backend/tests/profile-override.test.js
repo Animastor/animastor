@@ -10,9 +10,17 @@ const { expect } = require('chai');
 const express = require('express');
 
 // buildMergedDialogueWorkflow needs the real workflows loaded (loadWorkflows is
-// normally called at backend startup, not on require).
-const wfLoader = require('../src/workflows/workflow-loader');
-before(() => { wfLoader.loadWorkflows(); });
+// normally called at backend startup, not on require). The host-owned asset
+// dirs are injected explicitly (package resolution: injection → env).
+const path = require('path');
+const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
+before(() => {
+    wfLoader.configure({
+        workflowsDir: path.join(__dirname, '../ai/workflows'),
+        connectorsDir: path.join(__dirname, '../ai/connectors'),
+    });
+    wfLoader.loadWorkflows();
+});
 
 const profileOverride = require('../src/services/profile-override');
 

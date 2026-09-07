@@ -1,7 +1,8 @@
 // ======================================================
 // Connector Loader — v1.0.0
+// animastor-comfyui-workflow-connector package
 // ======================================================
-// Bridges ComfyUI workflows with backend code via
+// Bridges ComfyUI workflows with host code via
 // declarative connector JSON files.
 //
 // A connector is a configuration file that maps
@@ -9,10 +10,10 @@
 // to specific node IDs and fields within a ComfyUI workflow.
 //
 // Key responsibilities:
-//   1. Load connectors from the AI tree (backend/ai/connectors)
+//   1. Load connectors from the HOST-INJECTED directory
 //   2. Validate connector structure and field completeness
 //   3. Validate workflow ↔ connector compatibility via hash
-//   4. Provide lookup API for backend code
+//   4. Provide lookup API for host code
 //   5. Apply values to workflow JSON nodes
 
 const fs = require('fs');
@@ -26,11 +27,10 @@ const connectorsByName = {}; // connector_name → connector
 const connectorEnabled = {}; // connector_name → boolean (default: true)
 
 // Directory resolution order: explicit injection (configure) → env
-// (CONNECTOR_DIR) → host default (backend/ai/connectors). The default is a
-// HOST concern — it moves out of the module when the connector core is
-// extracted.
-const DEFAULT_CONNECTOR_DIR = path.join(__dirname, '../../ai/connectors');
-let CONNECTOR_DIR = process.env.CONNECTOR_DIR || DEFAULT_CONNECTOR_DIR;
+// (CONNECTOR_DIR) → no default. The default is a HOST concern
+// (extraction §1.3): the host passes its asset directory at boot via
+// configure() / the package API.
+let CONNECTOR_DIR = process.env.CONNECTOR_DIR || null;
 let loggerRef = console;
 
 const logPrefix = '[CONNECTOR]';
@@ -47,7 +47,10 @@ function error(msg) { loggerRef.error(`${logPrefix} ❌ ${msg}`); }
  * @param {{ connectorsDir?: string, logger?: object }} [options]
  */
 function configure({ connectorsDir, logger } = {}) {
-    if (connectorsDir) CONNECTOR_DIR = connectorsDir;
+    if (connectorsDir) {
+        CONNECTOR_DIR = connectorsDir;
+        loggerRef = logger || loggerRef;
+    }
     if (logger) loggerRef = logger;
 }
 
