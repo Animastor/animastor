@@ -80,7 +80,7 @@ describe('Private worker setup contract API (Phase 3)', () => {
             config: {
                 BACKEND_URL: 'http://backend.test',
                 GPU_HUB_API_KEY: null,
-                WORKER_SOURCE_PATH: path.join(REPO_ROOT, require('./architecture/helpers').WORKER_BUNDLE_DIR, 'worker.cjs'),
+                WORKER_SOURCE_PATH: path.join(require('./architecture/helpers').WORKER_BUNDLE_DIR, 'worker.cjs'),
                 WORKER_BUNDLE_DIR: require('./architecture/helpers').WORKER_BUNDLE_DIR,
                 WORKFLOW_DIR: path.join(REPO_ROOT, 'backend', 'ai', 'workflows'),
                 INSTALLER_SRC_DIR: path.join(REPO_ROOT, 'backend', 'src', 'installer'),
