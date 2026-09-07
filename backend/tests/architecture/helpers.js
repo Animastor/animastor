@@ -11,6 +11,19 @@ const path = require('path');
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 const BACKEND_SRC = path.join(REPO_ROOT, 'backend', 'src');
 
+// ── Worker package relocation (preparation) ──────────────────────────────
+// The package boundary is being relocated: worker/ → packages/animastor-
+// worker/ (see docs/architecture/WORKER_PACKAGE_RELOCATION_CHECKLIST.md).
+// Resolve the CURRENT physical location — the canonical path once the move
+// lands, the legacy path until then — so guards keep passing through both
+// states and the `git mv` commit needs no test edits.
+const WORKER_PKG_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-worker'))
+    ? path.join(REPO_ROOT, 'packages', 'animastor-worker')
+    : path.join(REPO_ROOT, 'worker');
+const WORKER_BUNDLE_DIR = path.join(WORKER_PKG_DIR, 'worker');
+const WORKER_TESTS_DIR = path.join(WORKER_PKG_DIR, 'tests');
+const SYNC_TOOL_PATH = path.join(WORKER_PKG_DIR, 'tools', 'sync-protocol.cjs');
+
 function listSourceFiles(rootDir, extensions = ['.js', '.cjs']) {
     const out = [];
     if (!fs.existsSync(rootDir)) return out;
@@ -73,6 +86,10 @@ function resolveSpecifier(fromFile, spec) {
 module.exports = {
     REPO_ROOT,
     BACKEND_SRC,
+    WORKER_PKG_DIR,
+    WORKER_BUNDLE_DIR,
+    WORKER_TESTS_DIR,
+    SYNC_TOOL_PATH,
     listSourceFiles,
     readSource,
     rel,

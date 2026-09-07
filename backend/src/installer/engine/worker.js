@@ -16,6 +16,7 @@
 
 const path = require('path');
 const platforms = require('../platform');
+const { resolveRepoBundleDir } = require('../worker-bundle-source');
 const { parseEnvKeys } = require('./probe');
 const { currentUid } = require('./prereq');
 
@@ -34,8 +35,10 @@ function findWorkerManifest(manifests, workerEntryId) {
 
 /**
  * Deploy the worker bundle into workerDir.
- * Source order (never invented): repo checkout `worker/worker/` first, then
- * an explicit `bundleDir` (a verified hub worker-bundle tarball the engine
+ * Source order (never invented): a repo checkout bundle first — canonical
+ * `packages/animastor-worker/worker/`, legacy `worker/worker/` (pre-
+ * relocation checkouts; see installer/worker-bundle-source.js) — then an
+ * explicit `bundleDir` (a verified hub worker-bundle tarball the engine
  * extracted beforehand). If both fail, the install returns status 'failed'.
  * Ownership details are returned for the uninstall manifest: dir_created,
  * files the installer actually copied (files_installed) vs files that were
@@ -48,8 +51,8 @@ function installWorkerBundle(io, { workerDir, manifest, repoRoot = null, bundleD
     const dirCreated = !io.fs.existsSync(workerDir);
     if (dirCreated) io.fs.mkdirSync(workerDir, { recursive: true });
 
-    const repoBundleDir = repoRoot ? path.join(repoRoot, 'worker', 'worker') : null;
-    const fromRepo = repoBundleDir && io.fs.isDirectory(repoBundleDir);
+    const repoBundleDir = resolveRepoBundleDir(io.fs, repoRoot);
+    const fromRepo = !!repoBundleDir;
     const installed = [];
     const kept = [];
     const failed = [];

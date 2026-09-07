@@ -140,15 +140,15 @@ describe('orchestration stabilization: protocol contract', () => {
             path.join(__dirname, '../../packages/animastor-gpu-hub/gpu-hub.js'), 'utf8'
         );
         // Phase 9D: the worker consumes the GENERATED canonical copy of the
-        // Job Protocol v2 (worker/worker/job-protocol-v2.cjs) — the frozen
+        // Job Protocol v2 (the GENERATED job-protocol-v2.cjs) — the frozen
         // literal lives there; worker.cjs itself carries no local literal.
         // Phase 10B: the hub also consumes the canonical package directly
         // (no local literal) — strict version 2 comes from @animastor/contracts.
         const workerProtocolSource = fs.readFileSync(
-            path.join(__dirname, '../../worker/worker/job-protocol-v2.cjs'), 'utf8'
+            path.join(require('./architecture/helpers').WORKER_BUNDLE_DIR, 'job-protocol-v2.cjs'), 'utf8'
         );
         const workerSource = fs.readFileSync(
-            path.join(__dirname, '../../worker/worker/worker.cjs'), 'utf8'
+            path.join(require('./architecture/helpers').WORKER_BUNDLE_DIR, 'worker.cjs'), 'utf8'
         );
 
         expect(jobSchema.PROTOCOL_VERSION).to.equal(2);
@@ -167,7 +167,7 @@ describe('orchestration stabilization: protocol contract', () => {
             path.join(__dirname, '../../packages/animastor-gpu-hub/gpu-hub.js'), 'utf8'
         );
         const workerSource = fs.readFileSync(
-            path.join(__dirname, '../../worker/worker/worker.cjs'), 'utf8'
+            path.join(require('./architecture/helpers').WORKER_BUNDLE_DIR, 'worker.cjs'), 'utf8'
         );
 
         // gpu-hub принимает timeout_ms из body и кладёт его в очередь (task).

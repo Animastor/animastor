@@ -1,12 +1,17 @@
 # ── Stage 1: stage monorepo artifacts ────────────────────────────────────────
 # Only the 4 required artifact groups are copied — no monorepo runtime code.
 # Build context is the repo root (docker-compose.yml context: .).
+# Worker bundle source: canonical packages/animastor-worker/worker/ (the
+# relocation target — see docs/architecture/WORKER_PACKAGE_RELOCATION_
+# CHECKLIST.md); the pre-relocation checkout layout worker/worker/ is
+# accepted until the physical move lands.
 FROM alpine:3.19 AS stager
+ARG WORKER_BUNDLE_SRC=worker/worker
 
 # Minimal directory tree so the build never silently produces an empty image.
 RUN mkdir -p /staging/artifacts/{worker-bundle,workflows,installer-src,install-manifests}
 
-COPY worker/worker/                /staging/artifacts/worker-bundle/
+COPY ${WORKER_BUNDLE_SRC}/         /staging/artifacts/worker-bundle/
 COPY backend/ai/workflows/         /staging/artifacts/workflows/
 COPY backend/src/installer/        /staging/artifacts/installer-src/
 COPY backend/ai/install-manifests/ /staging/artifacts/install-manifests/

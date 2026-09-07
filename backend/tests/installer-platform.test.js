@@ -424,7 +424,7 @@ describe('hub GET /installer platform selection', () => {
             redis: createMockRedis(),
             config: {
                 INSTALLER_SRC_DIR: stubSrc,
-                WORKER_BUNDLE_DIR: path.join(REPO_ROOT, 'worker', 'worker'),
+                WORKER_BUNDLE_DIR: require('./architecture/helpers').WORKER_BUNDLE_DIR,
                 WORKFLOW_DIR: path.join(REPO_ROOT, 'backend', 'ai', 'workflows'),
                 INSTALLER_MANIFESTS_DIR: path.join(REPO_ROOT, 'backend', 'ai', 'install-manifests'),
             },

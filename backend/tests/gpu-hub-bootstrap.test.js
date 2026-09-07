@@ -113,7 +113,7 @@ describe('Bootstrap installer (end-to-end)', function () {
     it('full happy path: download → verify → run installer with embedded profile/mode → temp dir wiped', async () => {
         hub = await startHub({
             INSTALLER_SRC_DIR: stubSrc,
-            WORKER_BUNDLE_DIR: path.join(REPO_ROOT, 'worker', 'worker'),
+            WORKER_BUNDLE_DIR: require('./architecture/helpers').WORKER_BUNDLE_DIR,
             WORKFLOW_DIR: path.join(REPO_ROOT, 'backend', 'ai', 'workflows'),
             INSTALLER_MANIFESTS_DIR: REAL_MANIFESTS,
         });
@@ -195,7 +195,7 @@ describe('Bootstrap installer (end-to-end)', function () {
     it('re-running the bootstrap is safe (fresh temp dir, installer invoked again)', async () => {
         hub = await startHub({
             INSTALLER_SRC_DIR: stubSrc,
-            WORKER_BUNDLE_DIR: path.join(REPO_ROOT, 'worker', 'worker'),
+            WORKER_BUNDLE_DIR: require('./architecture/helpers').WORKER_BUNDLE_DIR,
             WORKFLOW_DIR: path.join(REPO_ROOT, 'backend', 'ai', 'workflows'),
             INSTALLER_MANIFESTS_DIR: REAL_MANIFESTS,
         });
@@ -213,7 +213,7 @@ describe('Bootstrap installer (end-to-end)', function () {
     it('installer failures propagate (exit code + visible remediation pointer)', async () => {
         hub = await startHub({
             INSTALLER_SRC_DIR: stubSrc,
-            WORKER_BUNDLE_DIR: path.join(REPO_ROOT, 'worker', 'worker'),
+            WORKER_BUNDLE_DIR: require('./architecture/helpers').WORKER_BUNDLE_DIR,
             WORKFLOW_DIR: path.join(REPO_ROOT, 'backend', 'ai', 'workflows'),
             INSTALLER_MANIFESTS_DIR: REAL_MANIFESTS,
         });

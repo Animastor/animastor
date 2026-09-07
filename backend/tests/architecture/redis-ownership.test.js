@@ -181,7 +181,7 @@ describe('architecture: Redis ownership', () => {
     });
 
     it('worker bundle never touches Redis directly', () => {
-        const workerDir = path.join(REPO_ROOT, 'worker', 'worker');
+        const workerDir = require('./helpers').WORKER_BUNDLE_DIR;
         for (const file of listSourceFiles(workerDir)) {
             expect(readSource(file), `${rel(file)} must not talk to Redis — the worker talks HTTP to the hub only`).to.not.match(/ioredis|redis/i.test('') ? /$^/ : /ioredis|createClient|new\s+Redis/);
         }

@@ -131,10 +131,10 @@ function existingComfyIo(extraHttp = {}) {
     return createIo({
         files: {
             '/comfy/main.py': '',
-            '/repo/worker/worker/worker.cjs': '// stub',
-            '/repo/worker/worker/package.json': '{}',
+            '/repo/packages/animastor-worker/worker/worker.cjs': '// stub',
+            '/repo/packages/animastor-worker/worker/package.json': '{}',
         },
-        preDirs: ['/comfy/.git', '/repo/worker/worker'],
+        preDirs: ['/comfy/.git', '/repo/packages/animastor-worker/worker'],
         exec: baseExec(),
         http: {
             'http://127.0.0.1:8188/system_stats': { status: 200, json: () => ({ system: {} }) },

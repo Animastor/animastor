@@ -68,8 +68,15 @@ describe('worker bundle — Job Protocol v2 generated copy (frozen wire values)'
     });
 
     it('byte parity with the canonical contracts source (dev-time, monorepo present)', () => {
-        const canonicalPath = path.join(__dirname, '..', '..', 'contracts', 'src', 'job-protocol-v2.js');
-        if (!fs.existsSync(canonicalPath)) {
+        // Monorepo location of @animastor/contracts: repo root (today's
+        // boundary depth) or packages/ (post-relocation depth). Without the
+        // monorepo the parity check is skipped (repo-level guard D4 covers it).
+        const canonicalCandidates = [
+            path.join(__dirname, '..', '..', 'packages', 'animastor-contracts', 'src', 'job-protocol-v2.js'),
+            path.join(__dirname, '..', '..', '..', 'packages', 'animastor-contracts', 'src', 'job-protocol-v2.js'),
+        ];
+        const canonicalPath = canonicalCandidates.find((p) => fs.existsSync(p));
+        if (!canonicalPath) {
             console.log('  (parity vs canonical source skipped — standalone checkout without monorepo)');
             return;
         }

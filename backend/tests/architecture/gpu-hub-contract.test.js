@@ -20,10 +20,10 @@
 const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
-const { readSource, rel, REPO_ROOT } = require('./helpers');
+const { readSource, rel, REPO_ROOT, WORKER_BUNDLE_DIR } = require('./helpers');
 
 const gpuHubPath = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub', 'gpu-hub.js');
-const workerPath = path.join(REPO_ROOT, 'worker', 'worker', 'worker.cjs');
+const workerPath = path.join(WORKER_BUNDLE_DIR, 'worker.cjs');
 const dispatcherPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'gpu-dispatcher.js');
 const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-schema.js');
 // Phase 9C: the canonical Job Protocol v2 implementation moved to the
@@ -67,13 +67,13 @@ describe('architecture: GPU Hub contract', () => {
         const contractsImpl = read(contractsImplPath);
         const hub = read(gpuHubPath);
         const worker = read(workerPath);
-        const workerProtocol = read(path.join(REPO_ROOT, 'worker', 'worker', 'job-protocol-v2.cjs'));
+        const workerProtocol = read(path.join(WORKER_BUNDLE_DIR, 'job-protocol-v2.cjs'));
         const v = (src) => [...src.matchAll(/PROTOCOL_VERSION\s*=\s*(\d+)/g)].map((m) => Number(m[1]));
         expect(v(contractsImpl), 'contracts/src/job-protocol-v2.js (canonical)').to.deep.equal([2]);
         expect(v(hub), 'gpu-hub/gpu-hub.js (Phase 10B: no local literal)').to.deep.equal([]);
         expect(hub, 'gpu-hub must consume the canonical package').to.include("require('@animastor/contracts')");
-        expect(v(workerProtocol), 'worker/worker/job-protocol-v2.cjs (generated from contracts)').to.deep.equal([2]);
-        expect(v(worker), 'worker/worker/worker.cjs (no local literal)').to.deep.equal([]);
+        expect(v(workerProtocol), 'generated job-protocol-v2.cjs (generated from contracts)').to.deep.equal([2]);
+        expect(v(worker), 'worker.cjs (no local literal)').to.deep.equal([]);
         expect(worker, 'worker.cjs must consume the generated copy').to.include('require("./job-protocol-v2.cjs")');
         expect(read(jobSchemaPath), 'backend facade must not define its own literal').to.not.match(/PROTOCOL_VERSION\s*=\s*\d/);
     });
@@ -186,7 +186,7 @@ describe('architecture: Job protocol consistency (job-schema SYNC copies)', () =
         // worker.cjs consumes JOB_ID_SPLIT_RE from it (no inline literal).
         expect(worker).to.include('job_id.split(JOB_ID_SPLIT_RE)');
         expect(worker).to.not.include('/:(iu_image|image|audio|video)$/');
-        expect(read(path.join(REPO_ROOT, 'worker', 'worker', 'job-protocol-v2.cjs')))
+        expect(read(path.join(WORKER_BUNDLE_DIR, 'job-protocol-v2.cjs')))
             .to.include('JOB_ID_SPLIT_RE = /:(iu_image|image|audio|video)$/');
     });
 

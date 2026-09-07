@@ -21,10 +21,10 @@
 const { expect } = require('chai');
 const path = require('path');
 const fs = require('fs');
-const { readSource, rel, REPO_ROOT } = require('./helpers');
+const { readSource, rel, REPO_ROOT, WORKER_BUNDLE_DIR } = require('./helpers');
 
 const gpuHubPath = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub', 'gpu-hub.js');
-const workerPath = path.join(REPO_ROOT, 'worker', 'worker', 'worker.cjs');
+const workerPath = path.join(WORKER_BUNDLE_DIR, 'worker.cjs');
 const dispatcherPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'gpu-dispatcher.js');
 const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-schema.js');
 
@@ -76,17 +76,17 @@ describe('architecture: GPU Hub / Worker boundary — role separation', () => {
 
     it('worker is a self-contained execution bundle (no backend/hub/book/generation/PG deps)', () => {
         const banned = /postgres|storage\/postgres|book-repo|generation-routes|orchestrat|reconciliation|book\/index|ai-service/i;
-        for (const file of fs.readdirSync(path.join(REPO_ROOT, 'worker', 'worker'))) {
+        for (const file of fs.readdirSync(WORKER_BUNDLE_DIR)) {
             if (!/\.cjs$/.test(file) && !/\.js$/.test(file)) continue;
-            const src = readSource(path.join(REPO_ROOT, 'worker', 'worker', file));
+            const src = readSource(path.join(WORKER_BUNDLE_DIR, file));
             expect(src, file).to.not.match(banned);
         }
     });
 
     it('worker talks to the hub via HTTP only (no Redis, no direct backend calls)', () => {
-        for (const file of fs.readdirSync(path.join(REPO_ROOT, 'worker', 'worker'))) {
+        for (const file of fs.readdirSync(WORKER_BUNDLE_DIR)) {
             if (!/\.cjs$/.test(file) && !/\.js$/.test(file)) continue;
-            const src = readSource(path.join(REPO_ROOT, 'worker', 'worker', file));
+            const src = readSource(path.join(WORKER_BUNDLE_DIR, file));
             expect(src, file).to.not.match(/ioredis|new\s+Redis|createClient/);
         }
     });

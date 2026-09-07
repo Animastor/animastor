@@ -10,7 +10,17 @@
 // the bundle — NOT a second, hand-maintained implementation:
 //
 //   canonical source : packages/animastor-contracts/src/job-protocol-v2.js   (@animastor/contracts)
-//   generated output : worker/worker/job-protocol-v2.cjs  (header + verbatim body)
+//   generated output : worker/job-protocol-v2.cjs inside the package
+//                      boundary (worker/ until the relocation commit,
+//                      packages/animastor-worker/ after it)
+//
+// The tool is RELOCATION-INDEPENDENT: both the canonical source and the
+// bundle target are resolved from this file's own location (sibling
+// `worker/` dir for the target; the contracts package is found by trying
+// the repo-root depths that exist before and after the physical move), so
+// the physical `git mv worker/worker packages/animastor-worker` requires no
+// generator edits. There is exactly ONE canonical protocol source
+// (@animastor/contracts) and ONE generated copy — never duplicate either.
 //
 // The copy is guarded by:
 //   - parity:   the body after the GENERATED header must be byte-identical
@@ -22,8 +32,9 @@
 //               (repo-level guard, incl. negative control).
 //
 // Usage:
-//   node worker/tools/sync-protocol.cjs           # regenerate if out of sync
-//   node worker/tools/sync-protocol.cjs --check   # verify only; exit 1 on drift
+//   node <boundary>/tools/sync-protocol.cjs           # regenerate if out of sync
+//   node <boundary>/tools/sync-protocol.cjs --check   # verify only; exit 1 on drift
+// (boundary = worker/ until the relocation commit, packages/animastor-worker/ after)
 //
 // If packages/animastor-contracts/src/job-protocol-v2.js changes, regenerate and commit both
 // files together (worker.cjs consumes the copy; hub/backend keep their own
@@ -35,10 +46,28 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
-const REPO_ROOT = path.resolve(__dirname, "..", "..");
-const CANONICAL_PATH = path.join(REPO_ROOT, "packages", "animastor-contracts", "src", "job-protocol-v2.js");
-const CANONICAL_PKG_PATH = path.join(REPO_ROOT, "packages", "animastor-contracts", "package.json");
-const BUNDLE_TARGET = path.join(REPO_ROOT, "worker", "worker", "job-protocol-v2.cjs");
+// Bundle target is boundary-relative (sibling `worker/` dir of this tools/):
+// identical before and after the physical relocation of the package.
+const BUNDLE_TARGET = path.resolve(__dirname, "..", "worker", "job-protocol-v2.cjs");
+
+// Canonical source: try the repo-root depths that exist before (worker/tools
+// → 2 levels up) and after (packages/animastor-worker/tools → 3 levels up)
+// the relocation; first hit wins. Standalone checkouts keep the current
+// 2-level fallback (canonical simply stays missing there).
+const CANONICAL_CANDIDATES = [
+    path.resolve(__dirname, "..", "..", "..", "packages", "animastor-contracts", "src", "job-protocol-v2.js"),
+    path.resolve(__dirname, "..", "..", "packages", "animastor-contracts", "src", "job-protocol-v2.js"),
+];
+const CANONICAL_DEPTH = CANONICAL_CANDIDATES.findIndex((p) => fs.existsSync(p));
+const CANONICAL_PATH = CANONICAL_DEPTH >= 0
+    ? CANONICAL_CANDIDATES[CANONICAL_DEPTH]
+    : CANONICAL_CANDIDATES[CANONICAL_CANDIDATES.length - 1];
+const CANONICAL_PKG_PATH = path.join(path.dirname(path.dirname(CANONICAL_PATH)), "package.json");
+
+const REPO_ROOT = path.resolve(
+    __dirname,
+    ...(CANONICAL_DEPTH === 0 ? ["..", "..", ".."] : ["..", ".."])
+);
 
 // The generated file is exactly: HEADER + canonical bytes. Everything after
 // the marker line is canonical, byte for byte — the parity contract.
@@ -143,8 +172,8 @@ function main() {
             console.log("sync-protocol: worker bundle copy is in sync with @animastor/contracts");
             return 0;
         }
-        for (const e of res.errors) console.error(`sync-protocol: DRIFT — ${e}`);
-        console.error(`sync-protocol: regenerate with \`node worker/tools/sync-protocol.cjs\` and commit the result`);
+    for (const e of res.errors) console.error(`sync-protocol: DRIFT — ${e}`);
+    console.error(`sync-protocol: regenerate with \`node ${path.relative(process.cwd(), __filename)}\` and commit the result`);
         return 1;
     }
     const canonical = readCanonical();

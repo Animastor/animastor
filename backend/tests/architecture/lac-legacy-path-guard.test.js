@@ -22,10 +22,14 @@ const path = require('path');
 const { REPO_ROOT } = require('./helpers');
 
 // Structural roots only (no file lists) — resilient to repo evolution.
+// The worker package relocates to packages/animastor-worker/ (canonical);
+// the legacy worker/worker entry existsSync-filters out once the physical
+// move commit lands.
 const PRODUCTION_ROOTS = [
     'backend/src',
     'gpu-hub',
-    'worker/worker',
+    'packages/animastor-worker',
+    'worker',
     'packages/animastor-ai-connector',
     'frontends/app/src',
     'frontends/android/app/src',
@@ -64,7 +68,7 @@ const NEGATIVE_CONTROL_FILE = path.join(REPO_ROOT, 'backend', 'src', '__guard_ne
 
 describe('architecture: LAC legacy path guard (Phase 8D)', () => {
     it('production/runtime code contains no reference to the legacy local-ai-connector path', () => {
-        expect(PRODUCTION_ROOTS, 'expected production roots to exist (backend/src, gpu-hub, worker/worker, ai-connector, frontends)').to.have.lengthOf.at.least(4);
+        expect(PRODUCTION_ROOTS, 'expected production roots to exist (backend/src, gpu-hub, the worker package, ai-connector, frontends)').to.have.lengthOf.at.least(4);
         const offenders = PRODUCTION_ROOTS.flatMap(scanForLegacyPath);
         expect(offenders, 'legacy "local-ai-connector" path reference found in production code. The connector lives at ai-connector/ since Phase 8C — update the reference (compat markers like local-ai-connector-binding / doc names stay allowed).').to.deep.equal([]);
     });

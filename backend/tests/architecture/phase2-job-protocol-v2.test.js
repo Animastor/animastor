@@ -26,11 +26,14 @@ const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-sch
 // backend/src/runtime/job-schema.js is a compatibility facade re-export.
 const contractsImplPath = path.join(REPO_ROOT, 'packages', 'animastor-contracts', 'src', 'job-protocol-v2.js');
 const gpuHubPath = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub', 'gpu-hub.js');
-const workerPath = path.join(REPO_ROOT, 'worker', 'worker', 'worker.cjs');
+// Worker bundle path follows the package relocation (worker/worker today,
+// packages/animastor-worker/worker after the move) — resolved via helpers.
+const WORKER_DIR = require('./helpers').WORKER_BUNDLE_DIR;
+const workerPath = path.join(WORKER_DIR, 'worker.cjs');
 // Phase 9D: the worker consumes the GENERATED copy of the canonical
-// contracts implementation (worker/worker/job-protocol-v2.cjs) instead of
+// contracts implementation (job-protocol-v2.cjs) instead of
 // inline literals — parity-guarded by phase9d-worker-package.test.js.
-const workerProtocolPath = path.join(REPO_ROOT, 'worker', 'worker', 'job-protocol-v2.cjs');
+const workerProtocolPath = path.join(WORKER_DIR, 'job-protocol-v2.cjs');
 const dispatcherPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'gpu-dispatcher.js');
 
 function read(file) {
@@ -51,8 +54,8 @@ describe('architecture: Job Protocol v2 contract (backend → hub → worker bou
         expect(hub, 'gpu-hub must consume the canonical package').to.include("require('@animastor/contracts')");
         // Phase 9D: the worker has NO local literal — it consumes the
         // generated copy, which carries the frozen literal.
-        expect(v(workerProtocol), 'worker/worker/job-protocol-v2.cjs (generated from contracts)').to.deep.equal([2]);
-        expect(v(worker), 'worker/worker/worker.cjs (no local literal)').to.deep.equal([]);
+        expect(v(workerProtocol), 'generated job-protocol-v2.cjs (generated from contracts)').to.deep.equal([2]);
+        expect(v(worker), 'worker.cjs (no local literal)').to.deep.equal([]);
         expect(worker, 'worker.cjs must consume the generated copy').to.include('require("./job-protocol-v2.cjs")');
         // the backend facade re-exports and must not define its own literal
         expect(read(jobSchemaPath), 'backend facade must not define its own literal').to.not.match(/PROTOCOL_VERSION\s*=\s*\d/);

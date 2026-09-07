@@ -87,7 +87,7 @@ export function formatLastSeen(ts: number | null, now: number = Date.now()): str
 }
 
 /** Worker setup contract — the EXACT env var names worker.cjs reads.
- *  Kept in sync with worker/worker/worker.cjs (HUB_URL, ANIMASTOR_WORKER_TOKEN,
+ *  Kept in sync with the animastor-worker bundle worker.cjs (HUB_URL, ANIMASTOR_WORKER_TOKEN,
  *  WORKER_TYPE, WORKER_ID). Changing these here without the worker breaks Beta. */
 export interface WorkerSetupContract {
   env: { HUB_URL: string; ANIMASTOR_WORKER_TOKEN: string; WORKER_TYPE: WorkerType; WORKER_ID: string };

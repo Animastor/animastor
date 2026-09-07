@@ -36,8 +36,8 @@ const { planModelDownload } = require('./download-planner');
 // ---------------------------------------------------------------------------
 // Versions are READ from canonical sources — never duplicated here:
 //   installer     → backend/src/installer/package.json   (getInstallerVersion)
-//   worker bundle → worker/worker/package.json           (hub probe first,
-//                   repo fallback via getWorkerBundleVersion)
+//   worker bundle → packages/animastor-worker/worker/package.json (hub probe
+//                   first, repo fallback via getWorkerBundleVersion)
 //   workflows     → manifest revision + baseline_sha256  (content-addressed)
 //   uninstaller   → does not exist yet → version stays null, status 'planned'
 
@@ -64,9 +64,23 @@ function getWorkerBundleVersion() {
         if (typeof pkg.version === 'string' && pkg.version) return pkg.version;
     } catch (_) { /* not in container */ }
     try {
-        const file = path.join(__dirname, '..', '..', '..', 'worker', 'worker', 'package.json');
-        const pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
-        return typeof pkg.version === 'string' && pkg.version ? pkg.version : null;
+        // Canonical repo location (packages/animastor-worker/worker) with the
+        // legacy worker/worker fallback for pre-relocation checkouts — see
+        // installer/worker-bundle-source.js. Resolved against THIS module dir
+        // (backend/src/installer → repo root): inside the monorepo that is the
+        // repo root; inside a distributed installer package it is the package
+        // root, mirroring the repo layout.
+        const candidates = [
+            path.join(__dirname, '..', '..', '..', 'packages', 'animastor-worker', 'worker', 'package.json'),
+            path.join(__dirname, '..', '..', '..', 'worker', 'worker', 'package.json'),
+        ];
+        for (const file of candidates) {
+            try {
+                const pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
+                if (typeof pkg.version === 'string' && pkg.version) return pkg.version;
+            } catch (_) { /* try the next candidate */ }
+        }
+        return null;
     } catch (_) {
         return null;
     }

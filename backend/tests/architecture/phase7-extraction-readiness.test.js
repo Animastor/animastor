@@ -20,10 +20,10 @@
 const { expect } = require('chai');
 const path = require('path');
 const fs = require('fs');
-const { REPO_ROOT, BACKEND_SRC, listSourceFiles, readSource, rel } = require('./helpers');
+const { REPO_ROOT, BACKEND_SRC, listSourceFiles, readSource, rel, WORKER_BUNDLE_DIR } = require('./helpers');
 
 const LAC_DIR = path.join(REPO_ROOT, 'packages', 'animastor-ai-connector');
-const WORKER_DIR = path.join(REPO_ROOT, 'worker', 'worker');
+const WORKER_DIR = WORKER_BUNDLE_DIR;
 const HUB_DIR = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub');
 
 function walkSource(dir, extensions = ['.js', '.cjs']) {
@@ -79,12 +79,14 @@ describe('P7-T1: LAC stays an isolated package (extraction candidate)', () => {
 
 // ── P7-T2 — Worker inbound isolation ─────────────────────────────────────
 describe('P7-T2: worker bundle gains no inbound code dependencies', () => {
-    it('no repo file requires into worker/worker/', () => {
+    it('no repo file requires into the worker package boundary', () => {
         const offenders = [];
         for (const dir of [BACKEND_SRC, HUB_DIR, LAC_DIR]) {
             for (const file of walkSource(dir)) {
                 for (const { spec, target } of relativeTargets(file)) {
-                    if (target.startsWith('worker/')) offenders.push(`${rel(file)}: ${spec}`);
+                    // covers the legacy worker/ boundary and the canonical
+                    // packages/animastor-worker/ one (relocation-proof)
+                    if (target.startsWith('worker/') || target.startsWith('packages/animastor-worker/')) offenders.push(`${rel(file)}: ${spec}`);
                 }
             }
         }

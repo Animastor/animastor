@@ -415,7 +415,7 @@ WF_DIRS=()
 [ -d "/home/animastor/animastor/backend/ai/workflows" ] && WF_DIRS+=("/home/animastor/animastor/backend/ai/workflows")
 
 # Remote workflow delivery is the supported architecture: the worker
-# (worker/worker/worker.cjs runWorkflow) receives the workflow as
+# (worker.cjs runWorkflow — package animastor-worker) receives the workflow as
 # task.params and POSTs it to ComfyUI's /prompt endpoint. The JSON
 # templates live on the Animastor VPS (backend/ai/workflows), not on
 # the GPU instance. An empty ComfyUI/user/default/workflows/ is
@@ -531,9 +531,13 @@ hr2
 say "[8] WORKER"
 hr2
 
-# Search common locations for worker files.
+# Search common locations for worker files. Canonical repo location first
+# (packages/animastor-worker/worker), then the legacy repo layout, then the
+# installed/deployed layout (~/animastor/worker).
 WORKER_CANDIDATES=(
   "$HOME/animastor/worker"
+  "./packages/animastor-worker/worker"
+  "/home/animastor/animastor/packages/animastor-worker/worker"
   "./worker/worker"
   "./worker"
   "/home/animastor/animastor/worker/worker"

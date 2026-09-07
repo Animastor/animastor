@@ -34,6 +34,7 @@ const nodes = require('./nodes');
 const workflowsInstall = require('./workflows');
 const downloader = require('./downloader');
 const worker = require('./worker');
+const repoBundleSource = require('../worker-bundle-source');
 const prereq = require('./prereq');
 const management = require('../management');
 const { createProgressReporter } = require('./progress');
@@ -783,7 +784,7 @@ async function runInstallation(args) {
                     // any of them, fetch the hub's sha256-verified worker
                     // bundle (GET /worker-bundle) and use it as copy source.
                     const wbFiles = ((manifest.worker_bundle || {}).files) || [];
-                    const repoBundleDir = repoRoot ? path.join(repoRoot, 'worker', 'worker') : null;
+                    const repoBundleDir = repoBundleSource.resolveRepoBundleDir(io.fs, repoRoot);
                     const missingFromRepo = wbFiles.filter((f) => !(repoBundleDir && io.fs.existsSync(path.join(repoBundleDir, f))));
                     let bundleDir = null;
                     let bundleTmp = null;

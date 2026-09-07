@@ -580,7 +580,7 @@
     <string name="worker_setup_step_4">Start the worker with: node worker.cjs</string>
     <string name="worker_setup_step_5">Return here: the status flips to Online after the first heartbeat (within ~30 seconds).</string>
     <string name="worker_setup_hint">Use the same env var names worker.cjs expects. Never put the credential in a URL — pass it only as ANIMASTOR_WORKER_TOKEN.</string>
-    <string name="worker_source_label">The worker file is served by the GPU Hub: GET %1$s (worker.cjs from the project repository, worker/worker/worker.cjs).</string>
+    <string name="worker_source_label">The worker file is served by the GPU Hub: GET %1$s (worker.cjs from the project repository, animastor-worker package).</string>
     <string name="worker_run_label">Start command</string>
     <string name="worker_copy_env">Copy configuration</string>
     <string name="worker_env_copied">Configuration copied</string>

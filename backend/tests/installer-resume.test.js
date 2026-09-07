@@ -169,7 +169,7 @@ function createIo({ files = {}, preDirs = [], exec = {}, execHandlers = {}, http
 function existingComfy(extra = {}) {
     const base = {
         files: { '/comfy/main.py': '' },
-        preDirs: ['/comfy/.git', '/repo/worker/worker'],
+        preDirs: ['/comfy/.git', '/repo/packages/animastor-worker/worker'],
         exec: EXEC_BASE(),
         http: {},
     };
@@ -186,8 +186,8 @@ function existingComfy(extra = {}) {
 
 function workerRepoFiles() {
     return {
-        '/repo/worker/worker/worker.cjs': '// worker stub',
-        '/repo/worker/worker/package.json': '{"name":"x","dependencies":{}}',
+        '/repo/packages/animastor-worker/worker/worker.cjs': '// worker stub',
+        '/repo/packages/animastor-worker/worker/package.json': '{"name":"x","dependencies":{}}',
     };
 }
 

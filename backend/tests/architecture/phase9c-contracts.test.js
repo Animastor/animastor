@@ -32,6 +32,7 @@ const path = require('path');
 const {
     REPO_ROOT, BACKEND_SRC, listSourceFiles, readSource, rel,
     requireSpecifiers, resolveSpecifier,
+    WORKER_BUNDLE_DIR,
 } = require('./helpers');
 
 const CONTRACTS_DIR = path.join(REPO_ROOT, 'packages', 'animastor-contracts');
@@ -39,10 +40,10 @@ const CONTRACTS_IMPL_PATH = path.join(CONTRACTS_DIR, 'src', 'job-protocol-v2.js'
 const CONTRACTS_INDEX_PATH = path.join(CONTRACTS_DIR, 'src', 'index.js');
 const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-schema.js');
 const gpuHubPath = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub', 'gpu-hub.js');
-const workerPath = path.join(REPO_ROOT, 'worker', 'worker', 'worker.cjs');
+const WORKER_DIR = WORKER_BUNDLE_DIR;
+const workerPath = path.join(WORKER_DIR, 'worker.cjs');
 const LAC_DIR = path.join(REPO_ROOT, 'packages', 'animastor-ai-connector');
 const HUB_DIR = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub');
-const WORKER_DIR = path.join(REPO_ROOT, 'worker', 'worker');
 
 function read(file) {
     return readSource(file);
@@ -122,10 +123,11 @@ describe('Phase 9C: backend job-schema stays a pure facade', () => {
         // scan all production trees for grammar-function definitions
         const grammarDefRe = /function\s+(parseJobId|buildJobId|splitJobId|getStageForJobId)\b/;
         // Phase 9D: the worker bundle carries a GENERATED verbatim copy of
-        // the canonical implementation (worker/worker/job-protocol-v2.cjs).
-        // It is not a divergent schema — byte parity is guarded by
+        // the canonical implementation (packages/animastor-worker/worker/
+        // job-protocol-v2.cjs after the relocation; worker/worker/... until
+        // then). It is not a divergent schema — byte parity is guarded by
         // phase9d-worker-package.test.js — so it is excluded here.
-        const GENERATED_WORKER_COPY = 'worker/worker/job-protocol-v2.cjs';
+        const GENERATED_WORKER_COPY = `${rel(WORKER_DIR)}/job-protocol-v2.cjs`;
         const offenders = [];
         for (const dir of [BACKEND_SRC, HUB_DIR, WORKER_DIR, LAC_DIR]) {
             for (const file of listSourceFiles(dir)) {
@@ -150,7 +152,7 @@ describe('Phase 9C: backend job-schema stays a pure facade', () => {
         // the compose mount seam and carries no local literal.
         const allowed = new Set([
             'packages/animastor-contracts/src/job-protocol-v2.js', // canonical
-            'worker/worker/job-protocol-v2.cjs',       // GENERATED from canonical (Phase 9D, B2)
+            `${rel(WORKER_DIR)}/job-protocol-v2.cjs`,  // GENERATED from canonical (Phase 9D, B2; path follows the package relocation)
             'backend/src/routes/ai-connector-routes.cjs', // LAC protocol v1 (separate contract)
         ]);
         const offenders = [];
@@ -245,7 +247,7 @@ describe('Phase 9C: cross-side Job Protocol v2 parity', () => {
         const worker = read(workerPath);
         // Phase 9D: the worker no longer carries inline split literals —
         // both input-file naming splits consume JOB_ID_SPLIT_RE from the
-        // generated canonical copy (worker/worker/job-protocol-v2.cjs),
+        // generated canonical copy (the GENERATED job-protocol-v2.cjs),
         // whose family is pinned separately below.
         const usages = [...worker.matchAll(/job_id\.split\(JOB_ID_SPLIT_RE\)/g)].map((m) => m[0]);
         expect(usages, 'worker job_id split usages of the generated copy').to.deep.equal([
@@ -276,9 +278,9 @@ describe('Phase 9C: cross-side Job Protocol v2 parity', () => {
         const v = (src) => [...src.matchAll(/PROTOCOL_VERSION\s*=\s*(\d+)/g)].map((m) => Number(m[1]));
         expect(v(read(CONTRACTS_IMPL_PATH)), 'contracts/src/job-protocol-v2.js').to.deep.equal([2]);
         expect(v(read(gpuHubPath)), 'gpu-hub/gpu-hub.js (Phase 10B: no local literal)').to.deep.equal([]);
-        expect(v(read(path.join(WORKER_DIR, 'job-protocol-v2.cjs'))), 'worker/worker/job-protocol-v2.cjs (generated)').to.deep.equal([2]);
+        expect(v(read(path.join(WORKER_DIR, 'job-protocol-v2.cjs'))), 'generated job-protocol-v2.cjs (generated)').to.deep.equal([2]);
         // worker.cjs itself must have NO local literal (it consumes the copy)
-        expect(v(read(workerPath)), 'worker/worker/worker.cjs (no local literal)').to.deep.equal([]);
+        expect(v(read(workerPath)), 'worker.cjs (no local literal)').to.deep.equal([]);
     });
 
     it('frozen parse vectors behave identically in contracts and via the backend facade', () => {

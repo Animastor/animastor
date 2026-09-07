@@ -1317,7 +1317,7 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   const INSTALLER_WORKFLOWS_DIR = resolveArtifactDir('workflows', '/app/workflows', 'INSTALLER_WORKFLOWS_DIR');
 
   // Versions have ONE canonical source each (no manual duplication):
-  //   worker bundle → worker/worker/package.json (mounted as WORKER_BUNDLE_DIR)
+  //   worker bundle → packages/animastor-worker/worker/package.json (WORKER_BUNDLE_DIR)
   //   installer     → backend/src/installer/package.json (INSTALLER_SRC_DIR)
   // The hub reads them at request time; config overrides exist for tests.
   function readCanonicalVersion(dir, fallbackName) {
@@ -1634,9 +1634,10 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
 
   // Installer package — self-contained: installer sources + canonical
   // install manifests + the full worker bundle + generated root
-  // package.json/README. Layout mirrors the repo (src/installer/*,
-  // ai/install-manifests/*, worker/worker/*) so install-manifest.js and the
-  // engine resolve their inputs without modification. The version comes
+  // package.json/README. Layout mirrors the canonical repo layout
+  // (src/installer/*, ai/install-manifests/*, packages/animastor-worker/
+  // worker/*) so install-manifest.js and the engine resolve their inputs
+  // without modification. The version comes
   // from the canonical backend/src/installer/package.json — never hardcoded
   // here. No Worker Key, no .env, no credentials.
   function buildInstallerArtifact() {
@@ -1668,16 +1669,20 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
         data: fs.readFileSync(path.join(INSTALLER_WORKFLOWS_DIR, f)),
       });
     }
-    // The engine deploys the worker bundle from <installer>/worker/worker/
-    // (manifest worker_bundle.files). Without these files a distributed
+    // The engine deploys the worker bundle from
+    // <installer>/packages/animastor-worker/worker/ — the canonical repo
+    // layout, resolved by the engine through
+    // backend/src/installer/worker-bundle-source.js (canonical first, legacy
+    // `worker/worker` fallback). Without these files a distributed
     // installer could never install the worker offline — the install on the
     // GPU machine would always fail with "could not obtain bundle files".
+    // TWO-SIDED: never change this prefix without the engine resolver.
     const workerFiles = walkDir(fs, WORKER_BUNDLE_DIR)
       .filter(isServableBundleFile)
       .sort();
     for (const f of workerFiles) {
       entries.push({
-        name: `animastor-installer/worker/worker/${f}`,
+        name: `animastor-installer/packages/animastor-worker/worker/${f}`,
         data: fs.readFileSync(path.join(WORKER_BUNDLE_DIR, f)),
       });
     }

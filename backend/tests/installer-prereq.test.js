@@ -201,9 +201,9 @@ function baseMockOpts(overrides = {}) {
     return {
         execResults: { ...base, ...(execResults || {}) },
         files: {
-            '/tmp/repo/worker/worker/worker.cjs': '// worker',
-            '/tmp/repo/worker/worker/package.json': '{"name":"animastor-worker"}',
-            '/tmp/repo/worker/worker/.env.example': 'HUB_URL=\nANIMASTOR_WORKER_TOKEN=\nWORKER_TYPE=\nWORKER_ID=\n',
+            '/tmp/repo/packages/animastor-worker/worker/worker.cjs': '// worker',
+            '/tmp/repo/packages/animastor-worker/worker/package.json': '{"name":"animastor-worker"}',
+            '/tmp/repo/packages/animastor-worker/worker/.env.example': 'HUB_URL=\nANIMASTOR_WORKER_TOKEN=\nWORKER_TYPE=\nWORKER_ID=\n',
             ...(files || {}),
         },
         ...rest,

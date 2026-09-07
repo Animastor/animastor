@@ -24,7 +24,7 @@ const { createMockRedis } = require('./mocks/redis-mock');
 const { buildHubApp } = require('../../packages/animastor-gpu-hub/gpu-hub');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
-const REAL_WORKER_DIR = path.join(REPO_ROOT, 'worker', 'worker');
+const REAL_WORKER_DIR = require('./architecture/helpers').WORKER_BUNDLE_DIR;
 const REAL_WORKER_SOURCE = path.join(REAL_WORKER_DIR, 'worker.cjs');
 const REAL_WORKFLOW_DIR = path.join(REPO_ROOT, 'backend', 'ai', 'workflows');
 const REAL_INSTALLER_SRC = path.join(REPO_ROOT, 'backend', 'src', 'installer');
@@ -341,6 +341,10 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
             expect(names).to.include('animastor-installer/src/installer/install-manifest.js');
             expect(names).to.include('animastor-installer/ai/install-manifests/image/qwen-image.json');
             expect(names).to.include('animastor-installer/package.json');
+            // worker bundle ships under the canonical repo layout — the
+            // engine resolver (installer/worker-bundle-source.js) must find
+            // it there inside an extracted installer package (two-sided)
+            expect(names).to.include('animastor-installer/packages/animastor-worker/worker/worker.cjs');
             // no secrets of any kind
             for (const n of names) {
                 expect(n).to.not.match(/\.env$/);

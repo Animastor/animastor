@@ -557,7 +557,7 @@
     <string name="worker_setup_step_4">Запустите воркер командой: node worker.cjs</string>
     <string name="worker_setup_step_5">Вернитесь сюда: статус сменится на Online после первого heartbeat (до ~30 секунд).</string>
     <string name="worker_setup_hint">Используйте те же имена env-переменных, что ожидает worker.cjs. Не помещайте credential в URL — передавайте его только как ANIMASTOR_WORKER_TOKEN.</string>
-    <string name="worker_source_label">Файл воркера отдаёт GPU Hub: GET %1$s (worker.cjs из репозитория проекта, worker/worker/worker.cjs).</string>
+    <string name="worker_source_label">Файл воркера отдаёт GPU Hub: GET %1$s (worker.cjs из репозитория проекта, пакет animastor-worker).</string>
     <string name="worker_run_label">Команда запуска</string>
     <string name="worker_copy_env">Копировать конфигурацию</string>
     <string name="worker_env_copied">Конфигурация скопирована</string>

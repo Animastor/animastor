@@ -74,7 +74,14 @@ describe('worker package — manifest (standalone package)', () => {
 });
 
 describe('worker package — install manifests ship the runtime set (dev-time)', () => {
-    const MANIFEST_ROOT = path.join(__dirname, '..', '..', 'backend', 'ai', 'install-manifests');
+    // Monorepo manifests live at <repo>/backend/ai/install-manifests — try
+    // both repo-root depths so the check survives the package relocation
+    // (worker/ → packages/animastor-worker/) instead of silently skipping.
+    const manifestRootCandidates = [
+        path.join(__dirname, '..', '..', 'backend', 'ai', 'install-manifests'),
+        path.join(__dirname, '..', '..', '..', 'backend', 'ai', 'install-manifests'),
+    ];
+    const MANIFEST_ROOT = manifestRootCandidates.find((p) => fs.existsSync(p));
 
     it('every install manifest lists the exact runtime file set', () => {
         if (!fs.existsSync(MANIFEST_ROOT)) {

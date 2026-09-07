@@ -726,7 +726,7 @@ describe('Private worker Phase 2 — backend dispatch & callback hardening', () 
     describe('worker.cjs Bearer support (source contract)', () => {
         it('sends the credential on every hub call when ANIMASTOR_WORKER_TOKEN is set', () => {
             const workerSource = fs.readFileSync(
-                path.join(__dirname, '../../worker/worker/worker.cjs'), 'utf8'
+                path.join(require('./architecture/helpers').WORKER_BUNDLE_DIR, 'worker.cjs'), 'utf8'
             );
             expect(workerSource).to.match(/ANIMASTOR_WORKER_TOKEN/);
             expect(workerSource).to.match(/Bearer \$\{ANIMASTOR_WORKER_TOKEN\}/);

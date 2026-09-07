@@ -22,9 +22,9 @@
 const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
-const { listSourceFiles, readSource, rel, REPO_ROOT, requireSpecifiers } = require('./helpers');
+const { listSourceFiles, readSource, rel, REPO_ROOT, requireSpecifiers, WORKER_BUNDLE_DIR } = require('./helpers');
 
-const WORKER_DIR = path.join(REPO_ROOT, 'worker', 'worker');
+const WORKER_DIR = WORKER_BUNDLE_DIR;
 const HUB_DIR = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub');
 const LAC_DIR = path.join(REPO_ROOT, 'packages', 'animastor-ai-connector');
 const FRONTEND_APP_DIR = path.join(REPO_ROOT, 'frontends', 'app', 'src');

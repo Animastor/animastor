@@ -199,9 +199,12 @@ describe('phase10d: Docker deployment contract', () => {
         // Split at the runtime stage boundary — only check the production stage
         const runtimeIdx = src.indexOf('FROM node:');
         const runtimeStage = runtimeIdx >= 0 ? src.slice(runtimeIdx) : src;
-        // The runtime stage must never reference backend/, worker/worker/, or frontends/
+        // The runtime stage must never reference monorepo source paths
+        // (backend/, the worker package, frontends/) — baked-in artifact
+        // staging happens in the stager stage only.
         expect(runtimeStage).to.not.match(/\bbackend\b/);
-        expect(runtimeStage).to.not.match(/worker\/worker/);
+        expect(runtimeStage).to.not.match(/worker\/worker/); // also catches ...animastor-worker/worker
+        expect(runtimeStage).to.not.match(/packages\/animastor-worker/);
         expect(runtimeStage).to.not.match(/\bfrontends\b/);
     });
 

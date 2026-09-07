@@ -22,7 +22,10 @@ gpu-hub/tests/
 **/tests/
 
 # Config / env files that must never leak into image.
+# (.env.example is REQUIRED — the worker bundle ships it as the env template,
+# so it must not be excluded by an .env.* rule.)
 .env
 .env.*
+!.env.example
 *.pem
 *.key

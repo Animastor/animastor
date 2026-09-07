@@ -27,7 +27,7 @@
 
 const { expect } = require('chai');
 const path = require('path');
-const { listSourceFiles, readSource, rel, REPO_ROOT } = require('./helpers');
+const { listSourceFiles, readSource, rel, REPO_ROOT, WORKER_BUNDLE_DIR } = require('./helpers');
 
 const HUB_DIR = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub');
 const CONTRACTS_IMPL = path.join(REPO_ROOT, 'packages', 'animastor-contracts', 'src', 'job-protocol-v2.js');
@@ -102,7 +102,7 @@ describe('phase10a: Job Protocol version freeze', () => {
 
     it('worker generated copy and hub stay equal to the canonical value (no 3-way drift)', () => {
         const canonical = require(CONTRACTS_IMPL).PROTOCOL_VERSION;
-        const workerProto = require(path.join(REPO_ROOT, 'worker', 'worker', 'job-protocol-v2.cjs'));
+        const workerProto = require(path.join(WORKER_BUNDLE_DIR, 'job-protocol-v2.cjs'));
         const hub = require(hubPath);
         expect(workerProto.PROTOCOL_VERSION).to.equal(canonical);
         expect(hub.PROTOCOL_VERSION).to.equal(canonical);

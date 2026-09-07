@@ -296,7 +296,11 @@ describe('Setup contract — projections (unit)', () => {
         });
 
         it('worker bundle version is read from the canonical worker package.json', () => {
-            const canonical = require('../../worker/worker/package.json');
+            // resolved via helpers — canonical packages/animastor-worker/worker
+            // after the move commit, worker/worker until then
+            const canonical = require(path.join(
+                require('./architecture/helpers').WORKER_BUNDLE_DIR, 'package.json'
+            ));
             expect(sc.getWorkerBundleVersion()).to.equal(canonical.version);
         });
 

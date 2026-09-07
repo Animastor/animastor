@@ -55,7 +55,13 @@ check_dir() {
 if [ $# -eq 0 ]; then
     BACKEND_SRC="$ROOT_DIR/backend/src"
     GPU_HUB_SRC="$ROOT_DIR/packages/animastor-gpu-hub"
-    WORKER_SRC="$ROOT_DIR/worker"
+    # Worker package boundary relocates: worker/ → packages/animastor-worker/
+    # (see docs/architecture/WORKER_PACKAGE_RELOCATION_CHECKLIST.md).
+    if [ -d "$ROOT_DIR/packages/animastor-worker" ]; then
+        WORKER_SRC="$ROOT_DIR/packages/animastor-worker"
+    else
+        WORKER_SRC="$ROOT_DIR/worker"
+    fi
     LAC_SRC="$ROOT_DIR/packages/animastor-ai-connector"
     CONTRACTS_SRC="$ROOT_DIR/packages/animastor-contracts"
 
@@ -84,7 +90,11 @@ else
                 check_dir "gpu-hub" "$ROOT_DIR/packages/animastor-gpu-hub"
                 ;;
             worker)
-                check_dir "worker" "$ROOT_DIR/worker"
+                if [ -d "$ROOT_DIR/packages/animastor-worker" ]; then
+                    check_dir "animastor-worker" "$ROOT_DIR/packages/animastor-worker"
+                else
+                    check_dir "worker" "$ROOT_DIR/worker"
+                fi
                 ;;
             contracts)
                 check_dir "contracts" "$ROOT_DIR/packages/animastor-contracts"
