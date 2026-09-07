@@ -1,0 +1,5 @@
+{
+  "1": { "class_type": "TestInputNode", "inputs": { "text": "", "voice_instruction": "" } },
+  "2": { "class_type": "TestProcessNode", "inputs": { "frames": 0, "seed": 0 } },
+  "9": { "class_type": "TestSaveNode", "inputs": { "filename_prefix": "out", "images": [] } }
+}

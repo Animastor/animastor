@@ -12,18 +12,47 @@ const fs = require('fs');
 const path = require('path');
 const connectorLoader = require('./connector-loader');
 
-const WF_DIR = process.env.WF_DIR || path.join(__dirname, '../../ai/workflows');
+// Directory resolution order: explicit injection (configure) → env (WF_DIR)
+// → host default (backend/ai/workflows). The default is a HOST concern —
+// it moves out of the module when the connector core is extracted.
+const DEFAULT_WF_DIR = path.join(__dirname, '../../ai/workflows');
+let WF_DIR = process.env.WF_DIR || DEFAULT_WF_DIR;
+let loggerRef = console;
+
 const logPrefix = '[WORKFLOWS]';
+
+function log(msg) { loggerRef.log(`${logPrefix} ${msg}`); }
+function warn(msg) { loggerRef.warn(`${logPrefix} ${msg}`); }
+
+/**
+ * Dependency-injected configuration (extraction readiness): override the
+ * workflows directory and/or the logger before loadWorkflows(). Env vars
+ * and defaults still apply when nothing is injected.
+ *
+ * @param {{ workflowsDir?: string, logger?: object }} [options]
+ */
+function configure({ workflowsDir, logger } = {}) {
+    if (workflowsDir) WF_DIR = workflowsDir;
+    if (logger) loggerRef = logger;
+}
+
+/**
+ * Resolve the active workflows directory (for diagnostics/messages).
+ * @returns {string}
+ */
+function getWorkflowsDir() {
+    return WF_DIR;
+}
 
 const workflows = {};
 const workflowHashes = {}; // name → sha256
 
-function log(msg) {
-    console.log(`${logPrefix} ${msg}`);
-}
-
 function loadWorkflows() {
     let count = 0;
+    // Fresh-load semantics: clear previous entries so re-loading after a
+    // directory change (tests, hot reload) never leaves phantom workflows.
+    for (const key of Object.keys(workflows)) delete workflows[key];
+    for (const key of Object.keys(workflowHashes)) delete workflowHashes[key];
     if (fs.existsSync(WF_DIR)) {
         fs.readdirSync(WF_DIR).forEach(f => {
             if (f.endsWith('.json') && !f.startsWith('old_')) {
@@ -35,7 +64,7 @@ function loadWorkflows() {
                     workflowHashes[name] = connectorLoader.computeWorkflowHash(json);
                     count++;
                 } catch (err) {
-                    console.warn(`${logPrefix} Error loading workflow ${f}: ${err.message}`);
+                    warn(`Error loading workflow ${f}: ${err.message}`);
                 }
             }
         });
@@ -46,11 +75,11 @@ function loadWorkflows() {
         const connResult = connectorLoader.initialize(workflows);
         if (connResult.warnings.length > 0) {
             for (const w of connResult.warnings) {
-                console.warn(`${logPrefix} ⚠️ ${w}`);
+                warn(`⚠️ ${w}`);
             }
         }
         if (connResult.errors.length > 0) {
-            console.error(`${logPrefix} ❌ Connector errors: ${connResult.errors.length}`);
+            loggerRef.error(`${logPrefix} ❌ Connector errors: ${connResult.errors.length}`);
         }
 
         // Check that every workflow has a matching connector
@@ -63,14 +92,14 @@ function loadWorkflows() {
         if (missingConnectors.length > 0) {
             const msg = `Missing connectors for workflows: ${missingConnectors.join(', ')}. ` +
                 `Every workflow must have a matching connector file in the connectors dir (${connectorLoader.getConnectorsDir()}).`;
-            console.error(`${logPrefix} ❌ FATAL: ${msg}`);
+            loggerRef.error(`${logPrefix} ❌ FATAL: ${msg}`);
             throw new Error(msg);
         }
 
         log(`Connectors: ${Object.keys(connResult.connectors).length} loaded, ` +
             `${connResult.warnings.length} warnings, ${connResult.errors.length} errors`);
     } else {
-        console.warn(`${logPrefix} Workflow directory not found: ${WF_DIR}`);
+        warn(`Workflow directory not found: ${WF_DIR}`);
     }
     return workflows;
 }
@@ -97,4 +126,4 @@ function getWorkflowHash(name) {
     return workflowHashes[name] || null;
 }
 
-module.exports = { loadWorkflows, getWorkflow, getConnector, getWorkflowHash, workflows };
+module.exports = { loadWorkflows, getWorkflow, getConnector, getWorkflowHash, workflows, configure, getWorkflowsDir };

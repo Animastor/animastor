@@ -1,0 +1,50 @@
+{
+  "connectorVersion": "1.0.0",
+  "workflow": "minimal-wf",
+  "workflowHash": "",
+  "label": "Minimal Test Workflow",
+  "description": "Fixture workflow used by the connector core tests",
+  "type": "image",
+  "compatibility": {
+    "nodeClasses": {
+      "1": "TestInputNode",
+      "2": "TestProcessNode",
+      "9": "TestSaveNode"
+    }
+  },
+  "inputs": {
+    "positivePrompt": {
+      "nodeId": "1",
+      "field": "inputs.text",
+      "entityType": "positivePrompt",
+      "label": "Positive Prompt",
+      "required": true
+    }
+  },
+  "outputs": {
+    "generatedImage": {
+      "nodeId": "9",
+      "field": "inputs.images",
+      "entityType": "generatedImage",
+      "label": "Generated Image"
+    }
+  },
+  "parameters": {
+    "seed": {
+      "nodeId": "2",
+      "field": "inputs.seed",
+      "entityType": "seed",
+      "label": "Seed",
+      "default": 42
+    },
+    "steps": {
+      "nodeId": "2",
+      "field": "inputs.frames",
+      "entityType": "steps",
+      "label": "Steps",
+      "default": 8,
+      "min": 1,
+      "max": 100
+    }
+  }
+}

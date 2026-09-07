@@ -1,0 +1,18 @@
+{
+  "connectorVersion": "1.0.0",
+  "workflow": "malformed-wf",
+  "workflowHash": "",
+  "label": "Malformed Connector (test fixture)",
+  "type": "image",
+  "inputs": {
+    "positivePrompt": {
+      "field": "inputs.text",
+      "entityType": "positivePrompt"
+    },
+    "brokenEntity": {
+      "nodeId": "1",
+      "field": "inputs.text",
+      "entityType": "no-such-entity-type"
+    }
+  }
+}

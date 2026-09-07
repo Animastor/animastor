@@ -1,0 +1,5 @@
+{
+  "11": { "class_type": "TestImageInput", "inputs": { "image_1": "" } },
+  "12": { "class_type": "TestImageInput", "inputs": { "image_2": "" } },
+  "19": { "class_type": "TestSaveNode", "inputs": { "images": [] } }
+}

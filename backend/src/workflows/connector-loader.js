@@ -20,28 +20,65 @@ const path = require('path');
 const crypto = require('crypto');
 const entitySchema = require('./entity-schema');
 
-const CONNECTOR_DIR = process.env.CONNECTOR_DIR || path.join(__dirname, '../../ai/connectors');
-const logPrefix = '[CONNECTOR]';
-
 // In-memory registry
 const connectors = {};       // workflow_name → connector
 const connectorsByName = {}; // connector_name → connector
 const connectorEnabled = {}; // connector_name → boolean (default: true)
 
-function log(msg) { console.log(`${logPrefix} ${msg}`); }
-function warn(msg) { console.warn(`${logPrefix} ⚠️ ${msg}`); }
-function error(msg) { console.error(`${logPrefix} ❌ ${msg}`); }
+// Directory resolution order: explicit injection (configure) → env
+// (CONNECTOR_DIR) → host default (backend/ai/connectors). The default is a
+// HOST concern — it moves out of the module when the connector core is
+// extracted.
+const DEFAULT_CONNECTOR_DIR = path.join(__dirname, '../../ai/connectors');
+let CONNECTOR_DIR = process.env.CONNECTOR_DIR || DEFAULT_CONNECTOR_DIR;
+let loggerRef = console;
+
+const logPrefix = '[CONNECTOR]';
+
+function log(msg) { loggerRef.log(`${logPrefix} ${msg}`); }
+function warn(msg) { loggerRef.warn(`${logPrefix} ⚠️ ${msg}`); }
+function error(msg) { loggerRef.error(`${logPrefix} ❌ ${msg}`); }
+
+/**
+ * Dependency-injected configuration (extraction readiness): override the
+ * connectors directory and/or the logger. Env vars and defaults still apply
+ * when nothing is injected.
+ *
+ * @param {{ connectorsDir?: string, logger?: object }} [options]
+ */
+function configure({ connectorsDir, logger } = {}) {
+    if (connectorsDir) CONNECTOR_DIR = connectorsDir;
+    if (logger) loggerRef = logger;
+}
 
 // ─── Hashing ────────────────────────────────────────
 
 /**
- * Compute SHA-256 hash of a workflow JSON's normalized (sorted) string form.
+ * Deterministic JSON serialization: object keys are sorted at EVERY level
+ * (array order preserved). JSON.stringify's key-array replacer only sorts
+ * the top level, which would drop nested content from the hash.
+ * @param {*} value
+ * @returns {string}
+ */
+function stableStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    const keys = Object.keys(value).sort();
+    return `{${keys.map(k => `${JSON.stringify(k)}:${stableStringify(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * Compute SHA-256 hash of a workflow JSON's canonical (fully key-sorted)
+ * string form. Content-sensitive: any change inside any node changes the hash.
  * @param {object} workflowJson — loaded workflow JSON
  * @returns {string} hex digest
  */
 function computeWorkflowHash(workflowJson) {
-  const normalized = JSON.stringify(workflowJson, Object.keys(workflowJson).sort(), 0);
-  return crypto.createHash('sha256').update(normalized).digest('hex');
+  return crypto.createHash('sha256').update(stableStringify(workflowJson)).digest('hex');
 }
 
 // ─── Validation ─────────────────────────────────────
@@ -894,6 +931,10 @@ module.exports = {
   reload,
   registerConnector,
   unregisterConnector,
+  configure,
+
+  // Validation
+  validateConnector,
 
   // Compatibility
   checkCompatibility,

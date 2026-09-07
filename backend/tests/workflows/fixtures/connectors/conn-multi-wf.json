@@ -1,0 +1,33 @@
+{
+  "connectorVersion": "1.0.0",
+  "workflow": "multi-wf",
+  "workflowHash": "",
+  "label": "Multi Binding Test Workflow",
+  "type": "image",
+  "compatibility": {
+    "nodeClasses": {
+      "11": "TestImageInput",
+      "12": "TestImageInput",
+      "19": "TestSaveNode"
+    }
+  },
+  "inputs": {
+    "sourceImages": {
+      "type": "multi",
+      "entityType": "sourceImages",
+      "label": "Source Images",
+      "required": true,
+      "bindings": [
+        { "nodeId": "11", "field": "inputs.image_1" },
+        { "nodeId": "12", "field": "inputs.image_2" }
+      ]
+    }
+  },
+  "outputs": {
+    "generatedImage": {
+      "nodeId": "19",
+      "field": "inputs.images",
+      "entityType": "generatedImage"
+    }
+  }
+}
