@@ -34,7 +34,15 @@
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
-const { selectWorkflowGroups, toValidLTXFrames } = require('../workflows/video/video-workflows');
+const { toValidLTXFrames } = require('../workflows/video/video-workflows');
+// NOTE (Player route split): this module is a HOST-side port implementation
+// (computeVideoStartMs is injected into the player routes via
+// playerPorts — backend.cjs). It legitimately belongs to the generation
+// domain: probing served artifacts requires the LTX frame-alignment tax
+// knowledge from workflows/video. The player contour must NOT import this
+// module directly (guarded by tests/architecture/player-route-split.test.js).
+// `selectWorkflowGroups` was removed from this import — it was never used
+// here (a generation-domain leak in the serving path; audit R8 cleanup).
 const config = require('../config/runtime-config');
 
 const logPrefix = '[VIDEO-TIMELINE]';

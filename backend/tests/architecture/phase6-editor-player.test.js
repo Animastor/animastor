@@ -136,8 +136,8 @@ describe('T4: facades are wired at the composition root', () => {
     });
 
     it('contour routes destructure the facade deps', () => {
-        expect(readSource(path.join(BACKEND_SRC, 'routes', 'generation-routes.cjs'))).to.match(/playerModel/);
-        expect(readSource(path.join(BACKEND_SRC, 'routes', 'book', 'chunks-routes.cjs'))).to.match(/playerModel/);
+        expect(readSource(path.join(BACKEND_SRC, 'routes', 'player', 'player-routes.cjs'))).to.match(/playerModel/);
+        expect(readSource(path.join(BACKEND_SRC, 'routes', 'player', 'player-shared.cjs'))).to.match(/playerModel/);
         expect(readSource(path.join(BACKEND_SRC, 'routes', 'book', 'core-routes.cjs'))).to.match(/editorModel/);
         expect(readSource(path.join(BACKEND_SRC, 'routes', 'book', 'entity-crud-routes.cjs'))).to.match(/editorModel/);
     });
@@ -159,24 +159,36 @@ describe('T5: Editor/Player contours load through the facades', () => {
     });
 
     it('player media routes read books through playerModel only (import leg pinned)', () => {
-        // routes/generation-routes.cjs serves BOTH playback media (Player
-        // contour) and the legacy full-book import (POST /generate). The
-        // playback reads go through playerModel; the import/generation leg
-        // keeps its direct loader calls — pinned exactly here so it cannot
-        // grow silently (docs/architecture/PHASE_6_EDITOR_PLAYER.md §6).
+        // routes/generation-routes.cjs is now a generation/import-only contour
+        // after the Player route split: its book.loadBook calls are the pinned
+        // import leg (docs/architecture/PHASE_6_EDITOR_PLAYER.md §6). All
+        // playback reads live in routes/player/* and go through playerModel.
         const src = readSource(path.join(BACKEND_SRC, 'routes', 'generation-routes.cjs'));
         const direct = [...src.matchAll(/\bbook\.loadBook\s*\(/g)].length;
         expect(direct, 'routes/generation-routes.cjs direct book.loadBook count grew').to.equal(3);
         expect(src).to.match(/diskCopyExists: !!book\.loadBook\(bookId\)/);
         expect(src).to.match(/const existingBook = book\.loadBook\(bookId\);/);
         expect(src).to.match(/const loadedBook = book\.loadBook\(bookId\);/);
+        expect(src).to.not.match(/playerModel\.loadBook/);
+
         // The playback read sites must go through the Player boundary.
-        expect(src).to.match(/playerModel\.loadBook\(bookId\)/);
-        expect(src).to.match(/playerModel\.loadBook\(book_id\)/);
+        const playerFiles = ['player-routes.cjs', 'player-shared.cjs', 'scene-data.cjs', 'scene-media.cjs', 'playback-queue.cjs', 'iu-media.cjs'];
+        for (const f of playerFiles) {
+            const psrc = readSource(path.join(BACKEND_SRC, 'routes', 'player', f));
+            expect(psrc, `${f} must not call book.loadBook directly`).to.not.match(/\bbook\.loadBook\s*\(/);
+        }
+        expect(readSource(path.join(BACKEND_SRC, 'routes', 'player', 'iu-media.cjs'))).to.match(/playerModel\.loadBook\(book_id\)/);
+        expect(readSource(path.join(BACKEND_SRC, 'routes', 'player', 'scene-data.cjs'))).to.match(/playerModel\.loadBook\(bookId\)/);
     });
 
     it('chunks (playback queue) route reads through playerModel', () => {
-        const src = readSource(path.join(BACKEND_SRC, 'routes', 'book', 'chunks-routes.cjs'));
+        // After the Player route split, the playback-queue endpoints moved from
+        // routes/book/chunks-routes.cjs (now an empty registrar stub) to
+        // routes/player/playback-queue.cjs (Player contour).
+        const stub = readSource(path.join(BACKEND_SRC, 'routes', 'book', 'chunks-routes.cjs'));
+        expect(stub).to.not.match(/\bbook\.loadBook\s*\(/);
+        expect(stub).to.not.match(/playerModel\.loadBook/);
+        const src = readSource(path.join(BACKEND_SRC, 'routes', 'player', 'playback-queue.cjs'));
         expect(src).to.not.match(/\bbook\.loadBook\s*\(/);
         expect(src).to.match(/playerModel\.loadBook\(bookId\)/);
     });
@@ -229,9 +241,25 @@ describe('T6: contour routes do not gain new implementation-detail deps', () => 
             '../../services/agent-prompts',
         ],
         'routes/book/chunks-routes.cjs': [
-            '../../storage/postgres/repositories/scene-assets-repo',
-            './iu-progress-utils.cjs',
+            // Registrar stub after the Player route split — playback queue +
+            // assets-state moved to routes/player/playback-queue.cjs. No
+            // relative requires left (the IU-progress math lives in
+            // ./iu-progress-utils.cjs, injected into the player routes by the
+            // composition root).
         ],
+        'routes/player/player-routes.cjs': [
+            // Player contour registrar — only intra-player wiring is allowed.
+            './player-shared.cjs',
+            './scene-media.cjs',
+            './scene-data.cjs',
+            './iu-media.cjs',
+            './playback-queue.cjs',
+        ],
+        'routes/player/player-shared.cjs': ['./artifact-naming.cjs'],
+        'routes/player/scene-media.cjs': ['./artifact-naming.cjs'],
+        'routes/player/scene-data.cjs': ['./artifact-naming.cjs'],
+        'routes/player/iu-media.cjs': ['./artifact-naming.cjs'],
+        'routes/player/playback-queue.cjs': ['./artifact-naming.cjs'],
         'routes/book/entity-crud-routes.cjs': [
             '../../utils/entity-id',
             './scene-patch-utils.cjs',

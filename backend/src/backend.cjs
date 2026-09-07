@@ -47,6 +47,14 @@ const { createBookDeletion } = require('./services/book-deletion.cjs');
 // Phase 6: Editor/Player boundaries — facades over the Canonical Book Model.
 const { createPlayerModel } = require('./player/index.cjs');
 const { createEditorModel } = require('./editor/index.cjs');
+// Player route split: host port implementations injected into the playback
+// contour (the player routes must not import these directly — they carry
+// generation-domain knowledge: workflows/ alignment tax, ffmpeg/ffprobe,
+// auth middleware). Wired through routeDeps.playerPorts below.
+const videoTimeline = require('./video/video-timeline');
+const authContextMiddleware = require('./middleware/auth-context');
+const { computeWaveform } = require('./services/waveform-service');
+const { computeIuReady } = require('./routes/book/iu-progress-utils.cjs');
 const genSessionRepo = require('./storage/postgres/repositories/gen-session-repo');
 const bookSourceRepo = require('./storage/postgres/repositories/book-source-repo');
 const placeholderAudio = require('./services/placeholder-audio');
@@ -199,7 +207,6 @@ const windowGenerator = require('./services/window-generator.cjs')({
 
 const iuRepo = require('./storage/postgres/repositories/iu-repo');
 const sceneAssetsRepo = require('./storage/postgres/repositories/scene-assets-repo');
-const { computeWaveform } = require('./services/waveform-service');
 
 const taskHandlerDeps = {
     audio, image, video, state, book, orchestrator, activeScenes, placeholderAudio,
@@ -246,10 +253,35 @@ const routeDeps = {
     // Phase 6: Player/Editor boundaries — book access via the Canonical Book Model
     playerModel: createPlayerModel({ bookModel }),
     editorModel: createEditorModel({ bookModel, persistBook: book.saveBookBundle }),
+    // Player route split: the playback contour gets its dependencies ONLY
+    // through these seams (composition root — no hidden global requires in
+    // the player route files, guarded by player-route-split.test.js):
+    //   outputRoot     — the artifact root (config.OUTPUT_DIR injected; the
+    //                    player routes never read config directly; path
+    //                    semantics unchanged: path.join(outputRoot, buildId, …))
+    //   playerPorts    — host implementations that carry generation-domain or
+    //                    host-infra knowledge the player must not import:
+    //                    auth (checkBookAccess), video-timeline (ffprobe +
+    //                    workflows alignment tax), waveform (ffmpeg)
+    //   computeIuReady — pure IU progress math (routes/book/iu-progress-utils)
+    //   videoTimeline  — host module re-export (computeVideoStartMs port)
+    outputRoot: config.OUTPUT_DIR,
+    playerPorts: {
+        assertBookAccess: authContextMiddleware.checkBookAccess,
+        computeVideoStartMs: videoTimeline.computeVideoStartMs,
+        computeWaveform,
+    },
+    computeIuReady,
+    videoTimeline,
 };
 
 require('./routes/book-routes.cjs')(app, redis, { ...routeDeps, taskHandler, bookDiff, windowGenerator });
-require('./routes/generation-routes.cjs')(app, redis, { ...routeDeps, taskHandler, iuRepo, computeWaveform });
+// Player (playback) routes — the playback HTTP contour, split out of the
+// generation routes (docs/architecture/PLAYER_ROUTE_SPLIT_CHECKLIST.md).
+require('./routes/player/player-routes.cjs')(app, redis, routeDeps);
+// Generation routes — import/generation leg, worker status/counts, progress
+// SSE, GPU Hub callbacks. No playback handlers remain here.
+require('./routes/generation-routes.cjs')(app, redis, { ...routeDeps, taskHandler });
 require('./routes/ai-routes.cjs')(app, redis, {
     ...routeDeps, taskHandler, bookDiff, chatEngine,
     iuRepo, genSessionRepo, lazyBook, txtImporter, bookSourceRepo,

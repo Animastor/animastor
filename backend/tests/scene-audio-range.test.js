@@ -10,7 +10,9 @@ const path = require('path');
 const { EventEmitter } = require('events');
 
 const AUDIO_ROUTE = '/api/v1/scene/:bookId/:chapterId/:sceneId/audio';
-const MODULE = '../src/routes/generation-routes.cjs';
+// Player route split: the audio media route moved from generation-routes.cjs
+// to routes/player/scene-media.cjs (registered via routes/player/player-routes.cjs).
+const MODULE = '../src/routes/player/player-routes.cjs';
 
 function makeResponse() {
     const chunks = [];
@@ -34,9 +36,11 @@ function stubDeps(tmpDir) {
     const noop = () => {};
     return {
         config: { OUTPUT_DIR: tmpDir },
+        outputRoot: tmpDir, // player contour seam (injected artifact root)
         state: {}, audio: {}, image: {}, video: {},
         book: { loadBook: () => ({ manifest: { build_id: 'b1' } }) },
         playerModel: { loadBook: () => ({ manifest: { build_id: 'b1' } }) }, // Phase 6 Player boundary fake
+        playerPorts: { assertBookAccess: async () => ({}), computeVideoStartMs: async () => false, computeWaveform: async () => [] },
         orchestrator: {}, storage: {}, runtime: {}, activeScenes: {},
         layerConfig: {}, genScope: {}, placeholderAudio: {},
         utils: { log: noop },
@@ -44,6 +48,9 @@ function stubDeps(tmpDir) {
         getBookWindowStatus: noop, detectAvailableMode: noop,
         recoverChunksFromDisk: noop, recoverAllBooksFromDisk: noop,
         cleanupService: {}, iuRepo: {}, computeWaveform: noop,
+        computeIuReady: async () => 0,
+        videoTimeline: { computeVideoStartMs: async () => false },
+        sceneAssetsRepo: {},
     };
 }
 

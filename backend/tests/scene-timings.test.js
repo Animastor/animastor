@@ -15,7 +15,9 @@ const path = require('path');
 const { EventEmitter } = require('events');
 
 const GET_ROUTE = '/api/v1/scene/:bookId/:chapterId/:sceneId/timings';
-const MODULE = '../src/routes/generation-routes.cjs';
+// Player route split: the timings routes moved from generation-routes.cjs to
+// routes/player/scene-data.cjs (registered via routes/player/player-routes.cjs).
+const MODULE = '../src/routes/player/player-routes.cjs';
 
 // In-memory image_units store: unit_id → row (mirrors the PG table columns the
 // timings routes read/write).
@@ -41,10 +43,12 @@ function stubDeps(tmpDir, iuRepo) {
     const noop = () => {};
     return {
         config: { OUTPUT_DIR: tmpDir },
+        outputRoot: tmpDir, // player contour seam (injected artifact root)
         state: {}, audio: {}, video: {},
         image: { getSceneDuration: async () => 30 }, // 30s scene audio
         book: { loadBook: () => null },              // no book JSON → getEffectiveBuildId falls back to requested
         playerModel: { loadBook: () => null },       // Phase 6: Player boundary fake (same source as book)
+        playerPorts: { assertBookAccess: async () => ({}), computeVideoStartMs: async () => false, computeWaveform: async () => [] },
         orchestrator: {}, storage: {}, runtime: {}, activeScenes: {},
         layerConfig: {}, genScope: {}, placeholderAudio: {},
         utils: { log: noop },
@@ -52,6 +56,9 @@ function stubDeps(tmpDir, iuRepo) {
         getBookWindowStatus: noop, detectAvailableMode: noop,
         recoverChunksFromDisk: noop, recoverAllBooksFromDisk: noop,
         cleanupService: {}, iuRepo, computeWaveform: noop,
+        computeIuReady: async () => 0,
+        videoTimeline: { computeVideoStartMs: async () => false },
+        sceneAssetsRepo: {},
     };
 }
 
