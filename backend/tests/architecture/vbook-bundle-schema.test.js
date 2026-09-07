@@ -25,7 +25,7 @@ const { REPO_ROOT } = require('./helpers');
 const SCHEMA_PATH = path.join(REPO_ROOT, 'packages', 'animastor-vbook-runtime', 'schemas', 'vbook-bundle-3.1.schema.json');
 const schema = JSON.parse(fs.readFileSync(SCHEMA_PATH, 'utf8'));
 
-const validator = require('../../src/book/bundle-validator.cjs');
+const validator = require('@animastor/vbook-runtime/bundle-validator.cjs');
 
 // ── Minimal JSON Schema evaluator (draft 2020-12 subset used by the file) ─
 function resolveRef(ref) {
@@ -174,7 +174,7 @@ describe('vbook-bundle-3.1: schema exists and mirrors the validator (audit A1)',
         });
 
         it('producers emit vbook_version 3.1 with enum-conforming state/source', () => {
-            const draftSrc = fs.readFileSync(path.join(REPO_ROOT, 'backend', 'src', 'book', 'lazy-book', 'draft.js'), 'utf8');
+            const draftSrc = fs.readFileSync(path.join(REPO_ROOT, 'packages', 'animastor-vbook-runtime', 'src', 'lazy-book', 'draft.js'), 'utf8');
             expect(draftSrc).to.match(/vbook_version:\s*'3\.1'/);
             expect(draftSrc).to.match(/source:\s*sourceType/);
             expect(draftSrc).to.match(/state:\s*BookState\.RAW_IMPORTED/);
@@ -183,7 +183,7 @@ describe('vbook-bundle-3.1: schema exists and mirrors the validator (audit A1)',
         });
 
         it('constants enums stay in sync with the schema enums', () => {
-            const constants = require('../../src/book/lazy-book/constants.js');
+            const constants = require('@animastor/vbook-runtime/lazy-book/constants');
             expect(Object.values(constants.BookState).sort()).to.deep.equal([...schema.$defs.manifest.properties.state.enum].sort());
             expect(Object.values(constants.SourceType).sort()).to.deep.equal([...schema.$defs.manifest.properties.source.enum].sort());
         });

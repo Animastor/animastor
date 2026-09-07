@@ -33,10 +33,13 @@ const path = require('path');
 const fs = require('fs');
 const { readSource, rel, REPO_ROOT } = require('./helpers');
 
-const bookPath = path.join(REPO_ROOT, 'backend', 'src', 'book', 'index.js');
-const validatorPath = path.join(REPO_ROOT, 'backend', 'src', 'book', 'bundle-validator.cjs');
+// Physical home of the VBook runtime is the package; the host keeps one-line
+// re-export shims at backend/src/book (relocation checklist §2.4). The static
+// contract pins the PACKAGE sources (shims hold no logic by construction).
+const bookPath = path.join(REPO_ROOT, 'packages', 'animastor-vbook-runtime', 'src', 'index.js');
+const validatorPath = path.join(REPO_ROOT, 'packages', 'animastor-vbook-runtime', 'src', 'bundle-validator.cjs');
 const bookSourcePath = path.join(REPO_ROOT, 'backend', 'src', 'services', 'book-source.js');
-const lazyBookPath = path.join(REPO_ROOT, 'backend', 'src', 'book', 'lazy-book', 'draft.js');
+const lazyBookPath = path.join(REPO_ROOT, 'packages', 'animastor-vbook-runtime', 'src', 'lazy-book', 'draft.js');
 
 function read(file) {
     return readSource(file);

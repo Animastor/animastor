@@ -18,7 +18,7 @@ const _testBooksDir = require('fs').mkdtempSync(
     require('path').join(require('os').tmpdir(), 'animastor-txt-dedup-')
 );
 require('./vbook-test-bindings.cjs');
-const { configureBooksRoot } = require('../src/book/books-root');
+const { configureBooksRoot } = require('@animastor/vbook-runtime/books-root');
 const config = require('../src/config/runtime-config');
 // The books dir other modules loaded before this file still resolve against
 // (config was cached with the default BOOKS_DIR=/data/books). Purge stale

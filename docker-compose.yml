@@ -100,6 +100,10 @@ services:
       # requires it as 'animastor-comfyui-workflow-connector'; this read-only
       # mount resolves it in-container (backend build context = ./backend).
       - ./packages/animastor-comfyui-workflow-connector:/app/node_modules/animastor-comfyui-workflow-connector:ro
+      # arch(vbook): VBook runtime package. The backend requires it as
+      # '@animastor/vbook-runtime'; this read-only mount resolves it
+      # in-container (backend build context = ./backend, file: dependency).
+      - ./packages/animastor-vbook-runtime:/app/node_modules/@animastor/vbook-runtime:ro
     depends_on:
       postgres:
         condition: service_healthy

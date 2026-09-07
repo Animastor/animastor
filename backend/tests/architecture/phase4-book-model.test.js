@@ -28,10 +28,10 @@ const { readSource, rel, REPO_ROOT, BACKEND_SRC, listSourceFiles, requireSpecifi
 
 const config = require('../../src/config/runtime-config');
 const bookModel = require('../../src/book/book-model.cjs');
-const { createBookDeletion } = require('../../src/book/book-deletion.cjs');
+const { createBookDeletion } = require('../../src/services/book-deletion.cjs');
 
-const bookModelPath = path.join(BACKEND_SRC, 'book', 'book-model.cjs');
-const bookDeletionPath = path.join(BACKEND_SRC, 'book', 'book-deletion.cjs');
+const bookModelPath = path.join(REPO_ROOT, 'packages', 'animastor-vbook-runtime', 'src', 'book-model.cjs');
+const bookDeletionPath = path.join(BACKEND_SRC, 'services', 'book-deletion.cjs');
 const aiRoutesPath = path.join(BACKEND_SRC, 'routes', 'ai-routes.cjs');
 const coreRoutesPath = path.join(BACKEND_SRC, 'routes', 'book', 'core-routes.cjs');
 
@@ -340,7 +340,9 @@ describe('T7: no new Book Model → Player/Editor/Generation/Provider Gateway de
             const resolved = resolveSpecifier(file, spec);
             expect(resolved, `${rel(file)} requires ${spec}`).to.not.be.null;
             const relPath = rel(resolved);
-            const isBookLayer = /^backend\/src\/book\//.test(relPath);
+            const isBookLayer = /^backend\/src\/book\//.test(relPath)
+                || /^packages\/animastor-vbook-runtime\/src\//.test(relPath)
+                || relPath === 'backend/src/book/index.js'; // host shim
             const isAllowed = allowed.some((re) => re.test(relPath));
             expect(isBookLayer || isAllowed,
                 `${rel(file)} must not depend on ${relPath} (Book Model layer boundary)`).to.be.true;

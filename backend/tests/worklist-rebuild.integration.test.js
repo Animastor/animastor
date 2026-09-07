@@ -127,7 +127,7 @@ describe('Option E — WORK_TO_DO rebuild through real reconcileCycle (real PG +
         // book-domain path getters follow config.BOOKS_DIR mutations below.
         // (books-root.js itself is not purged — its binding would otherwise
         // still close over the pre-purge config instance.)
-        require('../src/book/books-root').configureBooksRoot(() => config.BOOKS_DIR);
+        require('@animastor/vbook-runtime/books-root').configureBooksRoot(() => config.BOOKS_DIR);
         await postgres.initialize();
     });
 

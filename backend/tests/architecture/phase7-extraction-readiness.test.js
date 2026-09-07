@@ -112,13 +112,14 @@ describe('P7-T3: GPU Hub gains no inbound code dependencies', () => {
 // ── P7-T4 — VBook internals consumer freeze ──────────────────────────────
 describe('P7-T4: VBook internals are not reached by new direct consumers', () => {
     // The Canonical Book Model facade (Phase 4) is the consumer-facing entry.
-    // The files below still reach the raw book domain directly — that is the
-    // measured, baselined state (Phase 7 audit §2.1/§2.3/§2.4). A NEW file
-    // requiring the book domain fails; migrating an existing one to the
-    // facade must remove its baseline entry in the same change.
+    // The VBook runtime now lives in packages/animastor-vbook-runtime; the
+    // host keeps one-line re-export shims at backend/src/book (relocation
+    // checklist §2.4), so consumers still require the legacy paths — every
+    // edge below goes through a shim into the package. A NEW file requiring
+    // the book domain fails; migrating an existing one to the facade must
+    // remove its baseline entry in the same change.
     const RAW_BOOK_BASELINE = [
         'backend/src/backend.cjs: ./book',
-        'backend/src/backend.cjs: ./book/book-deletion.cjs',
         'backend/src/backend.cjs: ./book/lazy-book',
         'backend/src/helpers/redis-helpers.cjs: ../book',
         'backend/src/orchestration/scene-callbacks.js: ../book',
@@ -146,7 +147,7 @@ describe('P7-T4: VBook internals are not reached by new direct consumers', () =>
         const bookRoot = path.join(BACKEND_SRC, 'book');
         const edges = [];
         for (const file of walkSource(BACKEND_SRC)) {
-            if (rel(file).startsWith('backend/src/book/')) continue; // intra-domain
+            if (rel(file).startsWith('backend/src/book/')) continue; // intra-domain (shims)
             for (const { spec, target } of relativeTargets(file)) {
                 if (target.startsWith('backend/src/book/')) edges.push(`${rel(file)}: ${spec}`);
             }
@@ -158,14 +159,14 @@ describe('P7-T4: VBook internals are not reached by new direct consumers', () =>
         // backend.cjs book-model.cjs + the two facades are the ALLOWED
         // consumer-facing entries (Phase 4/6); they are excluded here because
         // they are pinned by their own suites (phase4/phase6).
-        // backend.cjs books-root + lazy-book/parser are the VBook PORT
-        // BINDINGS (@animastor/vbook-runtime preparation): the composition
-        // root is the only place allowed to bind configureBooksRoot() and
-        // setStructureDetector() — pinned by vbook-package-boundary.test.js.
+        // backend.cjs binds the VBook package ports (configureBooksRoot /
+        // setStructureDetector) directly through the package entry points —
+        // the composition root is the only place allowed to do that, pinned
+        // by vbook-package-boundary.test.js.
+        // book-deletion.cjs moved to services/ (host-side orchestrator, out
+        // of the package scope — relocation checklist §2.1).
         const allowed = new Set([
             'backend/src/backend.cjs: ./book/book-model.cjs',
-            'backend/src/backend.cjs: ./book/books-root',
-            'backend/src/backend.cjs: ./book/lazy-book/parser',
             'backend/src/editor/index.cjs: ../book/book-model.cjs',
             'backend/src/player/index.cjs: ../book/book-model.cjs',
         ]);
@@ -177,8 +178,10 @@ describe('P7-T4: VBook internals are not reached by new direct consumers', () =>
 // ── P7-T5 — Book Model facade edge freeze ────────────────────────────────
 describe('P7-T5: Book Model facade stays implementation-free', () => {
     it('book-model.cjs requires only inside the book domain', () => {
-        const offenders = relativeTargets(path.join(BACKEND_SRC, 'book', 'book-model.cjs'))
-            .filter(({ target }) => !target.startsWith('backend/src/book/'));
+        // book-model.cjs lives in the package now; the host shim at the legacy
+        // path is a one-line re-export of it (relocation checklist §2.4).
+        const offenders = relativeTargets(path.join(REPO_ROOT, 'packages', 'animastor-vbook-runtime', 'src', 'book-model.cjs'))
+            .filter(({ target }) => !target.startsWith('packages/animastor-vbook-runtime/src/'));
         expect(offenders.map(({ spec }) => spec), 'the facade must not grow backend implementation deps (Phase 7 audit §2.2)').to.deep.equal([]);
     });
 });

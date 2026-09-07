@@ -7,11 +7,11 @@ const os = require('os');
 // a fresh temp dir so tests never touch real books.
 require('./vbook-test-bindings.cjs');
 const config = require('../src/config/runtime-config');
-const { configureBooksRoot } = require('../src/book/books-root');
+const { configureBooksRoot } = require('@animastor/vbook-runtime/books-root');
 config.BOOKS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'vbook-unit-'));
 configureBooksRoot(() => config.BOOKS_DIR);
 const sd = require('../src/services/structure-detector');
-const parser = require('../src/book/lazy-book/parser');
+const parser = require('@animastor/vbook-runtime/lazy-book/parser');
 const chapterUtils = require('../src/book/lazy-book/chapter-utils');
 const lazyBook = require('../src/book/lazy-book');
 const pipelineRunner = require('../src/services/agent/pipeline-runner');

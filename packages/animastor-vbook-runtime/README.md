@@ -4,13 +4,31 @@ Canonical **VBook 3.1** bundle/book runtime: multi-file bundle CRUD, draft/impor
 lifecycle, lazy parse windows, bundle validation, canonical id grammar and the
 on-disk path layout.
 
-**Status: PREPARATION PHASE.** The package manifest, public-API freeze, ports
-and the bundle schema are in place; the code still physically lives in
-`backend/src/book/` and is wired through shims. The physical move
-(`backend/src/book → packages/animastor-vbook-runtime/src`) is the next,
-separate task — see
+**Status: EXTRACTED.** The runtime physically lives in this package
+(`src/`); the host keeps one-line re-export shims at the legacy paths
+(`backend/src/book/**`, `backend/src/services/language-detector.js`,
+`backend/src/utils/{character-identity,snake-guard,scene-title-utils}.js`).
+The composition root (`backend/src/backend.cjs`) binds both ports through the
+package entry points. See
 [`docs/architecture/VBOOK_RUNTIME_RELOCATION_CHECKLIST.md`](../../docs/architecture/VBOOK_RUNTIME_RELOCATION_CHECKLIST.md)
-and [`docs/03-audit/VBOOK_EXTRACTION_READINESS_AUDIT.md`](../../docs/03-audit/VBOOK_EXTRACTION_READINESS_AUDIT.md).
+(COMPLETE) and
+[`docs/03-audit/VBOOK_EXTRACTION_READINESS_AUDIT.md`](../../docs/03-audit/VBOOK_EXTRACTION_READINESS_AUDIT.md).
+
+## Standalone use
+
+```bash
+npm install        # deps: adm-zip + tinyld (dev: mocha + chai)
+npm test           # package-owned suite, no host/PG/Redis
+```
+
+The package never reads `process.env`. Before any book operation, bind the
+filesystem root and (for parsing) a structure detector:
+
+```js
+const { configureBooksRoot } = require('@animastor/vbook-runtime/books-root');
+const { setStructureDetector } = require('@animastor/vbook-runtime/lazy-book/parser');
+configureBooksRoot('/data/books');            // string or () => string provider
+setStructureDetector(myStructureDetector);    // { buildDeterministicMap(text) }
 
 ## Ownership map (frozen)
 
@@ -48,7 +66,8 @@ Operations only. Additive changes only from here (C2 model API is internal-v1).
 - **Enums** (`lazy-book/constants.js`): `BookState`, `SceneStatus`, `SourceType`,
   `UnitType`, `DEFAULT_WINDOW_SIZE`.
 
-NOT part of the package: `book-deletion.cjs`, snapshot management, Redis/PG/
+NOT part of the package: `book-deletion.cjs` (host:
+`backend/src/services/book-deletion.cjs`), snapshot management, Redis/PG/
 orchestration access, GPU Hub env logic — all host-side.
 
 ## Ports (injected by the host composition root)
@@ -77,11 +96,12 @@ detector.buildDeterministicMap(sourceText)
 //                  startOffset, endOffset, source }] }
 ```
 
-The host binds its current implementation once at startup:
+The host binds its current implementation once at startup (composition root
+`backend/src/backend.cjs`):
 
 ```js
 const { setStructureDetector } = require('@animastor/vbook-runtime/lazy-book/parser');
-setStructureDetector(require('../services/structure-detector'));
+setStructureDetector(require('./services/structure-detector'));
 ```
 
 Fail-closed: parsing throws until a detector is bound. This port is the seed of

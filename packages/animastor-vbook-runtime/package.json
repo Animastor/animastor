@@ -3,6 +3,28 @@
     "version": "0.1.0",
     "description": "VBook Runtime — canonical VBook 3.1 bundle/book model: multi-file bundle CRUD, draft/import lifecycle, lazy parse windows, bundle validation, canonical id grammar and path layout. Owns bundle/book canonical state; the host owns the filesystem root (booksRoot), snapshots, deletion orchestration and Redis/PG/GPU Hub.",
     "main": "src/index.js",
+    "exports": {
+        ".": "./src/index.js",
+        "./book-model.cjs": "./src/book-model.cjs",
+        "./bundle-validator.cjs": "./src/bundle-validator.cjs",
+        "./books-root": "./src/books-root.js",
+        "./language-detector": "./src/language-detector.js",
+        "./character-identity": "./src/character-identity.js",
+        "./snake-guard": "./src/snake-guard.js",
+        "./scene-title-utils": "./src/scene-title-utils.js",
+        "./lazy-book": "./src/lazy-book/index.js",
+        "./lazy-book/parser": "./src/lazy-book/parser.js",
+        "./lazy-book/paths": "./src/lazy-book/paths.js",
+        "./lazy-book/constants": "./src/lazy-book/constants.js",
+        "./lazy-book/draft": "./src/lazy-book/draft.js",
+        "./lazy-book/parse": "./src/lazy-book/parse.js",
+        "./lazy-book/create": "./src/lazy-book/create.js",
+        "./lazy-book/status": "./src/lazy-book/status.js",
+        "./lazy-book/metadata": "./src/lazy-book/metadata.js",
+        "./lazy-book/chapter-utils": "./src/lazy-book/chapter-utils.js",
+        "./lazy-book/appearance": "./src/lazy-book/appearance.js",
+        "./schemas/*": "./schemas/*"
+    },
     "files": [
         "src/",
         "schemas/",
@@ -11,7 +33,7 @@
         "CHANGELOG.md"
     ],
     "scripts": {
-        "test": "node -e \"console.log('package-owned suite lands with the physical move (audit E1)')\""
+        "test": "mocha test/*.test.js"
     },
     "engines": {
         "node": ">=18"
@@ -28,5 +50,9 @@
     "dependencies": {
         "adm-zip": "^0.5.10",
         "tinyld": "^1.3.4"
+    },
+    "devDependencies": {
+        "chai": "^6.2.2",
+        "mocha": "^11.7.5"
     }
 }
