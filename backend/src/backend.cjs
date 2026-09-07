@@ -264,7 +264,10 @@ const routeDeps = {
     //                    auth (checkBookAccess), video-timeline (ffprobe +
     //                    workflows alignment tax), waveform (ffmpeg)
     //   computeIuReady — pure IU progress math (routes/book/iu-progress-utils)
-    //   videoTimeline  — host module re-export (computeVideoStartMs port)
+    // Final boundary audit: the wide `videoTimeline` module seam was removed —
+    // the player contour receives ONLY the port functions above; the host
+    // video-timeline module (which imports workflows/ + config) never enters
+    // the playback contour object graph.
     outputRoot: config.OUTPUT_DIR,
     playerPorts: {
         assertBookAccess: authContextMiddleware.checkBookAccess,
@@ -272,7 +275,6 @@ const routeDeps = {
         computeWaveform,
     },
     computeIuReady,
-    videoTimeline,
 };
 
 require('./routes/book-routes.cjs')(app, redis, { ...routeDeps, taskHandler, bookDiff, windowGenerator });

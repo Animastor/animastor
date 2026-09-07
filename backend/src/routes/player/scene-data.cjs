@@ -3,19 +3,21 @@
 // ======================================================
 // Byte-for-byte relocation of the scene-data handlers from
 // routes/generation-routes.cjs (Player route split — preparation stage, no
-// behavior change). Ports: videoTimeline/computeVideoStartMs and
-// computeWaveform arrive via playerPorts (host keeps ffprobe/ffmpeg +
-// workflows knowledge); image.getSceneDuration / getOrCreatePreview stay
-// injected deps on the shared context (host image-pipeline internals the
-// player must not import). Consumers: web playbackStore/EditPage/Navigate,
-// Android Repository, tests/scene-timings.test.js.
+// behavior change). Ports: computeVideoStartMs and computeWaveform arrive via
+// playerPorts (host keeps ffprobe/ffmpeg + workflows knowledge); image
+// .getSceneDuration / .getOrCreatePreview stay injected deps on the shared
+// context (host image-pipeline internals the player must not import);
+// bookProjections are the two pure VBook-runtime read projections injected by
+// the registrar (the book module itself never reaches this file).
+// Consumers: web playbackStore/EditPage/Navigate, Android Repository,
+// tests/scene-timings.test.js.
 
 const fs = require('fs');
 const path = require('path');
 const naming = require('./artifact-naming.cjs');
 
 module.exports = function(app, ctx, deps) {
-    const { image, videoTimelinePort } = deps;
+    const { image, bookProjections } = deps;
 
     // ── Scene status ────────────────────────────────────────────────────
     app.get('/api/v1/scene/:bookId/:chapterId/:sceneId/status', async (req, res) => {
@@ -115,9 +117,9 @@ module.exports = function(app, ctx, deps) {
                 try {
                     const b = ctx.playerModel.loadBook(bookId);
                     if (b) {
-                        const sceneData = deps.book.findSceneRuntimeData(b, chapterId, sceneId);
+                        const sceneData = bookProjections.findSceneRuntimeData(b, chapterId, sceneId);
                         if (sceneData && sceneData.payload) {
-                            const sceneUnits = deps.book.collectSceneUnits(sceneData.payload);
+                            const sceneUnits = bookProjections.collectSceneUnits(sceneData.payload);
                             let order = 0;
                             for (const u of sceneUnits) {
                                 ius.push({ unit_id: u.id, scene_id: sceneId, text: u.text, text_proportion: 0, estimated_duration_sec: 0, audio_file: null, start_ms: null, end_ms: null, _order: order });
@@ -206,7 +208,7 @@ module.exports = function(app, ctx, deps) {
             // measurement equals start_ms and is a no-op. Best-effort:
             // failures leave video_start_ms absent.
             try {
-                await videoTimelinePort.computeVideoStartMs(ius, buildId, bookId, chapterId, sceneId, ctx.outputRoot);
+                await ctx.playerPorts.computeVideoStartMs(ius, buildId, bookId, chapterId, sceneId, ctx.outputRoot);
             } catch (tlErr) {
                 console.warn(`[SCENE STORYBOARD] video_start_ms failed for ${bookId}/${chapterId}/${sceneId}: ${tlErr.message}`);
             }

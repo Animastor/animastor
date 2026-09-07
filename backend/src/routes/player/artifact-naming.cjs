@@ -54,7 +54,12 @@ function iuImagePrefix(bookId, chapterId, sceneId) {
     return `${bookId}_${chapterId}_${sceneId}_iu`;
 }
 
-/** IU image by id: `${prefix}_iu${iuId}.png` */
+/**
+ * IU image by exact URL id: `${prefix}_${iuId}.png`. The URL :iuId carries the
+ * `iu` prefix itself (frontend unitId: u.id ?? 'iu0001'), so this equals the
+ * writer's `${prefix}_iu${strippedId}.png` (filesystem-store
+ * .makeIUImageFilename with the ^iu-stripped id — see image/preview.js).
+ */
 function iuImageName(bookId, chapterId, sceneId, iuId) {
     return `${bookId}_${chapterId}_${sceneId}_${iuId}.png`;
 }

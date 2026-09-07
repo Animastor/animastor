@@ -23,7 +23,7 @@ module.exports = function(app, redis, deps) {
         runtime, activeScenes, layerConfig, genScope, placeholderAudio,
         utils, saveChunk, getChunk, getAllChunks, getBookWindowStatus,
         detectAvailableMode, recoverChunksFromDisk, recoverAllBooksFromDisk,
-        cleanupService, iuRepo, computeWaveform, playerModel,
+        cleanupService, iuRepo, computeWaveform,
     } = deps;
     const { log } = utils;
 

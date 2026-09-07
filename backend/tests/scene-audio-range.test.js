@@ -38,7 +38,7 @@ function stubDeps(tmpDir) {
         config: { OUTPUT_DIR: tmpDir },
         outputRoot: tmpDir, // player contour seam (injected artifact root)
         state: {}, audio: {}, image: {}, video: {},
-        book: { loadBook: () => ({ manifest: { build_id: 'b1' } }) },
+        book: { findSceneRuntimeData: () => null, collectSceneUnits: () => [] }, // VBook runtime: registrar extracts only the pure read projections
         playerModel: { loadBook: () => ({ manifest: { build_id: 'b1' } }) }, // Phase 6 Player boundary fake
         playerPorts: { assertBookAccess: async () => ({}), computeVideoStartMs: async () => false, computeWaveform: async () => [] },
         orchestrator: {}, storage: {}, runtime: {}, activeScenes: {},
@@ -49,7 +49,6 @@ function stubDeps(tmpDir) {
         recoverChunksFromDisk: noop, recoverAllBooksFromDisk: noop,
         cleanupService: {}, iuRepo: {}, computeWaveform: noop,
         computeIuReady: async () => 0,
-        videoTimeline: { computeVideoStartMs: async () => false },
         sceneAssetsRepo: {},
     };
 }

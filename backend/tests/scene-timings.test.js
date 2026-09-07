@@ -46,7 +46,7 @@ function stubDeps(tmpDir, iuRepo) {
         outputRoot: tmpDir, // player contour seam (injected artifact root)
         state: {}, audio: {}, video: {},
         image: { getSceneDuration: async () => 30 }, // 30s scene audio
-        book: { loadBook: () => null },              // no book JSON → getEffectiveBuildId falls back to requested
+        book: { findSceneRuntimeData: () => null, collectSceneUnits: () => [] }, // VBook runtime: registrar extracts only the pure read projections
         playerModel: { loadBook: () => null },       // Phase 6: Player boundary fake (same source as book)
         playerPorts: { assertBookAccess: async () => ({}), computeVideoStartMs: async () => false, computeWaveform: async () => [] },
         orchestrator: {}, storage: {}, runtime: {}, activeScenes: {},
@@ -57,7 +57,6 @@ function stubDeps(tmpDir, iuRepo) {
         recoverChunksFromDisk: noop, recoverAllBooksFromDisk: noop,
         cleanupService: {}, iuRepo, computeWaveform: noop,
         computeIuReady: async () => 0,
-        videoTimeline: { computeVideoStartMs: async () => false },
         sceneAssetsRepo: {},
     };
 }

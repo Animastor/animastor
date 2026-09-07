@@ -22,11 +22,19 @@
 //                   waveform-service) injected as ports; the contour must
 //                   NOT import generation/host implementation modules
 //                   (workflows/, video-timeline, middleware, waveform-service)
+//                   and must not receive the video-timeline MODULE — only the
+//                   port functions (final boundary audit: the module seam was
+//                   narrowed away; scene-data reads ports via playerPorts)
 //   redis/getChunk/getAllChunks/iuRepo — runtime state (infrastructural,
 //                   host-side; a full playback-projection port is
 //                   deliberately premature — recorded in the split checklist)
-//   image/state/activeScenes/placeholderAudio/layerConfig/book — host
+//   image/state/activeScenes/placeholderAudio/layerConfig — host
 //                   generation-pipeline seams (documented intentional deps)
+//   bookProjections — the two pure VBook-runtime read projections
+//                   (findSceneRuntimeData / collectSceneUnits) extracted from
+//                   the injected book module; the contour never receives the
+//                   whole book module surface (loaders/writers stay host-side;
+//                   book CONTENT reads go through playerModel only)
 //
 // Usage:
 //   require('./routes/player/player-routes.cjs')(app, redis, deps);
@@ -38,7 +46,7 @@ const { createPlayerShared } = require('./player-shared.cjs');
 
 module.exports = function(app, redis, deps) {
     const {
-        config, state, image, book, utils, redis: _redisDepsOk,
+        state, image, book, utils, redis: _redisDepsOk,
         getChunk, getAllChunks, getBookWindowStatus,
         activeScenes, placeholderAudio, layerConfig, iuRepo,
         sceneAssetsRepo, playerModel,
@@ -46,7 +54,6 @@ module.exports = function(app, redis, deps) {
         outputRoot,            // = config.OUTPUT_DIR (injected)
         playerPorts,           // { assertBookAccess, computeVideoStartMs, computeWaveform }
         computeIuReady,        // pure IU math (routes/book/iu-progress-utils.cjs)
-        videoTimeline,         // host module re-exported as a port object for scene-data
     } = deps;
     const { log } = utils;
 
@@ -63,8 +70,12 @@ module.exports = function(app, redis, deps) {
     require('./scene-media.cjs')(app, ctx);
     require('./scene-data.cjs')(app, ctx, {
         image,
-        book,
-        videoTimelinePort: videoTimeline,
+        // Pure read projections over the Canonical Book Model (VBook runtime);
+        // the whole book module surface is NOT handed to the player contour.
+        bookProjections: {
+            findSceneRuntimeData: book.findSceneRuntimeData,
+            collectSceneUnits: book.collectSceneUnits,
+        },
     });
     require('./iu-media.cjs')(app, ctx, {
         image, state, activeScenes, placeholderAudio,
