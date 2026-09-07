@@ -4,8 +4,9 @@
 **Source:** `backend/src/book/` (+ audited extraction companions)
 **Basis:** `docs/03-audit/VBOOK_EXTRACTION_READINESS_AUDIT.md` (baseline `7cf3f849`),
 preparation commit `fb411c6`.
-**Status:** `PHYSICAL MOVE COMPLETE` — all §2 items landed; shims remain as the
-sanctioned host→package seam (see §4 compatibility ledger).
+**Status:** `COMPLETE` — physical move landed and finalized (final
+architectural verification 2026-09-07 at HEAD `4d1f6f0e`, §6 record). Shims
+remain as the sanctioned host→package seam (§4 compatibility ledger).
 
 ## 0. Audit re-verification (done at HEAD)
 
@@ -98,6 +99,14 @@ wave-based task per audit §8):
 - `backend/src/services/language-detector.js` → `@animastor/vbook-runtime/language-detector`
 - `backend/src/utils/{character-identity,snake-guard,scene-title-utils}.js` → package roots
 
+**Final classification (§6):** every production import of the legacy paths is
+a *legitimate host-shim edge*; no "old runtime edge" remains — `backend/src/book/`
+holds exactly the 15 one-line shims (no implementation behind them, VB-T4
+pinned) and the 4 companion shims are one-line re-exports as well. **Reason to
+keep:** behavior-neutral zero-touch seam — ~23 pinned consumer sites migrate
+to direct package imports in the Phase-D waves (audit §8), not in extraction
+finalization. **Owner:** backend/architecture (VBook Phase-D follow-up).
+
 Test-environment note (4 failures, none VBook-related — verified identical at
 the preparation baseline `fb411c6`):
 
@@ -107,9 +116,20 @@ the preparation baseline `fb411c6`):
 - `ai-shared-stream` (SH-AI-3 CON1): passes WITHOUT the `.env` (mock runtime
   stays eligible), fails WITH it when the real connector key makes fixture
   eligibility differ — timing/eligibility artifact of the same env coupling.
-- `worker-share-policy` (D3 beacon → `/worker/counts`): 2s default `it()`
-  timeout vs a real-beacon + hub-server round trip; deterministically times
-  out at HEAD and at `fb411c6` alike — pre-existing flake, untouched here.
+- `worker-share-policy` (D3 beacon → `/worker/counts`) and
+  `private-worker-visibility` (A-vs-B `/worker/counts`): 2s default `it()`
+  timeout vs a real-beacon + hub-server round trip; intermittent
+  (one of the two times out per run, the other passes) — pre-existing flake
+  class, untouched here.
+- `guest-workspace` (test 16 "findByToken resolves only the raw token"):
+  ~1/16 nondeterministic flake with the root cause in the TEST, not the
+  product — the "wrong raw token" is built as `token.replace(/.$/, 'x')`,
+  but base64url decoding discards the last character's 2 low bits, so when
+  the random token ends in `w`, `w`→`x` decodes to the SAME secret → same
+  sha256 → the lookup legitimately resolves. The product
+  `guest-repo.findByToken` (hash compared in SQL) is correct. Fix belongs to
+  the guest-workspace suite — outside the VBook boundary, recorded here, not
+  bypassed.
 
 In all four the failure signature is identical before and after the move; the
 VBook-domain suites (VBook, entity-crud, txt-import, bootstrap, behavior/
@@ -124,3 +144,61 @@ phase2/4/6/7, VB-guards, bundle-schema) are fully green.
   `animastor-ai-connector@0.1.0` / `animastor-worker@2.1.0`).
 - C13 Parser contract: `structure-detector` stays host-side; the ChapterMap
   port in this package is its seed.
+
+## 6. Final verification record (2026-09-07 — "finalize runtime extraction")
+
+Re-verified at HEAD `4d1f6f0e` (extraction `7175099d` + one unrelated
+player-routes commit that touches no VBook file). All checklist questions
+checked against the code, not the docs:
+
+1. **Package boundary — CLEAN.** Every require in
+   `packages/animastor-vbook-runtime/src/**` resolves to node builtins,
+   `adm-zip` or `tinyld` (VB-T4; Tarjan SCC = acyclic). No `runtime-config`,
+   zero `process.env` reads (VB-T2), no Redis/PG/GPU-Hub/deletion
+   orchestration anywhere in the package (VB-T5).
+2. **Host shims — CLEAN.** `backend/src/book/` = exactly the 15 one-line
+   re-export shims + `books-root.js` shim; companions
+   (`services/language-detector.js`, `utils/{character-identity,snake-guard,
+   scene-title-utils}.js`) are one-line re-exports. All production imports of
+   `./book/...` classified legitimate host-shim edges (§4); no old runtime
+   implementation survives anywhere.
+3. **structure-detector — host-owned.** Package consumes only the injected
+   port (`setStructureDetector`/fail-closed getter, ChapterMap = C13 seed,
+   VB-T3); no direct require from the package.
+4. **booksRoot — port only.** `configureBooksRoot()` (static string or live
+   provider), fail-closed getters, bound at the composition root
+   (`backend.cjs`) and in test bindings; no `BOOKS_DIR`/env fallback inside
+   the package (VB-T2).
+5. **book-deletion — host-side.** Lives at
+   `backend/src/services/book-deletion.cjs` (adapters injected;
+   `HUB_URL`/`GPU_HUB_API_KEY` reads are the host-ownership markers, VB-T5);
+   absent from the package tree and from the `files` allowlist (VB-T5);
+   Redis/PG/HUB/snapshot ownership intact.
+6. **Public API — complete.** `exports` = 20 entry points + `./schemas/*`
+   wildcard, `main` = `src/index.js`, `files` allowlist (src/schemas/README/
+   LICENSE/CHANGELOG); every exports target exists (VB-T1). Host reaches the
+   package only through entry points/shims — zero deep imports into `src/`
+   (VB-T4 deep-require ban).
+7. **Dependency hygiene — DONE.** `tinyld` removed from backend
+   `package.json` (package-only consumer); `adm-zip` kept (export routes +
+   `backend.cjs`); package `dependencies` = {adm-zip, tinyld} = the actual
+   runtime graph (VB-T1).
+8. **Tests — GREEN (VBook).** Package standalone suite 19 passing; boundary +
+   contract guard set 132 passing (VB-T1…T5, phase2/4/6/7,
+   dependency-guardrails, bundle-schema sync); full architecture suite 379
+   passing; full backend suite 2909 passing / 5 failing, all five non-VBook
+   (§5 note: 3 documented SH-AI env-dependent, 1 root-caused guest-workspace
+   test flake, 1 `/worker/counts` timeout flake). `npm pack --dry-run` = 24
+   files, no `book-deletion.cjs`, no host paths, no tests in the tarball.
+   Production boot smoke green: composition root binds both ports, full
+   startup (workflows → PG → connectors → runtime loop) with zero errors.
+9. **Behavior parity — PINNED.** No behavior changes in this task; parity is
+   held by the green VBook-domain suites (draft lifecycle → bundle round-trip,
+   lazy windows, validator C1 rules, entity-crud, txt-import, bootstrap,
+   book-metadata, structure/language detectors, behavior/passport patches).
+10. **Checklist — COMPLETE** (this document).
+
+**Blockers: none** inside the VBook boundary. Out-of-boundary items recorded,
+not fixed: the `guest-workspace` test-16 flake (fix belongs to that suite)
+and the `/worker/counts` timeout flake class; `npm publish` remains gated on
+npm auth (§5).

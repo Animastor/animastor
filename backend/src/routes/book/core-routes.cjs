@@ -737,7 +737,7 @@ module.exports = function(app, redis, deps) {
     // ======================================================
     // Phase 4: the route no longer implements the deletion cascade itself —
     // ownership/cancel/runtime/derived-purge details live behind the
-    // bookDeletion.deleteBook(bookId) contract (src/book/book-deletion.cjs).
+    // bookDeletion.deleteBook(bookId) contract (services/book-deletion.cjs).
     app.delete('/api/v1/book/:bookId', async (req, res) => {
         try {
             const { bookId } = req.params;
