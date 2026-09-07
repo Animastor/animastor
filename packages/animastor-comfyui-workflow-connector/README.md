@@ -1,97 +1,298 @@
 # animastor-comfyui-workflow-connector
 
-Declarative mapping core between Animastor data entities (prompts, images,
-audio, generation parameters) and ComfyUI workflow JSON.
+Declarative mapping between data entities (prompts, images, audio, parameters) and ComfyUI workflow JSON.
 
-**Extraction basis:** `docs/architecture/COMFYUI_WORKFLOW_CONNECTOR_EXTRACTION_READINESS.md`
-(§1 frozen boundary, §2 public API, §6 migration order).
+Loads ComfyUI workflow templates and connector definitions from directories you provide, validates their compatibility (content-sensitive SHA-256 + node-class checks), applies entity-keyed bindings, and produces runnable workflow JSON — without exposing ComfyUI node IDs through the API boundary.
 
-## What it does
+## Installation
 
-- Loads ComfyUI workflow JSON (`{ "nodeId": { class_type, inputs } }` API format)
-  and `conn-*.json` connector files from **host-injected directories**.
-- Validates connector structure and workflow ↔ connector compatibility
-  (content-sensitive sha256 hash + node-class + per-binding expectedClass checks).
-- Applies entity-keyed inputs/parameters to workflow JSON via connector
-  bindings (node ids never cross the API boundary).
-- `build()` produces the runnable workflow JSON — the only output that
-  contains node ids, and only in the payload the host itself dispatches.
+```bash
+npm install animastor-comfyui-workflow-connector
+```
 
-## Public API
+Requires Node.js >= 18. Zero runtime dependencies — uses only Node builtins (`fs`, `path`, `crypto`).
+
+## Quick Start
 
 ```js
 const { createWorkflowConnector } = require('animastor-comfyui-workflow-connector');
 
-const wf = createWorkflowConnector({
-    workflowsDir: '/host/ai/workflows',     // host-owned, injected
-    connectorsDir: '/host/ai/connectors',   // host-owned, injected
-    logger,                                  // injected (defaults to console)
+// Point the package at your workflow and connector directories
+const connector = createWorkflowConnector({
+    workflowsDir: '/path/to/workflows',
+    connectorsDir: '/path/to/connectors',
+    logger: console, // optional, defaults to console
 });
 
-wf.listWorkflows()  // → [{ name, hash, hasConnector, type, label, compatible }]  (no node ids)
-wf.getWorkflow(n)   // → deep-cloned workflow JSON; throws WorkflowNotFoundError
-wf.getConnector(n)  // → entity-level VIEW { inputs, outputs, parameters, profile, … }
-                    //   nodeId/field/expectedClass STRIPPED; throws ConnectorMissingError
-wf.validate(n)      // → { compatible, warnings }
-wf.build({ workflow, inputs, parameters })
-                    // → { workflowJson, workflowHash }; connector defaults applied;
-                    //   unknown entity keys → BuildError; incompatible → IncompatibleWorkflowError
+// List loaded workflows
+const workflows = connector.listWorkflows();
+// → [{ name, hash, hasConnector, type, label, compatible }]
+
+// Build a runnable workflow from entity-keyed inputs
+const { workflowJson, workflowHash } = connector.build({
+    workflow: 'my-workflow',
+    inputs: { positivePrompt: 'A castle at dawn' },
+    parameters: { steps: 30 },
+});
+// Send workflowJson to ComfyUI
 ```
 
-Typed errors: `WorkflowNotFoundError`, `ConnectorMissingError`,
-`IncompatibleWorkflowError`, `BuildError`, base `ConnectorApiError`.
+## API
 
-**Compatibility surface:** the package also re-exports the underlying loader
-singletons (`workflowLoader`, `connectorLoader`, `entitySchema`) so the
-host consumers migrated from `backend/src/workflows/*` keep their exact
-call shapes (§6.1 of the extraction readiness doc).
+### `createWorkflowConnector(options)`
 
-## Dependency direction (hard contract)
+Factory function. Returns the connector API instance.
+
+**Options:**
+
+| Property | Type | Description |
+|---|---|---|
+| `workflowsDir` | `string` | Path to directory containing ComfyUI workflow JSON files |
+| `connectorsDir` | `string` | Path to directory containing `conn-*.json` connector files |
+| `logger` | `object` | Logger with `log()`, `warn()`, `error()` methods (defaults to `console`) |
+
+Directories can also be set via `WF_DIR` and `CONNECTOR_DIR` environment variables, but explicit options take precedence.
+
+### `.listWorkflows()`
+
+Returns an array of loaded workflows with entity-level metadata:
+
+```js
+[{
+    name: 'my-workflow',        // filename without .json
+    hash: 'abc123...',          // SHA-256 of the workflow JSON
+    hasConnector: true,         // whether a matching connector exists
+    type: 'image',              // connector type: 'image' | 'audio' | 'video'
+    label: 'My Workflow',       // human-readable label from connector
+    compatible: true            // hash + node-class compatibility check result
+}]
+```
+
+No ComfyUI node IDs are exposed.
+
+### `.getWorkflow(name)`
+
+Returns a deep-cloned workflow JSON object. Mutating the returned object does not affect the internal registry.
+
+Throws `WorkflowNotFoundError` if the workflow name is not loaded.
+
+### `.getConnector(name)`
+
+Returns an entity-level view of the connector:
+
+```js
+{
+    name: 'my-workflow',
+    type: 'image',
+    label: 'My Workflow',
+    description: '',
+    version: '1.0.0',
+    profile: {},
+    inputs: { positivePrompt: { entityType: 'string', label: 'Positive Prompt', required: true } },
+    outputs: { generatedImage: { entityType: 'image', label: 'Generated Image', required: true } },
+    parameters: { steps: { entityType: 'int', label: 'Steps', required: false, default: 20, min: 1, max: 100 } }
+}
+```
+
+ComfyUI-specific internals (`nodeId`, `field`, `expectedClass`) are stripped from the output.
+
+Throws `ConnectorMissingError` if no connector is registered for the workflow.
+
+### `.validate(name)`
+
+Returns `{ compatible: boolean, warnings: string[] }` after checking hash and node-class compatibility between a workflow and its connector.
+
+Throws `WorkflowNotFoundError` or `ConnectorMissingError`.
+
+### `.build({ workflow, inputs, parameters })`
+
+Builds a runnable workflow JSON from entity-keyed inputs and parameters.
+
+| Property | Type | Description |
+|---|---|---|
+| `workflow` | `string` | Workflow name (required) |
+| `inputs` | `object` | `{ entityKey: value }` applied via connector bindings |
+| `parameters` | `object` | `{ entityKey: value }`; connector defaults fill gaps for unspecified keys |
+
+Returns `{ workflowJson, workflowHash }`.
+
+Throws:
+- `WorkflowNotFoundError` — workflow not loaded
+- `ConnectorMissingError` — no connector registered
+- `IncompatibleWorkflowError` — hash/node-class mismatch
+- `BuildError` — unknown input/parameter keys or missing workflow name
+
+### `.getWorkflowHash(name)`
+
+Returns the SHA-256 hash string for a loaded workflow, or `null` if not found.
+
+### `.load()`
+
+Reloads all workflows and connectors from the configured directories.
+
+## Typed Errors
+
+All errors extend `ConnectorApiError` which extends `Error`. Each has a `code` property:
+
+| Error | Code | When |
+|---|---|---|
+| `WorkflowNotFoundError` | `WORKFLOW_NOT_FOUND` | Requested workflow name not loaded |
+| `ConnectorMissingError` | `CONNECTOR_MISSING` | No connector file for the workflow |
+| `IncompatibleWorkflowError` | `INCOMPATIBLE_WORKFLOW` | Hash or node-class mismatch |
+| `BuildError` | `BUILD_FAILED` | Invalid build input (missing name, unknown keys) |
+
+```js
+const { WorkflowNotFoundError } = require('animastor-comfyui-workflow-connector');
+
+try {
+    connector.getWorkflow('nonexistent');
+} catch (err) {
+    if (err instanceof WorkflowNotFoundError) {
+        console.log(err.code); // 'WORKFLOW_NOT_FOUND'
+        console.log(err.message); // 'Workflow not found: nonexistent'
+    }
+}
+```
+
+## Workflow Format
+
+The package expects ComfyUI workflow JSON in the standard format — an object keyed by node IDs:
+
+```json
+{
+    "1": {
+        "class_type": "CLIPTextEncode",
+        "inputs": { "text": "" }
+    },
+    "2": {
+        "class_type": "KSampler",
+        "inputs": { "seed": 42, "steps": 20 }
+    }
+}
+```
+
+Workflow files are plain `.json` files placed in the `workflowsDir` directory. Files prefixed with `old_` are ignored.
+
+## Connector Format
+
+Connector files define the mapping between data entities and workflow nodes. They live in `connectorsDir` and must be named `conn-*.json`:
+
+```json
+{
+    "connectorVersion": "1.0.0",
+    "workflow": "my-workflow",
+    "type": "image",
+    "label": "My Image Workflow",
+    "description": "Generates images from text prompts",
+    "inputs": {
+        "positivePrompt": {
+            "nodeId": "1",
+            "field": "inputs.text",
+            "entityType": "positivePrompt",
+            "label": "Positive Prompt",
+            "required": true
+        }
+    },
+    "parameters": {
+        "steps": {
+            "nodeId": "2",
+            "field": "inputs.steps",
+            "entityType": "steps",
+            "default": 20,
+            "min": 1,
+            "max": 100
+        },
+        "seed": {
+            "nodeId": "2",
+            "field": "inputs.seed",
+            "entityType": "seed",
+            "default": 42
+        }
+    }
+}
+```
+
+**Key fields per binding:**
+
+| Field | Description |
+|---|---|
+| `nodeId` | ComfyUI node ID in the workflow (internal, not exposed through API) |
+| `field` | Dot-separated path within the node (e.g. `inputs.text`) |
+| `entityType` | Canonical entity key (see Entity Types below) |
+| `default` | Default value applied when parameter is not provided |
+| `min` / `max` | Numeric bounds (for parameter validation) |
+| `required` | Whether the binding must be provided |
+
+### Multi-bindings
+
+For workflows that accept arrays of inputs (e.g. multiple source images), use the `multi` type:
+
+```json
+{
+    "sourceImages": {
+        "type": "multi",
+        "entityType": "sourceImages",
+        "bindings": [
+            { "nodeId": "10", "field": "inputs.image_1" },
+            { "nodeId": "11", "field": "inputs.image_2" }
+        ]
+    }
+}
+```
+
+## Entity Types
+
+Built-in entity keys recognized by the validation system:
+
+**Inputs:**
+`positivePrompt`, `negativePrompt`, `narrationText`, `voiceInstruction`, `dialogueScript`, `defaultInstruct`, `character1Voice`, `character2Voice`, `character3Voice`, `roleName1`, `roleName2`, `roleName3`, `sourceImage`, `sourceImages`, `mask`, `characterImage`, `coverImage`, `audio`
+
+**Outputs:**
+`generatedImage`, `generatedVideo`, `generatedAudio`, `videoFrames`
+
+**Parameters:**
+`totalFrames`, `frameRate`, `width`, `height`, `steps`, `cfg`, `sampler`, `scheduler`, `seed`, `outputFilenamePrefix`, `fps`, `quality`, `language`, `temperature`, `guideFrameIndex`, `guideStrength`
+
+Entity types with `image` or `image[]` type are not validated at runtime (they represent file paths or buffers). String/int/float types receive type checking in parameter updates.
+
+## Compatibility Exports
+
+For advanced use cases (e.g. migrating from internal APIs), the package also exports the underlying loader singletons:
+
+```js
+const { workflowLoader, connectorLoader, entitySchema } = require('animastor-comfyui-workflow-connector');
+```
+
+These expose the full internal API (node ID lookups, registry manipulation, etc.) and are intended for transitional compatibility only. Prefer `createWorkflowConnector()` for new code.
+
+## Standalone Contract
+
+This package has **zero** external dependencies:
 
 ```
-host business layer ──requires──▶ animastor-comfyui-workflow-connector ──▶ fs/path/crypto
+your code ──requires──▶ animastor-comfyui-workflow-connector ──▶ fs/path/crypto
 ```
 
-The package depends on **nothing but Node builtins**: no DB, no Redis,
-no HTTP, no GPU Hub, no dispatcher, no generation/business code.
-Guarded by `tests/connector-core.test.js` (standalone purity) and the host
-architecture suite (`backend/tests/architecture/comfyui-connector-core-boundary.test.js`).
+- No database, Redis, or HTTP dependencies
+- No GPU Hub, dispatcher, or job protocol dependencies
+- No hardcoded filesystem paths — all directories are injected at runtime
+- No generated artifacts or secrets in the published package
 
-## Asset directories (host-owned)
+The package ships only: `src/` (4 JS files), `README.md`, `LICENSE`, `package.json`.
 
-The package ships **no** workflow/connector assets. The host injects the
-directories at boot (`configure()` DI / `createWorkflowConnector` options).
-Fallback resolution order: explicit injection → `WF_DIR` / `CONNECTOR_DIR`
-env vars. In the Animastor monorepo the host (backend) passes
-`backend/ai/workflows` and `backend/ai/connectors`.
+## Running Tests
 
-## Tests
+Tests are included in the repository but **not** in the published npm package:
 
-```
+```bash
+git clone https://github.com/Animastor/animastor.git
+cd animastor/packages/animastor-comfyui-workflow-connector
 npm install
 npm test
 ```
 
-The suite (34 tests) proves the core works standalone with local fixtures:
-loading, entity schema, hash determinism/content-sensitivity, compatibility,
-binding application (incl. multi-bindings), the public API surface, typed
-errors, node-id hiding and fail-closed loading semantics.
+The test suite (34 tests) verifies workflow loading, connector validation, hash determinism, compatibility checks, binding application, the public API surface, typed errors, and dependency purity — all using local fixture files with zero host dependencies.
 
-## Installation in the Animastor monorepo
+## License
 
-The package is resolved via the repo-root `node_modules` symlink
-(same pattern as `@animastor/contracts`; see
-`docs/architecture/PHASE_9C_CONTRACTS_EXTRACTION_AUDIT.md` §3.1 for the
-docker build-context rationale):
-
-```
-mkdir -p node_modules
-ln -sfn ../packages/animastor-comfyui-workflow-connector node_modules/animastor-comfyui-workflow-connector
-```
-
-Docker: the backend build context is `./backend`, so the package is mounted
-read-only into the container by docker-compose:
-
-```
-./packages/animastor-comfyui-workflow-connector:/app/node_modules/animastor-comfyui-workflow-connector:ro
-```
+MIT

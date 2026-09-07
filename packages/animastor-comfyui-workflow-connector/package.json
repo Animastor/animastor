@@ -1,8 +1,18 @@
 {
   "name": "animastor-comfyui-workflow-connector",
   "version": "0.1.0",
-  "description": "Animastor ComfyUI Workflow Connector — declarative mapping core between Animastor entities (prompts, images, audio, parameters) and ComfyUI workflow JSON. Loads workflows + connectors, validates compatibility (content-sensitive sha256 + node-class checks), applies entity-keyed bindings and builds runnable workflow JSON. Zero host dependencies: fs/path/crypto only; asset directories and logger are injected by the host.",
+  "description": "Declarative mapping between data entities and ComfyUI workflow JSON. Loads workflows + connectors, validates compatibility (SHA-256 + node-class checks), applies entity-keyed bindings, and builds runnable workflow JSON. Zero runtime dependencies.",
   "main": "src/index.js",
+  "keywords": [
+    "comfyui",
+    "workflow",
+    "connector",
+    "mapping",
+    "ai",
+    "image-generation",
+    "node-id",
+    "declarative"
+  ],
   "files": [
     "src/",
     "README.md",
