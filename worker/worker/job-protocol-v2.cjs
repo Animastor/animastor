@@ -3,7 +3,7 @@
 // ======================================================
 // Generated copy of the canonical Job Protocol v2 implementation:
 //   package:   @animastor/contracts
-//   source:    contracts/src/job-protocol-v2.js
+//   source:    packages/animastor-contracts/src/job-protocol-v2.js
 //   sha256:    b005fafc01614e643e325b3433f657c6bd197ee6f76dca4d36eb1bf7de2b5a84
 //   generated: 0.1.0 snapshot
 // Generator:  worker/tools/sync-protocol.cjs (Phase 9D — blocker B2, option B)

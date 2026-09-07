@@ -24,7 +24,7 @@ const { readSource, rel, REPO_ROOT } = require('./helpers');
 const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-schema.js');
 // Phase 9C: canonical implementation lives in @animastor/contracts;
 // backend/src/runtime/job-schema.js is a compatibility facade re-export.
-const contractsImplPath = path.join(REPO_ROOT, 'contracts', 'src', 'job-protocol-v2.js');
+const contractsImplPath = path.join(REPO_ROOT, 'packages', 'animastor-contracts', 'src', 'job-protocol-v2.js');
 const gpuHubPath = path.join(REPO_ROOT, 'gpu-hub', 'gpu-hub.js');
 const workerPath = path.join(REPO_ROOT, 'worker', 'worker', 'worker.cjs');
 // Phase 9D: the worker consumes the GENERATED copy of the canonical

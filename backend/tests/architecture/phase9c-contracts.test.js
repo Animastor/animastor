@@ -34,7 +34,7 @@ const {
     requireSpecifiers, resolveSpecifier,
 } = require('./helpers');
 
-const CONTRACTS_DIR = path.join(REPO_ROOT, 'contracts');
+const CONTRACTS_DIR = path.join(REPO_ROOT, 'packages', 'animastor-contracts');
 const CONTRACTS_IMPL_PATH = path.join(CONTRACTS_DIR, 'src', 'job-protocol-v2.js');
 const CONTRACTS_INDEX_PATH = path.join(CONTRACTS_DIR, 'src', 'index.js');
 const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-schema.js');
@@ -100,7 +100,7 @@ describe('Phase 9C: contracts package isolation', () => {
         const offenders = [];
         for (const file of listSourceFiles(CONTRACTS_DIR)) {
             for (const { spec, target } of relativeTargets(file)) {
-                if (!target.startsWith('contracts/')) offenders.push(`${rel(file)}: ${spec}`);
+                if (!target.startsWith('packages/animastor-contracts/')) offenders.push(`${rel(file)}: ${spec}`);
             }
         }
         expect(offenders, 'contracts must not code-depend on any consuming component').to.deep.equal([]);
@@ -149,7 +149,7 @@ describe('Phase 9C: backend job-schema stays a pure facade', () => {
         // hub from this list: the hub consumes the canonical package via
         // the compose mount seam and carries no local literal.
         const allowed = new Set([
-            'contracts/src/job-protocol-v2.js',        // canonical
+            'packages/animastor-contracts/src/job-protocol-v2.js', // canonical
             'worker/worker/job-protocol-v2.cjs',       // GENERATED from canonical (Phase 9D, B2)
             'backend/src/routes/ai-connector-routes.cjs', // LAC protocol v1 (separate contract)
         ]);
@@ -199,7 +199,7 @@ describe('Phase 9C: dependency direction into contracts', () => {
         for (const dir of [BACKEND_SRC, HUB_DIR, WORKER_DIR, LAC_DIR]) {
             for (const file of listSourceFiles(dir)) {
                 for (const { spec, target } of relativeTargets(file)) {
-                    if (target.startsWith('contracts/') && !allowed.has(rel(file))) {
+                    if (target.startsWith('packages/animastor-contracts/') && !allowed.has(rel(file))) {
                         offenders.push(`${rel(file)}: ${spec}`);
                     }
                 }
@@ -308,7 +308,7 @@ describe('Phase 9C: cross-side Job Protocol v2 parity', () => {
 describe('Phase 9C: contracts deployment wiring', () => {
     it('backend compose service mounts the contracts package read-only', () => {
         const compose = fs.readFileSync(path.join(REPO_ROOT, 'docker-compose.yml'), 'utf8');
-        expect(compose).to.include('./contracts:/app/node_modules/@animastor/contracts:ro');
+        expect(compose).to.include('./packages/animastor-contracts:/app/node_modules/@animastor/contracts:ro');
     });
 
     it('gpu-hub compose service carries NO contracts mount (Phase 10G: hub resolves the published registry package)', () => {

@@ -39,7 +39,7 @@ const { REPO_ROOT, listSourceFiles, readSource, rel, requireSpecifiers } = requi
 const BUNDLE_DIR = path.join(REPO_ROOT, 'worker', 'worker');
 const WORKER_TESTS_DIR = path.join(REPO_ROOT, 'worker', 'tests');
 const SYNC_TOOL_PATH = path.join(REPO_ROOT, 'worker', 'tools', 'sync-protocol.cjs');
-const CONTRACTS_IMPL_PATH = path.join(REPO_ROOT, 'contracts', 'src', 'job-protocol-v2.js');
+const CONTRACTS_IMPL_PATH = path.join(REPO_ROOT, 'packages', 'animastor-contracts', 'src', 'job-protocol-v2.js');
 const MANIFEST_ROOT = path.join(REPO_ROOT, 'backend', 'ai', 'install-manifests');
 
 const RUNTIME_FILES = [

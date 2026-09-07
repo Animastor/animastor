@@ -231,7 +231,7 @@ describe('phase10d: canonical contracts resolution', () => {
     // Correctness of the copy (no fork) is guarded by protocol parity:
     // hub PROTOCOL_VERSION === monorepo canonical contracts value (asserted
     // here), plus the route/ownership freeze in the standalone suite.
-    const contractsCanonical = path.join(REPO_ROOT, 'contracts', 'src', 'index.js');
+    const contractsCanonical = path.join(REPO_ROOT, 'packages', 'animastor-contracts', 'src', 'index.js');
 
     it('require.resolve(@animastor/contracts) from the hub tree lands inside the hub tree (registry install, not root fallback)', () => {
         const resolved = fs.realpathSync(require.resolve('@animastor/contracts', { paths: [HUB_DIR] }));

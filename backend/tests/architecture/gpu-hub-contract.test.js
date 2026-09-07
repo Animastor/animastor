@@ -29,7 +29,7 @@ const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-sch
 // Phase 9C: the canonical Job Protocol v2 implementation moved to the
 // @animastor/contracts package; backend/src/runtime/job-schema.js is a
 // compatibility facade re-exporting it.
-const contractsImplPath = path.join(REPO_ROOT, 'contracts', 'src', 'job-protocol-v2.js');
+const contractsImplPath = path.join(REPO_ROOT, 'packages', 'animastor-contracts', 'src', 'job-protocol-v2.js');
 
 function read(file) {
     return readSource(file);

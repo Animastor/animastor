@@ -18,7 +18,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Animastor/animastor.git",
-    "directory": "contracts"
+    "directory": "packages/animastor-contracts"
   },
   "bugs": {
     "url": "https://github.com/Animastor/animastor/issues"

@@ -9,7 +9,7 @@
 // byte-exact copy of the canonical Job Protocol v2 implementation inside
 // the bundle — NOT a second, hand-maintained implementation:
 //
-//   canonical source : contracts/src/job-protocol-v2.js   (@animastor/contracts)
+//   canonical source : packages/animastor-contracts/src/job-protocol-v2.js   (@animastor/contracts)
 //   generated output : worker/worker/job-protocol-v2.cjs  (header + verbatim body)
 //
 // The copy is guarded by:
@@ -25,7 +25,7 @@
 //   node worker/tools/sync-protocol.cjs           # regenerate if out of sync
 //   node worker/tools/sync-protocol.cjs --check   # verify only; exit 1 on drift
 //
-// If contracts/src/job-protocol-v2.js changes, regenerate and commit both
+// If packages/animastor-contracts/src/job-protocol-v2.js changes, regenerate and commit both
 // files together (worker.cjs consumes the copy; hub/backend keep their own
 // integration surfaces — see docs/architecture/JOB_PROTOCOL_V2.md).
 
@@ -36,8 +36,8 @@ const fs = require("fs");
 const path = require("path");
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
-const CANONICAL_PATH = path.join(REPO_ROOT, "contracts", "src", "job-protocol-v2.js");
-const CANONICAL_PKG_PATH = path.join(REPO_ROOT, "contracts", "package.json");
+const CANONICAL_PATH = path.join(REPO_ROOT, "packages", "animastor-contracts", "src", "job-protocol-v2.js");
+const CANONICAL_PKG_PATH = path.join(REPO_ROOT, "packages", "animastor-contracts", "package.json");
 const BUNDLE_TARGET = path.join(REPO_ROOT, "worker", "worker", "job-protocol-v2.cjs");
 
 // The generated file is exactly: HEADER + canonical bytes. Everything after
@@ -47,7 +47,7 @@ const GENERATED_HEADER = `// ===================================================
 // ======================================================
 // Generated copy of the canonical Job Protocol v2 implementation:
 //   package:   @animastor/contracts
-//   source:    contracts/src/job-protocol-v2.js
+//   source:    packages/animastor-contracts/src/job-protocol-v2.js
 //   sha256:    {{CANONICAL_SHA256}}
 //   generated: {{CONTRACTS_VERSION}} snapshot
 // Generator:  worker/tools/sync-protocol.cjs (Phase 9D — blocker B2, option B)

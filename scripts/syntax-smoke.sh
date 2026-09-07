@@ -57,7 +57,7 @@ if [ $# -eq 0 ]; then
     GPU_HUB_SRC="$ROOT_DIR/gpu-hub"
     WORKER_SRC="$ROOT_DIR/worker"
     LAC_SRC="$ROOT_DIR/packages/animastor-ai-connector"
-    CONTRACTS_SRC="$ROOT_DIR/contracts"
+    CONTRACTS_SRC="$ROOT_DIR/packages/animastor-contracts"
 
     if [ -d "$BACKEND_SRC" ]; then
         check_dir "backend/src" "$BACKEND_SRC"
@@ -87,7 +87,7 @@ else
                 check_dir "worker" "$ROOT_DIR/worker"
                 ;;
             contracts)
-                check_dir "contracts" "$ROOT_DIR/contracts"
+                check_dir "contracts" "$ROOT_DIR/packages/animastor-contracts"
                 ;;
             *)
                 echo -e "${YELLOW}Unknown area: ${area}${NC}"
