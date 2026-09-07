@@ -45,7 +45,7 @@ const fs = require('fs');
 const { spawnSync } = require('child_process');
 const { REPO_ROOT } = require('./helpers');
 
-const HUB_DIR = path.join(REPO_ROOT, 'gpu-hub');
+const HUB_DIR = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub');
 const PKG_JSON = path.join(HUB_DIR, 'package.json');
 const PKG_LOCK = path.join(HUB_DIR, 'package-lock.json');
 

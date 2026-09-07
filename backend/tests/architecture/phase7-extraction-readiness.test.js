@@ -24,7 +24,7 @@ const { REPO_ROOT, BACKEND_SRC, listSourceFiles, readSource, rel } = require('./
 
 const LAC_DIR = path.join(REPO_ROOT, 'packages', 'animastor-ai-connector');
 const WORKER_DIR = path.join(REPO_ROOT, 'worker', 'worker');
-const HUB_DIR = path.join(REPO_ROOT, 'gpu-hub');
+const HUB_DIR = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub');
 
 function walkSource(dir, extensions = ['.js', '.cjs']) {
     return listSourceFiles(dir, extensions);

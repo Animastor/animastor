@@ -137,7 +137,7 @@ describe('orchestration stabilization: protocol contract', () => {
 
     it('keeps backend, GPU Hub, and worker on strict protocol version 2', () => {
         const hubSource = fs.readFileSync(
-            path.join(__dirname, '../../gpu-hub/gpu-hub.js'), 'utf8'
+            path.join(__dirname, '../../packages/animastor-gpu-hub/gpu-hub.js'), 'utf8'
         );
         // Phase 9D: the worker consumes the GENERATED canonical copy of the
         // Job Protocol v2 (worker/worker/job-protocol-v2.cjs) — the frozen
@@ -164,7 +164,7 @@ describe('orchestration stabilization: protocol contract', () => {
 
     it('keeps long video generation alive: per-job timeout is forwarded hub→worker, not a short fixed cap', () => {
         const hubSource = fs.readFileSync(
-            path.join(__dirname, '../../gpu-hub/gpu-hub.js'), 'utf8'
+            path.join(__dirname, '../../packages/animastor-gpu-hub/gpu-hub.js'), 'utf8'
         );
         const workerSource = fs.readFileSync(
             path.join(__dirname, '../../worker/worker/worker.cjs'), 'utf8'

@@ -367,7 +367,7 @@ describe('windows worker flow (mocked platform commands)', () => {
 // ---------------------------------------------------------------------------
 
 describe('bootstrap platform selection', () => {
-    const { buildBootstrapScript, buildWindowsBootstrapScript } = require('../../gpu-hub/bootstrap');
+    const { buildBootstrapScript, buildWindowsBootstrapScript } = require('../../packages/animastor-gpu-hub/bootstrap');
 
     it('the bash launcher keeps its credential rejection and checksum gates', () => {
         const s = buildBootstrapScript({ hubUrl: 'https://hub.example/gpu', profile: 'image/qwen-image', mode: 'managed' });
@@ -414,7 +414,7 @@ describe('bootstrap platform selection', () => {
 
 describe('hub GET /installer platform selection', () => {
     const { createMockRedis } = require('./mocks/redis-mock');
-    const { buildHubApp } = require('../../gpu-hub/gpu-hub');
+    const { buildHubApp } = require('../../packages/animastor-gpu-hub/gpu-hub');
 
     async function startHub() {
         const stubSrc = fs.mkdtempSync(path.join(os.tmpdir(), 'plat-hub-'));

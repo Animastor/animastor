@@ -10,7 +10,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Animastor/animastor.git",
-    "directory": "gpu-hub"
+    "directory": "packages/animastor-gpu-hub"
   },
   "bugs": {
     "url": "https://github.com/Animastor/animastor/issues"

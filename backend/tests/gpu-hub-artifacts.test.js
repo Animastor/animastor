@@ -21,7 +21,7 @@ const path = require('path');
 const zlib = require('zlib');
 
 const { createMockRedis } = require('./mocks/redis-mock');
-const { buildHubApp } = require('../../gpu-hub/gpu-hub');
+const { buildHubApp } = require('../../packages/animastor-gpu-hub/gpu-hub');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
 const REAL_WORKER_DIR = path.join(REPO_ROOT, 'worker', 'worker');

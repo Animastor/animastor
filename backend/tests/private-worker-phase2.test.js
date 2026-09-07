@@ -57,7 +57,7 @@ const workerRepo = require('../src/storage/postgres/repositories/worker-repo');
 const taskRepo = require('../src/storage/postgres/repositories/task-repo');
 const { createMockRedis } = require('./mocks/redis-mock');
 
-const hub = require('../../gpu-hub/gpu-hub');
+const hub = require('../../packages/animastor-gpu-hub/gpu-hub');
 const { buildHubApp, WORKER_AUTH_MIRROR_KEY, ORPHAN_GRACE_MS } = hub;
 
 const stamp = `pwphase2${Date.now()}`;

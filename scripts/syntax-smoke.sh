@@ -54,7 +54,7 @@ check_dir() {
 
 if [ $# -eq 0 ]; then
     BACKEND_SRC="$ROOT_DIR/backend/src"
-    GPU_HUB_SRC="$ROOT_DIR/gpu-hub"
+    GPU_HUB_SRC="$ROOT_DIR/packages/animastor-gpu-hub"
     WORKER_SRC="$ROOT_DIR/worker"
     LAC_SRC="$ROOT_DIR/packages/animastor-ai-connector"
     CONTRACTS_SRC="$ROOT_DIR/packages/animastor-contracts"
@@ -81,7 +81,7 @@ else
                 check_dir "backend/src" "$ROOT_DIR/backend/src"
                 ;;
             gpu-hub)
-                check_dir "gpu-hub" "$ROOT_DIR/gpu-hub"
+                check_dir "gpu-hub" "$ROOT_DIR/packages/animastor-gpu-hub"
                 ;;
             worker)
                 check_dir "worker" "$ROOT_DIR/worker"

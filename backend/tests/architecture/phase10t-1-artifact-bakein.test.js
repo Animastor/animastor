@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
-const HUB_DIR = path.join(REPO_ROOT, 'gpu-hub');
+const HUB_DIR = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub');
 
 function read(rel) {
   return fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
@@ -29,7 +29,7 @@ function read(rel) {
 
 describe('Phase 10T.1: Dockerfile artifact bake-in', () => {
   it('Dockerfile has a stager stage that copies all 4 artifact groups', () => {
-    const df = read('gpu-hub/Dockerfile');
+    const df = read('packages/animastor-gpu-hub/Dockerfile');
     expect(df).to.include('AS stager');
     expect(df).to.include('COPY --from=stager');
     expect(df).to.include('/app/artifacts/');
@@ -39,7 +39,7 @@ describe('Phase 10T.1: Dockerfile artifact bake-in', () => {
   });
 
   it('Dockerfile verifies all 4 groups exist at build time', () => {
-    const df = read('gpu-hub/Dockerfile');
+    const df = read('packages/animastor-gpu-hub/Dockerfile');
     expect(df).to.include('artifact bake-in verified');
     for (const d of ['worker-bundle', 'workflows', 'installer-src', 'install-manifests']) {
       expect(df, `Dockerfile missing build-time check for: ${d}`).to.include(`[ -d "/app/artifacts/$d" ]`);
@@ -47,7 +47,7 @@ describe('Phase 10T.1: Dockerfile artifact bake-in', () => {
   });
 
   it('Dockerfile does NOT copy the entire monorepo', () => {
-    const df = read('gpu-hub/Dockerfile');
+    const df = read('packages/animastor-gpu-hub/Dockerfile');
     // Should not have a bare "COPY . ." that includes the whole repo
     // (the stager uses selective COPY, the runtime stage copies only gpu-hub/)
     const lines = df.split('\n');
@@ -64,7 +64,7 @@ describe('Phase 10T.1: docker-compose build context', () => {
     const compose = read('docker-compose.yml');
     // Must use extended build syntax, not shorthand "build: ./gpu-hub"
     expect(compose).to.include('context: .');
-    expect(compose).to.include('dockerfile: gpu-hub/Dockerfile');
+    expect(compose).to.include('dockerfile: packages/animastor-gpu-hub/Dockerfile');
     // Shorthand must be gone
     expect(compose).not.to.match(/^(\s*)build:\s+\.\/gpu-hub\s*$/m);
   });
@@ -74,13 +74,13 @@ describe('Phase 10T.1: docker-compose build context', () => {
 
 describe('Phase 10T.1: resolveArtifactDir resolution order', () => {
   it('resolves baked-in artifacts/ before mount fallback', () => {
-    const src = read('gpu-hub/gpu-hub.js');
+    const src = read('packages/animastor-gpu-hub/gpu-hub.js');
     expect(src).to.include("path.join(__dirname, 'artifacts')");
     expect(src).to.include('fs.existsSync(bakedPath)');
   });
 
   it('all 4 artifact dirs have correct baked-in names and mount fallbacks', () => {
-    const src = read('gpu-hub/gpu-hub.js');
+    const src = read('packages/animastor-gpu-hub/gpu-hub.js');
     const frozen = [
       ['worker-bundle', '/app/worker-bundle'],
       ['workflows',     '/app/workflows'],
@@ -118,7 +118,7 @@ describe('Phase 10T.1: Installer getWorkerBundleVersion resolution', () => {
 
 describe('Phase 10T.1: /worker-source removal', () => {
   it('frozen route set does not include /worker-source', () => {
-    const src = read('gpu-hub/gpu-hub.js');
+    const src = read('packages/animastor-gpu-hub/gpu-hub.js');
     // The route handler for /worker-source must not exist
     const routeMatch = src.match(/app\.(get|post)\(\s*['"]\/worker-source/);
     expect(routeMatch).to.be.null;
@@ -127,7 +127,7 @@ describe('Phase 10T.1: /worker-source removal', () => {
   it('runtime files contain no /worker-source references', () => {
     const runtimeFiles = ['gpu-hub.js', 'server.js', 'tarball.js', 'bootstrap.js'];
     for (const file of runtimeFiles) {
-      const src = read(path.join('gpu-hub', file));
+      const src = read(path.join('packages/animastor-gpu-hub', file));
       expect(src, `${file} still references /worker-source`).not.to.include('/worker-source');
     }
   });

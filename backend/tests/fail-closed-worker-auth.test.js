@@ -46,7 +46,7 @@ const config = require('../src/config/runtime-config');
 const workerRepo = require('../src/storage/postgres/repositories/worker-repo');
 const { createMockRedis } = require('./mocks/redis-mock');
 
-const hub = require('../../gpu-hub/gpu-hub');
+const hub = require('../../packages/animastor-gpu-hub/gpu-hub');
 const { buildHubApp, WORKER_AUTH_MIRROR_KEY, PROTOCOL_VERSION } = hub;
 
 const stamp = `fcwa${Date.now()}`;

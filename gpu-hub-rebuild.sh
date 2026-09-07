@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rebuild the local GPU Hub from the monorepo fixture ./gpu-hub.
+# Rebuild the local GPU Hub from the monorepo fixture ./packages/animastor-gpu-hub.
 # Phase 10T: uses local dev overlay with bind mounts for artifacts.
 # For production, use the GHCR image via overlay-gpu-hub-standalone.yml.
 

@@ -29,7 +29,7 @@ const { expect } = require('chai');
 const path = require('path');
 const { listSourceFiles, readSource, rel, REPO_ROOT } = require('./helpers');
 
-const HUB_DIR = path.join(REPO_ROOT, 'gpu-hub');
+const HUB_DIR = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub');
 const CONTRACTS_IMPL = path.join(REPO_ROOT, 'packages', 'animastor-contracts', 'src', 'job-protocol-v2.js');
 const WORKER_REPO = path.join(REPO_ROOT, 'backend', 'src', 'storage', 'postgres', 'repositories', 'worker-repo.js');
 

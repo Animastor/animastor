@@ -115,7 +115,7 @@ services:
     # NEVER use a moving tag — pin by digest (see the Phase 10J audit).
     build:
       context: .
-      dockerfile: gpu-hub/Dockerfile
+      dockerfile: packages/animastor-gpu-hub/Dockerfile
     image: ${GPU_HUB_IMAGE:-animastor-gpu-hub:local}
     container_name: gpu-hub
     restart: unless-stopped

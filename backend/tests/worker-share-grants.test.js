@@ -35,7 +35,7 @@ const userRepo = require('../src/storage/postgres/repositories/user-repo');
 const shareEvents = require('../src/services/share-events');
 const { createMockRedis } = require('./mocks/redis-mock');
 
-const hub = require('../../gpu-hub/gpu-hub');
+const hub = require('../../packages/animastor-gpu-hub/gpu-hub');
 const { buildHubApp, PROTOCOL_VERSION, WORKER_AUTH_MIRROR_KEY } = hub;
 
 const WS_A = '11111111-1111-4111-8111-111111111111';

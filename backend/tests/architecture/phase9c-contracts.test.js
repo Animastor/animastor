@@ -38,10 +38,10 @@ const CONTRACTS_DIR = path.join(REPO_ROOT, 'packages', 'animastor-contracts');
 const CONTRACTS_IMPL_PATH = path.join(CONTRACTS_DIR, 'src', 'job-protocol-v2.js');
 const CONTRACTS_INDEX_PATH = path.join(CONTRACTS_DIR, 'src', 'index.js');
 const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-schema.js');
-const gpuHubPath = path.join(REPO_ROOT, 'gpu-hub', 'gpu-hub.js');
+const gpuHubPath = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub', 'gpu-hub.js');
 const workerPath = path.join(REPO_ROOT, 'worker', 'worker', 'worker.cjs');
 const LAC_DIR = path.join(REPO_ROOT, 'packages', 'animastor-ai-connector');
-const HUB_DIR = path.join(REPO_ROOT, 'gpu-hub');
+const HUB_DIR = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub');
 const WORKER_DIR = path.join(REPO_ROOT, 'worker', 'worker');
 
 function read(file) {

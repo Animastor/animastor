@@ -22,7 +22,7 @@ const fs = require('fs');
 const path = require('path');
 const { readSource, rel, REPO_ROOT } = require('./helpers');
 
-const gpuHubPath = path.join(REPO_ROOT, 'gpu-hub', 'gpu-hub.js');
+const gpuHubPath = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub', 'gpu-hub.js');
 const workerPath = path.join(REPO_ROOT, 'worker', 'worker', 'worker.cjs');
 const dispatcherPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'gpu-dispatcher.js');
 const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-schema.js');

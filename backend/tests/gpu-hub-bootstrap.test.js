@@ -20,8 +20,8 @@ const os = require('os');
 const path = require('path');
 
 const { createMockRedis } = require('./mocks/redis-mock');
-const { buildHubApp } = require('../../gpu-hub/gpu-hub');
-const { buildBootstrapScript } = require('../../gpu-hub/bootstrap');
+const { buildHubApp } = require('../../packages/animastor-gpu-hub/gpu-hub');
+const { buildBootstrapScript } = require('../../packages/animastor-gpu-hub/bootstrap');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
 const REAL_MANIFESTS = path.join(REPO_ROOT, 'backend', 'ai', 'install-manifests');

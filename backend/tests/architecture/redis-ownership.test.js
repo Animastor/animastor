@@ -99,7 +99,7 @@ describe('architecture: Redis ownership', () => {
     it('every animastor:* key literal in backend src and gpu-hub belongs to a registered family', () => {
         const dirs = [
             path.join(REPO_ROOT, 'backend', 'src'),
-            path.join(REPO_ROOT, 'gpu-hub'),
+            path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub'),
         ];
         const keyRe = /['"`]animastor:[a-zA-Z0-9:_\-${}.]+['"`]/g;
         const unresolved = [];

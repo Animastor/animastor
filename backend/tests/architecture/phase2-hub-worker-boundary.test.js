@@ -23,7 +23,7 @@ const path = require('path');
 const fs = require('fs');
 const { readSource, rel, REPO_ROOT } = require('./helpers');
 
-const gpuHubPath = path.join(REPO_ROOT, 'gpu-hub', 'gpu-hub.js');
+const gpuHubPath = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub', 'gpu-hub.js');
 const workerPath = path.join(REPO_ROOT, 'worker', 'worker', 'worker.cjs');
 const dispatcherPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'gpu-dispatcher.js');
 const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-schema.js');
@@ -93,9 +93,9 @@ describe('architecture: GPU Hub / Worker boundary — role separation', () => {
 
     it('hub has no code-level backend/worker source dependencies (HTTP + shared Redis only)', () => {
         const banned = /require\(['\"][^'\"]*(backend\/src|backend\/ai|worker\/worker|frontends)/;
-        for (const file of fs.readdirSync(path.join(REPO_ROOT, 'gpu-hub'))) {
+        for (const file of fs.readdirSync(path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub'))) {
             if (!/\.js$/.test(file) && !/\.cjs$/.test(file)) continue;
-            const src = readSource(path.join(REPO_ROOT, 'gpu-hub', file));
+            const src = readSource(path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub', file));
             expect(src, file).to.not.match(banned);
         }
     });

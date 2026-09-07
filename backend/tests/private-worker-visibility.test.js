@@ -52,7 +52,7 @@ const workerAuth = require('../src/services/worker-auth');
 const workerRepo = require('../src/storage/postgres/repositories/worker-repo');
 const { createMockRedis } = require('./mocks/redis-mock');
 
-const hub = require('../../gpu-hub/gpu-hub');
+const hub = require('../../packages/animastor-gpu-hub/gpu-hub');
 const { buildHubApp, PROTOCOL_VERSION } = hub;
 
 const WS_A = '11111111-1111-4111-8111-111111111111';

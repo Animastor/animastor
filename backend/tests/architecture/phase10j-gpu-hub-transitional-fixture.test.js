@@ -30,7 +30,7 @@ const fs = require('fs');
 const path = require('path');
 const { REPO_ROOT, BACKEND_SRC, listSourceFiles, readSource, rel, requireSpecifiers } = require('./helpers');
 
-const HUB_DIR = path.join(REPO_ROOT, 'gpu-hub');
+const HUB_DIR = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub');
 const COMPOSE_PATH = path.join(REPO_ROOT, 'docker-compose.yml');
 
 // Bare specifiers that would smuggle hub code into the backend runtime.
@@ -60,7 +60,7 @@ describe('phase10j: no runtime imports from backend/src into gpu-hub (TF2)', () 
                 if (!spec.startsWith('.')) continue;
                 const base = path.resolve(path.dirname(file), spec);
                 const normalized = path.relative(REPO_ROOT, base).split(path.sep).join('/');
-                if (normalized === 'gpu-hub' || normalized.startsWith('gpu-hub/')) {
+                if (normalized === 'packages/animastor-gpu-hub' || normalized.startsWith('packages/animastor-gpu-hub/')) {
                     offenders.push(`${rel(file)}: ${spec}`);
                 }
             }
@@ -106,8 +106,8 @@ describe('phase10j: compose GPU Hub image parameterization (TF3)', () => {
 
     it('default build stays the local fixture (production NOT yet switched)', () => {
         // Phase 10T.1: build context is now repo root (context: .) for multi-stage
-        // artifact bake-in. The Dockerfile path is still gpu-hub/Dockerfile.
-        expect(hubSection, 'transitional default: build must reference gpu-hub/Dockerfile').to.include('dockerfile: gpu-hub/Dockerfile');
+        // artifact bake-in. The Dockerfile path moved to packages/animastor-gpu-hub/.
+        expect(hubSection, 'transitional default: build must reference packages/animastor-gpu-hub/Dockerfile').to.include('dockerfile: packages/animastor-gpu-hub/Dockerfile');
     });
 
     it('image reference is parameterized with a local default (no :latest anywhere)', () => {

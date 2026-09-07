@@ -16,11 +16,11 @@ FROM node:20-slim
 
 WORKDIR /app
 
-COPY gpu-hub/package.json ./
+COPY packages/animastor-gpu-hub/package.json ./
 RUN npm install --omit=dev
 
-COPY gpu-hub/gpu-hub.js gpu-hub/server.js gpu-hub/tarball.js gpu-hub/bootstrap.js ./
-COPY gpu-hub/README.md gpu-hub/LICENSE ./
+COPY packages/animastor-gpu-hub/gpu-hub.js packages/animastor-gpu-hub/server.js packages/animastor-gpu-hub/tarball.js packages/animastor-gpu-hub/bootstrap.js ./
+COPY packages/animastor-gpu-hub/README.md packages/animastor-gpu-hub/LICENSE ./
 
 # Bake in the 4 artifact groups from the staging layer.
 COPY --from=stager /staging/artifacts/ /app/artifacts/

@@ -27,7 +27,7 @@ const { runMigrations } = require('../src/storage/postgres/schema');
 const { authContext } = require('../src/middleware/auth-context');
 const config = require('../src/config/runtime-config');
 const { createMockRedis } = require('./mocks/redis-mock');
-const { buildHubApp } = require('../../gpu-hub/gpu-hub');
+const { buildHubApp } = require('../../packages/animastor-gpu-hub/gpu-hub');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
 
