@@ -50,9 +50,9 @@ const {
     discoverModels,
     normalizeOpenAiModels,
     getAdapter,
-} = require('../../ai-connector/lib/runtime-adapters/index.cjs');
-const { parseConfig } = require('../../ai-connector/lib/config.cjs');
-const { createConnectorSession } = require('../../ai-connector/lib/connector.cjs');
+} = require('../../packages/animastor-ai-connector/lib/runtime-adapters/index.cjs');
+const { parseConfig } = require('../../packages/animastor-ai-connector/lib/config.cjs');
+const { createConnectorSession } = require('../../packages/animastor-ai-connector/lib/connector.cjs');
 
 const stamp = `lac3${Date.now()}`;
 

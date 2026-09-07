@@ -56,10 +56,10 @@ const { createMockRedis } = require('./mocks/redis-mock');
 const {
     chatCompletion,
     normalizeOpenAiChatCompletion,
-} = require('../../ai-connector/lib/runtime-adapters/index.cjs');
-const chatLib = require('../../ai-connector/lib/chat.cjs');
-const { createConnectorSession } = require('../../ai-connector/lib/connector.cjs');
-const opLog = require('../../ai-connector/lib/log.cjs');
+} = require('../../packages/animastor-ai-connector/lib/runtime-adapters/index.cjs');
+const chatLib = require('../../packages/animastor-ai-connector/lib/chat.cjs');
+const { createConnectorSession } = require('../../packages/animastor-ai-connector/lib/connector.cjs');
+const opLog = require('../../packages/animastor-ai-connector/lib/log.cjs');
 
 const stamp = `lac4${Date.now()}`;
 

@@ -697,7 +697,7 @@ function waitFor(predicate, { timeoutMs = 5000, stepMs = 25 } = {}) {
 
 /** Lazy require of the ai-connector distributable session lib. */
 function getConnectorLib() {
-    return Promise.resolve(require('../../ai-connector/lib/connector.cjs'));
+    return Promise.resolve(require('../../packages/animastor-ai-connector/lib/connector.cjs'));
 }
 
 /**

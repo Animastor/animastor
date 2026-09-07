@@ -26,7 +26,7 @@ const { listSourceFiles, readSource, rel, REPO_ROOT, requireSpecifiers } = requi
 
 const WORKER_DIR = path.join(REPO_ROOT, 'worker', 'worker');
 const HUB_DIR = path.join(REPO_ROOT, 'gpu-hub');
-const LAC_DIR = path.join(REPO_ROOT, 'ai-connector');
+const LAC_DIR = path.join(REPO_ROOT, 'packages', 'animastor-ai-connector');
 const FRONTEND_APP_DIR = path.join(REPO_ROOT, 'frontends', 'app', 'src');
 const BACKEND_SRC = path.join(REPO_ROOT, 'backend', 'src');
 

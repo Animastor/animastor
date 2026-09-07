@@ -40,7 +40,7 @@ const CONTRACTS_INDEX_PATH = path.join(CONTRACTS_DIR, 'src', 'index.js');
 const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-schema.js');
 const gpuHubPath = path.join(REPO_ROOT, 'gpu-hub', 'gpu-hub.js');
 const workerPath = path.join(REPO_ROOT, 'worker', 'worker', 'worker.cjs');
-const LAC_DIR = path.join(REPO_ROOT, 'ai-connector');
+const LAC_DIR = path.join(REPO_ROOT, 'packages', 'animastor-ai-connector');
 const HUB_DIR = path.join(REPO_ROOT, 'gpu-hub');
 const WORKER_DIR = path.join(REPO_ROOT, 'worker', 'worker');
 

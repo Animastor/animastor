@@ -26,7 +26,7 @@ const PRODUCTION_ROOTS = [
     'backend/src',
     'gpu-hub',
     'worker/worker',
-    'ai-connector',
+    'packages/animastor-ai-connector',
     'frontends/app/src',
     'frontends/android/app/src',
     'scripts',

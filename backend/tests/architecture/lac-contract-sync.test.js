@@ -32,7 +32,7 @@ const { REPO_ROOT } = require('./helpers');
 
 // Single point of truth for the future extraction: if the package moves,
 // update this (or the resolution below) once.
-const LAC_DIR = path.join(REPO_ROOT, 'ai-connector');
+const LAC_DIR = path.join(REPO_ROOT, 'packages', 'animastor-ai-connector');
 
 // The backend side under contract.
 const routes = require('../../src/routes/ai-connector-routes.cjs');

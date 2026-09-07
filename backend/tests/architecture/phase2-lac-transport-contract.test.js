@@ -25,11 +25,11 @@ const path = require('path');
 const fs = require('fs');
 const { readSource, rel, REPO_ROOT } = require('./helpers');
 
-const lacIndex = path.join(REPO_ROOT, 'ai-connector', 'index.cjs');
-const lacConfig = path.join(REPO_ROOT, 'ai-connector', 'lib', 'config.cjs');
-const lacConnector = path.join(REPO_ROOT, 'ai-connector', 'lib', 'connector.cjs');
-const lacChat = path.join(REPO_ROOT, 'ai-connector', 'lib', 'chat.cjs');
-const lacRuntimeIndex = path.join(REPO_ROOT, 'ai-connector', 'lib', 'runtime-adapters', 'index.cjs');
+const lacIndex = path.join(REPO_ROOT, 'packages', 'animastor-ai-connector', 'index.cjs');
+const lacConfig = path.join(REPO_ROOT, 'packages', 'animastor-ai-connector', 'lib', 'config.cjs');
+const lacConnector = path.join(REPO_ROOT, 'packages', 'animastor-ai-connector', 'lib', 'connector.cjs');
+const lacChat = path.join(REPO_ROOT, 'packages', 'animastor-ai-connector', 'lib', 'chat.cjs');
+const lacRuntimeIndex = path.join(REPO_ROOT, 'packages', 'animastor-ai-connector', 'lib', 'runtime-adapters', 'index.cjs');
 const backendRoutes = path.join(REPO_ROOT, 'backend', 'src', 'routes', 'ai-connector-routes.cjs');
 const backendTransport = path.join(REPO_ROOT, 'backend', 'src', 'services', 'ai-connector', 'transport.js');
 const backendDiscovery = path.join(REPO_ROOT, 'backend', 'src', 'services', 'ai-connector', 'discovery.js');
@@ -44,7 +44,7 @@ function read(file) {
 
 describe('architecture: LAC boundary — standalone, WS-only, outbound-only', () => {
     it('ai-connector (LAC) package has only ws as external dependency', () => {
-        const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'ai-connector', 'package.json'), 'utf8'));
+        const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'packages', 'animastor-ai-connector', 'package.json'), 'utf8'));
         expect(pkg.dependencies).to.have.property('ws');
         expect(Object.keys(pkg.dependencies)).to.deep.equal(['ws']);
     });

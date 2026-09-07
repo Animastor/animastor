@@ -213,7 +213,7 @@ function buildBackend() {
 
 // ── real connector session (the distributable) ────────────────────────────
 
-const { createConnectorSession } = require('../../ai-connector/lib/connector.cjs');
+const { createConnectorSession } = require('../../packages/animastor-ai-connector/lib/connector.cjs');
 
 function startConnector(wsUrl, token, runtimeBaseUrl) {
     const session = createConnectorSession({

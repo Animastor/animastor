@@ -56,7 +56,7 @@ if [ $# -eq 0 ]; then
     BACKEND_SRC="$ROOT_DIR/backend/src"
     GPU_HUB_SRC="$ROOT_DIR/gpu-hub"
     WORKER_SRC="$ROOT_DIR/worker"
-    LAC_SRC="$ROOT_DIR/ai-connector"
+    LAC_SRC="$ROOT_DIR/packages/animastor-ai-connector"
     CONTRACTS_SRC="$ROOT_DIR/contracts"
 
     if [ -d "$BACKEND_SRC" ]; then
