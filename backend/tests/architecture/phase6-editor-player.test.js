@@ -147,16 +147,16 @@ describe('T4: facades are wired at the composition root', () => {
     it('contour routes destructure the facade deps', () => {
         expect(readSource(path.join(REPO_ROOT, 'packages', 'animastor-player', 'src', 'player-routes.cjs'))).to.match(/playerModel/);
         expect(readSource(path.join(REPO_ROOT, 'packages', 'animastor-player', 'src', 'player-shared.cjs'))).to.match(/playerModel/);
-        expect(readSource(path.join(BACKEND_SRC, 'routes', 'book', 'core-routes.cjs'))).to.match(/editorModel/);
-        expect(readSource(path.join(BACKEND_SRC, 'routes', 'book', 'entity-crud-routes.cjs'))).to.match(/editorModel/);
+        expect(readSource(path.join(BACKEND_SRC, 'routes', 'editor', 'editor-routes.cjs'))).to.match(/editorModel/);
+        expect(readSource(path.join(BACKEND_SRC, 'routes', 'editor', 'entity-crud-routes.cjs'))).to.match(/editorModel/);
     });
 });
 
 // ── T5 — contour routes go through the facades ───────────────────────────
 describe('T5: Editor/Player contours load through the facades', () => {
     const editorRoutes = [
-        'routes/book/core-routes.cjs',
-        'routes/book/entity-crud-routes.cjs',
+        'routes/editor/editor-routes.cjs',
+        'routes/editor/entity-crud-routes.cjs',
     ];
 
     it('editor routes have NO direct book.loadBook / book.saveBookBundle calls', () => {
@@ -241,13 +241,29 @@ describe('T6: contour routes do not gain new implementation-detail deps', () => 
             '../services/audio-orchestrator',
             '../services/video-orchestrator',
         ],
-        'routes/book/core-routes.cjs': [
-            '../../storage/postgres/repositories/scene-assets-repo',
-            '../../orchestration/scene-restoration',
+        'routes/editor/editor-routes.cjs': [
+            // Editor contour (route split): host legs moved behind the
+            // editorPorts seam — the only requires left are the contour's
+            // own pure helpers. The dead scene-restoration edge was deleted
+            // with the split (audit F3).
             './scene-patch-utils.cjs',
-            './recover-chunks.cjs',
+            './read-recovery.cjs',
+        ],
+        'routes/editor/entity-crud-routes.cjs': [
+            '../../utils/entity-id',
+            './scene-patch-utils.cjs',
+            '../../book/lazy-book/paths',
+        ],
+        'routes/editor/editor-ports.cjs': [
+            // The port module IS the host seam by design: it wires the host
+            // implementations (entity-cleanup factory, audit service, agent
+            // constant, workspace-ownership) into the port object at the
+            // composition root. Contour registrars never require these
+            // directly (frozen above).
+            '../../services/entity-cleanup.cjs',
             '../../services/source-coverage-audit',
             '../../services/agent-prompts',
+            '../../middleware/workspace-ownership',
         ],
         'packages/animastor-player/src/player-routes.cjs': [
             // Player package registrar — only intra-package wiring is allowed.
@@ -262,13 +278,6 @@ describe('T6: contour routes do not gain new implementation-detail deps', () => 
         'packages/animastor-player/src/scene-data.cjs': ['./artifact-naming.cjs'],
         'packages/animastor-player/src/iu-media.cjs': ['./artifact-naming.cjs'],
         'packages/animastor-player/src/playback-queue.cjs': ['./artifact-naming.cjs'],
-        'routes/book/entity-crud-routes.cjs': [
-            '../../utils/entity-id',
-            './scene-patch-utils.cjs',
-            '../../book/lazy-book/paths',
-            '../../services/entity-cleanup.cjs',
-            '../../middleware/workspace-ownership',
-        ],
         'routes/book/generation-routes.cjs': [
             // Generation-control leg (regenerate / cancel / generate-next) —
             // requires dispatch/runtime + PG repos + raw PG for its VBook

@@ -1,60 +1,71 @@
 // ======================================================
-// Core Book Routes — GET/PUT/PATCH/DELETE + Cover
+// EDITOR ROUTES — Core Book GET/PUT/PATCH/DELETE + Cover
 // ======================================================
+// Editor contour (Phase 1 of the Editor extraction —
+// docs/architecture/editor-module-extraction-audit.md §13).
+// Moved byte-for-byte from routes/book/core-routes.cjs (route split,
+// the 4d1f6f0e playbook): same endpoints, same handlers, same HTTP
+// semantics. Host implementation modules (PG repos, services, agent
+// constants) no longer land here via direct requires — they arrive via
+// the editorPorts seam wired at the composition root
+// (routes/editor/editor-ports.cjs), the playerPorts analog.
+//
+// 11 endpoints: GET book, GET source-coverage, GET cover, PUT book,
+// PATCH scene/metadata/locations/characters/voices/behaviors, DELETE book.
 
-const sceneAssetsRepo = require('../../storage/postgres/repositories/scene-assets-repo');
-const { restoreSceneChunkStatus } = require('../../orchestration/scene-restoration');
 const { setDeep, findUnitInScene, normalizeFieldValue, rebuildFullText } = require('./scene-patch-utils.cjs');
-const { recoverMissingRedisChunks } = require('./recover-chunks.cjs');
-const sourceCoverageAudit = require('../../services/source-coverage-audit');
-const { IMAGE_PROMPT_MAX_CHARS } = require('../../services/agent-prompts');
+const { recoverMissingRedisChunks } = require('./read-recovery.cjs');
 
 // ── Editor-save prompt guard ─────────────────────────────────────────
 // A frame prompt (image.prompt / video.action) longer than the ceiling is almost
 // always a stray paste ("collected a wall of text and hit Save"). Reject it at the
 // boundary with a clear message instead of silently truncating — truncation would
 // let downstream polish passes rewrite the unseen part (see the
-// IMAGE_PROMPT_MAX_CHARS policy in agent-prompts.js).
-const PROMPT_PATH_KEYS = new Set(['image.prompt', 'visual.prompt', 'video.action']);
-
-function promptLengthError(field, value) {
-    return `Field "${field}" is ${value.length} chars — exceeds the ${IMAGE_PROMPT_MAX_CHARS}-char limit for a frame prompt. It looks like a large text block was pasted in; please shorten it.`;
-}
-
-function assertPromptLength(field, value) {
-    if (typeof value === 'string' && value.length > IMAGE_PROMPT_MAX_CHARS) {
-        const err = new Error(promptLengthError(field, value));
-        err.statusCode = 400;
-        throw err;
-    }
-}
-
-function findOversizedPromptInScene(sceneObj) {
-    const units = sceneObj && Array.isArray(sceneObj.units) ? sceneObj.units : [];
-    for (let i = 0; i < units.length; i++) {
-        const u = units[i] || {};
-        for (const field of PROMPT_PATH_KEYS) {
-            const [a, b] = field.split('.');
-            const val = u[a] && u[a][b];
-            if (typeof val === 'string' && val.length > IMAGE_PROMPT_MAX_CHARS) {
-                return { path: `units[${i}].${field}`, length: val.length };
-            }
-        }
-    }
-    return null;
-}
+// IMAGE_PROMPT_MAX_CHARS policy in agent-prompts.js — the constant now
+// flows through the editorPorts.promptLimit seam; the policy doc stays
+// host-side).
 
 module.exports = function(app, redis, deps) {
     const {
-        config, state, audio, image, video, book, orchestrator, storage,
-        txtImporter, lazyBook, genSessionRepo, bookSourceRepo,
-        placeholderAudio, layerConfig, genScope, activeScenes,
-        utils, saveChunk, getChunk, getAllChunks, getBookWindowStatus,
-        detectAvailableMode, recoverChunksFromDisk, recoverAllBooksFromDisk,
-        cleanupService, bookDiff, taskHandler, windowGenerator,
-        iuRepo, bookDeletion, editorModel,
+        book, bookDiff, storage, bookDeletion, editorModel,
+        editorPorts, utils,
     } = deps;
     const { log } = utils;
+    const placeholderAudio = editorPorts.placeholderAudio;
+
+    // Host legs via the port object (composition root wires the same
+    // function references the pre-split code required directly).
+    const sceneAssetsRepo = editorPorts.sceneAssetsRepo;
+    const sourceCoverageAudit = editorPorts.auditCoverage;
+    const IMAGE_PROMPT_MAX_CHARS = editorPorts.promptLimit;
+    const PROMPT_PATH_KEYS = new Set(['image.prompt', 'visual.prompt', 'video.action']);
+
+    function promptLengthError(field, value) {
+        return `Field "${field}" is ${value.length} chars — exceeds the ${IMAGE_PROMPT_MAX_CHARS}-char limit for a frame prompt. It looks like a large text block was pasted in; please shorten it.`;
+    }
+
+    function assertPromptLength(field, value) {
+        if (typeof value === 'string' && value.length > IMAGE_PROMPT_MAX_CHARS) {
+            const err = new Error(promptLengthError(field, value));
+            err.statusCode = 400;
+            throw err;
+        }
+    }
+
+    function findOversizedPromptInScene(sceneObj) {
+        const units = sceneObj && Array.isArray(sceneObj.units) ? sceneObj.units : [];
+        for (let i = 0; i < units.length; i++) {
+            const u = units[i] || {};
+            for (const field of PROMPT_PATH_KEYS) {
+                const [a, b] = field.split('.');
+                const val = u[a] && u[a][b];
+                if (typeof val === 'string' && val.length > IMAGE_PROMPT_MAX_CHARS) {
+                    return { path: `units[${i}].${field}`, length: val.length };
+                }
+            }
+        }
+        return null;
+    }
 
     // ======================================================
     // GET BOOK DATA
@@ -119,7 +130,7 @@ module.exports = function(app, redis, deps) {
             }
 
             try {
-                await recoverMissingRedisChunks({ redis, book, state, activeScenes, config, getAllChunks, saveChunk, log }, buildId, bookId);
+                await recoverMissingRedisChunks(editorPorts.recoveryCtx, buildId, bookId);
             } catch (chunkErr) {
                 console.warn(`[BOOK-RECOVER] ${bookId}: chunk recovery failed: ${chunkErr.message}`);
             }

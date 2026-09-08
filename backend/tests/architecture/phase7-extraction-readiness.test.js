@@ -125,7 +125,7 @@ describe('P7-T4: VBook internals are not reached by new direct consumers', () =>
         'backend/src/orchestration/scene-callbacks.js: ../book',
         'backend/src/orchestration/scene-orchestrator.js: ../book',
         'backend/src/routes/ai-routes.cjs: ../book/bundle-validator.cjs',
-        'backend/src/routes/book/entity-crud-routes.cjs: ../../book/lazy-book/paths',
+        'backend/src/routes/editor/entity-crud-routes.cjs: ../../book/lazy-book/paths',
         'backend/src/runtime/reconciliation-engine.js: ../book',
         'backend/src/runtime/runtime-scheduler.js: ../book',
         'backend/src/runtime/scene-window.js: ../book',

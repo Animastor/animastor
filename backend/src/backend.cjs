@@ -303,9 +303,11 @@ const routeDeps = {
     //   resolveOwnership  — workspace-ownership attach (POST /book/blank)
     //   recoveryCtx       — read-recovery dependencies (redis chunk repair)
     editorPorts: require('./routes/editor/editor-ports.cjs')({
-        redis, config, storage, runtime, bookDiff, book,
-        sceneAssetsRepo, placeholderAudio, activeScenes, state,
-        getAllChunks, saveChunk, utils,
+        deps: {
+            redis, config, storage, runtime, bookDiff, book,
+            sceneAssetsRepo, placeholderAudio, activeScenes, state,
+            getAllChunks, saveChunk, utils,
+        },
     }),
 };
 

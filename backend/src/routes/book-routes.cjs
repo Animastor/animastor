@@ -5,12 +5,17 @@
 // Split into sub-route modules for maintainability.
 //
 // Sub-modules (routes/book/):
-//   core-routes.cjs      - GET/PUT/PATCH book, DELETE, source-coverage, cover
 //   import-routes.cjs    - load-vbook, import-txt, bootstrap, resume-bootstrap, bootstrap-next-window, trigger-next-window
 //   generation-routes.cjs - regenerate, cancel-generation, generate-next
 //   agent-routes.cjs     - GET agent-status
 //   recovery-routes.cjs  - recover-placeholders
-//   entity-crud-routes.cjs - add/delete characters, locations, voices
+//
+// Editor contour (routes/editor/ — Phase 1 of the Editor extraction,
+// docs/architecture/editor-module-extraction-audit.md §13): core book
+// CRUD + entity/structure CRUD moved there, registered below.
+//   editor-routes.cjs       - GET/PUT/PATCH book, DELETE, source-coverage, cover
+//   entity-crud-routes.cjs  - add/delete characters, locations, voices,
+//                             behaviors, chapters, scenes, units; POST /blank
 //
 // Previously extracted sub-registrars:
 //   status-routes.cjs    - status endpoints
@@ -23,8 +28,12 @@
 //                          stub was deleted with the physical move.
 
 module.exports = function(app, redis, deps) {
-    // Core CRUD routes
-    require('./book/core-routes.cjs')(app, redis, deps);
+    // Editor contour — core book CRUD (GET/PUT/PATCH book, DELETE, cover,
+    // source-coverage) + entity/structure CRUD. Same endpoints, same
+    // handlers, same registration order as before the split (4d1f6f0e
+    // playbook — behavior-neutral move).
+    require('./editor/editor-routes.cjs')(app, redis, deps);
+    require('./editor/entity-crud-routes.cjs')(app, redis, deps);
 
     // Import and bootstrap routes
     require('./book/import-routes.cjs')(app, redis, deps);
@@ -56,8 +65,7 @@ module.exports = function(app, redis, deps) {
     // Recent books list (session restore across clients)
     require('./book/recent-books-routes.cjs')(app, redis, deps);
 
-    // Manual entity add/delete (characters / locations / voices) — Editor CRUD
-    require('./book/entity-crud-routes.cjs')(app, redis, deps);
+    // (entity CRUD now lives in the editor contour — see above)
 
     // Already-extracted sub-registrars (kept as-is)
     const registerStatusRoutes = require('./book/status-routes.cjs');

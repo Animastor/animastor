@@ -67,14 +67,29 @@ describe('BEHAVIOR CRUD ROUTES — manual Behavior editor', () => {
             read: (id) => bookModule.loadBook(id),
             commit: (b, files) => bookModule.saveBookBundle(b, files),
         };
-        require('../src/routes/book/entity-crud-routes.cjs')(app, {}, {
+        // Editor contour ports stub (route split): the registrar destructures
+        // editorPorts at mount time; the behaviors/characters handlers under
+        // test never reach the fan-out legs, so a minimal port object is
+        // enough (the real seam wiring is covered by the architecture suite).
+        const editorPortsStub = {
+            sceneAssetsRepo: { bumpSceneVersions: async () => 0, setDirtyUnitIds: async () => 0 },
+            placeholderAudio: { recoverMissingPlaceholders: async () => ({ created: 0, errors: [] }) },
+            auditCoverage: { auditBookCoverage: () => ({}) },
+            promptLimit: 2000,
+            purge: { purgeScene: async () => ({ complete: true, steps: [] }), purgeUnit: async () => ({ complete: true, steps: [] }) },
+            resolveOwnership: async () => ({}),
+            recoveryCtx: {},
+        };
+        require('../src/routes/editor/entity-crud-routes.cjs')(app, {}, {
             book: bookModule,
             editorModel: editorFacade,
+            editorPorts: editorPortsStub,
             utils: { log: () => {} },
         });
-        require('../src/routes/book/core-routes.cjs')(app, {}, {
+        require('../src/routes/editor/editor-routes.cjs')(app, {}, {
             book: bookModule,
             editorModel: editorFacade,
+            editorPorts: editorPortsStub,
             utils: { log: () => {} },
         });
     }

@@ -2,9 +2,12 @@
 // book JSON but lack chunks in Redis (e.g. window generation wrote scenes to
 // disk but failed to create chunks), and reconcile scene counters.
 //
-// Extracted from book-routes.cjs (Architectural Debt #3). Previously a function
-// nested in the route module's closure; now takes its dependencies explicitly
-// via `ctx` so the coupling is visible and testable.
+// Editor contour (Phase 1 of the Editor extraction — renamed from
+// routes/book/recover-chunks.cjs, behavior unchanged). Previously a function
+// nested in the route module's closure; takes its dependencies explicitly
+// via `ctx` so the coupling is visible and testable. The ctx object is built
+// host-side by the editorPorts seam (recoveryCtx) — the contour itself holds
+// no host requires.
 //
 // ctx fields used: { redis, book, state, activeScenes, config, getAllChunks, saveChunk, log }
 

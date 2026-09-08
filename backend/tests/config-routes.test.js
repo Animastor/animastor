@@ -5,7 +5,7 @@
 //   1. Returns 200 with a { limits: {...} } object
 //   2. Serves the exact backend constant IMAGE_PROMPT_MAX_CHARS
 //   3. The limit matches the save-boundary validation ceiling the editors
-//      enforce (core-routes.cjs prompt guard, IMAGE_PROMPT_MAX_CHARS = 2000)
+//      enforce (the Editor contour prompt guard in routes/editor/,
 
 const { expect } = require('chai');
 const express = require('express');
@@ -62,7 +62,7 @@ describe('GET /api/v1/config', () => {
         const res = await fetch(`${srv.base}/api/v1/config`);
         const body = await res.json();
         // Documented contract: the editors (Android + web) enforce this same
-        // value and the server rejects over-limit saves in core-routes.cjs.
+        // value and the server rejects over-limit saves in routes/editor/editor-routes.cjs.
         expect(body.limits.image_prompt_max_chars).to.equal(2000);
     });
 

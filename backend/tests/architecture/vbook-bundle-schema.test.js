@@ -178,7 +178,7 @@ describe('vbook-bundle-3.1: schema exists and mirrors the validator (audit A1)',
             expect(draftSrc).to.match(/vbook_version:\s*'3\.1'/);
             expect(draftSrc).to.match(/source:\s*sourceType/);
             expect(draftSrc).to.match(/state:\s*BookState\.RAW_IMPORTED/);
-            const crudSrc = fs.readFileSync(path.join(REPO_ROOT, 'backend', 'src', 'routes', 'book', 'entity-crud-routes.cjs'), 'utf8');
+            const crudSrc = fs.readFileSync(path.join(REPO_ROOT, 'backend', 'src', 'routes', 'editor', 'entity-crud-routes.cjs'), 'utf8');
             expect(crudSrc).to.match(/vbook_version:\s*'3\.1'/);
         });
 

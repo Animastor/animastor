@@ -22,7 +22,7 @@ const os = require('os');
 require('./vbook-test-bindings.cjs');
 const bookModule = require('../src/book/index');
 const config = require('../src/config/runtime-config');
-const { setDeep, normalizeFieldValue, findUnitInScene } = require('../src/routes/book/scene-patch-utils.cjs');
+const { setDeep, normalizeFieldValue, findUnitInScene } = require('../src/routes/editor/scene-patch-utils.cjs');
 const promptBuilder = require('../src/image/prompt-builder');
 
 const ORIG_BOOKS_DIR = config.BOOKS_DIR;

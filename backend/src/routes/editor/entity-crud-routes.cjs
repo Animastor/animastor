@@ -1,21 +1,28 @@
 // ======================================================
-// Entity CRUD Routes — manual add/delete of characters,
-// locations and voices from the Editor (web + Android).
+// EDITOR CONTOUR — Entity CRUD Routes
+// ======================================================
+// Manual add/delete of characters, locations and voices from the Editor
+// (web + Android).
 //
-// Split out of book-routes.cjs (sub-registrar pattern —
-// see cache-routes.cjs / status-routes.cjs). Writes go
-// through the EXISTING Canonical Book Model persistence (Phase 6 editor
-// boundary: editorModel.read / editorModel.commit → book.loadBook /
-// saveBookBundle)
-// persistence — no parallel storage path. The existing
-// PATCH /characters/{id} /locations/{id} /voices/{id}
-// endpoints stay the edit path; these cover create/delete.
+// Editor contour (Phase 1 of the Editor extraction —
+// docs/architecture/editor-module-extraction-audit.md §13). Moved
+// byte-for-byte from routes/book/entity-crud-routes.cjs (route split,
+// the 4d1f6f0e playbook): same endpoints, same handlers, same HTTP
+// semantics. Writes go through the EXISTING Canonical Book Model
+// persistence (Phase 6 editor boundary: editorModel.read /
+// editorModel.commit → book.loadBook / saveBookBundle) — no parallel
+// storage path. The existing PATCH /characters/{id} /locations/{id}
+// /voices/{id} endpoints stay the edit path; these cover create/delete.
 //
 // ID handling (spec): a user-entered canonical id is kept
 // verbatim; free-form input (Cyrillic, spaces, mixed case)
 // is transliterated to the project's snake_case standard
 // server-side via utils/entity-id (reusing cyrToLatin) so
 // neither frontend duplicates the algorithm.
+//
+// Host legs (entity-cleanup purge, workspace-ownership attach) arrive via
+// the editorPorts seam (routes/editor/editor-ports.cjs) — no direct host
+// requires inside the contour.
 // ======================================================
 
 const { toEntityId, isCanonicalEntityId } = require('../../utils/entity-id');
@@ -24,10 +31,11 @@ const { normalizeFieldValue, rebuildFullText } = require('./scene-patch-utils.cj
 // / iu-<hex8>. No second generator is ever introduced on the clients.
 const { chapterId, sceneId, unitId, generateBookId } = require('../../book/lazy-book/paths');
 
+// (redis is not destructured: purge/ownership legs arrive via editorPorts)
 module.exports = function (app, redis, deps) {
-    const { editorModel, utils } = deps;
+    const { editorModel, editorPorts, utils } = deps;
     const { log } = utils;
-    const cleanup = require('../../services/entity-cleanup.cjs')(redis, deps.config, deps);
+    const cleanup = editorPorts.purge;
 
     // Phase 6: Editor boundary — model reads go through editorModel.read
     // (Canonical Book Model), never through a raw backend loader.
@@ -711,8 +719,7 @@ module.exports = function (app, redis, deps) {
             };
 
             try {
-                const workspaceOwnership = require('../../middleware/workspace-ownership');
-                await workspaceOwnership.resolveWorkspaceForBook(bookId, {
+                await editorPorts.resolveOwnership(bookId, {
                     bookTitle: label,
                     preferredWorkspaceId: req.workspace?.id || null,
                 });

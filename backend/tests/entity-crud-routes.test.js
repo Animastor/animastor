@@ -60,11 +60,23 @@ describe('ENTITY CRUD ROUTES — manual add/delete', () => {
             patch() {},
             delete(path, handler) { handlers.set(path, handler); },
         };
-        require('../src/routes/book/entity-crud-routes.cjs')(app, {}, {
+        require('../src/routes/editor/entity-crud-routes.cjs')(app, {}, {
             book: bookModule,
             editorModel: {                       // Phase 6: Editor boundary fake over the real module
                 read: (id) => bookModule.loadBook(id),
                 commit: (b, files) => bookModule.saveBookBundle(b, files),
+            },
+            // Editor contour ports stub (route split): the entity add/delete
+            // handlers under test never reach the purge legs; the deep-cleanup
+            // suite below mounts the REAL factory through the same seam.
+            editorPorts: {
+                sceneAssetsRepo: { bumpSceneVersions: async () => 0, setDirtyUnitIds: async () => 0 },
+                placeholderAudio: { recoverMissingPlaceholders: async () => ({ created: 0, errors: [] }) },
+                auditCoverage: { auditBookCoverage: () => ({}) },
+                promptLimit: 2000,
+                purge: { purgeScene: async () => ({ complete: true, steps: [] }), purgeUnit: async () => ({ complete: true, steps: [] }) },
+                resolveOwnership: async () => ({}),
+                recoveryCtx: {},
             },
             utils: { log: () => {} },
         });
@@ -396,8 +408,10 @@ describe('ENTITY CRUD ROUTES — scene/unit delete deep cleanup', () => {
                 read: (id) => bookModule.loadBook(id),
                 commit: (b, files) => bookModule.saveBookBundle(b, files),
             },
+            editorPorts: null,                   // wired below (real entity-cleanup via the seam)
             utils: { log: () => {} },
             config: { OUTPUT_DIR: tmpDir },
+            bookDiff: {},
             storage: {
                 bookSync: {
                     purgeRemovedSceneRows: async (_bookId, keys) => {
@@ -440,7 +454,29 @@ describe('ENTITY CRUD ROUTES — scene/unit delete deep cleanup', () => {
                 },
             },
         };
-        require('../src/routes/book/entity-crud-routes.cjs')(app, redisMock, deps);
+        // Route split: the deep-cleanup purge now arrives via the editorPorts
+        // seam. Mount the REAL entity-cleanup factory over the mocked
+        // storage/runtime legs (same wiring the composition root performs in
+        // routes/editor/editor-ports.cjs) so the purge behavior itself stays
+        // under test — only its host collaborators are mocked.
+        const realPurge = require('../src/services/entity-cleanup.cjs')(redisMock, { OUTPUT_DIR: tmpDir }, {
+            utils: { log: () => {} },
+            storage: deps.storage,
+            runtime: deps.runtime,
+            bookDiff: deps.bookDiff,
+            book: bookModule,
+            sceneAssetsRepo: deps.sceneAssetsRepo,
+        });
+        deps.editorPorts = {
+            sceneAssetsRepo: deps.sceneAssetsRepo,
+            placeholderAudio: { recoverMissingPlaceholders: async () => ({ created: 0, errors: [] }) },
+            auditCoverage: { auditBookCoverage: () => ({}) },
+            promptLimit: 2000,
+            purge: realPurge,
+            resolveOwnership: async () => ({}),
+            recoveryCtx: {},
+        };
+        require('../src/routes/editor/entity-crud-routes.cjs')(app, redisMock, deps);
     }
 
     async function invoke(pathTemplate, params, body) {
