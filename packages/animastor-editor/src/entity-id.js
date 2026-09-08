@@ -2,7 +2,7 @@
 // Entity ID Utilities — manual entity add (characters /
 // locations / voices from the Editor).
 // The transliteration reuses the canonical cyrToLatin from
-// utils/cyr-latin-map (pure data + function, zero deps).
+// ./cyr-latin-map (pure data + function, zero deps).
 // This module folds the transliterated text into the
 // project's snake_case id standard (the same shape
 // normalizeForMatch / canonicalizeMixedScriptId produce).

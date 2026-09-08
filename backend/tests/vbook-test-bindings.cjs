@@ -20,6 +20,12 @@
 // (@animastor/vbook-runtime); this file binds its ports through the
 // package entry points:
 //   docs/architecture/VBOOK_RUNTIME_RELOCATION_CHECKLIST.md
+//
+// Dual-location note (worker/player/editor pattern): the extracted
+// packages carry a thin wrapper copy of this fixture in their own
+// test/ directory (packages/*/test/vbook-test-bindings.cjs) that simply
+// requires THIS file — the canonical host-owned source stays here, so a
+// change to the fixture cannot fork between host and package suites.
 
 'use strict';
 

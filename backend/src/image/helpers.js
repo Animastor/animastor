@@ -4,7 +4,9 @@
 // getOutputPath and escapeRegExp imported from shared utils/string-utils.
 
 const { getOutputPath, escapeRegExp } = require('../utils/string-utils');
-const { CYR_LATIN_MAP, cyrToLatin } = require('../utils/cyr-latin-map');
+// cyr-latin-map moved into @animastor/editor (Phase 4 physical move) —
+// this remains the canonical import for host image-domain consumers.
+const { CYR_LATIN_MAP, cyrToLatin } = require('@animastor/editor/cyr-latin-map.js');
 
 const logPrefix = '[IMAGE]';
 

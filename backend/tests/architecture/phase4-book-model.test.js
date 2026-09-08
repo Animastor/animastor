@@ -33,7 +33,9 @@ const { createBookDeletion } = require('../../src/services/book-deletion.cjs');
 const bookModelPath = path.join(REPO_ROOT, 'packages', 'animastor-vbook-runtime', 'src', 'book-model.cjs');
 const bookDeletionPath = path.join(BACKEND_SRC, 'services', 'book-deletion.cjs');
 const aiRoutesPath = path.join(BACKEND_SRC, 'routes', 'ai-routes.cjs');
-const coreRoutesPath = path.join(BACKEND_SRC, 'routes', 'editor', 'editor-routes.cjs');
+// The core book route physically lives in the @animastor/editor package
+// since the Phase 4 move (docs/architecture/editor-module-extraction-audit.md).
+const coreRoutesPath = path.join(REPO_ROOT, 'packages', 'animastor-editor', 'src', 'editor-routes.cjs');
 
 // ── Fixture helpers ──────────────────────────────────────────────────────
 let tmpDir;

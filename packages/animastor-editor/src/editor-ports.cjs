@@ -2,9 +2,10 @@
 // EDITOR CONTOUR — host ports (composition-root seam)
 // ======================================================
 // Editor route split (Phase 1 of the Editor extraction,
-// docs/architecture/editor-module-extraction-audit.md §6/§13).
+// docs/architecture/editor-module-extraction-audit.md §6/§13) — carried
+// into @animastor/editor by the Phase 4 physical move.
 //
-// The Editor HTTP contour (routes/editor/**) must not import host
+// The Editor HTTP contour (this package) must not import host
 // implementation modules directly (PG repos, Redis helpers, services,
 // middleware) — the same rule the Player contour follows via playerPorts
 // (docs/architecture/PLAYER_ROUTE_SPLIT_CHECKLIST.md). Instead the host
@@ -37,9 +38,9 @@
 //
 // This module itself is part of the Editor contour and MUST NOT contain
 // any host require() calls (services, middleware, PG repos, Redis) — it
-// only re-shapes what the composition root passes in so the future
-// physical move to packages/animastor-editor can carry it as-is (the
-// implementations stay host-side forever).  Phase 1.1 removed the last
+// only re-shapes what the composition root passes in. The physical move
+// to packages/animastor-editor carried it as-is (the implementations
+// stay host-side forever).  Phase 1.1 removed the last
 // four host requires (entity-cleanup, source-coverage-audit, agent-prompts,
 // workspace-ownership); these are now constructed in backend.cjs and passed
 // as ready-made references.
@@ -49,7 +50,7 @@ module.exports = function createEditorPorts({ deps }) {
         // ── host legs carried from the composition root ──────────
         // All host implementations arrive as already-resolved references;
         // editor-ports.cjs itself holds ZERO host require() calls so that
-        // the future packages/animastor-editor move carries only this file
+        // the @animastor/editor package carries only this file
         // and the contour registrars — the host services stay host-side.
         sceneAssetsRepo, placeholderAudio,
         auditCoverage, promptLimit,

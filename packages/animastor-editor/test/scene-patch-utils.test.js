@@ -1,5 +1,5 @@
 const assert = require('assert');
-const { setDeep, findUnitInScene, rebuildFullText } = require('../src/routes/editor/scene-patch-utils.cjs');
+const { setDeep, findUnitInScene, rebuildFullText } = require('@animastor/editor/scene-patch-utils.cjs');
 
 describe('scene-patch-utils', () => {
     describe('setDeep', () => {

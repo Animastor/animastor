@@ -1,6 +1,6 @@
 # Editor Module Extraction Audit — Editor contour → `packages/animastor-editor/`
 
-**Status:** Phase 3 COMPLETE (B1 resolved: `CYR_LATIN_MAP` + `cyrToLatin` extracted to `utils/cyr-latin-map.js`, closure reduced from 5 to 3 host files). Phase 2 (contract freeze + extraction-readiness audit). Phase 1 (route split) landed as `f24987ed`; Phase 1.1 (editor-ports.cjs zero host requires) landed as `c2b0fc2d`.
+**Status:** Phase 4 COMPLETE (physical move landed — `@animastor/editor@0.1.0`, see §Phase 4). Phase 3 COMPLETE (B1 resolved: `CYR_LATIN_MAP` + `cyrToLatin` extracted to the pure `cyr-latin-map` module, closure reduced from 5 to 3 host files — now moved INTO the package). Phase 2 (contract freeze + extraction-readiness audit). Phase 1 (route split) landed as `f24987ed`; Phase 1.1 (editor-ports.cjs zero host requires) landed as `c2b0fc2d`.
 **Date:** 2026-09-08 (Phases 1/1.1/2/3)
 **Baseline:** HEAD after Phase 3 (B1 resolved, all tests passing).
 **Baseline:** HEAD `f41f0aad` ("arch(player): extract Player package" — the Player physical move landed **during** this audit; the measurement started against `9a794464` + the staged move and was re-verified against the landed commit, which is byte-identical to the staged set). All Editor-contour claims are measured against the landed tree, where Player files resolve from `packages/animastor-player/src/`.
@@ -477,6 +477,136 @@ Steps 1–3 are independently landable; each is guarded and reversible.
 **The Player physical move has landed (`f41f0aad`, during this audit).** Next: run the Editor route split (step 1 of §13) as a single behavior-neutral commit with E1–E3 guard tests authored first — the exact shape of the Player's `4d1f6f0e`. In parallel (doc-only, no code): the `EDITOR_HTTP_CONTRACT.md` freeze. Then the seam narrowing (step 2) lands as its own commit, and the physical move becomes a low-risk mechanical step.
 
 Before starting, re-verify `backend.cjs`/`backend/package.json` against the landed Player wiring — the Editor steps edit the same files (registrar require, dependency block).
+
+---
+
+# Phase 4 — Physical Move (`packages/animastor-editor/`, `@animastor/editor`)
+
+**Scope:** the single atomic physical-move commit of §13 step 5. The frozen Editor contour (Phase 1 route split + Phase 1.1 ports seam + Phase 2 contract freeze + Phase 3 B1 resolution) is carried verbatim into `packages/animastor-editor/` as `@animastor/editor@0.1.0`. NO behavior change, NO HTTP change, NO port change, NO business-logic refactor — this is extraction, not redesign.
+**Date:** 2026-09-08
+**Baseline:** HEAD after Phase 3 (`d27529d9`).
+**Playbook:** the Player physical move (`f41f0aad`), executed without deviation.
+
+## P4.1 What moved
+
+Production code (all `git mv`, byte-identical except header comments + import re-pointing):
+
+| Old host path | New package path | Notes |
+|---|---|---|
+| `backend/src/routes/editor/editor-routes.cjs` | `packages/animastor-editor/src/editor-routes.cjs` | 11 endpoints, handlers unchanged |
+| `backend/src/routes/editor/entity-crud-routes.cjs` | `packages/animastor-editor/src/entity-crud-routes.cjs` | 15 endpoints, handlers unchanged |
+| `backend/src/routes/editor/editor-ports.cjs` | `packages/animastor-editor/src/editor-ports.cjs` | the frozen 7-port seam, carried as-is |
+| `backend/src/routes/editor/scene-patch-utils.cjs` | `packages/animastor-editor/src/scene-patch-utils.cjs` | pure, zero requires |
+| `backend/src/routes/editor/read-recovery.cjs` | `packages/animastor-editor/src/read-recovery.cjs` | ctx-injected, zero requires |
+| `backend/src/editor/index.cjs` | `packages/animastor-editor/src/editor-model.cjs` | the Phase 6 facade (T2) |
+| `backend/src/utils/entity-id.js` | `packages/animastor-editor/src/entity-id.js` | Editor-only consumer set (audit §5.1 ADR) |
+| `backend/src/utils/cyr-latin-map.js` | `packages/animastor-editor/src/cyr-latin-map.js` | B1 pure module — now INSIDE the package |
+| (new) | `packages/animastor-editor/src/index.cjs` | package entrypoint (public API) |
+
+Import re-pointing (the only production-code edits):
+- `entity-crud-routes.cjs`: `../../utils/entity-id` → `./entity-id.js`; `../../book/lazy-book/paths` → `@animastor/vbook-runtime/lazy-book/paths` (the export already existed — the host shim is no longer in the closure);
+- `editor-model.cjs`: `../book/book-model.cjs` → `@animastor/vbook-runtime/book-model.cjs` (same dependency the Player facade uses);
+- `backend/src/image/helpers.js` (host consumer of the moved map): `../utils/cyr-latin-map` → `@animastor/editor/cyr-latin-map.js` — the map's canonical home is the package; the host image domain follows it (B1 stays resolved: still a pure zero-dependency module).
+
+Tests moved (ownership transfer — zero assertion changes; see P4.5):
+
+| Old host path | New package path |
+|---|---|
+| `backend/tests/entity-crud-routes.test.js` | `packages/animastor-editor/test/entity-crud-routes.test.js` |
+| `backend/tests/behavior-crud.test.js` | `packages/animastor-editor/test/behavior-crud.test.js` |
+| `backend/tests/character-passport-patch.test.js` | `packages/animastor-editor/test/character-passport-patch.test.js` |
+| `backend/tests/scene-passport-patch.test.js` | `packages/animastor-editor/test/scene-passport-patch.test.js` |
+| `backend/tests/scene-patch-utils.test.js` | `packages/animastor-editor/test/scene-patch-utils.test.js` |
+| `backend/tests/vbook-test-bindings.cjs` | `packages/animastor-editor/test/vbook-test-bindings.cjs` (thin wrapper) + canonical source restored at `backend/tests/vbook-test-bindings.cjs` |
+
+Per Phase 2 §P2.4 the prompt-builder assertions in `character-passport-patch`/`scene-passport-patch` moved WITH the suites but still require the host `image/prompt-builder` + host `book-diff` through explicit repo-relative paths — the package test closure drags no host module INTO the package; the host-side assertion split recommendation is satisfied by keeping the requires host-pinned (they resolve via `../../../backend/src/...`).
+
+`vbook-test-bindings` becomes the dual-location fixture (worker/player pattern): the canonical host-owned source stays at `backend/tests/vbook-test-bindings.cjs` (required by `.mocharc.json` + 9+ host suites); the package copy is a one-line re-export so the fixture cannot fork.
+
+## P4.2 Package public API
+
+`@animastor/editor` (main: `src/index.cjs`) exports exactly:
+
+```js
+const { createEditorModel, createEditorRoutes, createEntityCrudRoutes } = require('@animastor/editor');
+```
+
+Internal modules are reachable ONLY through the export map (`./editor-routes.cjs`, `./entity-crud-routes.cjs`, `./editor-ports.cjs`, `./scene-patch-utils.cjs`, `./read-recovery.cjs`, `./editor-model.cjs`, `./entity-id.js`, `./cyr-latin-map.js`) — no `src/` deep imports. Declared dependency: `@animastor/vbook-runtime` ONLY.
+
+Host consumption (composition root, `backend.cjs` + `routes/book-routes.cjs`):
+- `createEditorModel` from the package entrypoint;
+- `editorPorts` assembled via `require('@animastor/editor/editor-ports.cjs')({ deps })`;
+- registration via `require('@animastor/editor/editor-routes.cjs')` / `entity-crud-routes.cjs` through the package export map.
+
+Host shims kept (relocation checklist §2.4, one-line re-exports, guard E3 freezes them):
+- `backend/src/routes/editor/index.cjs` → `module.exports = require('@animastor/editor');`
+- `backend/src/editor/index.cjs` → `module.exports = require('@animastor/editor');`
+
+The old contour paths (`routes/editor/{editor-routes,entity-crud-routes,editor-ports,scene-patch-utils,read-recovery}.cjs`, `routes/book/{core-routes,entity-crud-routes}.cjs`, `routes/book/{scene-patch-utils,recover-chunks}.cjs`, `utils/entity-id.js`, `utils/cyr-latin-map.js`) are **deleted** — no parallel Editor implementation exists.
+
+## P4.3 Final dependency closure (verified, not assumed)
+
+```
+packages/animastor-editor/src/**  (9 files)
+├─ node builtins only (0 otherwise)
+├─ @animastor/vbook-runtime/book-model.cjs     (editor-model.cjs)
+├─ @animastor/vbook-runtime/lazy-book/paths    (entity-crud-routes.cjs)
+└─ intra-package requires (index/registrars/helpers/entity-id→cyr-latin-map)
+```
+
+- **ZERO host modules reachable** from the package require closure (E6 walk: registrars + helpers reach only intra-package files; the former 3-file host shim chain — `book/lazy-book/paths.js`, `utils/entity-id.js`, `utils/cyr-latin-map.js` — is fully absorbed).
+- **B1 stays resolved:** no `image/helpers`, no `utils/string-utils`, no `config/runtime-config` anywhere in the package (guard scans every package file).
+- **editorPorts frozen:** the same 7 ports (`sceneAssetsRepo`, `placeholderAudio`, `auditCoverage`, `promptLimit`, `purge`, `resolveOwnership`, `recoveryCtx`), identity pass-through, mandatory ports fail-closed (E5 re-verified against the moved seam); wiring still happens ONLY at the composition root (`backend.cjs` E5 wiring test re-pinned to the package path).
+- **No editorPorts bypass:** zero lazy requires in handler bodies, single deps destructuring, no agent/generation/AI imports (E8 unchanged).
+- **Editor ⇄ Player: ZERO code deps in both directions** (grep-verified over both package src trees; the only `player` mentions in the Editor package are doc comments referencing the `playerPorts` precedent).
+- **`git mv` rename detection:** all 8 moved production files + 6 test files land as renames (R status) — byte-level provenance proven.
+
+## P4.4 Host integration changes
+
+| File | Change |
+|---|---|
+| `backend/package.json` | + `"@animastor/editor": "file:../packages/animastor-editor"` |
+| `backend/src/backend.cjs` | `createEditorModel` from `@animastor/editor`; `editorPorts` via the package export map |
+| `backend/src/routes/book-routes.cjs` | the two registrar requires now go through `@animastor/editor/...` |
+| `backend/src/image/helpers.js` | imports the moved cyr-latin map from the package |
+| `backend/tests/vbook-test-bindings.cjs` | restored (canonical fixture; the move landed it in the package, the host .mocharc requires it here) |
+
+## P4.5 Tests — what changed and why (ownership, not behavior)
+
+| Change | Kind |
+|---|---|
+| 6 suites moved to `packages/animastor-editor/test/` with re-pointed requires (`../src/...` → package exports / `../../../backend/src/...` for host collaborators) | **ownership** — same assertions, same fixtures, same expectations (75 passing before and after) |
+| E1–E3 + E4–E8 guards re-pinned to the physical boundary (`EDITOR_DIR` → package src; E2 allowlist gains the `@animastor/vbook-runtime/` bare specifier; E3 sanctioned edges become the package export map; E6 closure = ZERO host files; E7 flips the move gate: package EXISTS, manifest pinned; E5 wiring regex → package path) | **ownership/boundary** — the guards now guard the real package boundary instead of the pre-move staging boundary |
+| T-baselines (phase6) + P7-T4 raw-book baseline: `routes/editor/...` paths → `packages/animastor-editor/src/...`; the `entity-crud` entry leaves the raw-book baseline (id grammar is now a package export, not a `backend/src/book` path) | **ownership** — same rule, new physical location |
+| `phase4-book-model.test.js` + `vbook-bundle-schema.test.js`: source-scan paths re-pointed to the package files | **ownership** — the scanned producers moved |
+| NO test asserting HTTP semantics, status codes, payloads, merge rules, purge behavior or port shape had its expectation edited | — (0 behavior changes) |
+
+## P4.6 Endpoint verification
+
+Functional registration through the package entrypoint (the exact host wiring): **26 endpoints** — `get:3, put:1, patch:6, delete:8, post:8` — byte-identical surface to the Phase 2 freeze; guard E1 re-verifies the frozen 26-pair table against the moved registrars on every run.
+
+## P4.7 New architectural decisions (explicit)
+
+1. **`entity-id` + `cyr-latin-map` live in the Editor package** (the audit §5.4 ADR resolves to "move with Editor", not vbook-runtime): `entity-id` is Editor-only; the host image domain imports the map through the package export map (`@animastor/editor/cyr-latin-map.js`), keeping ONE canonical source.
+2. **The `lazy-book/paths` host shim leaves the Editor closure:** the package imports the VBook runtime export directly (the shim stays for other host consumers, untouched).
+3. **Test fixture dual-location:** `vbook-test-bindings` canonical source stays host-side (`backend/tests/`), package copy is a re-export wrapper — same pattern as worker/player.
+4. **Host shims kept** at `routes/editor/index.cjs` + `editor/index.cjs` (one-line re-exports, frozen by E3) per the relocation checklist §2.4.
+
+## P4.8 Verdict
+
+**READY — extraction complete.** `@animastor/editor@0.1.0` is the single Editor implementation; the host consumes only the package entrypoint + export map; ports, HTTP surface and behavior are unchanged and guarded.
+
+## P4.9 Verification (Phase 4 commands + exact results)
+
+- Package tests: `cd packages/animastor-editor && npm test` → **75 passing, 0 failing** (301ms).
+- Package/Editor suites via backend workspace: `cd backend && npx mocha --exit ../packages/animastor-editor/test/scene-patch-utils.test.js ../packages/animastor-editor/test/entity-crud-routes.test.js ../packages/animastor-editor/test/behavior-crud.test.js ../packages/animastor-editor/test/character-passport-patch.test.js ../packages/animastor-editor/test/scene-passport-patch.test.js` → **75 passing, 0 failing**.
+- Architecture guards (ALL suites, not a subset): `cd backend && npm run test:arch` → **635 passing, 0 failing** (2s).
+- Editor guards specifically: `cd backend && npx mocha --exit tests/architecture/editor-route-split.test.js` → **11 passing** (E1–E3); `tests/architecture/editor-extraction-readiness.test.js` → **20 passing** (E4–E8 + B1); `tests/architecture/phase6-editor-player.test.js` → **18 passing** (T1–T7); `tests/architecture/phase7-extraction-readiness.test.js` → **12 passing** (P7-T1..T8).
+- Full backend suite: `cd backend && npx mocha --exit "tests/**/*.test.js"` → **3162 passing, 5 failing** (2m). The 5 failures are **pre-existing and unrelated** (identical on the unmodified tree, verified by `git stash` before/after): 3× LLM-sharing suites + 1× worker-share-policy (PG/env-dependent integration suites failing the same way on HEAD), 1× flaky C21 timeout observed only under the full-suite run. Count delta vs Phase 3's "575": the Phase 3 figure was the mocha default config (`npm test` = `.mocharc.json` pretest + `tests/**/*.test.js` at that tree state); the tree has since gained the C19/C19.1/C20/C21 AI-contour suites, LLM-sharing suites and worker-share suites (measured HEAD baseline: **3214 passing / 10 failing** on the PRE-move tree vs **3162 passing / 5 failing** post-move — the same 5 pre-existing failures, with the C21 suites now stable in the post-move run; 75 Editor functional tests moved OUT of the backend glob into the package's own runner).
+- Syntax smoke: `bash scripts/syntax-smoke.sh backend` → **all production JS/CJS files pass**.
+- Endpoint contract: functional mount via the package entrypoint → **26 endpoints** (`get:3 put:1 patch:6 delete:8 post:8`), identical to the frozen table; E1 asserts it every run.
+- Boundary greps: package src requires → only builtins + `@animastor/vbook-runtime/*` + intra-package; Editor→Player and Player→Editor source scans → **ZERO**; old host contour paths → deleted (`src/editor/index.cjs` + `src/routes/editor/index.cjs` remain as one-line shims).
+- Ports: identity pass-through + fail-closed re-verified against the moved `createEditorPorts` (E5).
 
 ---
 

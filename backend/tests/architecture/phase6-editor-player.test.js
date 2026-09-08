@@ -25,12 +25,14 @@ const fs = require('fs');
 const { readSource, rel, REPO_ROOT, BACKEND_SRC, listSourceFiles, requireSpecifiers } = require('./helpers');
 
 // The Player layer is physically extracted to packages/animastor-player
-// (@animastor/player); the host keeps only the Editor facade
-// (docs/architecture/PLAYER_ROUTE_SPLIT_CHECKLIST.md — physical move COMPLETE).
+// (@animastor/player); the Editor layer is physically extracted the same way
+// to packages/animastor-editor (@animastor/editor) since the Phase 4 move
+// (docs/architecture/PLAYER_ROUTE_SPLIT_CHECKLIST.md — physical move COMPLETE;
+// docs/architecture/editor-module-extraction-audit.md — Phase 4 COMPLETE).
 const PLAYER_DIR = path.join(REPO_ROOT, 'packages', 'animastor-player', 'src');
-const EDITOR_DIR = path.join(BACKEND_SRC, 'editor');
+const EDITOR_DIR = path.join(REPO_ROOT, 'packages', 'animastor-editor', 'src');
 const PLAYER_FACADE = path.join(PLAYER_DIR, 'player-model.cjs');
-const EDITOR_FACADE = path.join(EDITOR_DIR, 'index.cjs');
+const EDITOR_FACADE = path.join(EDITOR_DIR, 'editor-model.cjs');
 const BACKEND_ROOT = path.join(BACKEND_SRC, 'backend.cjs');
 const FRONTEND_APP_DIR = path.join(REPO_ROOT, 'frontends', 'app', 'src');
 
@@ -111,7 +113,9 @@ describe('T2: Editor facade contract (read / modify / commit)', () => {
 
     it('delegates to the Book Model + injected writer (never raw backend internals)', () => {
         const src = readSource(EDITOR_FACADE);
-        expect(src).to.include("require('../book/book-model.cjs')");
+        // Post-move: the facade lives in the package; its Book Model layer is
+        // the @animastor/vbook-runtime facade (the host book shim re-exports it).
+        expect(src).to.include("require('@animastor/vbook-runtime/book-model.cjs')");
         expect(src).to.not.match(/require\(['"]\.\.\/book['"]\)/); // writer is injected, not required
         expect(src).to.not.match(/require\(['"]\.\.\/(services|storage|runtime|orchestration|routes)/);
         expect(src).to.match(/MODIFY/); // the three edit phases must be explicit
@@ -125,7 +129,7 @@ describe('T3: player/editor layers import nothing outside the Book Model layer',
         expect(assertBoundaryClean(PLAYER_DIR), 'player layer boundary violation').to.deep.equal([]);
     });
 
-    it('backend/src/editor/** has no implementation-detail requires', () => {
+    it('packages/animastor-editor/src/** has no implementation-detail requires', () => {
         expect(assertBoundaryClean(EDITOR_DIR), 'editor layer boundary violation').to.deep.equal([]);
     });
 });
@@ -147,21 +151,21 @@ describe('T4: facades are wired at the composition root', () => {
     it('contour routes destructure the facade deps', () => {
         expect(readSource(path.join(REPO_ROOT, 'packages', 'animastor-player', 'src', 'player-routes.cjs'))).to.match(/playerModel/);
         expect(readSource(path.join(REPO_ROOT, 'packages', 'animastor-player', 'src', 'player-shared.cjs'))).to.match(/playerModel/);
-        expect(readSource(path.join(BACKEND_SRC, 'routes', 'editor', 'editor-routes.cjs'))).to.match(/editorModel/);
-        expect(readSource(path.join(BACKEND_SRC, 'routes', 'editor', 'entity-crud-routes.cjs'))).to.match(/editorModel/);
+        expect(readSource(path.join(EDITOR_DIR, 'editor-routes.cjs'))).to.match(/editorModel/);
+        expect(readSource(path.join(EDITOR_DIR, 'entity-crud-routes.cjs'))).to.match(/editorModel/);
     });
 });
 
 // ── T5 — contour routes go through the facades ───────────────────────────
 describe('T5: Editor/Player contours load through the facades', () => {
     const editorRoutes = [
-        'routes/editor/editor-routes.cjs',
-        'routes/editor/entity-crud-routes.cjs',
+        'editor-routes.cjs',
+        'entity-crud-routes.cjs',
     ];
 
     it('editor routes have NO direct book.loadBook / book.saveBookBundle calls', () => {
         for (const f of editorRoutes) {
-            const src = readSource(path.join(BACKEND_SRC, f));
+            const src = readSource(path.join(EDITOR_DIR, f));
             expect(src, `${f} must not call book.loadBook directly`).to.not.match(/\bbook\.loadBook\s*\(/);
             expect(src, `${f} must not call book.saveBookBundle directly`).to.not.match(/\bbook\.saveBookBundle\s*\(/);
         }
@@ -241,26 +245,27 @@ describe('T6: contour routes do not gain new implementation-detail deps', () => 
             '../services/audio-orchestrator',
             '../services/video-orchestrator',
         ],
-        'routes/editor/editor-routes.cjs': [
-            // Editor contour (route split): host legs moved behind the
-            // editorPorts seam — the only requires left are the contour's
+        'packages/animastor-editor/src/editor-routes.cjs': [
+            // Editor package (Phase 4 physical move): host legs arrive behind
+            // the editorPorts seam — the only requires left are the package's
             // own pure helpers. The dead scene-restoration edge was deleted
             // with the split (audit F3).
             './scene-patch-utils.cjs',
             './read-recovery.cjs',
         ],
-        'routes/editor/entity-crud-routes.cjs': [
-            '../../utils/entity-id',
+        'packages/animastor-editor/src/entity-crud-routes.cjs': [
+            './entity-id.js',
             './scene-patch-utils.cjs',
-            '../../book/lazy-book/paths',
+            // The id grammar is the VBook runtime package export (bare
+            // specifier — not a relative edge, not scanned here).
         ],
-        'routes/editor/editor-ports.cjs': [
+        'packages/animastor-editor/src/editor-ports.cjs': [
             // Phase 1.1: the port module has zero host require() calls.
             // All host legs (entity-cleanup, source-coverage-audit,
-            // agent-prompts, workspace-ownership) are now constructed in
+            // agent-prompts, workspace-ownership) are constructed in
             // the composition root (backend.cjs) and passed as ready-made
-            // references. This keeps editor-ports.cjs portable for the
-            // future packages/animastor-editor move.
+            // references. This keeps editor-ports.cjs portable — the Phase 4
+            // move carried it as-is.
         ],
         'packages/animastor-player/src/player-routes.cjs': [
             // Player package registrar — only intra-package wiring is allowed.

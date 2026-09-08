@@ -25,8 +25,8 @@ const path = require('path');
 const os = require('os');
 
 require('./vbook-test-bindings.cjs');
-const bookModule = require('../src/book/index');
-const config = require('../src/config/runtime-config');
+const bookModule = require('../../../backend/src/book/index');
+const config = require('../../../backend/src/config/runtime-config');
 
 const ORIG_BOOKS_DIR = config.BOOKS_DIR;
 
@@ -80,13 +80,13 @@ describe('BEHAVIOR CRUD ROUTES — manual Behavior editor', () => {
             resolveOwnership: async () => ({}),
             recoveryCtx: {},
         };
-        require('../src/routes/editor/entity-crud-routes.cjs')(app, {}, {
+        require('@animastor/editor/entity-crud-routes.cjs')(app, {}, {
             book: bookModule,
             editorModel: editorFacade,
             editorPorts: editorPortsStub,
             utils: { log: () => {} },
         });
-        require('../src/routes/editor/editor-routes.cjs')(app, {}, {
+        require('@animastor/editor/editor-routes.cjs')(app, {}, {
             book: bookModule,
             editorModel: editorFacade,
             editorPorts: editorPortsStub,

@@ -1,0 +1,56 @@
+{
+    "name": "@animastor/editor",
+    "version": "0.1.0",
+    "description": "Animastor Editor — book-editing HTTP contour: core book GET/PUT/PATCH/DELETE, scene/metadata/location/character/voice/behavior patches, entity CRUD (characters/locations/voices/behaviors), structure CRUD (chapters/scenes/units) and blank-book scaffolding. Reads and writes book content only through the injected editorModel (VBook boundary); every host dependency arrives as an injected port (editorPorts) — no config, no generation, no AI, no Redis/PG internals in the package.",
+    "keywords": [
+        "animastor",
+        "editor",
+        "book-editing",
+        "http-api",
+        "entity-crud"
+    ],
+    "main": "src/index.cjs",
+    "exports": {
+        ".": "./src/index.cjs",
+        "./editor-routes.cjs": "./src/editor-routes.cjs",
+        "./entity-crud-routes.cjs": "./src/entity-crud-routes.cjs",
+        "./editor-ports.cjs": "./src/editor-ports.cjs",
+        "./scene-patch-utils.cjs": "./src/scene-patch-utils.cjs",
+        "./read-recovery.cjs": "./src/read-recovery.cjs",
+        "./editor-model.cjs": "./src/editor-model.cjs",
+        "./entity-id.js": "./src/entity-id.js",
+        "./cyr-latin-map.js": "./src/cyr-latin-map.js"
+    },
+    "files": [
+        "src/",
+        "README.md",
+        "LICENSE",
+        "CHANGELOG.md"
+    ],
+    "scripts": {
+        "test": "mocha --exit test/*.test.js"
+    },
+    "engines": {
+        "node": ">=18"
+    },
+    "license": "MIT",
+    "publishConfig": {
+        "access": "public"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/Animastor/animastor.git",
+        "directory": "packages/animastor-editor"
+    },
+    "homepage": "https://github.com/Animastor/animastor/tree/main/packages/animastor-editor#readme",
+    "bugs": {
+        "url": "https://github.com/Animastor/animastor/issues"
+    },
+    "dependencies": {
+        "@animastor/vbook-runtime": "^0.1.0"
+    },
+    "devDependencies": {
+        "chai": "^6.2.2",
+        "mocha": "^11.7.5"
+    }
+}

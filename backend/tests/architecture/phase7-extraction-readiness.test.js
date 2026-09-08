@@ -125,7 +125,10 @@ describe('P7-T4: VBook internals are not reached by new direct consumers', () =>
         'backend/src/orchestration/scene-callbacks.js: ../book',
         'backend/src/orchestration/scene-orchestrator.js: ../book',
         'backend/src/routes/ai-routes.cjs: ../book/bundle-validator.cjs',
-        'backend/src/routes/editor/entity-crud-routes.cjs: ../../book/lazy-book/paths',
+        // (entity-crud-routes.cjs was removed from this baseline at the Phase 4
+        // physical move: the Editor package now imports the id grammar as the
+        // @animastor/vbook-runtime/lazy-book/paths package export — not a
+        // backend/src/book path — so it is no longer a raw-book consumer.)
         'backend/src/runtime/reconciliation-engine.js: ../book',
         'backend/src/runtime/runtime-scheduler.js: ../book',
         'backend/src/runtime/scene-window.js: ../book',

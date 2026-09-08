@@ -21,8 +21,8 @@ const path = require('path');
 const os = require('os');
 
 require('./vbook-test-bindings.cjs');
-const bookModule = require('../src/book/index');
-const config = require('../src/config/runtime-config');
+const bookModule = require('../../../backend/src/book/index');
+const config = require('../../../backend/src/config/runtime-config');
 
 const ORIG_BOOKS_DIR = config.BOOKS_DIR;
 
@@ -60,7 +60,7 @@ describe('ENTITY CRUD ROUTES — manual add/delete', () => {
             patch() {},
             delete(path, handler) { handlers.set(path, handler); },
         };
-        require('../src/routes/editor/entity-crud-routes.cjs')(app, {}, {
+        require('@animastor/editor/entity-crud-routes.cjs')(app, {}, {
             book: bookModule,
             editorModel: {                       // Phase 6: Editor boundary fake over the real module
                 read: (id) => bookModule.loadBook(id),
@@ -459,7 +459,7 @@ describe('ENTITY CRUD ROUTES — scene/unit delete deep cleanup', () => {
         // storage/runtime legs (same wiring the composition root performs in
         // routes/editor/editor-ports.cjs) so the purge behavior itself stays
         // under test — only its host collaborators are mocked.
-        const realPurge = require('../src/services/entity-cleanup.cjs')(redisMock, { OUTPUT_DIR: tmpDir }, {
+        const realPurge = require('../../../backend/src/services/entity-cleanup.cjs')(redisMock, { OUTPUT_DIR: tmpDir }, {
             utils: { log: () => {} },
             storage: deps.storage,
             runtime: deps.runtime,
@@ -476,7 +476,7 @@ describe('ENTITY CRUD ROUTES — scene/unit delete deep cleanup', () => {
             resolveOwnership: async () => ({}),
             recoveryCtx: {},
         };
-        require('../src/routes/editor/entity-crud-routes.cjs')(app, redisMock, deps);
+        require('@animastor/editor/entity-crud-routes.cjs')(app, redisMock, deps);
     }
 
     async function invoke(pathTemplate, params, body) {
@@ -870,7 +870,7 @@ describe('ENTITY CLEANUP — partial failure → pending purge retry', () => {
             bookDiff: {},
             sceneAssetsRepo: {},
         };
-        return require('../src/services/entity-cleanup.cjs')(redisMock, deps.config, deps);
+        return require('../../../backend/src/services/entity-cleanup.cjs')(redisMock, deps.config, deps);
     }
 
     beforeEach(() => {

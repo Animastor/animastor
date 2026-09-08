@@ -1,14 +1,14 @@
 // ======================================================
 // EDITOR ROUTES — Core Book GET/PUT/PATCH/DELETE + Cover
 // ======================================================
-// Editor contour (Phase 1 of the Editor extraction —
-// docs/architecture/editor-module-extraction-audit.md §13).
+// Editor contour (@animastor/editor — Phase 4 physical move;
+// docs/architecture/editor-module-extraction-audit.md §13/§Phase 4).
 // Moved byte-for-byte from routes/book/core-routes.cjs (route split,
 // the 4d1f6f0e playbook): same endpoints, same handlers, same HTTP
 // semantics. Host implementation modules (PG repos, services, agent
 // constants) no longer land here via direct requires — they arrive via
 // the editorPorts seam wired at the composition root
-// (routes/editor/editor-ports.cjs), the playerPorts analog.
+// (src/editor-ports.cjs), the playerPorts analog.
 //
 // 11 endpoints: GET book, GET source-coverage, GET cover, PUT book,
 // PATCH scene/metadata/locations/characters/voices/behaviors, DELETE book.

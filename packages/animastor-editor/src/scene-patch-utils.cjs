@@ -1,6 +1,7 @@
 // Pure helpers for the PATCH /book/:bookId/scene/:chapterId/:sceneId handler.
 //
-// Extracted from book-routes.cjs (Architectural Debt #3). These close over no
+// Extracted from book-routes.cjs (Architectural Debt #3); carried into
+// @animastor/editor by the Phase 4 physical move. These close over no
 // request state or deps, so they live as plain exported functions.
 
 // Set a value at a dotted path inside an object, creating intermediate objects.

@@ -1,33 +1,31 @@
 // ======================================================
-// EDITOR PHASE 2 — CONTRACT FREEZE / EXTRACTION READINESS GUARDS
-// (E4–E8)
+// EDITOR — CONTRACT FREEZE / EXTRACTION READINESS GUARDS
+// (E4–E8) — post-physical-move edition (Phase 4)
 // ======================================================
 // Docs: docs/architecture/editor-module-extraction-audit.md
-// §Phase 2 (contract freeze + extraction-readiness audit). These guards
-// freeze what the Phase 1 route split produced so the future physical
-// move to packages/animastor-editor stays mechanical:
+// §Phase 2 (contract freeze), §Phase 4 (physical move). These guards
+// freeze the moved @animastor/editor package so the extraction stays
+// frozen:
 //
-//   E4 — Dependency matrix freeze: the exact dep legs each contour
+//   E4 — Dependency matrix freeze: the exact dep legs each package
 //        registrar consumes (member access + destructuring) are pinned,
 //        so a new host leg cannot appear silently.
 //   E5 — editorPorts contract freeze: the port object shape (the 7
 //        frozen port names) is validated functionally —
 //        createEditorPorts({deps}) requires the mandatory legs and
 //        passes all legs through verbatim (identity, no wrapping).
-//   E6 — Transitive require closure: the module closure of the contour
+//   E6 — Transitive require closure: the module closure of the package
 //        (registrars + helpers, excluding the composition-root seam
-//        itself) reaches ONLY intra-contour files, the two host id
-//        grammar shims (book/lazy-book/paths — a pure re-export of
-//        @animastor/vbook-runtime — and utils/entity-id) and the pure
-//        transliteration map (utils/cyr-latin-map — zero deps) plus
-//        node builtins. B1 is resolved: the old hidden chain
-//        (entity-id → image/helpers → string-utils → runtime-config)
-//        is gone — entity-id now imports cyrToLatin from the
-//        standalone utils/cyr-latin-map module.
-//   E7 — Editor package future boundary: the contour is carried by
-//        exactly the five files; no package requires editor modules;
-//        the physical packages/animastor-editor does not exist yet.
-//   E8 — No editorPorts bypass: contour handlers reach host legs ONLY
+//        itself) reaches ONLY intra-package files plus node builtins.
+//        The id grammar now comes from the VBook runtime package export
+//        (@animastor/vbook-runtime/lazy-book/paths — the former host shim
+//        book/lazy-book/paths.js is no longer in the closure); entity-id
+//        and cyr-latin-map moved INTO the package. B1 stays resolved:
+//        no image/helpers, string-utils or runtime-config anywhere.
+//   E7 — Editor package boundary: the package src/ is carried by
+//        exactly the 9 files; no package requires editor modules;
+//        packages/animastor-editor EXISTS (the physical move landed).
+//   E8 — No editorPorts bypass: package handlers reach host legs ONLY
 //        through the destructured editorModel/editorPorts/utils members
 //        — no require() inside handler bodies (lazy requires), no
 //        secondary deps.* access, no agent/generation domain imports.
@@ -43,7 +41,7 @@ const {
     BACKEND_SRC, listSourceFiles, readSource, rel, requireSpecifiers, resolveSpecifier, REPO_ROOT,
 } = require('./helpers');
 
-const EDITOR_DIR = path.join(BACKEND_SRC, 'routes', 'editor');
+const EDITOR_DIR = path.join(REPO_ROOT, 'packages', 'animastor-editor', 'src');
 const EDITOR_REGISTRARS = [
     path.join(EDITOR_DIR, 'editor-routes.cjs'),
     path.join(EDITOR_DIR, 'entity-crud-routes.cjs'),
@@ -79,7 +77,7 @@ function codeOf(file) {
 // ── E4 — dependency matrix freeze ─────────────────────────────────────────
 describe('E4: dependency matrix — contour deps legs stay frozen', () => {
     const BASELINE = {
-        'routes/editor/editor-routes.cjs': [
+        'editor-routes.cjs': [
             'book.collectSceneList',        // thin-client scene_list projection
             'bookDeletion.deleteBook',      // DELETE /book cascade (host service)
             'bookDiff.computeBookDiff',     // dirty-scene diff (host service)
@@ -93,7 +91,7 @@ describe('E4: dependency matrix — contour deps legs stay frozen', () => {
             'storage.bookSync',             // post-commit PG reconcile
             'utils.log',                     // destructured: const { log } = utils
         ],
-        'routes/editor/entity-crud-routes.cjs': [
+        'entity-crud-routes.cjs': [
             'editorModel.commit',
             'editorModel.read',
             'editorPorts.purge',            // structure-delete deep cleanup
@@ -121,12 +119,12 @@ describe('E4: dependency matrix — contour deps legs stay frozen', () => {
 
     it('editor-routes.cjs consumes exactly the frozen dep legs', () => {
         const used = legsUsed(codeOf(EDITOR_REGISTRARS[0]), ['book', 'bookDiff', 'storage', 'bookDeletion', 'editorModel', 'editorPorts', 'utils']);
-        expect(used, 'editor-routes dep matrix changed — see Phase 2 audit §E4').to.deep.equal(BASELINE['routes/editor/editor-routes.cjs']);
+        expect(used, 'editor-routes dep matrix changed — see Phase 2 audit §E4').to.deep.equal(BASELINE['editor-routes.cjs']);
     });
 
     it('entity-crud-routes.cjs consumes exactly the frozen dep legs', () => {
         const used = legsUsed(codeOf(EDITOR_REGISTRARS[1]), ['editorModel', 'editorPorts', 'utils']);
-        expect(used, 'entity-crud dep matrix changed — see Phase 2 audit §E4').to.deep.equal(BASELINE['routes/editor/entity-crud-routes.cjs']);
+        expect(used, 'entity-crud dep matrix changed — see Phase 2 audit §E4').to.deep.equal(BASELINE['entity-crud-routes.cjs']);
     });
 
     it('read-recovery ctx consumes exactly the frozen ctx fields', () => {
@@ -187,7 +185,8 @@ describe('E5: createEditorPorts — the frozen port object contract', () => {
 
     it('backend.cjs wires all seven ports at the composition root', () => {
         const src = readSource(BACKEND_ROOT);
-        expect(src).to.match(/editorPorts:\s*require\('\.\/routes\/editor\/editor-ports\.cjs'\)/);
+        // Post-move: the port assembly is loaded through the package export map.
+        expect(src).to.match(/editorPorts:\s*require\('@animastor\/editor\/editor-ports\.cjs'\)/);
         // The deps block carries every port name as a key or shorthand.
         const wiring = src.slice(src.indexOf('editorPorts: require('));
         const block = wiring.slice(0, wiring.indexOf('}),\n};') > 0 ? wiring.indexOf('}),\n};') : 5000);
@@ -197,27 +196,23 @@ describe('E5: createEditorPorts — the frozen port object contract', () => {
     });
 });
 
-// ── E6 — transitive require closure (extraction readiness) ────────────────
-describe('E6: contour require closure reaches only intra-contour + the pinned id-grammar shims', () => {
+// ── E6 — transitive require closure (package boundary, post-move) ─────────
+describe('E6: package require closure reaches only intra-package files + builtins', () => {
     // The closure walk starts at the registrars + pure helpers and follows
     // every relative require. The seam (editor-ports.cjs) is excluded: it is
     // the composition-root shape file and holds zero requires (pinned by
     // E2); its deps arrive from backend.cjs.
+    //
+    // Post-move (Phase 4) the closure is FULLY self-contained:
+    //   - the id grammar is imported as the VBook runtime package export
+    //     (@animastor/vbook-runtime/lazy-book/paths — a bare specifier, not
+    //     walked); the former host shim book/lazy-book/paths.js is gone from
+    //     the closure;
+    //   - entity-id.js and cyr-latin-map.js moved INTO the package (the
+    //     former host utils/ files are no longer reachable from it).
+    // B1 stays resolved: image/helpers.js, utils/string-utils.js and
+    // config/runtime-config.js are nowhere in the closure.
     const START = [...EDITOR_REGISTRARS, ...EDITOR_HELPERS];
-    // Host files allowed inside the closure (the Phase 3 dependency matrix):
-    //   book/lazy-book/paths.js — pure re-export shim of @animastor/vbook-runtime
-    //     (post-move the package imports the runtime export directly);
-    //   utils/entity-id.js — Editor-only id transliteration (move candidate);
-    //   utils/cyr-latin-map.js — pure CYR_LATIN_MAP + cyrToLatin (zero deps,
-    //     the canonical transliteration source; entity-id + image/helpers both
-    //     import from here).
-    // B1 resolved: image/helpers.js, utils/string-utils.js, and
-    // config/runtime-config.js are NO LONGER in the closure.
-    const ALLOWED_HOST_FILES = new Set([
-        path.join(BACKEND_SRC, 'book', 'lazy-book', 'paths.js'),
-        path.join(BACKEND_SRC, 'utils', 'entity-id.js'),
-        path.join(BACKEND_SRC, 'utils', 'cyr-latin-map.js'),
-    ]);
 
     function walkClosure() {
         const seen = [];
@@ -230,41 +225,29 @@ describe('E6: contour require closure reaches only intra-contour + the pinned id
             visited.add(key);
             for (const spec of requireSpecifiers(readSource(file))) {
                 if (builtinModules.includes(spec) || builtinModules.includes(spec.split('/')[0])) continue;
-                if (!spec.startsWith('.')) continue;
+                if (!spec.startsWith('.')) continue; // bare specifiers: vbook-runtime export map
                 const resolved = resolveSpecifier(file, spec);
                 if (!resolved) continue;
-                const isContour = resolved.startsWith(EDITOR_DIR + path.sep);
-                if (isContour) { queue.push(resolved); continue; }
+                const isPackage = resolved.startsWith(EDITOR_DIR + path.sep);
+                if (isPackage) { queue.push(resolved); continue; }
                 seen.push({ from: rel(file), spec, to: rel(resolved) });
-                // continue walking host legs ONLY for the allowed shims so
-                // their own transitive host deps stay visible in `seen`
-                if (ALLOWED_HOST_FILES.has(resolved)) queue.push(resolved);
             }
         }
         return seen;
     }
 
-    it('the closure reaches only the pinned host files (the Phase 2 matrix)', () => {
+    it('the closure reaches ONLY intra-package files (no host module at all)', () => {
         const edges = walkClosure();
-        const offenders = edges.filter((e) => !ALLOWED_HOST_FILES.has(path.join(REPO_ROOT, e.to)));
         expect(
-            offenders.map((e) => `${e.from} → ${e.to}`),
-            'editor contour closure gained a new host module — extend the Phase 2 dependency matrix consciously',
+            edges.map((e) => `${e.from} → ${e.to}`),
+            'editor package closure gained a host module — extend the dependency matrix consciously',
         ).to.deep.equal([]);
-        // The pinned host set is exact — B1 resolved: only the pure
-        // transliteration chain (entity-id → cyr-latin-map) plus the
-        // vbook-runtime shim remain; no image/string-utils/runtime-config.
-        const reachedHost = [...new Set(edges.map((e) => e.to))].sort();
-        expect(reachedHost).to.deep.equal([
-            'backend/src/book/lazy-book/paths.js',
-            'backend/src/utils/cyr-latin-map.js',
-            'backend/src/utils/entity-id.js',
-        ]);
     });
 
-    it('book/lazy-book/paths is a pure shim over @animastor/vbook-runtime (zero host logic)', () => {
-        const code = codeOf(path.join(BACKEND_SRC, 'book', 'lazy-book', 'paths.js')).trim();
-        expect(code).to.equal("module.exports = require('@animastor/vbook-runtime/lazy-book/paths');");
+    it('the id grammar is the VBook runtime package export (the host shim is gone from the closure)', () => {
+        const code = codeOf(EDITOR_REGISTRARS[1]);
+        expect(code).to.match(/require\(['"]@animastor\/vbook-runtime\/lazy-book\/paths['"]\)/);
+        expect(code).to.not.match(/require\(['"][^'"]*book\/lazy-book\/paths['"]\)/);
     });
 
     it('scene-patch-utils stays pure (zero requires)', () => {
@@ -272,56 +255,66 @@ describe('E6: contour require closure reaches only intra-contour + the pinned id
         expect(specs, 'scene-patch-utils is the shared pure helper — it must not gain requires').to.deep.equal([]);
     });
 
-    it('B1 resolved: the closure no longer reaches image/helpers, string-utils, or runtime-config', () => {
-        const edges = walkClosure();
-        const reachedHost = edges.map((e) => e.to);
-        const forbidden = [
-            'backend/src/image/helpers.js',
-            'backend/src/utils/string-utils.js',
-            'backend/src/config/runtime-config.js',
-        ];
-        for (const f of forbidden) {
-            expect(reachedHost, `B1 regression: ${f} must not be in the editor closure`).to.not.include(f);
+    it('B1 stays resolved: no image/helpers, string-utils, or runtime-config in the package closure', () => {
+        // Scan the whole package src/ (not just the registrars) so any new
+        // package file is covered too.
+        for (const file of listSourceFiles(EDITOR_DIR)) {
+            const code = codeOf(file);
+            expect(code, `${rel(file)} must not require image/helpers`).to.not.match(/require\(['"][^'"]*image\/helpers['"]\)/);
+            expect(code, `${rel(file)} must not require utils/string-utils`).to.not.match(/require\(['"][^'"]*utils\/string-utils['"]\)/);
+            expect(code, `${rel(file)} must not require config/runtime-config`).to.not.match(/require\(['"][^'"]*runtime-config['"]\)/);
         }
+        // The host image/helpers.js still imports the canonical cyr-latin-map
+        // — but from the PACKAGE now (the map moved; the host consumer follows).
+        const imageHelpers = readSource(path.join(BACKEND_SRC, 'image', 'helpers.js'));
+        expect(imageHelpers).to.match(/require\(['"]@animastor\/editor\/cyr-latin-map\.js['"]\)/);
     });
 
-    it('cyr-latin-map is a pure zero-dependency module (the canonical transliteration source)', () => {
-        const code = codeOf(path.join(BACKEND_SRC, 'utils', 'cyr-latin-map.js'));
+    it('cyr-latin-map is a pure zero-dependency module inside the package (the canonical transliteration source)', () => {
+        const code = codeOf(path.join(EDITOR_DIR, 'cyr-latin-map.js'));
         const specs = requireSpecifiers(code);
-        expect(specs, 'cyr-latin-map must not require any host module').to.deep.equal([]);
+        expect(specs, 'cyr-latin-map must not require any module').to.deep.equal([]);
         expect(code).to.match(/CYR_LATIN_MAP/);
         expect(code).to.match(/function cyrToLatin/);
     });
 
-    it('entity-id imports cyrToLatin from cyr-latin-map (not from image/helpers)', () => {
-        const code = codeOf(path.join(BACKEND_SRC, 'utils', 'entity-id.js'));
+    it('entity-id imports cyrToLatin from the package cyr-latin-map (not from image/helpers)', () => {
+        const code = codeOf(path.join(EDITOR_DIR, 'entity-id.js'));
         expect(code).to.match(/require\(['"]\.\/cyr-latin-map['"]\)/);
-        expect(code).to.not.match(/require\(['"].*image\/helpers['"]\)/);
+        expect(code).to.not.match(/require\(['"][^'"]*image\/helpers['"]\)/);
     });
 });
 
-// ── E7 — Editor package future boundary ───────────────────────────────────
-describe('E7: editor contour is carried by exactly the 5 files + the facade', () => {
-    it('routes/editor/** contains exactly the five contour files (no strays)', () => {
+// ── E7 — Editor package boundary (post-move) ──────────────────────────────
+describe('E7: the editor package is carried by exactly the 9 src files', () => {
+    it('packages/animastor-editor/src/** contains exactly the nine package files (no strays)', () => {
         const files = listSourceFiles(EDITOR_DIR).map((f) => rel(f)).sort();
         expect(files).to.deep.equal([
-            'backend/src/routes/editor/editor-ports.cjs',
-            'backend/src/routes/editor/editor-routes.cjs',
-            'backend/src/routes/editor/entity-crud-routes.cjs',
-            'backend/src/routes/editor/read-recovery.cjs',
-            'backend/src/routes/editor/scene-patch-utils.cjs',
+            'packages/animastor-editor/src/cyr-latin-map.js',
+            'packages/animastor-editor/src/editor-model.cjs',
+            'packages/animastor-editor/src/editor-ports.cjs',
+            'packages/animastor-editor/src/editor-routes.cjs',
+            'packages/animastor-editor/src/entity-crud-routes.cjs',
+            'packages/animastor-editor/src/entity-id.js',
+            'packages/animastor-editor/src/index.cjs',
+            'packages/animastor-editor/src/read-recovery.cjs',
+            'packages/animastor-editor/src/scene-patch-utils.cjs',
         ]);
     });
 
     it('the editor model facade stays a one-facade module (read/commit only)', () => {
-        const src = readSource(path.join(BACKEND_SRC, 'editor', 'index.cjs'));
+        const src = readSource(path.join(EDITOR_DIR, 'editor-model.cjs'));
         expect(src).to.match(/read\(bookId/);
         expect(src).to.match(/commit\(book/);
         expect(src).to.not.match(/require\(['"]\.\.\/(routes|services|storage|runtime|orchestration)/);
     });
 
-    it('packages/animastor-editor does NOT exist yet (physical move not started)', () => {
-        expect(fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-editor'))).to.equal(false);
+    it('packages/animastor-editor EXISTS with the frozen manifest (physical move landed)', () => {
+        expect(fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-editor'))).to.equal(true);
+        const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'packages', 'animastor-editor', 'package.json'), 'utf8'));
+        expect(pkg.name).to.equal('@animastor/editor');
+        expect(Object.keys(pkg.dependencies)).to.deep.equal(['@animastor/vbook-runtime']);
+        expect(pkg.main).to.equal('src/index.cjs');
     });
 
     it('no package requires an editor module (one-way street)', () => {
@@ -334,7 +327,7 @@ describe('E7: editor contour is carried by exactly the 5 files + the facade', ()
                 }
             }
         }
-        expect(offenders, 'packages stay decoupled from the editor contour').to.deep.equal([]);
+        expect(offenders, 'packages stay decoupled from the editor package').to.deep.equal([]);
     });
 });
 

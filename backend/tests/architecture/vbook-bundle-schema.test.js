@@ -178,7 +178,9 @@ describe('vbook-bundle-3.1: schema exists and mirrors the validator (audit A1)',
             expect(draftSrc).to.match(/vbook_version:\s*'3\.1'/);
             expect(draftSrc).to.match(/source:\s*sourceType/);
             expect(draftSrc).to.match(/state:\s*BookState\.RAW_IMPORTED/);
-            const crudSrc = fs.readFileSync(path.join(REPO_ROOT, 'backend', 'src', 'routes', 'editor', 'entity-crud-routes.cjs'), 'utf8');
+            // The blank-book producer lives in the @animastor/editor package
+            // since the Phase 4 move (docs/architecture/editor-module-extraction-audit.md).
+            const crudSrc = fs.readFileSync(path.join(REPO_ROOT, 'packages', 'animastor-editor', 'src', 'entity-crud-routes.cjs'), 'utf8');
             expect(crudSrc).to.match(/vbook_version:\s*'3\.1'/);
         });
 

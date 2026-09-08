@@ -3,29 +3,32 @@
 // ======================================================
 // Guards for the Editor HTTP contour after the route split (Phase 1 of
 // the Editor extraction, docs/architecture/editor-module-extraction-audit.md
-// §13 — the 4d1f6f0e Player-split playbook). The contour lives in
-// backend/src/routes/editor/** and is the future packages/animastor-editor.
+// §13 — the 4d1f6f0e Player-split playbook). Since the Phase 4 physical
+// move the contour lives in packages/animastor-editor (@animastor/editor);
+// the host keeps only the one-line re-export shims (routes/editor/index.cjs,
+// editor/index.cjs) and consumes the package entrypoint (E3).
 //
 //   E1 — Route surface parity: the contour registrars register EXACTLY the
 //        frozen 26-endpoint edit surface (method + path), byte-identical to
 //        the pre-split inventory (11 in the old routes/book/core-routes.cjs
 //        + 15 in the old routes/book/entity-crud-routes.cjs); no
 //        import/generation/player endpoint leaks in.
-//   E2 — Require isolation (forward direction): contour REGISTRARS and pure
-//        helpers require only intra-contour modules, the host Book Model
-//        shim (lazy-book/paths id grammar), utils/entity-id, and node
-//        builtins — no PG/storage, no Redis clients, no orchestration, no
-//        middleware, no services. The one deliberate exception is
-//        editor-ports.cjs itself: it is the composition-root seam whose
-//        job is to wire host implementations into the port object (the
-//        Player analog: backend.cjs wires playerPorts; here the port
-//        assembly lives in a contour file so the future package can carry
-//        the shape with it — its require set is frozen separately).
+//   E2 — Require isolation (forward direction): package REGISTRARS and pure
+//        helpers require only intra-package modules, the VBook runtime id
+//        grammar (@animastor/vbook-runtime/lazy-book/paths), the package
+//        entity-id module, and node builtins — no PG/storage, no Redis
+//        clients, no orchestration, no middleware, no services. The one
+//        deliberate exception is editor-ports.cjs itself: it is the
+//        composition-root seam whose job is to wire host implementations
+//        into the port object (the Player analog: backend.cjs wires
+//        playerPorts; here the port assembly lives in a package file so
+//        the package carries the shape with it — its require set is frozen
+//        separately).
 //   E3 — Reverse direction: no host module (generation/AI/import/other
-//        contours, packages) requires an Editor contour implementation
+//        contours, packages) requires an Editor package implementation
 //        file by path, and the non-editor book contours contain none of
 //        the 26 editor route literals (the edit surface is registered
-//        only by the editor contour).
+//        only by the editor package).
 //
 // Static checks follow the Phase 1 helpers (pure source scan, CI-safe).
 // The E-guards are the audit §12.3 items 1–2 (authored with the split).
@@ -39,7 +42,7 @@ const {
     BACKEND_SRC, listSourceFiles, readSource, rel, requireSpecifiers, resolveSpecifier, REPO_ROOT,
 } = require('./helpers');
 
-const EDITOR_DIR = path.join(BACKEND_SRC, 'routes', 'editor');
+const EDITOR_DIR = path.join(REPO_ROOT, 'packages', 'animastor-editor', 'src');
 const EDITOR_REGISTRARS = [
     path.join(EDITOR_DIR, 'editor-routes.cjs'),
     path.join(EDITOR_DIR, 'entity-crud-routes.cjs'),
@@ -49,7 +52,7 @@ const BOOK_ROUTES = path.join(BACKEND_SRC, 'routes', 'book-routes.cjs');
 const BACKEND_ROOT = path.join(BACKEND_SRC, 'backend.cjs');
 // Host contours that must not reach the Editor implementation.
 const HOST_CONTOUR_DIRS = [
-    path.join(BACKEND_SRC, 'routes'),          // non-editor route files (scan skips routes/editor)
+    path.join(BACKEND_SRC, 'routes'),          // non-editor route files (scan skips the editor shims)
     path.join(BACKEND_SRC, 'services'),
     path.join(BACKEND_SRC, 'orchestration'),
     path.join(BACKEND_SRC, 'runtime'),
@@ -186,26 +189,28 @@ describe('E1: editor registrars register exactly the frozen edit surface', () =>
 });
 
 // ── E2 — require isolation (forward direction) ────────────────────────────
-describe('E2: the editor contour requires no host implementation (ports seam only)', () => {
-    it('registrars and helpers require only intra-contour, book/paths, entity-id, and builtins', () => {
-        const ALLOWED = /^(\.\.?\/)+(book\/lazy-book\/paths|utils\/entity-id)/;
+describe('E2: the editor package requires no host implementation (ports seam only)', () => {
+    it('registrars and helpers require only intra-package, vbook-runtime, entity-id, and builtins', () => {
+        const ALLOWED = /^(\.\.?\/)+(book\/lazy-book\/paths|utils\/entity-id)|^@animastor\/vbook-runtime\//;
         const offenders = [];
         for (const file of contourFiles()) {
             const isPorts = file === EDITOR_PORTS; // the seam itself — pinned below
             for (const spec of requireSpecifiers(codeOf(readSource(file)))) {
                 if (builtinModules.includes(spec) || builtinModules.includes(spec.split('/')[0])) continue;
                 if (!spec.startsWith('.')) {
+                    // bare specifiers: only the VBook runtime id grammar is allowed
+                    if (ALLOWED.test(spec)) continue;
                     offenders.push(`${rel(file)}: ${spec} (bare, non-builtin)`);
                     continue;
                 }
                 if (isPorts) continue; // port-wiring requires pinned separately
                 if (ALLOWED.test(spec)) continue; // id grammar + entity-id (pre-split shape)
                 const resolved = resolveSpecifier(file, spec);
-                if (resolved && resolved.startsWith(EDITOR_DIR + path.sep)) continue; // intra-contour
+                if (resolved && resolved.startsWith(EDITOR_DIR + path.sep)) continue; // intra-package
                 offenders.push(`${rel(file)}: ${spec} (host implementation require)`);
             }
         }
-        expect(offenders, 'editor contour must receive host legs via editorPorts only').to.deep.equal([]);
+        expect(offenders, 'editor package must receive host legs via editorPorts only').to.deep.equal([]);
     });
 
     it('editor-ports.cjs (the seam) has zero host requires (Phase 1.1)', () => {
@@ -236,13 +241,13 @@ describe('E2: the editor contour requires no host implementation (ports seam onl
 });
 
 // ── E3 — reverse direction: nothing reaches the contour by path ──────────
-describe('E3: no host module requires the editor contour implementation by path', () => {
-    it('only book-routes.cjs (delegation) and backend.cjs (ports wiring) mention the contour', () => {
+describe('E3: no host module requires the editor package implementation by path', () => {
+    it('only book-routes.cjs (registration) and backend.cjs (ports wiring) mention the editor package', () => {
         const offenders = [];
         const seen = [];
         for (const dir of HOST_CONTOUR_DIRS) {
             for (const file of listSourceFiles(dir)) {
-                if (rel(file).startsWith('backend/src/routes/editor/')) continue;
+                if (rel(file).startsWith('backend/src/routes/editor/') || rel(file) === 'backend/src/editor/index.cjs') continue;
                 for (const spec of requireSpecifiers(codeOf(readSource(file)))) {
                     if (/routes\/editor\/|editor-routes\.cjs|entity-crud-routes\.cjs|editor-ports\.cjs|read-recovery\.cjs/.test(spec)) {
                         seen.push(`${rel(file)}: ${spec}`);
@@ -250,19 +255,19 @@ describe('E3: no host module requires the editor contour implementation by path'
                 }
             }
         }
-        // The two sanctioned edges: book-routes.cjs delegates registration to
-        // the contour registrars; backend.cjs wires editorPorts.
+        // The two sanctioned edges: book-routes.cjs registers the contour via
+        // the package export map; backend.cjs wires editorPorts the same way.
         const allowed = (edge) =>
-            edge.startsWith('backend/src/routes/book-routes.cjs: ./editor/') ||
-            edge.startsWith('backend/src/backend.cjs: ./routes/editor/editor-ports.cjs');
+            edge.startsWith('backend/src/routes/book-routes.cjs: @animastor/editor/') ||
+            edge.startsWith('backend/src/backend.cjs: @animastor/editor/editor-ports.cjs');
         for (const edge of seen) if (!allowed(edge)) offenders.push(edge);
-        expect(offenders, 'the editor contour is consumed only via book-routes delegation + the ports seam').to.deep.equal([]);
+        expect(offenders, 'the editor package is consumed only via book-routes registration + the ports seam').to.deep.equal([]);
     });
 
-    it('book-routes.cjs delegates the contour and registers no editor route literal itself', () => {
+    it('book-routes.cjs registers the contour through the package export map and no editor route literal itself', () => {
         const src = codeOf(readSource(BOOK_ROUTES));
-        expect(src).to.match(/require\('\.\/editor\/editor-routes\.cjs'\)/);
-        expect(src).to.match(/require\('\.\/editor\/entity-crud-routes\.cjs'\)/);
+        expect(src).to.match(/require\('@animastor\/editor\/editor-routes\.cjs'\)/);
+        expect(src).to.match(/require\('@animastor\/editor\/entity-crud-routes\.cjs'\)/);
         // The old core/entity registrar paths are gone.
         expect(src).to.not.match(/\.\/book\/(core|entity-crud)-routes\.cjs/);
         // No editor endpoint literal re-registered host-side (double-mount risk).
@@ -271,11 +276,16 @@ describe('E3: no host module requires the editor contour implementation by path'
         }
     });
 
-    it('the old contour paths are vacated (no legacy copies remain)', () => {
+    it('the old host contour paths are vacated (only one-line re-export shims remain)', () => {
         expect(fs.existsSync(path.join(BACKEND_SRC, 'routes', 'book', 'core-routes.cjs'))).to.equal(false);
         expect(fs.existsSync(path.join(BACKEND_SRC, 'routes', 'book', 'entity-crud-routes.cjs'))).to.equal(false);
         expect(fs.existsSync(path.join(BACKEND_SRC, 'routes', 'book', 'scene-patch-utils.cjs'))).to.equal(false);
         expect(fs.existsSync(path.join(BACKEND_SRC, 'routes', 'book', 'recover-chunks.cjs'))).to.equal(false);
+        // The legacy editor paths are pure re-export shims of the package.
+        const shim = codeOf(readSource(path.join(BACKEND_SRC, 'routes', 'editor', 'index.cjs'))).trim();
+        expect(shim).to.equal("module.exports = require('@animastor/editor');");
+        const facadeShim = codeOf(readSource(path.join(BACKEND_SRC, 'editor', 'index.cjs'))).trim();
+        expect(facadeShim).to.equal("module.exports = require('@animastor/editor');");
     });
 
     it('no editor route literal appears in the player package (Player stays Player)', () => {

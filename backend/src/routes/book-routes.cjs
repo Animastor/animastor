@@ -31,9 +31,12 @@ module.exports = function(app, redis, deps) {
     // Editor contour — core book CRUD (GET/PUT/PATCH book, DELETE, cover,
     // source-coverage) + entity/structure CRUD. Same endpoints, same
     // handlers, same registration order as before the split (4d1f6f0e
-    // playbook — behavior-neutral move).
-    require('./editor/editor-routes.cjs')(app, redis, deps);
-    require('./editor/entity-crud-routes.cjs')(app, redis, deps);
+    // playbook — behavior-neutral move). Since the Phase 4 physical move
+    // the contour lives in @animastor/editor (packages/animastor-editor);
+    // the legacy ./editor/ directory is a one-line re-export shim of the
+    // package (relocation checklist §2.4).
+    require('@animastor/editor/editor-routes.cjs')(app, redis, deps);
+    require('@animastor/editor/entity-crud-routes.cjs')(app, redis, deps);
 
     // Import and bootstrap routes
     require('./book/import-routes.cjs')(app, redis, deps);

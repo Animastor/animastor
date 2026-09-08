@@ -4,8 +4,8 @@
 // Manual add/delete of characters, locations and voices from the Editor
 // (web + Android).
 //
-// Editor contour (Phase 1 of the Editor extraction —
-// docs/architecture/editor-module-extraction-audit.md §13). Moved
+// Editor contour (@animastor/editor — Phase 4 physical move;
+// docs/architecture/editor-module-extraction-audit.md §13/§Phase 4). Moved
 // byte-for-byte from routes/book/entity-crud-routes.cjs (route split,
 // the 4d1f6f0e playbook): same endpoints, same handlers, same HTTP
 // semantics. Writes go through the EXISTING Canonical Book Model
@@ -17,19 +17,19 @@
 // ID handling (spec): a user-entered canonical id is kept
 // verbatim; free-form input (Cyrillic, spaces, mixed case)
 // is transliterated to the project's snake_case standard
-// server-side via utils/entity-id (reusing cyrToLatin) so
+// server-side via ./entity-id.js (reusing cyrToLatin) so
 // neither frontend duplicates the algorithm.
 //
 // Host legs (entity-cleanup purge, workspace-ownership attach) arrive via
-// the editorPorts seam (routes/editor/editor-ports.cjs) — no direct host
-// requires inside the contour.
+// the editorPorts seam (src/editor-ports.cjs) — no direct host
+// requires inside the package.
 // ======================================================
 
-const { toEntityId, isCanonicalEntityId } = require('../../utils/entity-id');
+const { toEntityId, isCanonicalEntityId } = require('./entity-id.js');
 const { normalizeFieldValue, rebuildFullText } = require('./scene-patch-utils.cjs');
 // The project's single hex-id generator (lazy-book paths): ch-<hex8> / sc-<hex8>
 // / iu-<hex8>. No second generator is ever introduced on the clients.
-const { chapterId, sceneId, unitId, generateBookId } = require('../../book/lazy-book/paths');
+const { chapterId, sceneId, unitId, generateBookId } = require('@animastor/vbook-runtime/lazy-book/paths');
 
 // (redis is not destructured: purge/ownership legs arrive via editorPorts)
 module.exports = function (app, redis, deps) {
