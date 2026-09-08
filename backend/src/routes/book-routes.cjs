@@ -8,7 +8,6 @@
 //   core-routes.cjs      - GET/PUT/PATCH book, DELETE, source-coverage, cover
 //   import-routes.cjs    - load-vbook, import-txt, bootstrap, resume-bootstrap, bootstrap-next-window, trigger-next-window
 //   generation-routes.cjs - regenerate, cancel-generation, generate-next
-//   chunks-routes.cjs    - GET chunks, GET assets-state
 //   agent-routes.cjs     - GET agent-status
 //   recovery-routes.cjs  - recover-placeholders
 //   entity-crud-routes.cjs - add/delete characters, locations, voices
@@ -18,6 +17,10 @@
 //   parse-routes.cjs     - parse/source/snapshot endpoints
 //   cache-routes.cjs     - cache inspection + teardown
 //   versions-routes.cjs  - version endpoints
+//   chunks-routes.cjs    - GET chunks, GET assets-state → moved to the
+//                          player contour (packages/animastor-player,
+//                          registered by backend.cjs); the empty registrar
+//                          stub was deleted with the physical move.
 
 module.exports = function(app, redis, deps) {
     // Core CRUD routes
@@ -32,8 +35,7 @@ module.exports = function(app, redis, deps) {
     // Regeneration and generation control routes
     require('./book/generation-routes.cjs')(app, redis, deps);
 
-    // Chunks and asset state routes
-    require('./book/chunks-routes.cjs')(app, redis, deps);
+    // (chunks + assets-state moved to the player contour — packages/animastor-player)
 
     // Agent status route
     require('./book/agent-routes.cjs')(app, redis, deps);

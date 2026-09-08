@@ -1,8 +1,9 @@
 // ======================================================
 // PLAYER ROUTES — PLAYBACK QUEUE (book chunks + assets-state)
 // ======================================================
-// Byte-for-byte relocation from routes/book/chunks-routes.cjs (Player route
-// split — preparation stage, no behavior change):
+// Byte-for-byte relocation from the host routes/book/chunks-routes.cjs
+// (Player route split, then physical move to packages/animastor-player — no
+// behavior change):
 //   - GET /api/v1/book/:bookId/chunks       — the playback queue
 //     (dedup per scene, cover_chunk_id, chunk_positions);
 //   - GET /api/v1/book/:bookId/assets-state — readiness counters.
@@ -11,9 +12,10 @@
 // as the Player does (dirty-unit counters, layer config) — recorded as an
 // intentional mixed responsibility (audit §3.4.5). PG scene-assets repo and
 // Redis chunk reads stay host-side infra (a full playback-projection port is
-// deliberately premature); the pure IU math stays in
-// routes/book/iu-progress-utils.cjs (kept pure, consumed via injection).
-// Consumers: web generateStore/playbackStore, Android, tests.
+// deliberately premature); the pure IU math stays host-side
+// (routes/book/iu-progress-utils.cjs — kept pure, injected as the
+// computeIuReady port). Consumers: web generateStore/playbackStore,
+// Android, tests.
 
 const path = require('path');
 const fs = require('fs');

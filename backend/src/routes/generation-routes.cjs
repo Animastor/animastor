@@ -6,8 +6,9 @@
 //   /gpu/task/result|error (GPU Hub callbacks).
 //
 // The playback (Player) HTTP contour — scene/chunk media serving, scene
-// data, iu/preview, playback queue — was physically split into
-// routes/player/ (Player route split, see
+// data, iu/preview, playback queue — was split out (4d1f6f0e) and then
+// physically extracted to packages/animastor-player (@animastor/player,
+// registered by backend.cjs through the package entrypoint; see
 // docs/architecture/PLAYER_ROUTE_SPLIT_CHECKLIST.md). No playback handlers
 // remain here (guarded by tests/architecture/player-route-split.test.js).
 //

@@ -1,16 +1,17 @@
 // ======================================================
 // PLAYER ROUTES — SCENE DATA (status / storyboard / timings / waveform)
 // ======================================================
-// Byte-for-byte relocation of the scene-data handlers from
-// routes/generation-routes.cjs (Player route split — preparation stage, no
-// behavior change). Ports: computeVideoStartMs and computeWaveform arrive via
+// Byte-for-byte relocation of the scene-data handlers from the host
+// routes/generation-routes.cjs (Player route split, then physical move to
+// packages/animastor-player — no behavior change). Ports: computeVideoStartMs
+// and computeWaveform arrive via
 // playerPorts (host keeps ffprobe/ffmpeg + workflows knowledge); image
 // .getSceneDuration / .getOrCreatePreview stay injected deps on the shared
 // context (host image-pipeline internals the player must not import);
 // bookProjections are the two pure VBook-runtime read projections injected by
 // the registrar (the book module itself never reaches this file).
 // Consumers: web playbackStore/EditPage/Navigate, Android Repository,
-// tests/scene-timings.test.js.
+// test/scene-timings.test.js.
 
 const fs = require('fs');
 const path = require('path');

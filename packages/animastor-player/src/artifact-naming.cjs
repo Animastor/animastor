@@ -1,5 +1,5 @@
 // ======================================================
-// PLAYER ROUTES — ARTIFACT NAMING GRAMMAR (seam)
+// @animastor/player — ARTIFACT NAMING GRAMMAR (seam)
 // ======================================================
 // The single place where the playback contour reconstructs media artifact
 // filenames. Generation WRITES these files (audio-orchestrator, video-
@@ -13,14 +13,13 @@
 // video group grammar `${prefix}_gN.mp4` (video-orchestrator suffixes).
 // The Player must NOT import generation implementations directly — this
 // module re-exposes the grammar through an explicit, dependency-free
-// utility contract so the future packages/animastor-player can consume it
-// without dragging generation modules along. When the physical move happens,
-// generation should consume THIS module (or the grammar should move into
-// @animastor/vbook-runtime schema territory) — see
-// docs/architecture/PLAYER_ROUTE_SPLIT_CHECKLIST.md.
+// utility contract (@animastor/player/src/artifact-naming.cjs — moved with
+// the physical extraction). Generation keeps its own writer functions; the
+// byte-identity pin below is the drift guard. Long-term home (optional):
+// @animastor/vbook-runtime schema territory — out of scope here.
 //
 // NOTE: strings here MUST stay byte-identical to the writers. Guarded by
-// tests/architecture/player-route-split.test.js (naming contract pins).
+// backend/tests/architecture/player-route-split.test.js (P7 naming pins).
 
 /**
  * Scene audio: `${book}_${chapter}_${scene}.mp3`

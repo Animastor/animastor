@@ -1,12 +1,13 @@
 // ======================================================
 // PLAYER ROUTES — SCENE MEDIA (audio / video / image serving)
 // ======================================================
-// Byte-for-byte relocation of the media-serving handlers from
-// routes/generation-routes.cjs (Player route split — preparation stage, no
-// behavior change). Dependencies arrive exclusively through the shared
+// Byte-for-byte relocation of the media-serving handlers from the host
+// routes/generation-routes.cjs (Player route split, then physical move to
+// packages/animastor-player — no behavior change). Dependencies arrive
+// exclusively through the shared
 // context (player-shared.cjs): playerModel, outputRoot, playerPorts,
 // naming grammar. Consumers: web playbackStore/EditPage, Android
-// Repository, tests/scene-audio-range.test.js.
+// Repository, test/scene-audio-range.test.js.
 
 const fs = require('fs');
 const path = require('path');

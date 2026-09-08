@@ -104,6 +104,10 @@ services:
       # '@animastor/vbook-runtime'; this read-only mount resolves it
       # in-container (backend build context = ./backend, file: dependency).
       - ./packages/animastor-vbook-runtime:/app/node_modules/@animastor/vbook-runtime:ro
+      # arch(player): Player package (playback contour). The backend requires
+      # it as '@animastor/player'; this read-only mount resolves it
+      # in-container (backend build context = ./backend, file: dependency).
+      - ./packages/animastor-player:/app/node_modules/@animastor/player:ro
     depends_on:
       postgres:
         condition: service_healthy

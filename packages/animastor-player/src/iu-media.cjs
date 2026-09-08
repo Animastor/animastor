@@ -1,8 +1,9 @@
 // ======================================================
 // PLAYER ROUTES — IU MEDIA (iu-image / preview / chunk storyboard+status)
 // ======================================================
-// Byte-for-byte relocation from routes/generation-routes.cjs (Player route
-// split — preparation stage, no behavior change). The preview route may
+// Byte-for-byte relocation from the host routes/generation-routes.cjs
+// (Player route split, then physical move to packages/animastor-player — no
+// behavior change). The preview route may
 // GENERATE a preview via the injected image.getOrCreatePreview dep
 // (host image-pipeline internal — documented hidden write, audit §4 R3).
 // Consumers: web Edit zoom/Navigate thumbs/player IU, Android Repository,

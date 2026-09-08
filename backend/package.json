@@ -17,6 +17,7 @@
     "pretest": "bash ../scripts/syntax-smoke.sh"
   },
   "dependencies": {
+    "@animastor/player": "file:../packages/animastor-player",
     "@animastor/vbook-runtime": "file:../packages/animastor-vbook-runtime",
     "adm-zip": "^0.5.10",
     "cors": "^2.8.5",

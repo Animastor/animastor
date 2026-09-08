@@ -1,6 +1,6 @@
 # PLAYER ROUTE SPLIT CHECKLIST — playback contour → `routes/player/` → `packages/animastor-player/`
 
-**Status:** Route split COMPLETE (`4d1f6f0e`). Final package boundary audit COMPLETE (this document — it was referenced by the split commit's code comments but never committed; created by the boundary-audit commit).
+**Status: COMPLETE — PHYSICAL MOVE DONE (production-ready).** Route split COMPLETE (`4d1f6f0e`), final package boundary audit COMPLETE (audit commit `9a79446`), physical extraction to `packages/animastor-player/` (`@animastor/player`) COMPLETE (this document's commit — see §4). No HTTP contract, filename or runtime-semantic change.
 **Base commit of the split:** `4d1f6f0ec216f9d50e1a9e93a18b43a79e11b7a6`
 **Related:** `PLAYER_PACKAGE_EXTRACTION_READINESS_AUDIT.md` (pre-split reconnaissance), `PHASE_6_EDITOR_PLAYER.md` (facade + frozen legacy edges), `PHASE_7_EXTRACTION_READINESS.md` §4.6 (forced sequence: VBook → route split → Player), `VBOOK_RUNTIME_RELOCATION_CHECKLIST.md` (upstream, COMPLETE).
 
@@ -188,4 +188,95 @@ Existing: `phase6-editor-player.test.js` T1–T7 (facades, frozen contour requir
 - Tests: `scene-timings` / `scene-audio-range` stubs re-aimed to the narrowed seams; new `tests/architecture/player-route-split.test.js` (P1–P7).
 - No HTTP contract, filename, or runtime-semantic change.
 
-## VERDICT: READY FOR PLAYER PHYSICAL MOVE
+---
+
+## 4. PHYSICAL MOVE COMPLETE — `packages/animastor-player/` (`@animastor/player`)
+
+Executed per §2.10 with no deviation from the MOVE / PORT / STAY / VBOOK / DELETE lists of §2.8. No HTTP contract, filename or runtime-semantic change (P1 proves the frozen 17-endpoint surface; behavior suites moved with the package pass unchanged).
+
+### 4.1 Exact package contents (MOVE — all transferred, `git mv`)
+
+```
+packages/animastor-player/
+├── package.json                  @animastor/player — single entrypoint export "."
+├── README.md / LICENSE / CHANGELOG.md
+├── src/
+│   ├── index.cjs                 PUBLIC ENTRYPOINT: { createPlayerModel, createPlayerRoutes }
+│   ├── player-model.cjs          Phase 6 facade (from backend/src/player/index.cjs) —
+│   │                             requires @animastor/vbook-runtime/book-model.cjs
+│   ├── player-routes.cjs         registrar: createPlayerRoutes(app, redis, deps)
+│   ├── player-shared.cjs         shared contour context (build-id resolution, Range
+│   │                             streaming, chunk-book auth guard, video resolution)
+│   ├── scene-media.cjs           /scene/*/audio|video|image + chunk-keyed media
+│   ├── scene-data.cjs            /scene/*/status|storyboard|waveform|timings
+│   ├── iu-media.cjs              /chunk/:id, /chunk/:id/storyboard, /iu-image/*, /preview/*
+│   ├── playback-queue.cjs        /book/:bookId/chunks + /book/:bookId/assets-state
+│   └── artifact-naming.cjs       dependency-free naming grammar (P7 writer-identity pin)
+└── test/
+    ├── scene-timings.test.js     moved from backend/tests (6 cases)
+    └── scene-audio-range.test.js moved from backend/tests (11 cases)
+```
+
+### 4.2 Public API (single entrypoint — guard P9)
+
+```js
+const { createPlayerModel, createPlayerRoutes } = require('@animastor/player');
+const playerModel = createPlayerModel({ bookModel });   // host binds its Book Model
+createPlayerRoutes(app, redis, routeDeps);              // registers the 17 frozen endpoints
+```
+
+No subpath exports; the host never requires package internals by path (P3/P8/P9). Missing `bookProjections` fails construction.
+
+### 4.3 Host ports/adapters (composition root `backend.cjs` — unchanged seam shapes, §2.4)
+
+| Port | Host implementation |
+|---|---|
+| `playerModel` | `createPlayerModel({ bookModel })` — package facade over the host Book Model shim |
+| `outputRoot` | `config.OUTPUT_DIR` (injected; P4: zero config reads in the package) |
+| `playerPorts.assertBookAccess` | `middleware/auth-context.checkBookAccess` |
+| `playerPorts.computeVideoStartMs` | `video/video-timeline.computeVideoStartMs` (ffprobe + workflows tax stays host-side) |
+| `playerPorts.computeWaveform` | `services/waveform-service.computeWaveform` (ffmpeg stays host-side) |
+| `computeIuReady` | `routes/book/iu-progress-utils.cjs` (pure math stays host-side, shared with progress-panel) |
+| `bookProjections` | `{ findSceneRuntimeData, collectSceneUnits }` — narrow pure-read port; **the whole book module never enters the package** (P5/P6) |
+| `redis` / `getChunk` / `getAllChunks` / `getBookWindowStatus` / `iuRepo` / `sceneAssetsRepo` / `layerConfig` / `image` / `state` / `activeScenes` / `placeholderAudio` / `utils.log` | injected per the §2.8 PORT list, unchanged |
+
+### 4.4 VBook boundary
+
+- Book content: `playerModel` (package facade) → `@animastor/vbook-runtime/book-model.cjs` (direct package import — the host shim is no longer in the package path). Guarded by phase6 T1/T3 (re-aimed to the package dir) + player-route-split P2/P6.
+- Read projections: injected `bookProjections` port; P6 pins that scene-data uses only `findSceneRuntimeData`/`collectSceneUnits` and that no package file sees the book module surface.
+
+### 4.5 Deleted legacy files (no duplicate implementation remains)
+
+- `backend/src/routes/player/` (all 7 files — moved)
+- `backend/src/player/` (facade — moved)
+- `backend/src/routes/book/chunks-routes.cjs` (empty registrar stub) + its require in `routes/book-routes.cjs`
+- `backend/tests/scene-timings.test.js`, `backend/tests/scene-audio-range.test.js` (moved into the package)
+
+### 4.6 Final dependency direction
+
+```
+backend.cjs (composition root) ──requires──▶ @animastor/player (entrypoint only)
+        │ ports: playerModel, outputRoot, playerPorts, computeIuReady, bookProjections, …
+        ▼
+@animastor/player ──▶ @animastor/vbook-runtime (book-model.cjs facade only)
+        ▲  generation-routes.cjs: zero player imports / zero player endpoints (P3)
+        └── NO cycles (package-internal SCC scan: NONE; generation⇄player impossible, P2+P3)
+```
+
+### 4.7 Guards (re-aimed + extended — `backend/tests/architecture/player-route-split.test.js`, 29 checks)
+
+P1 route-surface parity (17 frozen endpoints via the package registrar) · P2 require isolation (package files resolve only intra-package + `@animastor/vbook-runtime` + node builtins; explicit host-forbidden list) · P3 reverse direction (generation imports/registers nothing player; **nothing requires the package by path**) · P4 zero config reads; `outputRoot: config.OUTPUT_DIR` wiring pinned · P5 seam shape (playerPorts = exactly 3 ports; wide video-timeline module seam banned; bookProjections = exactly 2 pure reads) · P6 book access through playerModel only; facade depends only on the VBook Book Model layer · P7 naming grammar dependency-free + writer-identical + imported by nobody outside the package · **P8 no legacy backend copy remains** (dirs, stub, book-routes require, 8 package files present) · **P9 package manifest** (single `.` export; the only dependency is `@animastor/vbook-runtime`; backend.cjs requires exactly `@animastor/player`; routes registered via `createPlayerRoutes`).
+
+Also re-aimed: `phase6-editor-player.test.js` (T1 facade → package; T3 scan → package src; T4/T5 paths; T6 baseline re-homed to package paths), `phase7-extraction-readiness.test.js` (P7-T4 allowed set: the `backend/src/player` edge is gone — the package consumes the VBook package facade directly). `scripts/syntax-smoke.sh` covers `packages/animastor-player` (all-mode + `player` area); `docker-compose.yml` mounts the package read-only at `/app/node_modules/@animastor/player` (vbook/contracts precedent).
+
+### 4.8 Tests & package validation
+
+- Package standalone: `npm test` in `packages/animastor-player` — **17 passing** (scene-timings 6 + scene-audio-range 11), no host, no PG/Redis.
+- Backend suite (`mocha --exit "tests/**/*.test.js"`): **2924 passing / 2 failing** — the 2 failures are the pre-existing LLM sharing / share-policy family (`ai-endpoint-sharing.test.js` "no policy row is enabled unless the owner explicitly enabled it", `ai-shared-inference.test.js` "16b. shared snapshot is safe for health checks"), byte-identical to clean-HEAD baseline (2931 passing / 2 failing at `9a79446`; delta = −17 moved behavior tests + 10 new guard checks = exact).
+- Architecture suite: 408 passing (P1–P9, T1–T7, VB-T1–T5, phase7).
+- `npm pack --dry-run`: 15 files / 26.2 kB — `src/` + `test/` + manifest + README/LICENSE/CHANGELOG only; no backend source, no generation implementation, no temp files; dependency graph cycle-free; zero requires outside the package except `@animastor/vbook-runtime` + node builtins.
+- HTTP/API parity: P1 pins method+path of all 17 endpoints; Range/206/ETag/If-Range/304/416 behavior pinned by the moved `scene-audio-range.test.js` (11 cases, byte-identical assertions); timings semantics pinned by `scene-timings.test.js` (6 cases); waveform + video timing ports unchanged (host-side modules untouched); `backend/node_modules/@animastor/player` resolves via the `file:` dependency (backend.cjs boots, `createPlayerModel` + `createPlayerRoutes` verified).
+
+**REMAINING KNOWN UNRELATED FAILURES:** the two LLM sharing tests above (pre-existing at HEAD, unrelated to Player).
+
+## VERDICT: COMPLETE — PLAYER PHYSICAL MOVE DONE (production-ready)

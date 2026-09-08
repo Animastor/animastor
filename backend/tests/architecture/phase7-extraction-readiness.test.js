@@ -168,7 +168,9 @@ describe('P7-T4: VBook internals are not reached by new direct consumers', () =>
         const allowed = new Set([
             'backend/src/backend.cjs: ./book/book-model.cjs',
             'backend/src/editor/index.cjs: ../book/book-model.cjs',
-            'backend/src/player/index.cjs: ../book/book-model.cjs',
+            // Player facade: physically extracted to packages/animastor-player;
+            // its Book Model layer is the VBook runtime package facade itself
+            // (not a backend/src/book path — nothing to pin here anymore).
         ]);
         const set = bookDomainEdges().filter((e) => !allowed.has(e));
         expect(set, 'VBook internals gained a new direct consumer — go through the Book Model facade (or update the Phase 7 baseline consciously)').to.deep.equal([...RAW_BOOK_BASELINE].sort());

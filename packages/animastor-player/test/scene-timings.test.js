@@ -15,9 +15,10 @@ const path = require('path');
 const { EventEmitter } = require('events');
 
 const GET_ROUTE = '/api/v1/scene/:bookId/:chapterId/:sceneId/timings';
-// Player route split: the timings routes moved from generation-routes.cjs to
-// routes/player/scene-data.cjs (registered via routes/player/player-routes.cjs).
-const MODULE = '../src/routes/player/player-routes.cjs';
+// Player route split, then physical extraction: the timings routes live in
+// packages/animastor-player/src/scene-data.cjs (registered via the package
+// entrypoint src/index.cjs).
+const MODULE = require.resolve('../src/index.cjs');
 
 // In-memory image_units store: unit_id → row (mirrors the PG table columns the
 // timings routes read/write).
@@ -42,12 +43,13 @@ function makeIuRepo(initialRows) {
 function stubDeps(tmpDir, iuRepo) {
     const noop = () => {};
     return {
-        config: { OUTPUT_DIR: tmpDir },
-        outputRoot: tmpDir, // player contour seam (injected artifact root)
+        // Seams (composition-root contract): outputRoot replaces any direct
+        // config read; book content is reachable only via playerModel +
+        // bookProjections (no `book` / `config` keys exist in the package API).
+        outputRoot: tmpDir,
         state: {}, audio: {}, video: {},
         image: { getSceneDuration: async () => 30 }, // 30s scene audio
-        book: { findSceneRuntimeData: () => null, collectSceneUnits: () => [] }, // VBook runtime: registrar extracts only the pure read projections
-        playerModel: { loadBook: () => null },       // Phase 6: Player boundary fake (same source as book)
+        playerModel: { loadBook: () => null },       // Phase 6: Player boundary fake
         playerPorts: { assertBookAccess: async () => ({}), computeVideoStartMs: async () => false, computeWaveform: async () => [] },
         orchestrator: {}, storage: {}, runtime: {}, activeScenes: {},
         layerConfig: {}, genScope: {}, placeholderAudio: {},
@@ -58,6 +60,7 @@ function stubDeps(tmpDir, iuRepo) {
         cleanupService: {}, iuRepo, computeWaveform: noop,
         computeIuReady: async () => 0,
         sceneAssetsRepo: {},
+        bookProjections: { findSceneRuntimeData: () => null, collectSceneUnits: () => [] },
     };
 }
 
@@ -105,7 +108,7 @@ describe('Scene timings persistence (Edit waveform handles)', () => {
             put: (p, h) => registered.push({ method: 'put', p, h }),
             delete: () => {},
         };
-        require(MODULE)(app, {}, stubDeps(tmpDir, iuRepo));
+        require(MODULE).createPlayerRoutes(app, {}, stubDeps(tmpDir, iuRepo));
         const get = registered.find((r) => r.method === 'get' && r.p === GET_ROUTE);
         const put = registered.find((r) => r.method === 'put' && r.p === GET_ROUTE);
         if (!get || !put) throw new Error('timings routes not registered');
@@ -165,7 +168,7 @@ describe('Scene timings persistence (Edit waveform handles)', () => {
             put: (p, h) => registered.push({ method: 'put', p, h }),
             delete: () => {},
         };
-        require(MODULE)(app, {}, stubDeps(tmpDir, iuRepo));
+        require(MODULE).createPlayerRoutes(app, {}, stubDeps(tmpDir, iuRepo));
         const get = registered.find((r) => r.method === 'get' && r.p === GET_ROUTE);
         handlers = { getTimings: get.h };
 

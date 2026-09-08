@@ -45,12 +45,16 @@ const lazyBook = require('./book/lazy-book');
 const bookModel = require('./book/book-model.cjs');
 const { createBookDeletion } = require('./services/book-deletion.cjs');
 // Phase 6: Editor/Player boundaries — facades over the Canonical Book Model.
-const { createPlayerModel } = require('./player/index.cjs');
+// The Player (model facade + playback HTTP contour) is physically extracted
+// to packages/animastor-player (@animastor/player); the host consumes ONLY
+// the package entrypoint — never package internals
+// (docs/architecture/PLAYER_ROUTE_SPLIT_CHECKLIST.md, physical move COMPLETE).
+const { createPlayerModel, createPlayerRoutes } = require('@animastor/player');
 const { createEditorModel } = require('./editor/index.cjs');
-// Player route split: host port implementations injected into the playback
-// contour (the player routes must not import these directly — they carry
+// Player package ports (host implementations injected into the playback
+// contour — the player package must not import these directly: they carry
 // generation-domain knowledge: workflows/ alignment tax, ffmpeg/ffprobe,
-// auth middleware). Wired through routeDeps.playerPorts below.
+// auth middleware).
 const videoTimeline = require('./video/video-timeline');
 const authContextMiddleware = require('./middleware/auth-context');
 const { computeWaveform } = require('./services/waveform-service');
@@ -250,20 +254,27 @@ const routeDeps = {
         log: utils.log,
         setCancelFlag: (redisClient, id) => require('./runtime/scene-window').setCancelFlag(redisClient, id),
     }),
-    // Phase 6: Player/Editor boundaries — book access via the Canonical Book Model
+    // Phase 6: Player/Editor boundaries — book access via the Canonical Book Model.
+    // playerModel comes from the extracted @animastor/player package; the
+    // composition root binds it to the host Book Model (VBook runtime shim).
     playerModel: createPlayerModel({ bookModel }),
     editorModel: createEditorModel({ bookModel, persistBook: book.saveBookBundle }),
-    // Player route split: the playback contour gets its dependencies ONLY
-    // through these seams (composition root — no hidden global requires in
-    // the player route files, guarded by player-route-split.test.js):
+    // Player package ports: the playback contour (packages/animastor-player)
+    // gets its dependencies ONLY through these seams (composition root —
+    // no hidden host requires inside the package, guarded by
+    // player-route-split.test.js):
     //   outputRoot     — the artifact root (config.OUTPUT_DIR injected; the
-    //                    player routes never read config directly; path
+    //                    player package never reads config directly; path
     //                    semantics unchanged: path.join(outputRoot, buildId, …))
     //   playerPorts    — host implementations that carry generation-domain or
     //                    host-infra knowledge the player must not import:
     //                    auth (checkBookAccess), video-timeline (ffprobe +
     //                    workflows alignment tax), waveform (ffmpeg)
     //   computeIuReady — pure IU progress math (routes/book/iu-progress-utils)
+    //   bookProjections — the two pure VBook-runtime read projections
+    //                    (findSceneRuntimeData / collectSceneUnits), passed
+    //                    as a narrow port; the whole book module surface
+    //                    never enters the player object graph.
     // Final boundary audit: the wide `videoTimeline` module seam was removed —
     // the player contour receives ONLY the port functions above; the host
     // video-timeline module (which imports workflows/ + config) never enters
@@ -275,12 +286,18 @@ const routeDeps = {
         computeWaveform,
     },
     computeIuReady,
+    bookProjections: {
+        findSceneRuntimeData: book.findSceneRuntimeData,
+        collectSceneUnits: book.collectSceneUnits,
+    },
 };
 
 require('./routes/book-routes.cjs')(app, redis, { ...routeDeps, taskHandler, bookDiff, windowGenerator });
-// Player (playback) routes — the playback HTTP contour, split out of the
-// generation routes (docs/architecture/PLAYER_ROUTE_SPLIT_CHECKLIST.md).
-require('./routes/player/player-routes.cjs')(app, redis, routeDeps);
+// Player (playback) routes — registered through the @animastor/player
+// package API (the playback HTTP contour lives in
+// packages/animastor-player; the host must not require package internals —
+// docs/architecture/PLAYER_ROUTE_SPLIT_CHECKLIST.md).
+createPlayerRoutes(app, redis, routeDeps);
 // Generation routes — import/generation leg, worker status/counts, progress
 // SSE, GPU Hub callbacks. No playback handlers remain here.
 require('./routes/generation-routes.cjs')(app, redis, { ...routeDeps, taskHandler });

@@ -24,16 +24,22 @@ const path = require('path');
 const fs = require('fs');
 const { readSource, rel, REPO_ROOT, BACKEND_SRC, listSourceFiles, requireSpecifiers } = require('./helpers');
 
-const PLAYER_DIR = path.join(BACKEND_SRC, 'player');
+// The Player layer is physically extracted to packages/animastor-player
+// (@animastor/player); the host keeps only the Editor facade
+// (docs/architecture/PLAYER_ROUTE_SPLIT_CHECKLIST.md — physical move COMPLETE).
+const PLAYER_DIR = path.join(REPO_ROOT, 'packages', 'animastor-player', 'src');
 const EDITOR_DIR = path.join(BACKEND_SRC, 'editor');
-const PLAYER_FACADE = path.join(PLAYER_DIR, 'index.cjs');
+const PLAYER_FACADE = path.join(PLAYER_DIR, 'player-model.cjs');
 const EDITOR_FACADE = path.join(EDITOR_DIR, 'index.cjs');
 const BACKEND_ROOT = path.join(BACKEND_SRC, 'backend.cjs');
 const FRONTEND_APP_DIR = path.join(REPO_ROOT, 'frontends', 'app', 'src');
 
-// Layers below the Player/Editor boundary — the ONLY backend code they may
-// reach is the Canonical Book Model layer (backend/src/book/**) plus node
-// builtins. Everything else is an implementation-detail leak.
+// Layers below the Player/Editor boundary — the ONLY backend code the
+// Editor facade may reach is the Canonical Book Model layer
+// (backend/src/book/** — host shim over the VBook runtime) plus node
+// builtins. The Player package (its own boundary, guarded separately by
+// player-route-split.test.js) reaches only @animastor/vbook-runtime.
+// Everything else is an implementation-detail leak.
 const FORBIDDEN_SPEC = /orchestration|runtime|redis|ioredis|storage\/postgres|storage\/|provider-gateway|ai-service|ai-loader|generation|services\/|routes\/|middleware\/|workflows|video\/|audio\/|image\//i;
 const BOOK_LAYER_ALLOWED = /^(\.\.?\/)+(book)\//;
 
@@ -68,9 +74,12 @@ describe('T1: Player facade contract', () => {
 
     it('delegates reads to the injected Canonical Book Model (never a raw loader)', () => {
         const src = readSource(PLAYER_FACADE);
-        expect(src).to.include("require('../book/book-model.cjs')");
+        // The facade lives in the package; its Book Model layer is the
+        // @animastor/vbook-runtime facade (the host book shim re-exports it).
+        expect(src).to.include("require('@animastor/vbook-runtime/book-model.cjs')");
         expect(src).to.not.match(/require\(['"]\.\.\/book['"]\)/); // no raw book/index.js loader
         expect(src).to.not.match(/require\(['"]\.\.\/(services|storage|runtime|orchestration|routes)/);
+        expect(src).to.not.match(/require\(['"][^'"]*backend/); // no host backend module
         // The boundary must be documented in the source itself.
         expect(src).to.match(/Canonical Book Model/);
     });
@@ -112,7 +121,7 @@ describe('T2: Editor facade contract (read / modify / commit)', () => {
 
 // ── T3 — structural forbidden-deps scan (whole player/ and editor/ dirs) ─
 describe('T3: player/editor layers import nothing outside the Book Model layer', () => {
-    it('backend/src/player/** has no implementation-detail requires', () => {
+    it('packages/animastor-player/src/** has no implementation-detail requires', () => {
         expect(assertBoundaryClean(PLAYER_DIR), 'player layer boundary violation').to.deep.equal([]);
     });
 
@@ -136,8 +145,8 @@ describe('T4: facades are wired at the composition root', () => {
     });
 
     it('contour routes destructure the facade deps', () => {
-        expect(readSource(path.join(BACKEND_SRC, 'routes', 'player', 'player-routes.cjs'))).to.match(/playerModel/);
-        expect(readSource(path.join(BACKEND_SRC, 'routes', 'player', 'player-shared.cjs'))).to.match(/playerModel/);
+        expect(readSource(path.join(REPO_ROOT, 'packages', 'animastor-player', 'src', 'player-routes.cjs'))).to.match(/playerModel/);
+        expect(readSource(path.join(REPO_ROOT, 'packages', 'animastor-player', 'src', 'player-shared.cjs'))).to.match(/playerModel/);
         expect(readSource(path.join(BACKEND_SRC, 'routes', 'book', 'core-routes.cjs'))).to.match(/editorModel/);
         expect(readSource(path.join(BACKEND_SRC, 'routes', 'book', 'entity-crud-routes.cjs'))).to.match(/editorModel/);
     });
@@ -162,7 +171,8 @@ describe('T5: Editor/Player contours load through the facades', () => {
         // routes/generation-routes.cjs is now a generation/import-only contour
         // after the Player route split: its book.loadBook calls are the pinned
         // import leg (docs/architecture/PHASE_6_EDITOR_PLAYER.md §6). All
-        // playback reads live in routes/player/* and go through playerModel.
+        // playback reads live in packages/animastor-player/src and go through
+        // playerModel.
         const src = readSource(path.join(BACKEND_SRC, 'routes', 'generation-routes.cjs'));
         const direct = [...src.matchAll(/\bbook\.loadBook\s*\(/g)].length;
         expect(direct, 'routes/generation-routes.cjs direct book.loadBook count grew').to.equal(3);
@@ -174,21 +184,20 @@ describe('T5: Editor/Player contours load through the facades', () => {
         // The playback read sites must go through the Player boundary.
         const playerFiles = ['player-routes.cjs', 'player-shared.cjs', 'scene-data.cjs', 'scene-media.cjs', 'playback-queue.cjs', 'iu-media.cjs'];
         for (const f of playerFiles) {
-            const psrc = readSource(path.join(BACKEND_SRC, 'routes', 'player', f));
+            const psrc = readSource(path.join(PLAYER_DIR, f));
             expect(psrc, `${f} must not call book.loadBook directly`).to.not.match(/\bbook\.loadBook\s*\(/);
         }
-        expect(readSource(path.join(BACKEND_SRC, 'routes', 'player', 'iu-media.cjs'))).to.match(/playerModel\.loadBook\(book_id\)/);
-        expect(readSource(path.join(BACKEND_SRC, 'routes', 'player', 'scene-data.cjs'))).to.match(/playerModel\.loadBook\(bookId\)/);
+        expect(readSource(path.join(PLAYER_DIR, 'iu-media.cjs'))).to.match(/playerModel\.loadBook\(book_id\)/);
+        expect(readSource(path.join(PLAYER_DIR, 'scene-data.cjs'))).to.match(/playerModel\.loadBook\(bookId\)/);
     });
 
     it('chunks (playback queue) route reads through playerModel', () => {
-        // After the Player route split, the playback-queue endpoints moved from
-        // routes/book/chunks-routes.cjs (now an empty registrar stub) to
-        // routes/player/playback-queue.cjs (Player contour).
-        const stub = readSource(path.join(BACKEND_SRC, 'routes', 'book', 'chunks-routes.cjs'));
-        expect(stub).to.not.match(/\bbook\.loadBook\s*\(/);
-        expect(stub).to.not.match(/playerModel\.loadBook/);
-        const src = readSource(path.join(BACKEND_SRC, 'routes', 'player', 'playback-queue.cjs'));
+        // After the Player route split and the physical extraction, the
+        // playback-queue endpoints live in packages/animastor-player/src/
+        // playback-queue.cjs (the routes/book/chunks-routes.cjs stub was
+        // deleted with the move).
+        expect(fs.existsSync(path.join(BACKEND_SRC, 'routes', 'book', 'chunks-routes.cjs'))).to.equal(false);
+        const src = readSource(path.join(PLAYER_DIR, 'playback-queue.cjs'));
         expect(src).to.not.match(/\bbook\.loadBook\s*\(/);
         expect(src).to.match(/playerModel\.loadBook\(bookId\)/);
     });
@@ -240,26 +249,19 @@ describe('T6: contour routes do not gain new implementation-detail deps', () => 
             '../../services/source-coverage-audit',
             '../../services/agent-prompts',
         ],
-        'routes/book/chunks-routes.cjs': [
-            // Registrar stub after the Player route split — playback queue +
-            // assets-state moved to routes/player/playback-queue.cjs. No
-            // relative requires left (the IU-progress math lives in
-            // ./iu-progress-utils.cjs, injected into the player routes by the
-            // composition root).
-        ],
-        'routes/player/player-routes.cjs': [
-            // Player contour registrar — only intra-player wiring is allowed.
+        'packages/animastor-player/src/player-routes.cjs': [
+            // Player package registrar — only intra-package wiring is allowed.
             './player-shared.cjs',
             './scene-media.cjs',
             './scene-data.cjs',
             './iu-media.cjs',
             './playback-queue.cjs',
         ],
-        'routes/player/player-shared.cjs': ['./artifact-naming.cjs'],
-        'routes/player/scene-media.cjs': ['./artifact-naming.cjs'],
-        'routes/player/scene-data.cjs': ['./artifact-naming.cjs'],
-        'routes/player/iu-media.cjs': ['./artifact-naming.cjs'],
-        'routes/player/playback-queue.cjs': ['./artifact-naming.cjs'],
+        'packages/animastor-player/src/player-shared.cjs': ['./artifact-naming.cjs'],
+        'packages/animastor-player/src/scene-media.cjs': ['./artifact-naming.cjs'],
+        'packages/animastor-player/src/scene-data.cjs': ['./artifact-naming.cjs'],
+        'packages/animastor-player/src/iu-media.cjs': ['./artifact-naming.cjs'],
+        'packages/animastor-player/src/playback-queue.cjs': ['./artifact-naming.cjs'],
         'routes/book/entity-crud-routes.cjs': [
             '../../utils/entity-id',
             './scene-patch-utils.cjs',
@@ -291,10 +293,18 @@ describe('T6: contour routes do not gain new implementation-detail deps', () => 
         return [...code.matchAll(/require\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1]);
     }
 
+    function contourSource(file) {
+        // Backend contour files resolve under backend/src; extracted package
+        // files (packages/…) resolve from the repo root.
+        return file.startsWith('packages/')
+            ? readSource(path.join(REPO_ROOT, file))
+            : readSource(path.join(BACKEND_SRC, file));
+    }
+
     it('relative require sets of the contour routes stay frozen', () => {
         const offenders = [];
         for (const [file, baseline] of Object.entries(BASELINE)) {
-            const src = readSource(path.join(BACKEND_SRC, file));
+            const src = contourSource(file);
             const specs = scanEdgeSpecs(src).filter((s) => s.startsWith('.'));
             const baselineSet = new Set(baseline);
             for (const spec of specs) {
@@ -306,7 +316,7 @@ describe('T6: contour routes do not gain new implementation-detail deps', () => 
 
     it('no contour route opens Redis or raw PG client connections directly', () => {
         for (const file of Object.keys(BASELINE)) {
-            const src = readSource(path.join(BACKEND_SRC, file));
+            const src = contourSource(file);
             expect(src, `${file} must not open PG connections`).to.not.match(/require\(['"](pg|.*postgres)['"]\)/);
             expect(src, `${file} must not open Redis connections`).to.not.match(/require\(['"]ioredis['"]\)/);
         }

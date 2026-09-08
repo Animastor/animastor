@@ -64,6 +64,9 @@ if [ $# -eq 0 ]; then
     fi
     LAC_SRC="$ROOT_DIR/packages/animastor-ai-connector"
     CONTRACTS_SRC="$ROOT_DIR/packages/animastor-contracts"
+    # Player package (physical extraction — see
+    # docs/architecture/PLAYER_ROUTE_SPLIT_CHECKLIST.md).
+    PLAYER_SRC="$ROOT_DIR/packages/animastor-player"
 
     if [ -d "$BACKEND_SRC" ]; then
         check_dir "backend/src" "$BACKEND_SRC"
@@ -79,6 +82,9 @@ if [ $# -eq 0 ]; then
     fi
     if [ -d "$CONTRACTS_SRC" ]; then
         check_dir "contracts" "$CONTRACTS_SRC"
+    fi
+    if [ -d "$PLAYER_SRC" ]; then
+        check_dir "player" "$PLAYER_SRC"
     fi
 else
     for area in "$@"; do
@@ -98,6 +104,9 @@ else
                 ;;
             contracts)
                 check_dir "contracts" "$ROOT_DIR/packages/animastor-contracts"
+                ;;
+            player)
+                check_dir "player" "$ROOT_DIR/packages/animastor-player"
                 ;;
             *)
                 echo -e "${YELLOW}Unknown area: ${area}${NC}"

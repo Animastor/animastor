@@ -10,9 +10,10 @@ const path = require('path');
 const { EventEmitter } = require('events');
 
 const AUDIO_ROUTE = '/api/v1/scene/:bookId/:chapterId/:sceneId/audio';
-// Player route split: the audio media route moved from generation-routes.cjs
-// to routes/player/scene-media.cjs (registered via routes/player/player-routes.cjs).
-const MODULE = '../src/routes/player/player-routes.cjs';
+// Player route split, then physical extraction: the audio media route lives
+// in packages/animastor-player/src/scene-media.cjs (registered via the
+// package entrypoint src/index.cjs).
+const MODULE = require.resolve('../src/index.cjs');
 
 function makeResponse() {
     const chunks = [];
@@ -35,10 +36,11 @@ function makeResponse() {
 function stubDeps(tmpDir) {
     const noop = () => {};
     return {
-        config: { OUTPUT_DIR: tmpDir },
-        outputRoot: tmpDir, // player contour seam (injected artifact root)
+        // Seams (composition-root contract): outputRoot replaces any direct
+        // config read; book content is reachable only via playerModel
+        // (no `book` / `config` keys exist in the package API).
+        outputRoot: tmpDir,
         state: {}, audio: {}, image: {}, video: {},
-        book: { findSceneRuntimeData: () => null, collectSceneUnits: () => [] }, // VBook runtime: registrar extracts only the pure read projections
         playerModel: { loadBook: () => ({ manifest: { build_id: 'b1' } }) }, // Phase 6 Player boundary fake
         playerPorts: { assertBookAccess: async () => ({}), computeVideoStartMs: async () => false, computeWaveform: async () => [] },
         orchestrator: {}, storage: {}, runtime: {}, activeScenes: {},
@@ -50,6 +52,7 @@ function stubDeps(tmpDir) {
         cleanupService: {}, iuRepo: {}, computeWaveform: noop,
         computeIuReady: async () => 0,
         sceneAssetsRepo: {},
+        bookProjections: { findSceneRuntimeData: () => null, collectSceneUnits: () => [] },
     };
 }
 
@@ -87,7 +90,7 @@ describe('Scene audio HTTP Range support (Edit waveform seek)', () => {
             post: (p, h) => registered.push({ method: 'post', p, h }),
             put: () => {}, delete: () => {},
         };
-        require(MODULE)(app, {}, stubDeps(tmpDir));
+        require(MODULE).createPlayerRoutes(app, {}, stubDeps(tmpDir));
         const route = registered.find((r) => r.p === AUDIO_ROUTE);
         if (!route) throw new Error(`audio route not registered: ${AUDIO_ROUTE}`);
         audioHandler = route.h;

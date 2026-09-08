@@ -1,9 +1,8 @@
 // ======================================================
-// ANIMASTOR BACKEND — PLAYER ROUTES (playback HTTP contour)
-// ======================================================
-// The playback contour, physically separated from the generation contour
-// (Player route split — preparation for the packages/animastor-player move;
-// see docs/architecture/PLAYER_ROUTE_SPLIT_CHECKLIST.md).
+// @animastor/player — PLAYER ROUTES (playback HTTP contour)
+// ======================================================// The playback contour, physically extracted from the host backend
+// (Player route split 4d1f6f0e → packages/animastor-player move; see
+// docs/architecture/PLAYER_ROUTE_SPLIT_CHECKLIST.md).
 //
 // Serves (byte-identical to the pre-split handlers — URLs, headers, status
 // codes and response bodies unchanged):
@@ -13,7 +12,8 @@
 //   chunk-keyed:    /api/v1/chunk/:id (status), /api/v1/chunk/:id/audio|image|video|storyboard
 //   playback queue: /api/v1/book/:bookId/chunks, /api/v1/book/:bookId/assets-state
 //
-// Dependencies arrive EXCLUSIVELY through deps (composition root — backend.cjs):
+// Dependencies arrive EXCLUSIVELY through deps (composition root — host
+// backend.cjs):
 //   playerModel   — Phase 6 facade over the Canonical Book Model (book reads)
 //   outputRoot    — artifact root (config.OUTPUT_DIR injected; no direct
 //                   config reads in the player contour)
@@ -31,31 +31,40 @@
 //   image/state/activeScenes/placeholderAudio/layerConfig — host
 //                   generation-pipeline seams (documented intentional deps)
 //   bookProjections — the two pure VBook-runtime read projections
-//                   (findSceneRuntimeData / collectSceneUnits) extracted from
-//                   the injected book module; the contour never receives the
-//                   whole book module surface (loaders/writers stay host-side;
-//                   book CONTENT reads go through playerModel only)
+//                   (findSceneRuntimeData / collectSceneUnits); the package
+//                   never receives the whole book module surface (loaders/
+//                   writers stay host-side; book CONTENT reads go through
+//                   playerModel only)
 //
 // Usage:
-//   require('./routes/player/player-routes.cjs')(app, redis, deps);
+//   const { createPlayerRoutes } = require('@animastor/player');
+//   createPlayerRoutes(app, redis, deps);
 //
-// Guards: tests/architecture/player-route-split.test.js +
-//         tests/architecture/phase6-editor-player.test.js (re-aimed T4/T5/T6).
+// Guards: backend/tests/architecture/player-route-split.test.js +
+//         backend/tests/architecture/phase6-editor-player.test.js (re-aimed T4/T5/T6).
 
 const { createPlayerShared } = require('./player-shared.cjs');
 
 module.exports = function(app, redis, deps) {
     const {
-        state, image, book, utils, redis: _redisDepsOk,
+        state, image, utils,
         getChunk, getAllChunks, getBookWindowStatus,
         activeScenes, placeholderAudio, layerConfig, iuRepo,
         sceneAssetsRepo, playerModel,
         // Player-route seams (composition root provides them):
         outputRoot,            // = config.OUTPUT_DIR (injected)
         playerPorts,           // { assertBookAccess, computeVideoStartMs, computeWaveform }
-        computeIuReady,        // pure IU math (routes/book/iu-progress-utils.cjs)
+        computeIuReady,        // pure IU math (host routes/book/iu-progress-utils.cjs)
+        bookProjections,       // { findSceneRuntimeData, collectSceneUnits } — the two
+                               // pure VBook-runtime read projections; the whole book
+                               // module surface is NOT handed to the package
     } = deps;
     const { log } = utils;
+
+    if (!bookProjections || typeof bookProjections.findSceneRuntimeData !== 'function'
+        || typeof bookProjections.collectSceneUnits !== 'function') {
+        throw new Error('createPlayerRoutes: bookProjections { findSceneRuntimeData, collectSceneUnits } is a required port');
+    }
 
     const ctx = createPlayerShared({
         playerModel,
@@ -72,10 +81,7 @@ module.exports = function(app, redis, deps) {
         image,
         // Pure read projections over the Canonical Book Model (VBook runtime);
         // the whole book module surface is NOT handed to the player contour.
-        bookProjections: {
-            findSceneRuntimeData: book.findSceneRuntimeData,
-            collectSceneUnits: book.collectSceneUnits,
-        },
+        bookProjections,
     });
     require('./iu-media.cjs')(app, ctx, {
         image, state, activeScenes, placeholderAudio,

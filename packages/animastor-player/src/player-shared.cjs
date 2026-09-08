@@ -1,5 +1,5 @@
 // ======================================================
-// PLAYER ROUTES — SHARED CONTOUR HELPERS (seam)
+// @animastor/player — SHARED CONTOUR HELPERS (seam)
 // ======================================================
 // Dependency-injection seam shared by every player route sub-module.
 // The playback contour must reach host infrastructure ONLY through:
@@ -19,7 +19,8 @@
 // reconstructed ad-hoc in route handlers.
 //
 // Static dependency rules are guarded by
-// tests/architecture/player-route-split.test.js and Phase 6 T3-style scans.
+// backend/tests/architecture/player-route-split.test.js and Phase 6
+// T3-style scans (re-aimed to this package).
 
 const path = require('path');
 const fs = require('fs');
