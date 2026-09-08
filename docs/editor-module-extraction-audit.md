@@ -29,7 +29,7 @@
 | Can Editor⇄Player be one-directional | **YES, trivially** — it already is: `Editor(facade) → VBook ← Player(facade)`; the only Player⇄Editor runtime touchpoint is *frontend* invalidation callbacks, not code deps |
 | Frontend part of the package | **NO (recommended)** — same verdict as Player audit: thin client stays app code; `lib/entityEditor` stays shared app-side |
 | Hidden dependencies found | **YES** — id grammar (`entity-id` + `lazy-book/paths`) shared with VBook package; `IMAGE_PROMPT_MAX_CHARS` shared with `config-routes`/agent-prompts; `bookDiff`/`bookSync` shared with ai-routes/agent pipeline; entity-cleanup shared with book deletion flow |
-| Forced upstream step | Player physical move **landing** (staged, in flight) → Editor route split → post-commit port → package |
+| Forced upstream step | ~~Player physical move~~ **landed during this audit** (`f41f0aad`) → Editor route split → post-commit port → package |
 | Extraction risk after preparation | **MEDIUM (3/5)** — same as Player post-split; below Hub (no cross-service Redis writes), above VBook (wider host fan-out: PG, Redis, FS purge, in-flight cancellation) |
 
 ---
@@ -361,7 +361,7 @@ Editor (facade + contour) ──▶ @animastor/vbook-runtime ◀── Player (f
 
 | # | Risk/Blocker | Severity | Mitigation |
 |---|---|---|---|
-| R1 | **In-flight Player physical move** (staged, uncommitted) collides with any Editor action in `backend.cjs`/`package.json` | P0 until landed | Do not start Editor prep until the Player move commits; audit re-baselined against it |
+| R1 | ~~Player physical move in flight~~ **RESOLVED during this audit**: the move landed as `f41f0aad` before this document was committed; no `backend.cjs`/`package.json` collision remains | ~~P0~~ closed | Editor prep can start immediately; re-verify `backend.cjs` wiring against `f41f0aad` first (one-line registrar require now points at `@animastor/player`) |
 | R2 | Post-commit fan-out is *behavioral* (version bumps drive regeneration) — port must preserve exact call order and best-effort semantics (warnings, not failures) | High | Port = same function references, composition-root wiring; pin with existing suites + new split parity test |
 | R3 | `PUT /book` merge semantics (passport/bible preservation) are load-bearing for both clients | High | Character-passport/behavior suites already cover; add explicit PUT-merge cases before move |
 | R4 | `bookDiff`/`bookSync` PG writes assume the diff contract (`dirty_scenes[].changes.units.unit_ids`) — an implicit schema between Editor and Generator | Medium | Document in the contract doc; keep both host-side (only the function reference crosses) |
@@ -427,7 +427,7 @@ Frontend: `resourceInvalidations.test.ts` covers the invalidation dialect; **no 
 
 ## 13. Migration plan (proposed; NOTHING executed by this audit)
 
-Precondition **P0**: the staged Player physical move lands as its atomic commit (working tree is dirty with it — do not touch `backend.cjs`/`package.json` until it does).
+Precondition ~~P0~~ **satisfied**: the Player physical move landed as `f41f0aad` during this audit (staged set → identical commit). Step 0 before starting: re-read `backend.cjs` registration against the landed Player wiring (the registrar require now resolves from `@animastor/player`) — Editor steps touch the same file.
 
 1. **Route split** (behavior-neutral, mirrors `4d1f6f0e`): create `backend/src/routes/editor/` with `editor-routes.cjs`, `entity-crud-routes.cjs`, `editor-ports.cjs` (port shape from §6); move `scene-patch-utils`/`recover-chunks` alongside; delete the dead `scene-restoration` require (F3); update `book-routes.cjs` to delegate; **E1/E2/E3 guard tests authored first** (Player playbook P1–P3). Baselines T5/T6 re-pinned.
 2. **Seam narrowing** (mirrors `9a794464`): replace the five scattered legs with `editorPorts` at the composition root — same function references, zero behavior change; `recover-chunks` re-pointed to `editorModel.read` (R10); `lazy-book/paths` import re-aimed at `@animastor/vbook-runtime`.
@@ -449,7 +449,7 @@ Steps 1–3 are independently landable; each is guarded and reversible.
 | Seam narrowing (step 2) | **Medium** — the post-commit fan-out port is 6 functions but behavior-sensitive (R2/R4); read-repair port is mechanical |
 | Contract + tests (steps 3–4) | **Low** — enumerable surface, existing suites |
 | Physical move (step 5) | **Low** — the repo's 6th execution of the same playbook; zero reverse deps |
-| Blockers | 1 sequencing (P0: Player move in flight), 0 structural |
+| Blockers | 0 structural (the sequencing blocker closed: Player move landed `f41f0aad` during this audit) |
 | Extractable without behavior change | Everything in the MOVE list; `scene-restoration` edge deletion |
 | Requires contract change first | `editorPorts` seam (new, behavior-neutral), T5/T6 baseline updates (ADR-class per §27.2.3 convention) |
 
@@ -473,9 +473,9 @@ Steps 1–3 are independently landable; each is guarded and reversible.
 
 ## 16. Recommended next step
 
-**After the Player physical move lands (P0):** run the Editor route split (step 1 of §13) as a single behavior-neutral commit with E1–E3 guard tests authored first — the exact shape of the Player's `4d1f6f0e`. In parallel (doc-only, no code): the `EDITOR_HTTP_CONTRACT.md` freeze. Then the seam narrowing (step 2) lands as its own commit, and the physical move becomes a low-risk mechanical step.
+**The Player physical move has landed (`f41f0aad`, during this audit).** Next: run the Editor route split (step 1 of §13) as a single behavior-neutral commit with E1–E3 guard tests authored first — the exact shape of the Player's `4d1f6f0e`. In parallel (doc-only, no code): the `EDITOR_HTTP_CONTRACT.md` freeze. Then the seam narrowing (step 2) lands as its own commit, and the physical move becomes a low-risk mechanical step.
 
-Do **not** start while the Player move is uncommitted: both edit `backend.cjs` registration and `backend/package.json`.
+Before starting, re-verify `backend.cjs`/`backend/package.json` against the landed Player wiring — the Editor steps edit the same files (registrar require, dependency block).
 
 ---
 
@@ -486,7 +486,7 @@ Do **not** start while the Player move is uncommitted: both edit `backend.cjs` r
 - Require inventories: `core-routes.cjs` (6 top-level requires), `entity-crud-routes.cjs` (4 + lazy workspace-ownership), sub-registrar wiring in `routes/book-routes.cjs` + `backend.cjs:255,280`.
 - Frontend: EditPage import block + 35 API call sites (all via `api/client`); playbackStore invalidation exports; Android `BackendApi.kt` editor/structure endpoint declarations; `EditFragment.kt` size.
 - Tests: 8 editor-family suites + 4 architecture guards read; frontend state test inventory.
-- Working tree: `git status` (12 staged player-move entries — the P0 baseline caveat).
+- Working tree: `git status` (12 staged player-move entries at measurement time; the move landed as `f41f0aad` before this document was committed — baseline caveat resolved, claims re-checked against the landed commit).
 - VBook package exports (`packages/animastor-vbook-runtime/package.json`) — `lazy-book/paths` export confirmed.
 
 Nothing in the repository was modified by this reconnaissance.
