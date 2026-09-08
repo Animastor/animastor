@@ -255,19 +255,25 @@ describe('E3: no host module requires the editor package implementation by path'
                 }
             }
         }
-        // The two sanctioned edges: book-routes.cjs registers the contour via
-        // the package export map; backend.cjs wires editorPorts the same way.
+        // The two sanctioned edges (Phase 4.1 — both through the package ROOT):
+        // book-routes.cjs registers the contour via the legacy one-line shim
+        // (backend/src/routes/editor/index.cjs → require('@animastor/editor'));
+        // backend.cjs wires editorPorts via the root factory createEditorPorts.
         const allowed = (edge) =>
+            edge.startsWith('backend/src/routes/book-routes.cjs: ./editor/index.cjs') ||
             edge.startsWith('backend/src/routes/book-routes.cjs: @animastor/editor/') ||
-            edge.startsWith('backend/src/backend.cjs: @animastor/editor/editor-ports.cjs');
+            edge.startsWith('backend/src/backend.cjs: @animastor/editor');
         for (const edge of seen) if (!allowed(edge)) offenders.push(edge);
         expect(offenders, 'the editor package is consumed only via book-routes registration + the ports seam').to.deep.equal([]);
     });
 
-    it('book-routes.cjs registers the contour through the package export map and no editor route literal itself', () => {
+    it('book-routes.cjs registers the contour through the package root API (no deep imports) and no editor route literal itself', () => {
         const src = codeOf(readSource(BOOK_ROUTES));
-        expect(src).to.match(/require\('@animastor\/editor\/editor-routes\.cjs'\)/);
-        expect(src).to.match(/require\('@animastor\/editor\/entity-crud-routes\.cjs'\)/);
+        // Phase 4.1: registration goes through the legacy one-line re-export
+        // shim (routes/editor/index.cjs → require('@animastor/editor')) — the
+        // host no longer deep-imports the package registrars by path.
+        expect(src).to.match(/require\(['"]\.\/editor\/index\.cjs['"]\)/);
+        expect(src).to.not.match(/require\(['"]@animastor\/editor\//);
         // The old core/entity registrar paths are gone.
         expect(src).to.not.match(/\.\/book\/(core|entity-crud)-routes\.cjs/);
         // No editor endpoint literal re-registered host-side (double-mount risk).

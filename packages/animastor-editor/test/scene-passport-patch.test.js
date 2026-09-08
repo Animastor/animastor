@@ -21,7 +21,7 @@ const os = require('os');
 require('./vbook-test-bindings.cjs');
 const bookModule = require('../../../backend/src/book/index');
 const config = require('../../../backend/src/config/runtime-config');
-const { setDeep, normalizeFieldValue } = require('@animastor/editor/scene-patch-utils.cjs');
+const { setDeep, normalizeFieldValue } = require('../src/scene-patch-utils.cjs');
 const promptBuilder = require('../../../backend/src/image/prompt-builder');
 
 const ORIG_BOOKS_DIR = config.BOOKS_DIR;

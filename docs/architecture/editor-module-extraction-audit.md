@@ -1,6 +1,6 @@
 # Editor Module Extraction Audit — Editor contour → `packages/animastor-editor/`
 
-**Status:** Phase 4 COMPLETE (physical move landed — `@animastor/editor@0.1.0`, see §Phase 4). Phase 3 COMPLETE (B1 resolved: `CYR_LATIN_MAP` + `cyrToLatin` extracted to the pure `cyr-latin-map` module, closure reduced from 5 to 3 host files — now moved INTO the package). Phase 2 (contract freeze + extraction-readiness audit). Phase 1 (route split) landed as `f24987ed`; Phase 1.1 (editor-ports.cjs zero host requires) landed as `c2b0fc2d`.
+**Status:** Phase 4.1 COMPLETE (NPM readiness — package boundary closed, `@animastor/editor` publishable, see §Phase 4.1). Phase 4 COMPLETE (physical move landed — `@animastor/editor@0.1.0`, see §Phase 4). Phase 3 COMPLETE (B1 resolved: `CYR_LATIN_MAP` + `cyrToLatin` extracted to the pure `cyr-latin-map` module, closure reduced from 5 to 3 host files — now moved INTO the package). Phase 2 (contract freeze + extraction-readiness audit). Phase 1 (route split) landed as `f24987ed`; Phase 1.1 (editor-ports.cjs zero host requires) landed as `c2b0fc2d`.
 **Date:** 2026-09-08 (Phases 1/1.1/2/3)
 **Baseline:** HEAD after Phase 3 (B1 resolved, all tests passing).
 **Baseline:** HEAD `f41f0aad` ("arch(player): extract Player package" — the Player physical move landed **during** this audit; the measurement started against `9a794464` + the staged move and was re-verified against the landed commit, which is byte-identical to the staged set). All Editor-contour claims are measured against the landed tree, where Player files resolve from `packages/animastor-player/src/`.
@@ -523,20 +523,21 @@ Per Phase 2 §P2.4 the prompt-builder assertions in `character-passport-patch`/`
 
 `vbook-test-bindings` becomes the dual-location fixture (worker/player pattern): the canonical host-owned source stays at `backend/tests/vbook-test-bindings.cjs` (required by `.mocharc.json` + 9+ host suites); the package copy is a one-line re-export so the fixture cannot fork.
 
-## P4.2 Package public API
+## P4.2 Package public API (updated by Phase 4.1)
 
 `@animastor/editor` (main: `src/index.cjs`) exports exactly:
 
 ```js
-const { createEditorModel, createEditorRoutes, createEntityCrudRoutes } = require('@animastor/editor');
+const { createEditorModel, createEditorRoutes, createEntityCrudRoutes, createEditorPorts } =
+    require('@animastor/editor');
 ```
 
-Internal modules are reachable ONLY through the export map (`./editor-routes.cjs`, `./entity-crud-routes.cjs`, `./editor-ports.cjs`, `./scene-patch-utils.cjs`, `./read-recovery.cjs`, `./editor-model.cjs`, `./entity-id.js`, `./cyr-latin-map.js`) — no `src/` deep imports. Declared dependency: `@animastor/vbook-runtime` ONLY.
+**Phase 4.1 update:** the export map is now ROOT-ONLY (`{ ".": "./src/index.cjs" }`); the eight internal subpaths listed below were removed. The ports seam factory (`createEditorPorts`) moved through the package root — it is the composition-root shape the host must build before registration, hence part of the public contract, not an internal file.
 
-Host consumption (composition root, `backend.cjs` + `routes/book-routes.cjs`):
-- `createEditorModel` from the package entrypoint;
-- `editorPorts` assembled via `require('@animastor/editor/editor-ports.cjs')({ deps })`;
-- registration via `require('@animastor/editor/editor-routes.cjs')` / `entity-crud-routes.cjs` through the package export map.
+Host consumption (composition root, `backend.cjs` + `routes/book-routes.cjs`) — Phase 4.1:
+- `createEditorModel` + `createEditorPorts` from the package root (`require('@animastor/editor')`);
+- `editorPorts` assembled via `createEditorPorts({ deps })`;
+- registration via the legacy one-line shim (`routes/book-routes.cjs` → `./editor/index.cjs` → `require('@animastor/editor')`).
 
 Host shims kept (relocation checklist §2.4, one-line re-exports, guard E3 freezes them):
 - `backend/src/routes/editor/index.cjs` → `module.exports = require('@animastor/editor');`
@@ -868,3 +869,95 @@ Total E6 tests: 7 (up from 4 in Phase 2). Total editor-extraction-readiness suit
 - Full backend suite: `cd backend && npm test` → **575 passing, 0 failing**.
 - Syntax smoke: `bash scripts/syntax-smoke.sh backend` → all production JS/CJS files pass.
 - Functional verification: `node -e "const e = require('./src/utils/entity-id'); console.log(e.toEntityId('Привет мир'))"` → `privet_mir` (identical to pre-B1-resolve).`/
+
+---
+
+# Phase 4.1 — NPM publication readiness (package boundary hardening)
+
+**Date:** 2026-09-08. **Baseline:** `92577b5d` ("feat(editor): extract Editor package"). **Commit:** `chore(editor): harden package boundary and prepare npm release`. **Verdict: NPM READY** (see §P4.1.9).
+
+## P4.1.1 Deep-import issue (blocker)
+
+After the Phase 4 physical move the host still consumed the package through DEEP imports — internal files leaked into the host's view of the package:
+
+| Host site | Deep import (before) |
+|---|---|
+| `backend/src/backend.cjs` (ports wiring) | `require('@animastor/editor/editor-ports.cjs')` |
+| `backend/src/routes/book-routes.cjs` (registration) | `require('@animastor/editor/editor-routes.cjs')` + `require('@animastor/editor/entity-crud-routes.cjs')` |
+| `backend/src/image/helpers.js` (host image domain) | `require('@animastor/editor/cyr-latin-map.js')` |
+
+Deep count before: **4 distinct deep-import specifiers across 3 host files**. After: **0** (PB1 guard, `editor-package-boundary.test.js`).
+
+## P4.1.2 Decision — public API
+
+- `editorPorts` → **public, through the root**. The seam factory `createEditorPorts({ deps })` is the composition-root shape the host must build BEFORE route registration; it is a documented contract (frozen 7 ports, E5), not an internal implementation detail. Exporting it through the root does not open any internal path.
+- `cyr-latin-map` → **NOT public**. The map is needed only by the package's own `entity-id` and by the host image domain. Making it a package export would turn Editor into a shared host-utilities library — rejected (constraint §11). Resolution: the host image domain consumes a **host-local byte-parity twin** restored at the pre-move location `backend/src/utils/cyr-latin-map.js` (the canonical source remains the package file; the twin carries the Phase 9D-style GENERATED marker and is byte-guarded by PB5 — same playbook as the worker's `job-protocol-v2.cjs` copy). The host no longer reaches INTO the package for a utility.
+- `scene-patch-utils`, `read-recovery`, `entity-id`, `editor-model`, registrars → stay internal, unreachable from the host.
+
+## P4.1.3 Final public API
+
+```js
+const { createEditorModel, createEditorRoutes, createEntityCrudRoutes, createEditorPorts } =
+    require('@animastor/editor');
+```
+
+Exactly four factories (PB3 pins the surface; nothing else is exported).
+
+## P4.1.4 Final export map
+
+```json
+"exports": { ".": "./src/index.cjs" }
+```
+
+Root-only, closed. `./package.json` is NOT exported (blocked). No subpath is official public API. The `files` list is `["src/", "README.md", "LICENSE"]` (the stale `CHANGELOG.md` entry — a file that does not exist in the package — was dropped). Deep imports fail with ERR_PACKAGE_PATH_NOT_EXPORTED at runtime and fail the architecture suite via PB1 statically.
+
+## P4.1.5 Package closure (re-verified)
+
+- require closure of the WHOLE package (entrypoint included): intra-package files + node builtins + `@animastor/vbook-runtime` (the declared dependency) only — **ZERO host modules** (PB4 walk).
+- No `require()` from the package into backend; no config/runtime imports; no Redis/PG; no generation/AI; no Player imports (PB4 + E2/T3 unchanged).
+- No require cycles inside the package (PB4 DFS).
+- `editorPorts` remains the ONLY host infrastructure seam; the frozen 7 ports are unchanged and unexpanded: `sceneAssetsRepo`, `placeholderAudio`, `auditCoverage`, `promptLimit`, `purge`, `resolveOwnership`, `recoveryCtx` (PB3 + E5 re-verified).
+
+## P4.1.6 Host integration after Phase 4.1
+
+- `backend/src/backend.cjs`: `const { createEditorModel, createEditorPorts } = require('@animastor/editor');` — ports wired via `createEditorPorts({ deps })` at the composition root.
+- `backend/src/routes/book-routes.cjs`: registers the contour through the legacy one-line shim `./editor/index.cjs` (→ `require('@animastor/editor')`) — no deep registrar imports.
+- Legacy compatibility shims (`backend/src/routes/editor/index.cjs`, `backend/src/editor/index.cjs`) are kept for existing consumers; both are one-line re-exports of the package ROOT and expose nothing internal (E3 pins them).
+
+## P4.1.7 New guards — `backend/tests/architecture/editor-package-boundary.test.js` (15 tests)
+
+| Guard | Freezes |
+|---|---|
+| PB1 | host → package: root specifier ONLY; no `@animastor/editor/...`, no `packages/animastor-editor/src/...`, no relative escape into the package dir |
+| PB2 | exports == `{ ".": "./src/index.cjs" }`; manifest publish-complete (name/version/description/keywords/repository/homepage/bugs/license/engines/files/main/exports); frozen dep set |
+| PB3 | root API == exactly the 4 factories; ports factory returns the frozen 7-port shape |
+| PB4 | package closure self-contained (entrypoint included); no cycles; no host/other-package requires |
+| PB5 | `backend/src/utils/cyr-latin-map.js` twin: marker present, body byte-identical to the package canonical source, same exports/behavior, zero requires |
+
+Existing guards re-pinned: E3 (allowed edges now the shim + root), E5 (composition root wires via `createEditorPorts(`, no deep requires), B1 (image/helpers consumes the host-local twin), E7 (exports map assertion added).
+
+## P4.1.8 Tarball + installation verification
+
+- `npm pack --dry-run` (packages/animastor-editor): **12 files, 23.4 kB packed / 101.7 kB unpacked** — `package.json`, `README.md`, `LICENSE`, `src/` (9 files). NO tests, NO node_modules, NO dev artifacts, NO backend, NO docs, NO host implementation (grep-verified against the tar listing).
+- `npm pack` (real): `animastor-editor-0.1.0.tgz`, same 12-file listing.
+- `npm publish --dry-run`: OK — "Publishing to https://registry.npmjs.org/ with tag latest and public access (dry-run)". Real publish NOT executed (constraint §11).
+- Clean-dir install test (`/tmp/editor-clean-install`): `npm init -y` + `npm install <tgz>` → installs `@animastor/editor@0.1.0` + its production dep `@animastor/vbook-runtime` (resolved from the real npm registry — the dep is published). Smoke through the public API only, with zero access to the backend tree: public surface == 4 factories; `createEditorPorts` returns the frozen 7-port object and fails closed; `createEditorModel` delegates to the injected Book Model; both registrars register exactly 26 endpoints; `require('@animastor/editor/editor-ports.cjs')` is BLOCKED by the exports map. **SMOKE OK.**
+
+## P4.1.9 Tests and results
+
+| Suite | Command | Result |
+|---|---|---|
+| Editor package tests | `cd packages/animastor-editor && npm test` | **75 passing, 0 failing** |
+| Deep-import guard (new) | `cd backend && npx mocha --exit tests/architecture/editor-package-boundary.test.js` | **15 passing, 0 failing** |
+| E1–E8 + B1 + T-guards + endpoint surface | `cd backend && npx mocha --exit tests/architecture/editor-route-split.test.js tests/architecture/editor-extraction-readiness.test.js tests/architecture/editor-package-boundary.test.js tests/architecture/phase6-editor-player.test.js tests/architecture/phase4-book-model.test.js tests/architecture/vbook-bundle-schema.test.js tests/architecture/phase7-extraction-readiness.test.js` | **129 passing, 0 failing** |
+| Full architecture suite | `cd backend && npm run test:arch` | **670 passing, 3 failing** — all 3 pre-existing on clean HEAD (C20 host-ports ×2, C19 host-ports; stale pins vs the AI-analyzer commits `c9abbdf8`/`0c41c9a0` that landed in parallel; unrelated to Editor) |
+| Endpoint contract (editor surface) | `cd backend && npx mocha --exit tests/book-metadata-patch.test.js tests/scene-list.test.js tests/behavior-edit-book.test.js tests/book-source.test.js tests/config-routes.test.js` | **61 passing, 0 failing** |
+| Syntax smoke | `cd backend && npm run test:syntax` | all production JS/CJS files pass |
+| Full backend suite | `cd backend && npx mocha --exit "tests/**/*.test.js"` | after: **3197 passing, 8 failing**; fresh baseline on clean HEAD (same day, AI commits landed): **3183 passing, 7 failing** — identical failure families: LLM Sharing Phase 1/2/3 (SH-AI-1/3, 3), C19/C20 host-ports pins (3), worker-visibility/share-policy Redis-mock timeouts (1–2, flaky, also failed on baseline and in combined baseline runs). No new Editor-related failure. |
+| Editor package test require-paths | package tests now require `../src/...` (relative) instead of `@animastor/editor/...` specifiers (which the root-only export map now blocks) | 75 passing |
+
+## P4.1.10 Verdict
+
+**NPM READY** — deep imports = 0 (PB1); package root API works (PB3 + clean-install smoke); tarball verified (12 files, clean); clean install from the .tgz works against the real registry dependency; package closure = 0 host modules (PB4); architecture guards pass (all Editor guards green); Editor tests pass (75/75); backend regression contains no new failures (all remaining failures reproduce on the clean-HEAD baseline and are unrelated to Editor).
+
+Release status: publishable as `@animastor/editor@0.1.0`. Publication itself is a separate, explicit action (`npm publish` NOT executed).

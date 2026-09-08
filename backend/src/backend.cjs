@@ -54,7 +54,9 @@ const { createBookDeletion } = require('./services/book-deletion.cjs');
 // since the Phase 4 physical move
 // (docs/architecture/editor-module-extraction-audit.md — Phase 4).
 const { createPlayerModel, createPlayerRoutes } = require('@animastor/player');
-const { createEditorModel } = require('@animastor/editor');
+// Editor API comes ONLY through the package root (Phase 4.1 — no deep
+// imports): the model facade + the frozen-7-port seam factory.
+const { createEditorModel, createEditorPorts } = require('@animastor/editor');
 // Player package ports (host implementations injected into the playback
 // contour — the player package must not import these directly: they carry
 // generation-domain knowledge: workflows/ alignment tax, ffmpeg/ffprobe,
@@ -311,7 +313,7 @@ const routeDeps = {
     //   agent-prompts, workspace-ownership) are now constructed in the
     //   composition root and passed as ready-made references so that
     //   editor-ports.cjs holds zero host require() calls (Phase 1.1).
-    editorPorts: require('@animastor/editor/editor-ports.cjs')({
+    editorPorts: createEditorPorts({
         deps: {
             sceneAssetsRepo,
             placeholderAudio,

@@ -80,13 +80,13 @@ describe('BEHAVIOR CRUD ROUTES — manual Behavior editor', () => {
             resolveOwnership: async () => ({}),
             recoveryCtx: {},
         };
-        require('@animastor/editor/entity-crud-routes.cjs')(app, {}, {
+        require('../src/entity-crud-routes.cjs')(app, {}, {
             book: bookModule,
             editorModel: editorFacade,
             editorPorts: editorPortsStub,
             utils: { log: () => {} },
         });
-        require('@animastor/editor/editor-routes.cjs')(app, {}, {
+        require('../src/editor-routes.cjs')(app, {}, {
             book: bookModule,
             editorModel: editorFacade,
             editorPorts: editorPortsStub,

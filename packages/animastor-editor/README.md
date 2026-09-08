@@ -32,8 +32,14 @@ npm install @animastor/editor
 ## Public API
 
 The package exposes a single entrypoint — `require('@animastor/editor')`
-returns `{ createEditorModel, createEditorRoutes, createEntityCrudRoutes }`.
-Deep imports (`@animastor/editor/src/...`) are intentionally not exported.
+returns `{ createEditorModel, createEditorRoutes, createEntityCrudRoutes,
+createEditorPorts }`. Since Phase 4.1 the export map is root-only:
+deep imports (`@animastor/editor/...`, `@animastor/editor/src/...`) are
+blocked by the package `exports` map and rejected by the deep-import guard
+(`backend/tests/architecture/editor-package-boundary.test.js`, PB1–PB4).
+The `editorPorts` seam is exported through the same root because it is the
+composition-root shape the host must build before registration — it is
+part of the public contract, not an internal file.
 
 ## Boundary
 
@@ -58,11 +64,11 @@ npm test           # behavioral tests, no host needed
 ## Host integration (composition root)
 
 ```js
-const { createEditorModel, createEditorRoutes, createEntityCrudRoutes } =
-    require('@animastor/editor');
+const { createEditorModel, createEditorRoutes, createEntityCrudRoutes,
+        createEditorPorts } = require('@animastor/editor');
 
 const editorModel = createEditorModel({ bookModel, persistBook: book.saveBookBundle });
-const editorPorts = require('@animastor/editor/editor-ports.cjs')({
+const editorPorts = createEditorPorts({
     deps: {
         sceneAssetsRepo,          // PG scene-assets (bumpSceneVersions/setDirtyUnitIds)
         placeholderAudio,         // read-time placeholder recovery
@@ -99,7 +105,33 @@ DELETE /api/v1/book/:bookId/chapters/:chapterId/scenes/:sceneId/units/:unitId
 Guards: [`backend/tests/architecture/editor-route-split.test.js`](https://github.com/Animastor/animastor/blob/main/backend/tests/architecture/editor-route-split.test.js)
 (E1–E3), [`backend/tests/architecture/editor-extraction-readiness.test.js`](https://github.com/Animastor/animastor/blob/main/backend/tests/architecture/editor-extraction-readiness.test.js)
 (E4–E8 + B1), [`backend/tests/architecture/phase6-editor-player.test.js`](https://github.com/Animastor/animastor/blob/main/backend/tests/architecture/phase6-editor-player.test.js)
-(T2–T7).
+(T2–T7), [`backend/tests/architecture/editor-package-boundary.test.js`](https://github.com/Animastor/animastor/blob/main/backend/tests/architecture/editor-package-boundary.test.js)
+(PB1–PB5 — deep-import guard, manifest freeze, package closure, cyr-latin-map twin parity).
+
+## Package boundary (NPM readiness — Phase 4.1)
+
+- The `exports` map is **root-only**: `{ ".": "./src/index.cjs" }`. Deep imports
+  (`@animastor/editor/...`) throw `ERR_PACKAGE_PATH_NOT_EXPORTED` at runtime and are
+  rejected by the PB1 architecture guard.
+- `createEditorPorts` is public through the root: it is the composition-root seam
+  the host fills before route registration (the frozen 7-port contract above).
+- The pure `cyr-latin-map` transliteration module is **internal**. Hosts that need
+  Cyrillic→Latin normalization outside the Editor should keep their own copy (the
+  Animastor backend carries a byte-parity twin guarded by the PB5 test) — the
+  Editor is not a general-purpose utilities library.
+
+## Versioning / release
+
+- Current version: `0.1.0` (first publishable release; `npm publish --dry-run` verified).
+- SemVer: the frozen HTTP surface (26 endpoints), the four public factories and the
+  7-port `editorPorts` shape are the contract — breaking any of them requires a major
+  bump. New optional ports or endpoints are minor; fixes are patch.
+- The package is published from `packages/animastor-editor` (`files` = `src/`,
+  `README.md`, `LICENSE`; `publishConfig.access = public`). Publication is a manual,
+  explicit step — it is never automated in CI or agent runs.
+- Release history is tracked in
+  [`docs/architecture/editor-module-extraction-audit.md`](https://github.com/Animastor/animastor/blob/main/docs/architecture/editor-module-extraction-audit.md)
+  (§Phase 4 physical move, §Phase 4.1 NPM readiness).
 
 ## License
 

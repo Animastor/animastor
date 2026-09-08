@@ -185,10 +185,13 @@ describe('E5: createEditorPorts — the frozen port object contract', () => {
 
     it('backend.cjs wires all seven ports at the composition root', () => {
         const src = readSource(BACKEND_ROOT);
-        // Post-move: the port assembly is loaded through the package export map.
-        expect(src).to.match(/editorPorts:\s*require\('@animastor\/editor\/editor-ports\.cjs'\)/);
+        // Phase 4.1: the port factory comes through the package ROOT
+        // (createEditorPorts from require('@animastor/editor')) — no deep
+        // imports of package internals.
+        expect(src).to.match(/createEditorPorts\(\{/);
+        expect(src).to.not.match(/require\(['"]@animastor\/editor\/['"]/);
         // The deps block carries every port name as a key or shorthand.
-        const wiring = src.slice(src.indexOf('editorPorts: require('));
+        const wiring = src.slice(src.indexOf('editorPorts: createEditorPorts('));
         const block = wiring.slice(0, wiring.indexOf('}),\n};') > 0 ? wiring.indexOf('}),\n};') : 5000);
         for (const p of FROZEN_PORTS) {
             expect(block, `composition root must wire the ${p} port`).to.match(new RegExp('\\b' + p + '\\b'));
@@ -264,10 +267,11 @@ describe('E6: package require closure reaches only intra-package files + builtin
             expect(code, `${rel(file)} must not require utils/string-utils`).to.not.match(/require\(['"][^'"]*utils\/string-utils['"]\)/);
             expect(code, `${rel(file)} must not require config/runtime-config`).to.not.match(/require\(['"][^'"]*runtime-config['"]\)/);
         }
-        // The host image/helpers.js still imports the canonical cyr-latin-map
-        // — but from the PACKAGE now (the map moved; the host consumer follows).
+        // The host image/helpers.js consumes a HOST-LOCAL byte-parity twin of
+        // the cyr-latin map (Phase 4.1: the package exposes its root only, so
+        // the host must not deep-import the package-internal module).
         const imageHelpers = readSource(path.join(BACKEND_SRC, 'image', 'helpers.js'));
-        expect(imageHelpers).to.match(/require\(['"]@animastor\/editor\/cyr-latin-map\.js['"]\)/);
+        expect(imageHelpers).to.match(/require\(['"]\.\.\/utils\/cyr-latin-map['"]\)/);
     });
 
     it('cyr-latin-map is a pure zero-dependency module inside the package (the canonical transliteration source)', () => {
@@ -315,6 +319,8 @@ describe('E7: the editor package is carried by exactly the 9 src files', () => {
         expect(pkg.name).to.equal('@animastor/editor');
         expect(Object.keys(pkg.dependencies)).to.deep.equal(['@animastor/vbook-runtime']);
         expect(pkg.main).to.equal('src/index.cjs');
+        // Phase 4.1: root-only exports map — the package boundary is closed.
+        expect(pkg.exports).to.deep.equal({ '.': './src/index.cjs' });
     });
 
     it('no package requires an editor module (one-way street)', () => {

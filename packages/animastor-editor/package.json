@@ -11,21 +11,12 @@
     ],
     "main": "src/index.cjs",
     "exports": {
-        ".": "./src/index.cjs",
-        "./editor-routes.cjs": "./src/editor-routes.cjs",
-        "./entity-crud-routes.cjs": "./src/entity-crud-routes.cjs",
-        "./editor-ports.cjs": "./src/editor-ports.cjs",
-        "./scene-patch-utils.cjs": "./src/scene-patch-utils.cjs",
-        "./read-recovery.cjs": "./src/read-recovery.cjs",
-        "./editor-model.cjs": "./src/editor-model.cjs",
-        "./entity-id.js": "./src/entity-id.js",
-        "./cyr-latin-map.js": "./src/cyr-latin-map.js"
+        ".": "./src/index.cjs"
     },
     "files": [
         "src/",
         "README.md",
-        "LICENSE",
-        "CHANGELOG.md"
+        "LICENSE"
     ],
     "scripts": {
         "test": "mocha --exit test/*.test.js"

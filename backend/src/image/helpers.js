@@ -4,9 +4,12 @@
 // getOutputPath and escapeRegExp imported from shared utils/string-utils.
 
 const { getOutputPath, escapeRegExp } = require('../utils/string-utils');
-// cyr-latin-map moved into @animastor/editor (Phase 4 physical move) —
-// this remains the canonical import for host image-domain consumers.
-const { CYR_LATIN_MAP, cyrToLatin } = require('@animastor/editor/cyr-latin-map.js');
+// Phase 4.1: the cyr-latin map no longer comes from the @animastor/editor
+// package (host must not deep-import package internals — package root only).
+// The Editor keeps its own canonical copy; this host leg is a byte-parity
+// twin (guarded by editor-package-boundary.test.js PB5), restored at the
+// pre-move host location.
+const { CYR_LATIN_MAP, cyrToLatin } = require('../utils/cyr-latin-map');
 
 const logPrefix = '[IMAGE]';
 

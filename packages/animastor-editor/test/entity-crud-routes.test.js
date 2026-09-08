@@ -60,7 +60,7 @@ describe('ENTITY CRUD ROUTES — manual add/delete', () => {
             patch() {},
             delete(path, handler) { handlers.set(path, handler); },
         };
-        require('@animastor/editor/entity-crud-routes.cjs')(app, {}, {
+        require('../src/entity-crud-routes.cjs')(app, {}, {
             book: bookModule,
             editorModel: {                       // Phase 6: Editor boundary fake over the real module
                 read: (id) => bookModule.loadBook(id),
@@ -476,7 +476,7 @@ describe('ENTITY CRUD ROUTES — scene/unit delete deep cleanup', () => {
             resolveOwnership: async () => ({}),
             recoveryCtx: {},
         };
-        require('@animastor/editor/entity-crud-routes.cjs')(app, redisMock, deps);
+        require('../src/entity-crud-routes.cjs')(app, redisMock, deps);
     }
 
     async function invoke(pathTemplate, params, body) {
