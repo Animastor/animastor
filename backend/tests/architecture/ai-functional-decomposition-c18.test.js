@@ -33,12 +33,14 @@ const {
     REPO_ROOT, readSource, requireSpecifiers, resolveSpecifier,
 } = require('./helpers');
 
-// ── C18 contour file set (functional modules F1–F18, C19 physical split) ────
+// ── C18 contour file set (functional modules F1–F18, C19/C20 physical splits) ──
 const CONTOUR_FILES = [
     'backend/src/services/structure-detector-deterministic.js',
     'backend/src/services/structure-analyzer/index.js',
     'backend/src/services/structure-analyzer/ai-merge.js',
     'backend/src/services/structure-detector.js',
+    'backend/src/services/character-analyzer/index.js',
+    'backend/src/services/character-analyzer/voices.js',
     'backend/src/services/agent/pipeline-steps.js',
     'backend/src/services/agent/pipeline-runner.js',
     'backend/src/services/agent/parallel-analysis-orchestrator.js',
@@ -181,6 +183,8 @@ describe('C18 functional decomposition: Book Writer boundary', () => {
         'backend/src/services/structure-analyzer/index.js',
         'backend/src/services/structure-analyzer/ai-merge.js',
         'backend/src/services/structure-detector.js',
+        'backend/src/services/character-analyzer/index.js',
+        'backend/src/services/character-analyzer/voices.js',
         'backend/src/services/agent/pipeline-steps.js',
         'backend/src/services/agent/pipeline-runner.js',
         'backend/src/services/agent/parallel-analysis-orchestrator.js',

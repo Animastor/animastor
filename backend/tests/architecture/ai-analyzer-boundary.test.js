@@ -27,12 +27,14 @@ const path = require('path');
 const fs = require('fs');
 const { REPO_ROOT, readSource, rel, requireSpecifiers } = require('./helpers');
 
-// ── AI Analyzer file set (C17 boundary + C19 physical split) ────────────────
+// ── AI Analyzer file set (C17 boundary + C19/C20 physical splits) ───────────
 const AI_ANALYZER_FILES = [
     'backend/src/services/structure-detector-deterministic.js',
     'backend/src/services/structure-analyzer/index.js',
     'backend/src/services/structure-analyzer/ai-merge.js',
     'backend/src/services/structure-detector.js',
+    'backend/src/services/character-analyzer/index.js',
+    'backend/src/services/character-analyzer/voices.js',
     'backend/src/services/agent/pipeline-steps.js',
     'backend/src/services/agent/pipeline-runner.js',
     'backend/src/services/agent/parallel-analysis-orchestrator.js',

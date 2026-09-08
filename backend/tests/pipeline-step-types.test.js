@@ -11,12 +11,22 @@ const path = require('path');
 // sync with the step types actually used by the pipeline.
 
 describe('pipeline step types vs agent_steps.step_type CHECK constraint', () => {
-    const stepsSrc = fs.readFileSync(path.join(__dirname, '../src/services/agent/pipeline-steps.js'), 'utf8');
-    const schemaSrc = fs.readFileSync(path.join(__dirname, '../src/storage/postgres/schema.js'), 'utf8');
+    // Step sources live in the host steps file AND in the analyzer modules
+    // (C19: structure-analyzer, C20: character-analyzer) — scan all of them.
+    const stepSources = [
+        '../src/services/agent/pipeline-steps.js',
+        '../src/services/character-analyzer/index.js',
+        '../src/services/character-analyzer/voices.js',
+    ].map(f => path.join(__dirname, f));
 
     const usedTypes = new Set(
-        [...stepsSrc.matchAll(/createStep\(\s*sessionId,\s*'([a-z_]+)'/g)].map(m => m[1])
+        stepSources.flatMap(src => {
+            const s = fs.readFileSync(src, 'utf8');
+            return [...s.matchAll(/createStep\(\s*(?:sessionId|input\.sessionId),\s*'([a-z_]+)'/g)].map(m => m[1]);
+        })
     );
+
+    const schemaSrc = fs.readFileSync(path.join(__dirname, '../src/storage/postgres/schema.js'), 'utf8');
 
     // Both constraint declarations: the CREATE TABLE and the migration update
     // (the latter is written as `CHECK (step_type IN (...))` — note the space).
@@ -35,7 +45,7 @@ describe('pipeline step types vs agent_steps.step_type CHECK constraint', () => 
     for (const [i, allowed] of checkBlocks.entries()) {
         it(`every createStep() type is allowed by constraint declaration #${i + 1}`, () => {
             const missing = [...usedTypes].filter(t => !allowed.has(t));
-            expect(missing, `step type(s) used in pipeline-steps.js but missing from the agent_steps.step_type CHECK: ${missing.join(', ')}`).to.deep.equal([]);
+            expect(missing, `step type(s) used in pipeline-steps.js / analyzer modules but missing from the agent_steps.step_type CHECK: ${missing.join(', ')}`).to.deep.equal([]);
         });
     }
 });

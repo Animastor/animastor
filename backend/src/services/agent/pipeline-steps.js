@@ -20,7 +20,6 @@ const {
 const { normalizeCharacterRefs } = require('../../image/image-service');
 const { sanitizeVideoTokens, tokensToString } = require('../../book/lazy-book/appearance');
 const { findUnverifiedSnakeTokens, canonicalizeText, desnakeifyText, findCrossPromptGaps, participantFieldIds, sanitizeEnvironment } = require('../../utils/snake-guard');
-const { hasRealAppearance } = require('../../utils/character-identity');
 
 /**
  * Normalize names/aliases → character_id in an AI-written visual text.
@@ -236,30 +235,39 @@ async function stepAnalyzeStructure(sessionId, sourceText, stepIndex, progress, 
     );
 }
 
+// ======================================================
+// Agent Pipeline Step — Character Extraction (host adapter, C20)
+// ======================================================
+// The Character Analyzer functional module lives in
+// services/character-analyzer (C20 physical extraction). It reaches the
+// LLM ONLY through an injected callAI port and owns no persistence; the
+// host-side wiring (PG session/steps, conversation log, prompts, provider
+// context) is passed in here — this adapter is the composition point.
+// Replacing Character Analysis means replacing character-analyzer, not
+// touching this adapter's siblings (structure/locations/scenes/units/visuals).
+
 async function stepExtractCharacters(sessionId, text, stepIndex, progress, language) {
-    const _progress = progress || (() => {});
-    _progress({ stage: 'extracting_chars', message: PROGRESS_STAGES.extracting_chars });
-    await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.extracting_chars });
-
-    const step = await createStep(sessionId, 'analyze_characters', stepIndex || 0);
-
-    const messages = [
-        { role: 'system', content: fillLang(SYSTEM_PROMPTS.characters, language) },
-        { role: 'user', content: `Extract all characters from this text:\n\n\`\`\`\n${text}\n\`\`\`` },
-    ];
-
-    try {
-        const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
-        const characters = result.characters || [];
-        const mentions = result.mentions || {};
-        await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
-        await completeStep(step.step_id, { characters, mentions });
-        console.log(`[AGENT] Step 1 (characters): ${characters.length} extracted, ${Object.keys(mentions).length} mentions`);
-        return { characters, mentions };
-    } catch (err) {
-        await failStep(step.step_id, err.message);
-        throw err;
-    }
+    const characterAnalyzer = require('../character-analyzer');
+    return characterAnalyzer.extractCharacters(
+        {
+            windowText: text,
+            language,
+            sessionId,
+            stepIndex,
+            progress,
+        },
+        {
+            callAI: aiCaller.callAI,
+            logConversation: aiCaller.logConversation,
+            updateSession,
+            createStep,
+            completeStep,
+            failStep,
+            extractingCharactersMessage: PROGRESS_STAGES.extracting_chars,
+            prompt: (name) => SYSTEM_PROMPTS[name],
+            fillLang,
+        }
+    );
 }
 
 async function stepExtractLocations(sessionId, text, characters, stepIndex, progress, language) {
@@ -419,99 +427,39 @@ async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepInd
     }
 }
 
+// ======================================================
+// Agent Pipeline Step — Voice Generation (host adapter, C20)
+// ======================================================
+// F7 voice authoring lives in character-analyzer/voices.js (the audio-
+// adjacent half of the Character Analyzer). It still mutates
+// characters[i].voice in place — the write-back contract is unchanged;
+// only the wiring moved behind the module seam.
+
 async function stepGenerateVoices(sessionId, text, characters, stepIndex, progress, language, promptProfiles) {
-    const _progress = progress || (() => {});
-    _progress({ stage: 'voice_generation', message: PROGRESS_STAGES.voice_generation });
-    await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.voice_generation });
-
-    // Only REAL characters get voice profiles. A character must have an actual
-    // appearance description (the entry criterion in characters.md). A
-    // dialogue-only participant without a described appearance is NOT a
-    // character — no voice is invented for them; the audio pipeline assigns a
-    // default voice automatically. Shared predicate (character-identity) —
-    // looks at the WHOLE aggregate (passport/appearance/clothes/description),
-    // not at the name alone.
-    const viableChars = (characters || []).filter(c => c.id && c.name && hasRealAppearance(c));
-    if (viableChars.length === 0) {
-        console.log('[AGENT] Step voice_generation: skipped — no characters with described appearance to generate voices for');
-        return { voices: {} };
-    }
-
-    // Check if all characters already have meaningful voice descriptions (more than just defaults)
-    // We consider a voice "meaningful" if it's longer than ~30 chars and not a generic fallback.
-    const charsWithoutVoice = viableChars.filter(c => {
-        const v = c.voice || '';
-        // Consider a voice missing if: empty, very short, or matches known generic patterns
-        return !v || v.length < 20 || /character voice|natural intonation|matching/i.test(v);
-    });
-
-    if (charsWithoutVoice.length === 0 && viableChars.every(c => c.voice && c.voice.length >= 30)) {
-        console.log('[AGENT] Step voice_generation: skipped — all characters already have meaningful voice descriptions');
-        return { voices: {} };
-    }
-
-    const step = await createStep(sessionId, 'generate_voices', stepIndex || 0);
-
-    const charsContext = viableChars.map(c =>
-        `- ${c.id}: ${c.name}\n` +
-        `  role: ${c.role || 'unknown'}\n` +
-        `  description: ${(c.description || '').substring(0, 300)}\n` +
-        `  appearance: ${(c.appearance || c.passport?.appearance || '').substring(0, 400)}\n` +
-        `  traits: ${(c.traits || []).slice(0, 5).join(', ') || 'none'}\n` +
-        `  current_voice: ${c.voice || '(none)'}`
-    ).join('\n');
-
-    // Use full text (up to 8000 chars) for dialogue analysis
-    const truncatedText = (text || '').length > 8000
-        ? (text || '').substring(0, 8000) + '...'
-        : (text || '');
-
-    // Inject the audio/TTS skill when a profile is configured (there is no
-    // 'default' skill): the voice-instruction authoring rules for the active
-    // TTS model live in skills/audio/{qwen-tts,...}.md.
-    let voicePrompt = SYSTEM_PROMPTS.voice_generation;
-    const audioSkill = promptProfileLoader.buildSkillSection('audio', promptProfiles?.audioProfile || null);
-    if (audioSkill) {
-        voicePrompt = `${audioSkill}\n\n${voicePrompt}`;
-    }
-
-    const prompt = fillLang(
-        voicePrompt
-            .replace('%CHARACTERS%', charsContext)
-            .replace('%TEXT%', truncatedText),
-        language
-    );
-
-    const messages = [
-        { role: 'system', content: prompt },
-        { role: 'user', content: `Analyze the source text and generate voice descriptions for characters who have DIALOGUE LINES (speech). Skip characters who only appear in narration and never speak. Do NOT generate narrator voice.\n\nCharacters:\n${charsContext}\n\nSource text for analysis:\n${truncatedText}` },
-    ];
-
-    try {
-        const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
-        const voices = result.voices || {};
-
-        // Update character voice fields ONLY for characters who needed them.
-        // Characters that already had good voices are NOT overwritten —
-        // this prevents voice drift across pipeline windows.
-        const updateTargets = charsWithoutVoice.length > 0
-            ? charsWithoutVoice
-            : viableChars;
-        for (const ch of updateTargets) {
-            if (voices[ch.id]?.instruction) {
-                ch.voice = voices[ch.id].instruction;
-            }
+    const characterAnalyzer = require('../character-analyzer');
+    return characterAnalyzer.generateVoices(
+        {
+            windowText: text,
+            characters,
+            promptProfiles,
+            language,
+            sessionId,
+            stepIndex,
+            progress,
+        },
+        {
+            callAI: aiCaller.callAI,
+            logConversation: aiCaller.logConversation,
+            updateSession,
+            createStep,
+            completeStep,
+            failStep,
+            voiceGenerationMessage: PROGRESS_STAGES.voice_generation,
+            prompt: (name) => SYSTEM_PROMPTS[name],
+            fillLang,
+            buildSkill: promptProfileLoader.buildSkillSection,
         }
-
-        await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
-        await completeStep(step.step_id, { voices: Object.keys(voices).length });
-        console.log(`[AGENT] Step voice_generation: ${Object.keys(voices).length}/${viableChars.length} characters got voice descriptions`);
-        return { voices };
-    } catch (err) {
-        await failStep(step.step_id, err.message);
-        console.warn(`[AGENT] Step voice_generation FAILED: ${err.message} — keeping existing character voices`);
-        return { voices: {} };
-    }
+    );
 }
 
 /**
