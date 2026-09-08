@@ -124,8 +124,10 @@ async function bootstrapWithAgentInner(bookId, draft, progress, publishProgress,
         // ── v2: structure is analyzed BEFORE window slicing. The program
         // finds candidate lines, the LLM classifies them, and the resulting
         // chapter map drives window boundaries (see TXT_IMPORT_STRUCTURE_V2.md).
-        const structureDetector = require('../structure-detector');
-        const { candidates } = structureDetector.extractCandidates(draft.sourceText);
+        // C19: candidates come through the Structure Analyzer seam (the
+        // deterministic parser adapter is the analyzer's injected detector).
+        const structureAnalyzer = require('../structure-analyzer');
+        const { candidates } = structureAnalyzer.extractCandidates(draft.sourceText);
 
         _progress({ stage: 'analyzing_structure', message: PROGRESS_STAGES.analyzing_structure });
         const structure = await pipelineSteps.stepAnalyzeStructure(sessionId, draft.sourceText, 0, _progress, language, { candidates });

@@ -33,8 +33,11 @@ const {
     REPO_ROOT, readSource, requireSpecifiers, resolveSpecifier,
 } = require('./helpers');
 
-// ── C18 contour file set (functional modules F1–F18) ────────────────────────
+// ── C18 contour file set (functional modules F1–F18, C19 physical split) ────
 const CONTOUR_FILES = [
+    'backend/src/services/structure-detector-deterministic.js',
+    'backend/src/services/structure-analyzer/index.js',
+    'backend/src/services/structure-analyzer/ai-merge.js',
     'backend/src/services/structure-detector.js',
     'backend/src/services/agent/pipeline-steps.js',
     'backend/src/services/agent/pipeline-runner.js',
@@ -174,6 +177,10 @@ describe('C18 functional decomposition: single LLM seam per functional module', 
 // ── Guard 4: Book Writer calls are host-only ────────────────────────────────
 describe('C18 functional decomposition: Book Writer boundary', () => {
     const NON_HOST_FILES = [
+        'backend/src/services/structure-detector-deterministic.js',
+        'backend/src/services/structure-analyzer/index.js',
+        'backend/src/services/structure-analyzer/ai-merge.js',
+        'backend/src/services/structure-detector.js',
         'backend/src/services/agent/pipeline-steps.js',
         'backend/src/services/agent/pipeline-runner.js',
         'backend/src/services/agent/parallel-analysis-orchestrator.js',
@@ -181,7 +188,6 @@ describe('C18 functional decomposition: Book Writer boundary', () => {
         'backend/src/services/agent/text-utils.js',
         'backend/src/services/agent/image-utils.js',
         'backend/src/services/agent/ai-caller.js',
-        'backend/src/services/structure-detector.js',
     ].map(f => path.join(REPO_ROOT, f));
 
     const WRITER_OPS = [/createFromAnalysis/, /appendToBook/, /createDraftBook/, /updateBookState/];
@@ -227,17 +233,26 @@ describe('C18 functional decomposition: F9 cross-contour contract (video_tokens)
     });
 });
 
-// ── Guard 7: structure-detector dual role (C18 H7) ──────────────────────────
+// ── Guard 7: structure-detector dual role resolved by the C19 split ─────────
 describe('C18 functional decomposition: structure-detector dual role preserved', () => {
-    it('remains pure (zero requires) and keeps both halves exported', () => {
-        const s = src(path.join(REPO_ROOT, 'backend/src/services/structure-detector.js'));
-        expect(requireSpecifiers(s), 'structure-detector must stay pure (parser port + AI merge seam)').to.deep.equal([]);
-        for (const fn of ['extractCandidates', 'buildDeterministicMap', 'analyzeStructure', 'mergeAiDecisions', 'sanitizeStructure', 'mapToStructureChapters']) {
-            expect(s, `structure-detector must export ${fn}`).to.match(new RegExp(`\\b${fn}\\b`));
+    it('deterministic half stays pure (zero requires) with its surface exported', () => {
+        const s = src(path.join(REPO_ROOT, 'backend/src/services/structure-detector-deterministic.js'));
+        expect(requireSpecifiers(s), 'deterministic half must stay pure (parser port impl)').to.deep.equal([]);
+        for (const fn of ['extractCandidates', 'buildDeterministicMap', 'mapToStructureChapters']) {
+            expect(s, `deterministic half must export ${fn}`).to.match(new RegExp(`\\b${fn}\\b`));
         }
     });
 
-    it('composition root still binds it into @animastor/parser', () => {
+    it('AI-merge half exports live in the structure-analyzer module (C19)', () => {
+        for (const fn of ['analyzeStructure', 'mergeAiDecisions', 'sanitizeStructure']) {
+            const s = src(path.join(REPO_ROOT, 'backend/src/services/structure-analyzer/ai-merge.js'));
+            expect(s, `structure-analyzer/ai-merge must define ${fn}`).to.match(new RegExp(`function ${fn}\\b`));
+        }
+        const barrel = src(path.join(REPO_ROOT, 'backend/src/services/structure-detector.js'));
+        expect(barrel, 'compatibility barrel re-exports the AI-merge half').to.match(/require\('\.\/structure-analyzer'\)/);
+    });
+
+    it('composition root still binds the deterministic detector into @animastor/parser', () => {
         const s = src(path.join(REPO_ROOT, 'backend/src/backend.cjs'));
         expect(s).to.match(/setStructureDetector\(require\('\.\/services\/structure-detector'\)\)/);
     });

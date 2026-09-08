@@ -199,113 +199,41 @@ function normalizeSceneEnvironment(scene) {
     return { ...scene, location: { ...loc, environment: sanitized } };
 }
 
+// ======================================================
+// Agent Pipeline Step — Structure Analysis (host adapter, C19)
+// ======================================================
+// The Structure Analyzer functional module lives in
+// services/structure-analyzer (C19 physical extraction). It reaches the
+// LLM ONLY through an injected callAI port and owns no persistence; the
+// host-side wiring (PG session/steps, conversation log, prompts, provider
+// context) is passed in here — this adapter is the composition point.
+// Replacing the Structure Analysis algorithm means replacing
+// structure-analyzer, not touching this adapter's siblings
+// (characters/locations/scenes/units/visuals).
+
 async function stepAnalyzeStructure(sessionId, sourceText, stepIndex, progress, language, options = {}) {
-    const _progress = progress || (() => {});
-    _progress({ stage: 'analyzing_structure', message: PROGRESS_STAGES.analyzing_structure });
-    await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.analyzing_structure });
-
-    const step = await createStep(sessionId, 'analyze_structure', stepIndex || 0);
-
-    // ── Candidates: the program finds suspicious lines, the LLM classifies ──
-    const structureDetector = require('../structure-detector');
-    const { candidates } = options.candidates
-        ? { candidates: options.candidates }
-        : structureDetector.extractCandidates(sourceText);
-
-    const headBlock = candidates
-        .filter(c => c.inHeadBlock)
-        .sort((a, b) => a.lineIndex - b.lineIndex)
-        .slice(0, 15)
-        .map(c => `${c.lineIndex + 1}: ${c.text}`)
-        .join('\n');
-
-    // Candidates offered to the LLM. Strong candidates (keyword or
-    // headingLikelihood >= 0.3) plus STANDALONE title/author head-zone lines:
-    // a real title line like "За пределами алгоритмов." scores only ~0.15
-    // (decorative period → sentencePunctuation penalty) and would otherwise be
-    // invisible to the LLM, forcing it to anchor the title to a wrong
-    // candidate (e.g. the prologue line) and tripping the hallucination guard.
-    // standalone keeps long narrative paragraphs out — only title-page-like
-    // lines (blank line above AND below) join the payload.
-    const candidatePayload = candidates
-        .filter(c => c.keyword || c.headingLikelihood >= 0.3 || (c.inHeadBlock && c.standalone))
-        .slice(0, 60)
-        .map(c => ({
-            id: c.id,
-            line: c.text,
-            next_paragraph: c.nextParagraphPreview || null,
-        }));
-
-    const userPrompt = [
-        'Analyze the structure of this text. For each candidate line decide:',
-        '- What are these short lines? Book title? Author? (for lines at the very top)',
-        '- Prologue + its title? Chapter + its title? Part? Epilogue?',
-        '- Or is it just an ordinary heading / narrative line (reject)?',
-        'For the VERY FIRST line, answer explicitly: is there a person\'s full',
-        'name (initials + surname, e.g. "С. А. Хабаров")? The first line may',
-        'contain the title AND the author name without a separator — split',
-        'them into title + author. A name INSIDE the title text ("Жизнь',
-        'Хабарова") is part of the title, not an author.',
-        'Find what ACTUALLY exists — do NOT invent a structure for a poem,',
-        'a fragment, or a few sentences.',
-        '',
-        '## Head of the document',
-        '```',
-        headBlock || '(no head lines)',
-        '```',
-        '',
-        '## Candidate lines (short standalone lines with the paragraph below)',
-        '```json',
-        JSON.stringify(candidatePayload, null, 1),
-        '```',
-    ].join('\n');
-
-    const messages = [
-        { role: 'system', content: fillLang(SYSTEM_PROMPTS.structure, language) },
-        { role: 'user', content: userPrompt },
-    ];
-
-    // Deterministic fallback map — used on AI failure AND as the backbone.
-    const fallbackMap = structureDetector.buildDeterministicMap(sourceText);
-    const fallbackStructure = {
-        author: fallbackMap.author?.text || null,
-        title: fallbackMap.title?.text || null,
-        has_prologue: fallbackMap.hasPrologue,
-        has_epilogue: fallbackMap.hasEpilogue,
-        parts: fallbackMap.parts || [],
-        chapters: structureDetector.mapToStructureChapters(fallbackMap),
-        segments: fallbackMap.segments || [],
-        country: null,
-        epoch: null,
-    };
-
-    try {
-        const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
-        // Merge LLM decisions into the deterministic map, then project to the
-        // structure contract. sanitizeStructure inside mergeAiDecisions drops
-        // unanchorable/hallucinated answers (confidence, anchor, shape checks).
-        const map = structureDetector.analyzeStructure(sourceText, result);
-        const structure = {
-            author: map.author?.text || null,
-            title: map.title?.text || null,
-            has_prologue: map.hasPrologue,
-            has_epilogue: map.hasEpilogue,
-            parts: map.parts || [],
-            chapters: structureDetector.mapToStructureChapters(map),
-            segments: map.segments || [],
-            country: result.country || null,
-            epoch: result.epoch || null,
-        };
-
-        await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
-        await completeStep(step.step_id, structure);
-        console.log(`[AGENT] Step 0 (structure): title=${structure.title ? `«${structure.title}»` : '✗'}, author=${structure.author ? `«${structure.author}»` : '✗'}, ${structure.segments.length} segments (${structure.segments.map(s => s.type).join(',')})`);
-        return structure;
-    } catch (err) {
-        await failStep(step.step_id, err.message);
-        console.error(`[AGENT] Step 0 (structure) FAILED: ${err.message} — using deterministic structure map`);
-        return fallbackStructure;
-    }
+    const structureAnalyzer = require('../structure-analyzer');
+    return structureAnalyzer.analyzeBookStructure(
+        {
+            sourceText,
+            candidates: options.candidates,
+            language,
+            sessionId,
+            stepIndex,
+            progress,
+        },
+        {
+            callAI: aiCaller.callAI,
+            logConversation: aiCaller.logConversation,
+            updateSession,
+            createStep,
+            completeStep,
+            failStep,
+            analyzingStructureMessage: PROGRESS_STAGES.analyzing_structure,
+            prompt: (name) => SYSTEM_PROMPTS[name],
+            fillLang,
+        }
+    );
 }
 
 async function stepExtractCharacters(sessionId, text, stepIndex, progress, language) {

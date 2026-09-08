@@ -4,8 +4,11 @@
 // Freezes the AI Analyzer boundary facts established by
 // docs/architecture/ai-analyzer-boundary-c17.md:
 //
-//   1. structure-detector.js is PURE (zero requires) — the deterministic
-//      candidates/map and the AI-merge seam live in one injectable module.
+//   1. The former dual-role structure-detector.js was physically split in
+//      C19 (docs/architecture/structure-analyzer-extraction-c19.md):
+//      the DETERMINISTIC half (Parser adapter impl) is pure (zero requires)
+//      and the AI-merge half lives in the structure-analyzer module; the
+//      services/structure-detector path remains as a re-export-only barrel.
 //   2. The AI Analyzer layer (pipeline steps/runner/orchestrator) never
 //      writes books (no Book Writer calls) — persistence is bootstrap-only.
 //   3. The AI Analyzer layer never imports the Importer — the Importer
@@ -24,8 +27,11 @@ const path = require('path');
 const fs = require('fs');
 const { REPO_ROOT, readSource, rel, requireSpecifiers } = require('./helpers');
 
-// ── AI Analyzer file set (C17 boundary) ─────────────────────────────────────
+// ── AI Analyzer file set (C17 boundary + C19 physical split) ────────────────
 const AI_ANALYZER_FILES = [
+    'backend/src/services/structure-detector-deterministic.js',
+    'backend/src/services/structure-analyzer/index.js',
+    'backend/src/services/structure-analyzer/ai-merge.js',
     'backend/src/services/structure-detector.js',
     'backend/src/services/agent/pipeline-steps.js',
     'backend/src/services/agent/pipeline-runner.js',
@@ -37,18 +43,33 @@ const AI_ANALYZER_FILES = [
 
 const src = (f) => readSource(f);
 
-// ── Guard 1: structure-detector is pure (zero requires) ─────────────────────
-describe('C17 AI Analyzer boundary: structure-detector purity', () => {
-    it('structure-detector.js has ZERO require/import specifiers', () => {
-        const s = src(path.join(REPO_ROOT, 'backend/src/services/structure-detector.js'));
-        expect(requireSpecifiers(s), 'structure-detector.js must stay pure — it is the host-injected parser port AND the AI-merge seam').to.deep.equal([]);
+// ── Guard 1: deterministic half is pure; the barrel only re-exports ─────────
+describe('C17 AI Analyzer boundary: structure-detector split purity', () => {
+    it('structure-detector-deterministic.js has ZERO require/import specifiers', () => {
+        const s = src(path.join(REPO_ROOT, 'backend/src/services/structure-detector-deterministic.js'));
+        expect(requireSpecifiers(s), 'the deterministic Parser-adapter half must stay pure — it is the host-injected parser port').to.deep.equal([]);
     });
 
-    it('structure-detector exports the frozen analyzer seam (analyzeStructure + mergeAiDecisions + sanitizeStructure + buildDeterministicMap)', () => {
+    it('structure-detector.js is a re-export-only compatibility barrel (no duplicated implementation)', () => {
         const s = src(path.join(REPO_ROOT, 'backend/src/services/structure-detector.js'));
-        for (const fn of ['analyzeStructure', 'mergeAiDecisions', 'sanitizeStructure', 'buildDeterministicMap', 'extractCandidates', 'mapToStructureChapters']) {
-            expect(s, `structure-detector.js must export ${fn}`).to.match(new RegExp(`\\b${fn}\\b`));
+        for (const fn of ['extractCandidates', 'buildDeterministicMap', 'mergeAiDecisions', 'sanitizeStructure', 'analyzeStructure', 'mapToStructureChapters']) {
+            expect(s, `barrel must not re-implement ${fn} — physical home is the split modules`).to.not.match(new RegExp(`function ${fn}\\b`));
         }
+        expect(requireSpecifiers(s)).to.include('./structure-detector-deterministic');
+        expect(requireSpecifiers(s)).to.include('./structure-analyzer');
+    });
+
+    it('the frozen analyzer seam (analyzeStructure + mergeAiDecisions + sanitizeStructure + buildDeterministicMap + mapToStructureChapters) stays exported', () => {
+        const barrel = src(path.join(REPO_ROOT, 'backend/src/services/structure-detector.js'));
+        for (const fn of ['analyzeStructure', 'mergeAiDecisions', 'sanitizeStructure', 'buildDeterministicMap', 'extractCandidates', 'mapToStructureChapters']) {
+            expect(barrel, `structure-detector barrel must export ${fn}`).to.match(new RegExp(`\\b${fn}\\b`));
+        }
+        const analyzer = src(path.join(REPO_ROOT, 'backend/src/services/structure-analyzer/index.js'))
+            + src(path.join(REPO_ROOT, 'backend/src/services/structure-analyzer/ai-merge.js'));
+        for (const fn of ['analyzeStructure', 'mergeAiDecisions', 'sanitizeStructure']) {
+            expect(analyzer, `structure-analyzer must export ${fn}`).to.match(new RegExp(`\\b${fn}\\b`));
+        }
+        expect(src(path.join(REPO_ROOT, 'backend/src/services/structure-analyzer/index.js'))).to.match(/\banalyzeBookStructure\b/);
     });
 });
 

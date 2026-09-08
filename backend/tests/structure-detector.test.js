@@ -10,7 +10,10 @@ const config = require('../src/config/runtime-config');
 const { configureBooksRoot } = require('@animastor/vbook-runtime/books-root');
 config.BOOKS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'vbook-unit-'));
 configureBooksRoot(() => config.BOOKS_DIR);
-const sd = require('../src/services/structure-detector');
+const sd = require('../src/services/structure-detector-deterministic');
+// C19: the AI-merge half (mergeAiDecisions/sanitizeStructure/mapToStructureChapters)
+// physically lives in the Structure Analyzer module — the suite pins it there.
+const sa = require('../src/services/structure-analyzer');
 const parser = require('@animastor/parser');
 const chapterUtils = require('../src/book/lazy-book/chapter-utils');
 const lazyBook = require('../src/book/lazy-book');
@@ -139,7 +142,7 @@ describe('structure-detector (v2)', () => {
                 author: null,
                 elements: [],
             };
-            const map = sd.mergeAiDecisions(BARE, wrongAnchor);
+            const map = sa.mergeAiDecisions(BARE, wrongAnchor);
             expect(map.title.text).to.equal('За пределами алгоритмов');
             expect(map.author).to.equal(null);
         });
@@ -234,7 +237,7 @@ describe('structure-detector (v2)', () => {
                     { candidate_id: ids['ПОНТИЙ ПИЛАТ'], kind: 'chapter', title: 'ПОНТИЙ ПИЛАТ', number: 2, confidence: 0.95 },
                 ],
             };
-            const map = sd.mergeAiDecisions(src, ai);
+            const map = sa.mergeAiDecisions(src, ai);
             const chapters = map.segments.filter(s => s.type === 'chapter');
             expect(chapters.length).to.equal(2);
             expect(chapters.map(s => s.number)).to.deep.equal([1, 2]);
@@ -244,7 +247,7 @@ describe('structure-detector (v2)', () => {
             expect(chapters[1].headerLine).to.equal('Глава 2');
             // The intro unit text built from the merged map must NOT be "Глава 1\n1".
             const intro = chapterUtils.buildSegmentIntro(
-                sd.mapToStructureChapters(map)[0], 'ru');
+                sa.mapToStructureChapters(map)[0], 'ru');
             expect(intro.text).to.equal('Глава 1\nНИКОГДА НЕ РАЗГОВАРИВАЙТЕ С НЕИЗВЕСТНЫМИ');
         });
 
@@ -257,7 +260,7 @@ describe('structure-detector (v2)', () => {
                 'Светлана, исследователь когнитивной инженерии, пришла к похожему выводу.',
             ].join('\n');
             const ids = candidateIds(src);
-            const map = sd.mergeAiDecisions(src, {
+            const map = sa.mergeAiDecisions(src, {
                 elements: [
                     // LLM merged the title into the "Глава N" line — the ALL-CAPS
                     // line below must NOT become a second chapter segment.
@@ -283,7 +286,7 @@ describe('structure-detector (v2)', () => {
                     { candidate_id: ids['Глава 3. Процветание'], kind: 'chapter', title: 'Процветание', number: 3, confidence: 0.98 },
                 ],
             };
-            const map = sd.mergeAiDecisions(BOOK, ai);
+            const map = sa.mergeAiDecisions(BOOK, ai);
             expect(map.title.text).to.equal('За пределами алгоритмов');
             expect(map.author.text).to.equal('С.А. Хабаров');
             expect(map.segments.map(s => s.type)).to.deep.equal(['prologue', 'chapter', 'chapter', 'chapter']);
@@ -305,7 +308,7 @@ describe('structure-detector (v2)', () => {
                     { candidate_id: ids['Глава 3. Процветание'], kind: 'chapter', title: 'Процветание', number: 3, confidence: 0.95 },
                 ],
             };
-            const map = sd.mergeAiDecisions(BOOK, poison);
+            const map = sa.mergeAiDecisions(BOOK, poison);
             expect(map.title.text).to.equal('За пределами алгоритмов');
             expect(map.author.text).to.equal('С.А. Хабаров');
             const segs = map.segments.map(s => s.title);
@@ -315,7 +318,7 @@ describe('structure-detector (v2)', () => {
 
         it('keeps an element with an empty title (titleless chapter) instead of dropping the boundary', () => {
             const ids = candidateIds(BOOK);
-            const map = sd.mergeAiDecisions(BOOK, {
+            const map = sa.mergeAiDecisions(BOOK, {
                 elements: [
                     { candidate_id: ids['Глава 1. Земля'], kind: 'chapter', title: '', number: 1, confidence: 0.95 },
                     { candidate_id: ids['Глава 2. Первый полёт'], kind: 'chapter', title: '', number: 2, confidence: 0.95 },
@@ -337,7 +340,7 @@ describe('structure-detector (v2)', () => {
                 author: { text: 'Пётр Иванов', candidate_id: ids[titleLine], confidence: 0.8 },
                 elements: [],
             };
-            const map = sd.mergeAiDecisions(BOOK, hallucinated);
+            const map = sa.mergeAiDecisions(BOOK, hallucinated);
             // Deterministic backbone detected the REAL author from the line split.
             expect(map.title.text).to.equal('За пределами алгоритмов');
             expect(map.author.text).to.equal('С.А. Хабаров');
@@ -351,7 +354,7 @@ describe('structure-detector (v2)', () => {
                 author: { text: 'С.А. Хабаров', candidate_id: ids['За пределами алгоритмов'], confidence: 0.8 },
                 elements: [],
             };
-            const map = sd.mergeAiDecisions(noAuthorBook, hallucinated);
+            const map = sa.mergeAiDecisions(noAuthorBook, hallucinated);
             expect(map.title.text).to.equal('За пределами алгоритмов');
             expect(map.author).to.equal(null);
         });
@@ -359,7 +362,7 @@ describe('structure-detector (v2)', () => {
         it('keeps author when the line is a real "Title. Author" one-liner', () => {
             const ids = candidateIds(BOOK);
             const titleLine = BOOK.split('\n')[0];
-            const map = sd.mergeAiDecisions(BOOK, {
+            const map = sa.mergeAiDecisions(BOOK, {
                 title: { text: 'За пределами алгоритмов', candidate_id: ids[titleLine], confidence: 0.95 },
                 author: { text: 'С.А. Хабаров', candidate_id: ids[titleLine], confidence: 0.8 },
                 elements: [],
@@ -369,7 +372,7 @@ describe('structure-detector (v2)', () => {
 
         it('sanitizeStructure drops a title that looks like a full sentence', () => {
             const ids = candidateIds(BOOK);
-            const out = sd.sanitizeStructure({
+            const out = sa.sanitizeStructure({
                 title: { text: 'Это слишком длинное предложение, чтобы быть названием книги вообще', confidence: 0.99 },
                 elements: [],
             }, sd.extractCandidates(BOOK).candidates);
@@ -379,7 +382,7 @@ describe('structure-detector (v2)', () => {
         it('sanitizeStructure nulls a bare-number chapter title equal to its number (import_1786345731767)', () => {
             const src = 'Глава 1\nНИКОГДА НЕ РАЗГОВАРИВАЙТЕ С НЕИЗВЕСТНЫМИ\n\nОднажды весною, в час небывало жаркого заката, в Москве, на Патриарших прудах, появились два гражданина. Первый из них, одетый в летнюю серенькую пару, был маленького роста, упитан, лыс.';
             const ids = candidateIds(src);
-            const out = sd.sanitizeStructure({
+            const out = sa.sanitizeStructure({
                 elements: [
                     { candidate_id: ids['Глава 1'], kind: 'chapter', title: '1', number: 1, confidence: 0.95 },
                     { candidate_id: ids['НИКОГДА НЕ РАЗГОВАРИВАЙТЕ С НЕИЗВЕСТНЫМИ'], kind: 'chapter', title: 'ПОНТИЙ ПИЛАТ', number: 2, confidence: 0.95 },
@@ -425,7 +428,7 @@ describe('structure-detector (v2)', () => {
                 has_prologue: map.hasPrologue,
                 has_epilogue: map.hasEpilogue,
                 parts: map.parts,
-                chapters: sd.mapToStructureChapters(map),
+                chapters: sa.mapToStructureChapters(map),
                 segments: map.segments,
                 country: null,
                 epoch: null,
@@ -550,7 +553,7 @@ describe('structure-detector (v2)', () => {
                 author: { text: 'С.А. Хабаров', candidate_id: ids[src.split('\n')[0]], confidence: 0.8 },
                 elements: [],
             };
-            const map = sd.mergeAiDecisions(src, ai);
+            const map = sa.mergeAiDecisions(src, ai);
             // The author is dropped, and the CLEAN split title survives (not the
             // whole line with the character name glued to it).
             expect(map.author).to.equal(null);
@@ -571,7 +574,7 @@ describe('structure-detector (v2)', () => {
         it('keeps an agent author whose surname never appears in the narrative', () => {
             const ids = candidateIds(BOOK);
             const titleLine = BOOK.split('\n')[0];
-            const map = sd.mergeAiDecisions(BOOK, {
+            const map = sa.mergeAiDecisions(BOOK, {
                 title: { text: 'За пределами алгоритмов', candidate_id: ids[titleLine], confidence: 0.95 },
                 author: { text: 'С.А. Хабаров', candidate_id: ids[titleLine], confidence: 0.8 },
                 elements: [],
@@ -785,13 +788,13 @@ describe('structure-detector (v2)', () => {
                 author: { text: 'С.А. Хабаров', candidate_id: ids['С.А. Хабаров'], confidence: 0.9 },
                 elements: [],
             };
-            const map = sd.mergeAiDecisions(INVERTED, ai);
+            const map = sa.mergeAiDecisions(INVERTED, ai);
             expect(map.title.text).to.equal('За пределами алгоритмов');
             expect(map.author.text).to.equal('С.А. Хабаров');
         });
 
         it('sanitizeStructure anchors title line_text without the trailing period', () => {
-            const out = sd.sanitizeStructure({
+            const out = sa.sanitizeStructure({
                 title: { text: 'За пределами алгоритмов', line_text: 'За пределами алгоритмов', confidence: 0.95 },
                 elements: [],
             }, sd.extractCandidates(INVERTED).candidates);
