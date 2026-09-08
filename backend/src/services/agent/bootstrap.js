@@ -126,8 +126,8 @@ async function bootstrapWithAgentInner(bookId, draft, progress, publishProgress,
         // chapter map drives window boundaries (see TXT_IMPORT_STRUCTURE_V2.md).
         // C19: candidates come through the Structure Analyzer seam (the
         // deterministic parser adapter is the analyzer's injected detector).
-        const structureAnalyzer = require('../structure-analyzer');
-        const { candidates } = structureAnalyzer.extractCandidates(draft.sourceText);
+        const { extractCandidates } = require('../structure-detector-deterministic');
+        const { candidates } = extractCandidates(draft.sourceText);
 
         _progress({ stage: 'analyzing_structure', message: PROGRESS_STAGES.analyzing_structure });
         const structure = await pipelineSteps.stepAnalyzeStructure(sessionId, draft.sourceText, 0, _progress, language, { candidates });

@@ -166,3 +166,80 @@ Prompt text, merge algorithm, sanitize rules, numbering, offsets, fallback shape
 4. **Location Analyzer (F3)** — env sanitize + merge contract (runner 513–556) must move into the module contract first.
 5. **Scene Analysis (F4/F5)** — needs `source-coverage` + duration heuristic ownership decision; biggest port surface (repairHint, coverage loop).
 6. **Package extraction (`@animastor/ai-analyzer`)** — only after all F1–F5 modules share the port idiom; the C19 `structure-analyzer/` directory is the first package-boundary seed, promoted when (and only when) the sibling modules reach the same shape.
+
+---
+
+## C19.1 — Dependency Direction Hardening
+
+**Date:** 2026-09-08
+**Scope:** boundary audit + dependency cleanup after C19 extraction.
+
+### 1. Dependency direction (verified + hardened)
+
+```
+HOST (composition)
+  bootstrap.js ──── structure-detector-deterministic.extractCandidates   ← C19.1 fix
+  pipeline-steps.js ──── structure-analyzer.analyzeBookStructure (ports)
+
+STRUCTURE ANALYZER (backend/src/services/structure-analyzer/)
+  index.js ──── require('../structure-detector-deterministic')  ← deterministic adapter
+             ──── require('./ai-merge')
+  ai-merge.js ── require('../structure-detector-deterministic')
+
+HOST-SIDE PARSER ADAPTER (structure-detector-deterministic.js)
+  zero requires — pure
+
+COMPATIBILITY BARREL (structure-detector.js)
+  re-exports both halves — zero local functions
+```
+
+**Correct direction (enforced):**
+- Structure Analyzer → `structure-detector-deterministic` → `@animastor/parser` ✓
+- Host adapters → Structure Analyzer (ports) ✓
+- `bootstrap.js` → `structure-detector-deterministic` (deterministic functions) ✓
+
+**Forbidden directions (guards prevent):**
+- Parser → Structure Analyzer ✗
+- Structure Analyzer → Book Writer / Importer / ai-service / fetch / DB / Redis ✗
+- Structure Analyzer → sibling analyzers ✗
+- Host code → Structure Analyzer for deterministic functions ✗
+
+### 2. Fix applied
+
+`bootstrap.js` previously imported `extractCandidates` through `structure-analyzer` (the AI module). This was a boundary smell: a host-side deterministic function routed through the AI module's re-exports. Fixed to import directly from `structure-detector-deterministic`.
+
+### 3. Final contract (unchanged from C19 §3–4)
+
+```js
+analyzeBookStructure(input, ports) → StructureAnalysis
+
+input: { sourceText, candidates?, language, sessionId, stepIndex, progress }
+ports: { callAI, logConversation, updateSession, createStep, completeStep,
+         failStep, analyzingStructureMessage, prompt, fillLang, detector? }
+output: { author, title, has_prologue, has_epilogue, parts[], chapters[],
+          segments[], country, epoch }
+fail: → deterministic fallbackStructure (never fails the import)
+```
+
+**Excluded from the module:**
+- `ai-service`, `fetch`, OpenAI/Anthropic SDK — LLM is the injected `callAI` port
+- Book Writer, Importer — host-side consumers call the analyzer, not vice versa
+- DB/Redis/runtime persistence — injected via `updateSession`/`createStep`/etc. ports
+- Character/Location/Scene analyzers — sibling modules, no cross-imports
+
+### 4. Guards (C19.1 additions to `structure-analyzer-extraction-c19.test.js`)
+
+| Guard | What it checks |
+|---|---|
+| **9. Deterministic import direction** | `bootstrap.js` imports `extractCandidates` from `structure-detector-deterministic`, NOT from `structure-analyzer` |
+| **10. No hidden dependencies** | Structure Analyzer's only external require is `structure-detector-deterministic` (plus its own `ai-merge.js`) |
+| **11. No barrel import** | Structure Analyzer does not import the compatibility barrel `structure-detector.js` |
+
+### 5. Verification (all green)
+
+| Suite | Result |
+|---|---|
+| `tests/architecture/structure-analyzer-extraction-c19.test.js` (26 assertions, incl. 3 new C19.1) | ✔ |
+| `npm run test:arch` (all 520 architecture assertions) | ✔ |
+| `tests/structure-detector.test.js` (64 golden tests) | ✔ |
+| `npm run test:syntax` | ✔ |

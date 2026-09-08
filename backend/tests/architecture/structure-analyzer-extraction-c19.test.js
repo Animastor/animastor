@@ -184,7 +184,35 @@ describe('C19 Structure Analyzer boundary: compatibility barrel', () => {
         expect(steps).to.match(/structure-analyzer/);
         expect(steps).to.match(/analyzeBookStructure/);
         const bootstrap = src(path.join(REPO_ROOT, 'backend/src/services/agent/bootstrap.js'));
-        expect(bootstrap).to.match(/structure-analyzer/);
         expect(bootstrap, 'bootstrap must not build the structure prompt inline anymore').to.not.match(/Analyze the structure of this text/);
+    });
+});
+
+// ── C19.1: deterministic function import direction ───────────────────────────
+describe('C19.1 Structure Analyzer boundary: deterministic import direction', () => {
+    it('bootstrap.js imports extractCandidates from structure-detector-deterministic, not from structure-analyzer', () => {
+        const bootstrap = src(path.join(REPO_ROOT, 'backend/src/services/agent/bootstrap.js'));
+        const specs = requireSpecifiers(bootstrap);
+        const deterministicSpecs = specs.filter(s => /structure-detector-deterministic/.test(s));
+        const analyzerSpecs = specs.filter(s => /structure-analyzer/.test(s));
+        expect(deterministicSpecs, 'bootstrap must use the deterministic adapter for extractCandidates').to.have.length.greaterThanOrEqual(1);
+        expect(analyzerSpecs, 'bootstrap must NOT import structure-analyzer for deterministic functions').to.have.lengthOf(0);
+    });
+
+    it('structure-analyzer has no hidden dependencies beyond structure-detector-deterministic + ai-merge', () => {
+        for (const f of ANALYZER_FILES) {
+            const specs = requireSpecifiers(src(f));
+            const externalSpecs = specs.filter(s => s.startsWith('.') && !s.startsWith('./ai-merge'));
+            const forbidden = externalSpecs.filter(s => !/structure-detector-deterministic/.test(s));
+            expect(forbidden, `${rel(f)} must not require host modules beyond the deterministic adapter`).to.deep.equal([]);
+        }
+    });
+
+    it('structure-analyzer does not import the compatibility barrel (structure-detector.js)', () => {
+        for (const f of ANALYZER_FILES) {
+            const specs = requireSpecifiers(src(f));
+            const barrelImport = specs.filter(s => /structure-detector\.js$|\.\/structure-detector['"]/.test(s));
+            expect(barrelImport, `${rel(f)} must not import the barrel — use structure-detector-deterministic directly`).to.deep.equal([]);
+        }
     });
 });
