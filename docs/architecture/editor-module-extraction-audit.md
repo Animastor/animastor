@@ -1,7 +1,8 @@
 # Editor Module Extraction Audit — Editor contour → `packages/animastor-editor/`
 
-**Status:** READ-ONLY reconnaissance. No production code changed, no refactor performed, no files moved, no package created. Only this document was added.
-**Date:** 2026-09-08
+**Status:** Phase 2 COMPLETE (contract freeze + extraction-readiness audit; behavior-neutral, no physical move). Phase 1 (route split) landed as `f24987ed`; Phase 1.1 (editor-ports.cjs zero host requires) landed as `c2b0fc2d`. This section: §Phase 2 below.
+**Date:** 2026-09-08 (Phase 1 recon); 2026-09-08 (Phase 2 freeze)
+**Baseline:** HEAD `dd85db71` (Phase 1 + 1.1 + C17–C19.1 landed; note: a C20 AI WIP was present in the working tree during part of the audit — transient, unrelated to Editor, and closed by the time of the final suite run).
 **Baseline:** HEAD `f41f0aad` ("arch(player): extract Player package" — the Player physical move landed **during** this audit; the measurement started against `9a794464` + the staged move and was re-verified against the landed commit, which is byte-identical to the staged set). All Editor-contour claims are measured against the landed tree, where Player files resolve from `packages/animastor-player/src/`.
 **Context:** VBook runtime physically extracted (`@animastor/vbook-runtime@0.1.0`, commit `7175099d`); Player physically extracted (`@animastor/player@0.1.0`, commit `f41f0aad`); Editor is the next candidate in the extraction queue per `PHASE_NEXT_MODULE_EXTRACTION_RECONNAISSANCE.md` §4.7 / §6 (ranked #5, "after Player", shares the post-commit-hook port problem).
 **Related:** `PHASE_6_EDITOR_PLAYER.md` (Editor facade T1–T7 guards), `PHASE_7_EXTRACTION_READINESS.md` §2.4 (Editor 🟠 verdict: facade 🟢 / contour 🟠), `PLAYER_ROUTE_SPLIT_CHECKLIST.md` (the route-split + physical-move playbook this audit follows), `VBOOK_EXTRACTION_READINESS_AUDIT.md` (upstream, COMPLETE), `MODULAR_PRODUCT_ARCHITECTURE.md` §6/§26 (graduation checklist).
@@ -490,3 +491,161 @@ Before starting, re-verify `backend.cjs`/`backend/package.json` against the land
 - VBook package exports (`packages/animastor-vbook-runtime/package.json`) — `lazy-book/paths` export confirmed.
 
 Nothing in the repository was modified by this reconnaissance.
+
+---
+
+# Phase 2 — Contract Freeze & Extraction Readiness Audit
+
+**Scope:** full dependency/contract/test audit of `backend/src/routes/editor/**` + `editor-ports.cjs` after Phase 1 (route split `f24987ed`) and Phase 1.1 (ports seam zero host requires `c2b0fc2d`). No runtime behavior changed, no physical move, no `packages/animastor-editor` created (guarded — E7).
+**Guards added:** `backend/tests/architecture/editor-extraction-readiness.test.js` (E4–E8, 17 tests) extending the Phase 1 E1–E3 suite (`editor-route-split.test.js`).
+**Method:** static require-closure walk + member-access matrix (E4) + functional port-object validation (E5) + HTTP parity re-verification against the pre-split tree (`f24987ed~1`) + test-consumer enumeration (web `EditPage.tsx`, Android `BackendApi.kt`, backend suites).
+
+## P2.1 Dependency matrix (measured, frozen)
+
+The contour = 5 files (1,742 LOC total): `editor-routes.cjs` (764, 11 endpoints), `entity-crud-routes.cjs` (738, 15 endpoints), `editor-ports.cjs` (83, seam), `scene-patch-utils.cjs` (93, pure), `read-recovery.cjs` (64, ctx-injected), plus the model facade `backend/src/editor/index.cjs` (50, 🟢 Phase 6).
+
+### P2.1.1 require() edges (module scope — zero host requires in the contour)
+
+| File | requires | Classification |
+|---|---|---|
+| `editor-routes.cjs` | `./scene-patch-utils.cjs`, `./read-recovery.cjs` | intra-contour |
+| `entity-crud-routes.cjs` | `../../utils/entity-id`, `./scene-patch-utils.cjs`, `../../book/lazy-book/paths` | id grammar (see B1) |
+| `scene-patch-utils.cjs` | **none** | pure |
+| `read-recovery.cjs` | **none** (ctx-injected) | pure |
+| `editor-ports.cjs` | **none** (Phase 1.1) | seam |
+
+### P2.1.2 Transitive closure — THE Phase 2 finding (B1)
+
+The require closure of the contour (registrars + helpers) reaches exactly:
+
+```
+routes/editor/** (intra-contour)
+└─ backend/src/book/lazy-book/paths.js       — PURE SHIM: one-line re-export of
+                                               @animastor/vbook-runtime/lazy-book/paths
+└─ backend/src/utils/entity-id.js           — Editor-only transliteration (move candidate)
+    └─ backend/src/image/helpers.js          — HIDDEN HOST LEG (cyrToLatin)
+        └─ backend/src/utils/string-utils.js
+            └─ backend/src/config/runtime-config.js  — host config domain
+```
+
+**B1 — the single hidden dependency:** `entity-id` requires `image/helpers` for the `cyrToLatin` transliteration map, dragging `utils/string-utils` + `config/runtime-config` into the contour's closure. E2 (Phase 1) whitelisted the `utils/entity-id` specifier but did not walk its closure. This is the only blocker-class item found; resolution options at move time (Phase 3): (a) move `entity-id` into the package and port `cyrToLatin` as a pure transliteration table (its own file in vbook-runtime — the map is pure data + one function), or (b) ADR `entity-id` → `@animastor/vbook-runtime` (id-grammar territory, matching the Phase 1 recon §5.4 recommendation). Both keep behavior identical. **Frozen as-is by E6** (pinned closure: exactly those 5 host files, no more).
+
+### P2.1.3 deps legs (injected at registration — frozen by E4)
+
+`editor-routes.cjs(app, redis, deps)` consumes **exactly** (12 legs):
+`book.collectSceneList`, `bookDeletion.deleteBook`, `bookDiff.computeBookDiff`, `editorModel.{read,commit}`, `editorPorts.{auditCoverage, placeholderAudio, promptLimit, recoveryCtx, sceneAssetsRepo}`, `storage.bookSync`, `utils.log`. (`redis` is accepted but NOT destructured/used — pre-split signature shape.)
+
+`entity-crud-routes.cjs(app, redis, deps)` consumes **exactly** (5 legs):
+`editorModel.{read,commit}`, `editorPorts.{purge, resolveOwnership}`, `utils.log`. (`redis` likewise unused.)
+
+`read-recovery.cjs` ctx (8 fields, contract in header): `{ redis, book, state, activeScenes, config, getAllChunks, saveChunk, log }` — consumed: `book.loadBook`, `book.collectScenes`, `redis.get/set`, `config.{BOOK_SCENE_TOTAL, BOOK_SCENE_NEXT}`, `getAllChunks()`, `saveChunk()`, `log()`. `state`/`activeScenes` ride the ctx for wiring-completeness (documented, unused by the repair itself — the GPU-scheduler registration note).
+
+### P2.1.4 Cross-contour dependencies (measured)
+
+| Direction | Result |
+|---|---|
+| Editor → Player (code) | **0** — no `animastor-player`/`playerModel`/`playerPorts` specifiers anywhere in the contour (E2 + E6 closure) |
+| Player → Editor (code) | **0** — no package file requires an editor module (E7) |
+| Editor → generation/AI/agent domain | **0** — no `agent|generation|ai-` specifiers (E8) |
+| Packages → Editor | **0** across player/vbook-runtime/worker/parser/contracts (E7) |
+| Host → contour implementation | **2 sanctioned edges only**: `book-routes.cjs` delegation + `backend.cjs` ports wiring (E3, Phase 1) |
+| Global state / `process.env` / direct Redis-PG clients in contour | **0** (E2 + T6 re-verified) |
+| Cycles | **0** — contour is not in any SCC |
+
+## P2.2 Public API / contract freeze
+
+### P2.2.1 Editor ports (the seam — frozen by E5, functional)
+
+`createEditorPorts({ deps })` → port object with **exactly 7 keys** (identity pass-through, no wrapping — the pre-split host function references flow through):
+
+| Port | Host implementation (stays host-side forever) |
+|---|---|
+| `sceneAssetsRepo` | `storage/postgres/repositories/scene-assets-repo` (`bumpSceneVersions`, `setDirtyUnitIds`) — mandatory, fail-closed |
+| `placeholderAudio` | `services/placeholder-audio` (`recoverMissingPlaceholders`) — mandatory, fail-closed |
+| `auditCoverage` | `services/source-coverage-audit` (`auditBookCoverage`) |
+| `promptLimit` | `services/agent-prompts.IMAGE_PROMPT_MAX_CHARS` (agent-domain constant, value 2000 — shared with `GET /config`) |
+| `purge` | `services/entity-cleanup` (`purgeScene`, `purgeUnit`) |
+| `resolveOwnership` | `middleware/workspace-ownership.resolveWorkspaceForBook` (POST /blank) |
+| `recoveryCtx` | `{ redis, book, state, activeScenes, config, getAllChunks, saveChunk, log }` (read-recovery) |
+
+### P2.2.2 Route registrars (frozen by E1, Phase 1 — re-verified byte-identical vs `f24987ed~1`)
+
+`editor-routes.cjs` — 11 endpoints; `entity-crud-routes.cjs` — 15 endpoints; **26 total, method+path parity exact vs the pre-split tree** (verified functionally by E1 and re-diffed against `git show f24987ed~1` during this audit — identical). Registration order, handlers, HTTP semantics unchanged.
+
+### P2.2.3 Models that STAY host-side (never move)
+
+`bookModel`/VBook runtime (the facade wraps it), `bookDiff` (8+ host consumers), `entity-cleanup`, `book-sync`/`scene-assets-repo` (PG), `placeholder-audio`, `source-coverage-audit`, `book-deletion`, `book-model`/`saveBookBundle` writer, `workspace-ownership`, `agent-prompts` (agent domain), `config-routes` (`GET /config` serves the shared limit globally), `image/helpers` (image domain — B1 target), all Redis/PG/FS infrastructure, auth middleware (app-level `requireBookAccess` family).
+
+### P2.2.4 Internal implementation — NOT public API
+
+Everything inside the contour files below the registrar surface: `setDeep`/`findUnitInScene`/`normalizeFieldValue`/`rebuildFullText` (pure helpers, re-exported for tests only), `recoverMissingRedisChunks`, prompt-guard internals (`assertPromptLength`/`findOversizedPromptInScene`/`PROMPT_PATH_KEYS`), entity CRUD helpers (`resolveId`/`buildPassport`/`buildLocation`/`resolveStructureId`), the read-time enrichment rules (F5/F7 chapter titles, `is_special`, display indices, `scene_list`). The future package exports **only**: `createEditorModel`, the two route registrars, and (for tests) the pure helpers — mirroring `@animastor/player`'s `index.cjs` surface.
+
+## P2.3 HTTP contract (frozen)
+
+26 endpoints — the E1 `EDITOR_ROUTES` table is the canonical freeze (11 core + 15 entity/structure CRUD). Verified in Phase 2:
+- **No changes vs baseline**: registered surface re-diffed against the pre-split files — identical method+path pairs, byte-for-byte.
+- **No Player/generation leakage**: `NON_EDITOR_ROUTE_LITERALS` guard (E1) — zero hits; the player-owned paths (`/scene/*/timings`, `/scene/*/waveform`, `/iu-image/`, `/preview/`, `/book/:id/chunks`, `/book/:id/assets-state`) and generation paths (`/generate`, `/worker/*`) never appear in contour registrations or literals.
+- **Consumers**: web `EditPage.tsx` (all 26 via `api/client` seam — T7), Android `BackendApi.kt` (all 26 declared), backend suites. `POST /book/:id/snapshot` (parse-routes) and `GET /config` (config-routes) remain host-side by design (Phase 1 decision, unchanged).
+- **Editor→Player integration is HTTP-only** (waveform/timings/IU-media/preview endpoints consumed by the web Editor's panel) — no code dependency either direction.
+
+## P2.4 Test ownership
+
+### Move with the package (Phase 3, per the worker/player dual-location precedent)
+
+| Suite | Mounts | Notes |
+|---|---|---|
+| `entity-crud-routes.test.js` | real registrar + real entity-cleanup over mocked storage/runtime | pure-port stubs; already seam-shaped |
+| `behavior-crud.test.js` | both real registrars | editorPorts stub |
+| `character-passport-patch.test.js` | handler simulation + real `scene-patch-utils` | also requires `image/prompt-builder` (host read-side check — split the assertions at move time) |
+| `scene-passport-patch.test.js` | handler simulation + real `scene-patch-utils` + real bookDiff | same split note |
+| `scene-patch-utils.test.js` | pure helpers only | moves as-is |
+| `vbook-test-bindings.cjs` | shared temp-BOOKS_DIR fixture | dual-location helper |
+
+### Stay host-side (backend/integration)
+
+`book-metadata-patch.test.js` (simulates the handler against the host book module — no contour file mounted; rewrite as registrar-mounted before the move or it stays as a host model test), `config-routes.test.js` (host `/config` endpoint; asserts the shared constant), `ai-editor-mode.test.js` + `behavior-edit-book.test.js` (AI writer, not the contour), `book-diff-unit.test.js` (host service), `phase4-book-model.test.js` / `vbook-bundle-schema.test.js` (host model/schema; they *read* contour source for version pins — keep host-side), architecture guards E1–E8/T2–T6 (host-owned by design; they guard the host↔package boundary).
+
+### Tests accidentally checking host internals — found and classified
+
+- `character-passport-patch`/`scene-passport-patch` call `image/prompt-builder` (host read-side) to assert regeneration effects — legitimate as host integration tests; flagged so they are NOT moved with the package (they would drag `image/` into the package test closure). Recommendation: at move time, split the prompt-builder assertions into a host-side suite.
+- No suite asserts contour internals beyond the pure helpers + registrar mounts — no test depends on host implementation details *through* the contour.
+
+## P2.5 Architecture guards (Phase 2 additions)
+
+New suite `backend/tests/architecture/editor-extraction-readiness.test.js`:
+
+| Guard | Freezes |
+|---|---|
+| **E4** | deps member matrix of both registrars + read-recovery ctx fields (a new host leg = conscious matrix update) |
+| **E5** | editorPorts shape: exactly 7 keys, identity pass-through, fail-closed on missing mandatory legs, composition-root wiring of all 7 |
+| **E6** | the transitive require closure: only intra-contour + the 5 pinned host files (B1 made explicit and visible); `lazy-book/paths` stays a pure shim; `scene-patch-utils` stays pure |
+| **E7** | package future boundary: contour = exactly 5 files; no package requires editor modules; `packages/animastor-editor` does NOT exist yet (physical-move gate) |
+| **E8** | no editorPorts bypass: zero `require()` inside handler bodies (lazy host legs), deps destructured once (no secondary `deps.*` access), no agent/generation domain imports |
+
+Together with Phase 1's E1 (26-endpoint surface + no leakage), E2 (require isolation + ports zero-require + no Redis/PG + no Player), E3 (reverse direction), and Phase 6's T2/T3/T4/T5/T6, the boundary is now fully pinned: **any new Editor→host edge, host→Editor edge, port-shape change, or HTTP surface change fails CI**.
+
+## P2.6 Extraction readiness — can Editor move without host modules?
+
+**YES.** The move set is exactly: 5 contour files + `backend/src/editor/index.cjs` (facade) + 6 test files (+ fixture) + the two id-grammar legs (B1). Everything else — every PG repo, Redis helper, service, middleware, orchestration/runtime module — arrives through the frozen ports seam and **stays host-side forever**. The `entity-id` closure (B1) is the only item needing an architectural decision at move time; E6 pins it so the decision cannot be skipped silently.
+
+## P2.7 Blockers
+
+| # | Item | Severity | Status |
+|---|---|---|---|
+| B1 | `utils/entity-id` transitive closure reaches `image/helpers` → `utils/string-utils` → `config/runtime-config` (the `cyrToLatin` map) | Medium | **Documented + frozen by E6** — resolve at move time: port `cyrToLatin` as pure data into the package/vbook-runtime, or ADR `entity-id` into vbook-runtime. No behavior change either way. |
+| — | No other blockers: zero reverse deps, zero cycles, zero Player/generation coupling, zero globals, HTTP surface frozen, ports frozen, test ownership enumerable | — | clear |
+
+## P2.8 Verdict
+
+**READY WITH CONDITIONS** — the physical move to `packages/animastor-editor` (Phase 3) can proceed after resolving B1 (one ADR-class decision, no code risk). Conditions: (1) B1 resolution lands with the move; (2) the 6 test files move per P2.4 with the prompt-builder assertions split out host-side; (3) the move is executed as the single atomic playbook commit (skeleton → `git mv` → registrar require swap → E7 package-boundary gate flipped to the new path, mirroring the Player's `phase10d`/`vbook-package-boundary` pattern).
+
+## P2.9 Verification (Phase 2 commands)
+
+- Guards: `npx mocha --exit tests/architecture/editor-extraction-readiness.test.js` → **17 passing** (E4–E8).
+- Editor suites: `entity-crud-routes`, `behavior-crud`, `character-passport-patch`, `scene-passport-patch`, `scene-patch-utils`, `book-metadata-patch`, `config-routes`, `ai-editor-mode` → **108 passing**.
+- Editor-family combined run (guards E1–E8 + T1–T7 + 5 functional suites) → **154 passing, 0 failing**.
+- Full backend suite at freeze time: **572 passing, 0 failing** (two earlier C17/C18-boundary failures observed mid-audit were resolved by the parallel C19/C19.1 AI commits `aeb8b775`/`dd85db71`; re-verified clean after rebase of the working state — no Editor-related failures at any point).
+- HTTP parity: E1 functional registration (26 pairs) + `git show f24987ed~1` endpoint diff — identical.
+- Closure walk: E6 pins the 5-file host closure; `book/lazy-book/paths.js` verified as the exact one-line shim.
+
+Nothing in the Editor runtime changed in Phase 2: zero production-code edits — only the new guard suite and this document.
