@@ -12,7 +12,7 @@ const {
     getCharactersPath, getMentionsPath, getBiblePath, getLocationsPath, getVoicesPath, getChapterDir,
     generateBookId,
 } = require('./paths');
-const languageDetector = require('../language-detector');
+const languageDetector = require('@animastor/parser/language-detector');
 
 // Detect the source language programmatically (tinyld — pure JS, no LLM) and
 // persist it into book.json (`language` + `defaults.language`). Unknown/empty

@@ -3,7 +3,7 @@
 // ======================================================
 
 const { SceneStatus } = require('./constants');
-const { splitIntoChapters } = require('./parser');
+const { splitIntoChapters } = require('@animastor/parser');
 const draft = require('./draft');
 
 function getBookStatus(bookId) {

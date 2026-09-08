@@ -57,7 +57,7 @@ const SHIM_PATHS = [
     'backend/src/utils/snake-guard.js',
     'backend/src/utils/scene-title-utils.js',
 ];
-const PACKAGE_EXTERNALS = new Set(['adm-zip', 'tinyld']);
+const PACKAGE_EXTERNALS = new Set(['adm-zip', 'tinyld', '@animastor/parser']);
 const NODE_BUILTIN_RE = /^(assert|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|dns|domain|events|fs|http|http2|https|inspector|module|net|os|path|perf_hooks|process|punycode|querystring|readline|repl|stream|string_decoder|timers|tls|trace_events|tty|url|util|v8|vm|worker_threads|zlib)(\/|$)/;
 
 function resolveRelative(fromFile, spec) {
@@ -75,17 +75,18 @@ function isShim(file) {
 
 // ── VB-T1 — declared dependency surface ──────────────────────────────────
 describe('VB-T1: @animastor/vbook-runtime dependency surface matches the audit', () => {
-    it('package.json declares exactly adm-zip + tinyld (audit §1.1)', () => {
+    it('package.json declares exactly @animastor/parser + adm-zip (audit §1.1)', () => {
         const pkg = JSON.parse(fs.readFileSync(path.join(PACKAGE_DIR, 'package.json'), 'utf8'));
         expect(pkg.name).to.equal('@animastor/vbook-runtime');
-        expect(Object.keys(pkg.dependencies || {}).sort()).to.deep.equal(['adm-zip', 'tinyld']);
+        expect(Object.keys(pkg.dependencies || {}).sort()).to.deep.equal(['@animastor/parser', 'adm-zip']);
     });
 
-    it('backend keeps adm-zip (export routes) and no longer declares tinyld', () => {
+    it('backend keeps adm-zip (export routes), depends on @animastor/parser, and no longer declares tinyld', () => {
         const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'backend', 'package.json'), 'utf8'));
         expect(pkg.dependencies).to.have.property('adm-zip');
-        expect(pkg.dependencies, 'tinyld moved into the package with language-detector').to.not.have.property('tinyld');
+        expect(pkg.dependencies, 'tinyld moved into @animastor/parser').to.not.have.property('tinyld');
         expect(pkg.dependencies).to.have.property('@animastor/vbook-runtime');
+        expect(pkg.dependencies).to.have.property('@animastor/parser');
     });
 
     it('the package resolves standalone (installed/linkable) and exposes its entry points', () => {
@@ -160,56 +161,76 @@ describe('VB-T3: structure-detector connects only via the injectable port', () =
     });
 
     it('parser.js exports the port binding API (setStructureDetector/getStructureDetector)', () => {
-        const parser = require(path.join(PACKAGE_SRC, 'lazy-book', 'parser.js'));
+        const parser = require('@animastor/parser');
         expect(parser.setStructureDetector).to.be.a('function');
         expect(parser.getStructureDetector).to.be.a('function');
         expect(parser.getStructureDetector().buildDeterministicMap).to.be.a('function');
     });
 
     it('the port is fail-closed: splitIntoChapters throws without a bound detector', () => {
-        // Fresh module instance — binding state is process-global, so load an
-        // isolated copy of the module to probe the unbound state.
-        // (filename/paths must be set BEFORE _compile: parser.js now has
-        // top-level relative requires — the C13 contracts module.)
-        const Module = require('module');
-        const parserPath = path.join(PACKAGE_SRC, 'lazy-book', 'parser.js');
-        const src = fs.readFileSync(parserPath, 'utf8');
-        const m = new Module('parser-unbound-probe', null);
-        m.filename = parserPath;
-        m.paths = Module._nodeModulePaths(path.dirname(parserPath));
-        m._compile(src, parserPath);
-        expect(() => m.exports.splitIntoChapters('текст')).to.throw(/structureDetector is not bound/);
+        const parserPath = require.resolve('@animastor/parser');
+        const cached = require.cache[parserPath];
+        // Also save sub-module caches to avoid mutation leaking
+        const parserPrefix = parserPath.replace(/\/index\.js$/, '/');
+        const savedSubCache = {};
+        for (const key of Object.keys(require.cache)) {
+            if (key.startsWith(parserPrefix) && key !== parserPath) {
+                savedSubCache[key] = require.cache[key];
+                delete require.cache[key];
+            }
+        }
+        delete require.cache[parserPath];
+        try {
+            const fresh = require('@animastor/parser');
+            expect(() => fresh.splitIntoChapters('текст')).to.throw(/structureDetector is not bound/);
+        } finally {
+            for (const key of Object.keys(require.cache)) {
+                if (key.startsWith(parserPrefix)) delete require.cache[key];
+            }
+            Object.assign(require.cache, savedSubCache);
+            if (cached) require.cache[parserPath] = cached;
+        }
     });
 
     it('setStructureDetector rejects implementations without buildDeterministicMap', () => {
-        const parser = require(path.join(PACKAGE_SRC, 'lazy-book', 'parser.js'));
+        const parser = require('@animastor/parser');
         expect(() => parser.setStructureDetector({})).to.throw(/buildDeterministicMap/);
         expect(() => parser.setStructureDetector(null)).to.throw(/buildDeterministicMap/);
     });
 
     it('injected stub ChapterMap drives splitIntoChapters (port contract works end-to-end)', () => {
-        const Module = require('module');
-        const parserPath = path.join(PACKAGE_SRC, 'lazy-book', 'parser.js');
-        const src = fs.readFileSync(parserPath, 'utf8');
-        const m = new Module('parser-stub-probe', null);
-        m.filename = parserPath;
-        m.paths = Module._nodeModulePaths(path.dirname(parserPath));
-        m._compile(src, parserPath);
-        const text = 'Пролог\n\n' + 'x'.repeat(60) + '\n\nГлава 1\n\n' + 'y'.repeat(60);
-        m.exports.setStructureDetector({
-            buildDeterministicMap: (t) => ({
-                hasPrologue: true, hasEpilogue: false, parts: [],
-                segments: [
-                    { type: 'prologue', label: 'Пролог', title: 'Пролог', number: null, headerLine: 0, startOffset: 0, endOffset: 10, source: t.slice(0, 10) },
-                    { type: 'body', label: null, title: null, number: 1, headerLine: 12, startOffset: 12, endOffset: t.length, source: t.slice(12) },
-                ],
-            }),
-        });
-        const chapters = m.exports.splitIntoChapters(text);
-        expect(chapters).to.have.lengthOf(2);
-        expect(chapters[0]).to.include({ type: 'prologue', label: 'Пролог' });
-        expect(chapters[1]).to.include({ type: 'chapter', number: 1 });
-        expect(chapters[1].startOffset).to.equal(12);
+        const parserPath = require.resolve('@animastor/parser');
+        const parserPrefix = parserPath.replace(/\/index\.js$/, '/');
+        const savedCache = {};
+        for (const key of Object.keys(require.cache)) {
+            if (key.startsWith(parserPrefix)) {
+                savedCache[key] = require.cache[key];
+                delete require.cache[key];
+            }
+        }
+        try {
+            const fresh = require('@animastor/parser');
+            const text = 'Пролог\n\n' + 'x'.repeat(60) + '\n\nГлава 1\n\n' + 'y'.repeat(60);
+            fresh.setStructureDetector({
+                buildDeterministicMap: (t) => ({
+                    hasPrologue: true, hasEpilogue: false, parts: [],
+                    segments: [
+                        { type: 'prologue', label: 'Пролог', title: 'Пролог', number: null, headerLine: 0, startOffset: 0, endOffset: 10, source: t.slice(0, 10) },
+                        { type: 'body', label: null, title: null, number: 1, headerLine: 12, startOffset: 12, endOffset: t.length, source: t.slice(12) },
+                    ],
+                }),
+            });
+            const chapters = fresh.splitIntoChapters(text);
+            expect(chapters).to.have.lengthOf(2);
+            expect(chapters[0]).to.include({ type: 'prologue', label: 'Пролог' });
+            expect(chapters[1]).to.include({ type: 'chapter', number: 1 });
+            expect(chapters[1].startOffset).to.equal(12);
+        } finally {
+            for (const key of Object.keys(require.cache)) {
+                if (key.startsWith(parserPrefix)) delete require.cache[key];
+            }
+            Object.assign(require.cache, savedCache);
+        }
     });
 });
 
@@ -228,10 +249,13 @@ describe('VB-T4: the package require graph is fully isolated', () => {
                 }
                 if (NODE_BUILTIN_RE.test(spec)) continue;
                 if (PACKAGE_EXTERNALS.has(spec)) continue;
+                // Allow sub-path imports from declared dependencies (e.g. @animastor/parser/language-detector)
+                const pkgBase = spec.startsWith('@animastor/') ? spec.split('/').slice(0, 2).join('/') : null;
+                if (pkgBase && PACKAGE_EXTERNALS.has(pkgBase)) continue;
                 offenders.push(`${rel(file)}: ${spec}`);
             }
         }
-        expect(offenders, 'the package must depend only on node builtins + adm-zip + tinyld (audit §1.1); anything else is a new cross-module coupling').to.deep.equal([]);
+        expect(offenders, 'the package must depend only on node builtins + @animastor/parser + adm-zip + tinyld (audit §1.1); anything else is a new cross-module coupling').to.deep.equal([]);
     });
 
     it('host shims are one-line re-exports of the package (no logic migrates back)', () => {
@@ -242,8 +266,11 @@ describe('VB-T4: the package require graph is fully isolated', () => {
             const lines = src.split('\n').filter((l) => l.trim() && !l.trim().startsWith('//')).length;
             if (lines > 1) offenders.push(`${relPath} (${lines} code lines)`);
             const specs = requireSpecifiers(src);
-            if (specs.length !== 1 || !specs[0].startsWith('@animastor/vbook-runtime')) {
-                offenders.push(`${relPath}: must re-export exactly one @animastor/vbook-runtime specifier`);
+            const validShim = specs.length === 1 && (
+                specs[0].startsWith('@animastor/vbook-runtime') || specs[0].startsWith('@animastor/parser')
+            );
+            if (!validShim) {
+                offenders.push(`${relPath}: must re-export exactly one @animastor/vbook-runtime or @animastor/parser specifier`);
             }
         }
         expect(offenders, 'shims must stay one-line re-exports').to.deep.equal([]);

@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { BookState, SceneStatus, UnitType, DEFAULT_WINDOW_SIZE } = require('./constants');
 const { getBookDir, getChapterDir, getBookMetaPath, chapterId, sceneId, unitId } = require('./paths');
-const { splitIntoChapters, splitIntoScenes, splitIntoUnits, detectLanguage } = require('./parser');
+const { splitIntoChapters, splitIntoScenes, splitIntoUnits, detectLanguage } = require('@animastor/parser');
 const chapterUtils = require('./chapter-utils');
 const draft = require('./draft');
 

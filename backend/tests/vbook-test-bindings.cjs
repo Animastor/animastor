@@ -25,7 +25,7 @@
 
 const config = require('../src/config/runtime-config');
 const { configureBooksRoot } = require('@animastor/vbook-runtime/books-root');
-const { setStructureDetector } = require('@animastor/vbook-runtime/lazy-book/parser');
+const { setStructureDetector } = require('@animastor/parser');
 
 configureBooksRoot(() => config.BOOKS_DIR);
 setStructureDetector(require('../src/services/structure-detector'));

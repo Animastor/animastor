@@ -16,9 +16,9 @@ const path = require('path');
 require('./vbook-test-bindings.cjs'); // binds the real structure-detector port
 
 const sd = require('../src/services/structure-detector');
-const parser = require('@animastor/vbook-runtime/lazy-book/parser');
-const contracts = require('@animastor/vbook-runtime/contracts/parser-contract');
-const legacyProjection = require('@animastor/vbook-runtime/contracts/legacy-projection');
+const parser = require('@animastor/parser');
+const contracts = require('@animastor/parser/contracts/parser-contract');
+const legacyProjection = require('@animastor/parser/contracts/legacy-projection');
 
 // ── Fixtures ─────────────────────────────────────────────────────────────
 
@@ -313,7 +313,7 @@ describe('C13: legacy chapter DTO is a projection of the canonical map', () => {
 // ── Language contract ────────────────────────────────────────────────────
 
 describe('C13: LanguageResult contract (detectLanguage)', () => {
-    const { detectLanguage, detectLanguageWithConfidence } = require('@animastor/vbook-runtime/language-detector');
+    const { detectLanguage, detectLanguageWithConfidence } = require('@animastor/parser/language-detector');
 
     it('detectLanguage returns an ISO 639-1 string and never throws on degenerate input', () => {
         expect(detectLanguage('Привет, как дела? Как проходит твой день?')).to.equal('ru');
@@ -352,11 +352,18 @@ describe('C13: StructureDetectorPort binding (fail-closed, composition root)', (
     it('unbound port is fail-closed; rejections keep the frozen message', () => {
         // Fresh module instance: binding state is process-global, so probe an
         // isolated copy and restore the original afterwards.
-        const parserPath = require.resolve('@animastor/vbook-runtime/lazy-book/parser');
-        const cached = require.cache[parserPath];
-        delete require.cache[parserPath];
+        // Save ALL @animastor/parser cache entries — setStructureDetector
+        // mutates parser.js's module-level state, not just index.js.
+        const parserPrefix = require.resolve('@animastor/parser').replace(/\/index\.js$/, '/');
+        const savedCache = {};
+        for (const key of Object.keys(require.cache)) {
+            if (key.startsWith(parserPrefix)) {
+                savedCache[key] = require.cache[key];
+                delete require.cache[key];
+            }
+        }
         try {
-            const fresh = require('@animastor/vbook-runtime/lazy-book/parser');
+            const fresh = require('@animastor/parser');
             expect(() => fresh.splitIntoChapters('текст')).to.throw(/structureDetector is not bound/);
             expect(() => fresh.setStructureDetector({})).to.throw(/buildDeterministicMap/);
             expect(() => fresh.setStructureDetector(null)).to.throw(/buildDeterministicMap/);
@@ -369,17 +376,24 @@ describe('C13: StructureDetectorPort binding (fail-closed, composition root)', (
                 startLine: 0, endLine: 0, startOffset: 0, endOffset: 5, length: 5,
             });
         } finally {
-            delete require.cache[parserPath];
-            if (cached) require.cache[parserPath] = cached;
+            for (const key of Object.keys(require.cache)) {
+                if (key.startsWith(parserPrefix)) delete require.cache[key];
+            }
+            Object.assign(require.cache, savedCache);
         }
     });
 
     it('buildChapterMap alias drives splitIntoChapters end-to-end (same offsets contract)', () => {
-        const parserPath = require.resolve('@animastor/vbook-runtime/lazy-book/parser');
-        const cached = require.cache[parserPath];
-        delete require.cache[parserPath];
+        const parserPrefix = require.resolve('@animastor/parser').replace(/\/index\.js$/, '/');
+        const savedCache = {};
+        for (const key of Object.keys(require.cache)) {
+            if (key.startsWith(parserPrefix)) {
+                savedCache[key] = require.cache[key];
+                delete require.cache[key];
+            }
+        }
         try {
-            const fresh = require('@animastor/vbook-runtime/lazy-book/parser');
+            const fresh = require('@animastor/parser');
             const text = 'Глава 1\n\n' + 'x'.repeat(60);
             fresh.setStructureDetector({
                 buildChapterMap: (t) => ({
@@ -391,8 +405,10 @@ describe('C13: StructureDetectorPort binding (fail-closed, composition root)', (
             const chapters = fresh.splitIntoChapters(text);
             expect(chapters[0]).to.include({ type: 'chapter', number: 1, startOffset: 0, endOffset: text.length });
         } finally {
-            delete require.cache[parserPath];
-            if (cached) require.cache[parserPath] = cached;
+            for (const key of Object.keys(require.cache)) {
+                if (key.startsWith(parserPrefix)) delete require.cache[key];
+            }
+            Object.assign(require.cache, savedCache);
         }
     });
 });

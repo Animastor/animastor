@@ -1,26 +1,14 @@
 // ======================================================
-// Parser Core — extraction boundary for @animastor/parser
+// @animastor/parser — public API
 // ======================================================
-// This barrel groups the Parser Core surface: deterministic text parsing,
-// chapter/segment detection, offsets, language detection, and canonical
-// ParserResult. It has ZERO dependencies on VBook persistence, Redis,
-// PostgreSQL, AI pipeline, Book Writer, or Importer.
+// Deterministic text parser: chapter/segment detection, offsets,
+// language detection, canonical ParserResult/ChapterMap DTO.
 //
-// When @animastor/parser is physically extracted, this barrel becomes
-// its public API surface.
+// Pure sync, no IO, no AI, no DB, no filesystem.
+// The only external dependency is tinyld (language detection).
 //
-// Dependencies:
-//   - contracts/parser-contract.js  (pure, zero requires)
-//   - contracts/legacy-projection.js (pure, zero requires)
-//   - lazy-book/parser.js           (Parser facade, depends only on contracts)
-//   - language-detector.js          (pure utility, depends only on tinyld)
-//
-// NOT included (host-side):
-//   - lazy-book/parse.js            (Book Writer — fs, draft, paths)
-//   - services/structure-detector.js (AI + Deterministic combined)
-//   - services/txt-importer.js       (Importer)
-//   - services/agent/*               (AI pipeline)
-//   - Redis, PostgreSQL, Book Writer
+// The structureDetector port is the composition root seam:
+// the host binds the real detector implementation at startup.
 // ======================================================
 
 const parser = require('./lazy-book/parser');

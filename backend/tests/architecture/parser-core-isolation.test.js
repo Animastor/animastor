@@ -18,16 +18,16 @@ const path = require('path');
 const fs = require('fs');
 const { REPO_ROOT, listSourceFiles, readSource, rel, requireSpecifiers } = require('./helpers');
 
-const PACKAGE_DIR = path.join(REPO_ROOT, 'packages', 'animastor-vbook-runtime');
+const PACKAGE_DIR = path.join(REPO_ROOT, 'packages', 'animastor-parser');
 const PACKAGE_SRC = path.join(PACKAGE_DIR, 'src');
 
 // ── Parser Core file set ────────────────────────────────────────────────────
 const PARSER_CORE_FILES = [
-    'packages/animastor-vbook-runtime/src/parser-core.js',
-    'packages/animastor-vbook-runtime/src/lazy-book/parser.js',
-    'packages/animastor-vbook-runtime/src/contracts/parser-contract.js',
-    'packages/animastor-vbook-runtime/src/contracts/legacy-projection.js',
-    'packages/animastor-vbook-runtime/src/language-detector.js',
+    'packages/animastor-parser/src/index.js',
+    'packages/animastor-parser/src/lazy-book/parser.js',
+    'packages/animastor-parser/src/contracts/parser-contract.js',
+    'packages/animastor-parser/src/contracts/legacy-projection.js',
+    'packages/animastor-parser/src/language-detector.js',
 ].map(f => path.join(REPO_ROOT, f));
 
 // ── Forbidden imports (host-side dependencies) ──────────────────────────────
@@ -94,7 +94,7 @@ describe('Parser Core isolation: require graph stays within boundary', () => {
                 if (spec.startsWith('.')) {
                     const target = resolveRelative(filePath, spec);
                     const targetRel = target ? rel(target) : null;
-                    const inside = targetRel && targetRel.startsWith('packages/animastor-vbook-runtime/src/');
+                    const inside = targetRel && targetRel.startsWith('packages/animastor-parser/src/');
                     if (!inside) offenders.push(`${spec} (resolves to ${targetRel || 'NOT FOUND'})`);
                     continue;
                 }
@@ -110,7 +110,7 @@ describe('Parser Core isolation: require graph stays within boundary', () => {
 // ── Guard 3: parser-contract.js is pure (zero requires) ─────────────────────
 describe('Parser Core purity: parser-contract.js has zero requires', () => {
     it('parser-contract.js exports without any require/import', () => {
-        const filePath = path.join(REPO_ROOT, 'packages/animastor-vbook-runtime/src/contracts/parser-contract.js');
+        const filePath = path.join(REPO_ROOT, 'packages/animastor-parser/src/contracts/parser-contract.js');
         const src = readSource(filePath);
         const specs = requireSpecifiers(src);
         expect(specs, 'parser-contract.js must be pure (zero requires)').to.deep.equal([]);
@@ -120,7 +120,7 @@ describe('Parser Core purity: parser-contract.js has zero requires', () => {
 // ── Guard 4: legacy-projection.js is pure (zero requires) ───────────────────
 describe('Parser Core purity: legacy-projection.js has zero requires', () => {
     it('legacy-projection.js exports without any require/import', () => {
-        const filePath = path.join(REPO_ROOT, 'packages/animastor-vbook-runtime/src/contracts/legacy-projection.js');
+        const filePath = path.join(REPO_ROOT, 'packages/animastor-parser/src/contracts/legacy-projection.js');
         const src = readSource(filePath);
         const specs = requireSpecifiers(src);
         expect(specs, 'legacy-projection.js must be pure (zero requires)').to.deep.equal([]);
@@ -130,7 +130,7 @@ describe('Parser Core purity: legacy-projection.js has zero requires', () => {
 // ── Guard 5: language-detector.js only depends on tinyld ────────────────────
 describe('Parser Core purity: language-detector.js depends only on tinyld', () => {
     it('language-detector.js requires only tinyld (no host deps)', () => {
-        const filePath = path.join(REPO_ROOT, 'packages/animastor-vbook-runtime/src/language-detector.js');
+        const filePath = path.join(REPO_ROOT, 'packages/animastor-parser/src/language-detector.js');
         const src = readSource(filePath);
         const specs = requireSpecifiers(src);
         expect(specs, 'language-detector.js must only require tinyld').to.deep.equal(['tinyld']);
@@ -140,7 +140,7 @@ describe('Parser Core purity: language-detector.js depends only on tinyld', () =
 // ── Guard 6: parser.js has no VBook persistence imports ─────────────────────
 describe('Parser Core purity: parser.js has no persistence/state imports', () => {
     it('parser.js does not import fs, draft, paths, constants, or BookState', () => {
-        const filePath = path.join(REPO_ROOT, 'packages/animastor-vbook-runtime/src/lazy-book/parser.js');
+        const filePath = path.join(REPO_ROOT, 'packages/animastor-parser/src/lazy-book/parser.js');
         const src = readSource(filePath);
         const specs = requireSpecifiers(src);
         // parser.js should only import from contracts/ and language-detector
@@ -168,10 +168,10 @@ describe('Parser Core boundary: parse.js (Book Writer) is excluded', () => {
     });
 });
 
-// ── Guard 8: parser-core.js barrel re-exports correctly ─────────────────────
-describe('Parser Core barrel: parser-core.js exports the full surface', () => {
-    it('parser-core.js re-exports all Parser Core functions', () => {
-        const barrel = require(path.join(PACKAGE_SRC, 'parser-core'));
+// ── Guard 8: index.js barrel re-exports correctly ─────────────────────────
+describe('Parser Core barrel: index.js exports the full surface', () => {
+    it('index.js re-exports all Parser Core functions', () => {
+        const barrel = require(path.join(PACKAGE_SRC, 'index'));
         // Parser facade
         expect(barrel.splitIntoChapters).to.be.a('function');
         expect(barrel.splitIntoScenes).to.be.a('function');
@@ -198,8 +198,8 @@ describe('Parser Core barrel: parser-core.js exports the full surface', () => {
         expect(barrel.detectLanguageWithConfidence).to.be.a('function');
     });
 
-    it('parser-core.js barrel is idempotent with individual module exports', () => {
-        const barrel = require(path.join(PACKAGE_SRC, 'parser-core'));
+    it('index.js barrel is idempotent with individual module exports', () => {
+        const barrel = require(path.join(PACKAGE_SRC, 'index'));
         const parser = require(path.join(PACKAGE_SRC, 'lazy-book', 'parser'));
         const contracts = require(path.join(PACKAGE_SRC, 'contracts', 'parser-contract'));
         const legacy = require(path.join(PACKAGE_SRC, 'contracts', 'legacy-projection'));

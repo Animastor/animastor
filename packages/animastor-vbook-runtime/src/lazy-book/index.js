@@ -38,7 +38,7 @@ const {
     splitIntoChapters, splitIntoScenes, splitIntoUnits,
     firstMeaningfulChapter, detectLanguage,
     injectChapterMarkers,
-} = require('./parser');
+} = require('@animastor/parser');
 
 module.exports = {
     // Constants

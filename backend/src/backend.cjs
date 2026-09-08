@@ -37,7 +37,7 @@ const config = require('./config/runtime-config');
 //       docs/architecture/VBOOK_RUNTIME_RELOCATION_CHECKLIST.md
 const { configureBooksRoot } = require('@animastor/vbook-runtime/books-root');
 configureBooksRoot(() => config.BOOKS_DIR);
-const { setStructureDetector } = require('@animastor/vbook-runtime/lazy-book/parser');
+const { setStructureDetector } = require('@animastor/parser');
 setStructureDetector(require('./services/structure-detector'));
 
 const txtImporter = require('./services/txt-importer');
@@ -290,6 +290,23 @@ const routeDeps = {
         findSceneRuntimeData: book.findSceneRuntimeData,
         collectSceneUnits: book.collectSceneUnits,
     },
+    // Editor contour ports (Phase 1 of the Editor extraction —
+    // docs/architecture/editor-module-extraction-audit.md §6/§13): the
+    // edit HTTP contour (routes/editor/**) gets its host legs ONLY through
+    // this seam (the playerPorts analog — no hidden host requires inside
+    // the contour, guarded by editor-route-split.test.js E2/E3):
+    //   sceneAssetsRepo   — PG scene-assets (bumpSceneVersions/setDirtyUnitIds)
+    //   placeholderAudio  — read-time placeholder recovery (GET /book/:id)
+    //   auditCoverage     — POST source-coverage audit service
+    //   promptLimit       — IMAGE_PROMPT_MAX_CHARS (agent-domain constant)
+    //   purge             — entity-cleanup purgeScene/purgeUnit (structure deletes)
+    //   resolveOwnership  — workspace-ownership attach (POST /book/blank)
+    //   recoveryCtx       — read-recovery dependencies (redis chunk repair)
+    editorPorts: require('./routes/editor/editor-ports.cjs')({
+        redis, config, storage, runtime, bookDiff, book,
+        sceneAssetsRepo, placeholderAudio, activeScenes, state,
+        getAllChunks, saveChunk, utils,
+    }),
 };
 
 require('./routes/book-routes.cjs')(app, redis, { ...routeDeps, taskHandler, bookDiff, windowGenerator });
