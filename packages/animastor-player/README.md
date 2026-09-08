@@ -8,12 +8,31 @@ preview / chunk storyboard), the playback queue (chunk dedup,
 projection. Includes the `createPlayerModel` facade over the Canonical Book
 Model and the read-side artifact-naming grammar.
 
-**Status: EXTRACTED.** The playback contour physically lives in this
+**Status: EXTRACTED (0.1.0).** The playback contour physically lives in this
 package (`src/`); the host backend consumes it only through the package
 entrypoint. See
-[`docs/architecture/PLAYER_ROUTE_SPLIT_CHECKLIST.md`](../../docs/architecture/PLAYER_ROUTE_SPLIT_CHECKLIST.md)
+[`docs/architecture/PLAYER_ROUTE_SPLIT_CHECKLIST.md`](https://github.com/Animastor/animastor/blob/main/docs/architecture/PLAYER_ROUTE_SPLIT_CHECKLIST.md)
 (physical move COMPLETE) and
-[`docs/architecture/PLAYER_PACKAGE_EXTRACTION_READINESS_AUDIT.md`](../../docs/architecture/PLAYER_PACKAGE_EXTRACTION_READINESS_AUDIT.md).
+[`docs/architecture/PLAYER_PACKAGE_EXTRACTION_READINESS_AUDIT.md`](https://github.com/Animastor/animastor/blob/main/docs/architecture/PLAYER_PACKAGE_EXTRACTION_READINESS_AUDIT.md).
+
+## Requirements
+
+- Node.js >= 18
+- [`@animastor/vbook-runtime`](https://www.npmjs.com/package/@animastor/vbook-runtime)
+  (installed automatically as the only runtime dependency — the Player Model
+  facade over its Canonical Book Model)
+
+## Installation
+
+```bash
+npm install @animastor/player
+```
+
+## Public API
+
+The package exposes a single entrypoint — `require('@animastor/player')`
+returns `{ createPlayerModel, createPlayerRoutes }`. Deep imports
+(`@animastor/player/src/...`) are intentionally not exported.
 
 ## Boundary
 
@@ -24,7 +43,7 @@ storage. Book content is reached only through the injected `playerModel`
 (VBook boundary — the facade over `@animastor/vbook-runtime`'s Book Model).
 Every host dependency arrives as an injected port at registration time.
 
-## Standalone use
+## Standalone use (repository checkout)
 
 ```bash
 npm install        # dep: @animastor/vbook-runtime (dev: mocha + chai)
@@ -68,8 +87,8 @@ GET  /api/v1/preview/:b/:ch/:sc/:iuId      GET  /api/v1/book/:bookId/chunks
 GET  /api/v1/book/:bookId/assets-state
 ```
 
-Guards: `backend/tests/architecture/player-route-split.test.js` (P1–P9) and
-`backend/tests/architecture/phase6-editor-player.test.js` (T1–T7).
+Guards: [`backend/tests/architecture/player-route-split.test.js`](https://github.com/Animastor/animastor/blob/main/backend/tests/architecture/player-route-split.test.js) (P1–P9) and
+[`backend/tests/architecture/phase6-editor-player.test.js`](https://github.com/Animastor/animastor/blob/main/backend/tests/architecture/phase6-editor-player.test.js) (T1–T7).
 
 ## License
 

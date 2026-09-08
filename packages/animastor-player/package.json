@@ -2,13 +2,19 @@
     "name": "@animastor/player",
     "version": "0.1.0",
     "description": "Animastor Player — playback HTTP contour: scene media serving (Range/206/ETag/If-Range), scene data (status/storyboard/timings/waveform), IU media, playback queue and assets-state. Reads book content only through the injected playerModel (VBook boundary); every host dependency arrives as an injected port — no config, no generation, no workflows, no Redis/PG/Redis internals in the package.",
+    "keywords": [
+        "animastor",
+        "player",
+        "playback",
+        "http-range",
+        "media-streaming"
+    ],
     "main": "src/index.cjs",
     "exports": {
         ".": "./src/index.cjs"
     },
     "files": [
         "src/",
-        "test/",
         "README.md",
         "LICENSE",
         "CHANGELOG.md"
@@ -28,11 +34,12 @@
         "url": "git+https://github.com/Animastor/animastor.git",
         "directory": "packages/animastor-player"
     },
+    "homepage": "https://github.com/Animastor/animastor/tree/main/packages/animastor-player#readme",
     "bugs": {
         "url": "https://github.com/Animastor/animastor/issues"
     },
     "dependencies": {
-        "@animastor/vbook-runtime": "file:../animastor-vbook-runtime"
+        "@animastor/vbook-runtime": "^0.1.0"
     },
     "devDependencies": {
         "chai": "^6.2.2",
