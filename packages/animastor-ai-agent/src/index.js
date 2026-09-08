@@ -1,9 +1,10 @@
 // ======================================================
 // @animastor/ai-agent — AI Agent Core
 // ======================================================
-// The shared execution mechanism for all AI analysis tasks:
+// Generic AI execution engine: the shared mechanism for running ANY AI task
+// through a standard lifecycle.
 //
-//   task → callAI → structured JSON → validation/error/degradation lifecycle
+//   task → prompt/rules/skills/examples → callAI → structured JSON → result
 //
 // This package owns ONLY the mechanism — no domain knowledge, no persistence,
 // no generation concerns. The AI Analysis layer
@@ -15,10 +16,12 @@
 //   ✗ NO AI provider / callAI implementation / fetch
 //   ✗ NO PG / Redis / fs
 //   ✗ NO TTS / audio / image / video generation
-//   ✓ Pure mechanism only (fail-closed port validation)
+//   ✓ Pure mechanism only (port validation + generic lifecycle)
 
 const { assertHostPorts } = require('./ports');
+const { execute } = require('./execute');
 
 module.exports = {
     assertHostPorts,
+    execute,
 };

@@ -1,126 +1,118 @@
-# C21.1 — AI Agent Core / AI Analysis: Package Separation
+# C21.2 — AI Agent Core: Generic Execution Lifecycle
 
-**Status:** EXTRACTED. Two physical packages with enforced dependency direction; behavior-preserving; no prompt, rules, skills, JSON contract, degradation, or merge change.
+**Status:** IMPLEMENTED. The generic `execute()` lifecycle replaces per-task lifecycle boilerplate. All analysis tasks delegate to the core lifecycle; C19/C20 backend modules also use it (except voices, which has a pre-check skip pattern).
 **Date:** 2026-09-08
-**Baseline:** C21 (`ai-agent-contour-extraction-c21.md` — shared contour extraction)
-**Predecessors:** C18 (functional decomposition), C19 (structure-analyzer), C20 (character-analyzer), C21 (contour extraction)
+**Baseline:** C21.1 (package separation)
+**Predecessors:** C18 (functional decomposition), C19 (structure-analyzer), C20 (character-analyzer), C21 (contour extraction), C21.1 (package separation)
 
 ---
 
-## 1. Why: mechanism ≠ semantics
+## 1. What changed (C21.1 → C21.2)
 
-C21 extracted a shared contour that unified all AI analysis tasks behind one seam. But the contour mixed two concerns:
+C21.1 established the two-package structure but left each analysis task defining its own lifecycle boilerplate (port validation, progress, step creation, AI call, logging, error handling). C21.2 extracts that into a single generic `execute()` function in `@animastor/ai-agent`.
 
-1. **Mechanism**: fail-closed port validation, `callAI` seam pattern, task lifecycle
-2. **Semantics**: concrete analysis tasks (structure, characters, locations, scenes, units, voices)
+### Before (each task duplicated the lifecycle):
+```javascript
+async function extractLocations(input, ports) {
+    const _ports = ports || {};
+    const REQUIRED_PORTS = [...];
+    const missing = REQUIRED_PORTS.filter(p => !_ports[p]);
+    if (missing.length) throw new Error(...);
+    const { callAI, logConversation, ... } = _ports;
+    _progress({ stage: 'extracting_locs', message: extractingLocationsMessage });
+    await updateSession(sessionId, { progress_msg: ... });
+    const step = await createStep(sessionId, 'analyze_locations', stepIndex || 0);
+    const messages = [...];
+    try {
+        const result = await callAI(messages, { maxTokens: 4096 });
+        const locations = result.locations || [];
+        await logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
+        await completeStep(step.step_id, result);
+        return locations;
+    } catch (err) {
+        await failStep(step.step_id, err.message);
+        throw err;
+    }
+}
+```
 
-C21.1 separates these into two physical packages with a strict dependency direction, so each concern can evolve independently without accidental coupling.
+### After (task defines only what's unique):
+```javascript
+const locationsTask = {
+    requiredPorts: [...],
+    taskName: 'ai-agent/locations',
+    stage: 'extracting_locs',
+    progressMessage: (ports) => ports.extractingLocationsMessage,
+    stepType: 'analyze_locations',
+    buildMessages(input, ports) { return { messages: [...], options: { maxTokens: 4096 } }; },
+    normalize(result) { return result.locations || []; },
+};
 
-## 2. What was separated
+async function extractLocations(input, ports) {
+    return execute(locationsTask, input, ports);
+}
+```
 
-| Concern | Before (C21) | After (C21.1) |
+## 2. The execute() lifecycle
+
+```
+assertHostPorts → progress → updateSession → createStep → buildMessages
+  → callAI → normalize → logConversation → completeStep → return
+
+  on error: failStep → onError (or rethrow)
+```
+
+### Task definition contract:
+
+| Field | Required | Description |
 |---|---|---|
-| Host port validation (`assertHostPorts`) | `ai-agent/ports.js` (backend) | `packages/animastor-ai-agent/src/ports.js` (Core) |
-| Task files (locations, scenes, units) | `ai-agent/tasks/*.js` (backend) | `packages/animastor-ai-analysis/src/tasks/*.js` (Semantic) |
-| Prompt-context builder | `ai-agent/context.js` (backend) | `packages/animastor-ai-analysis/src/context.js` (Semantic) |
-| C19/C20 module re-exports | `ai-agent/index.js` (backend) | `packages/animastor-ai-analysis/src/index.js` (Semantic) |
-| Backend barrel | `ai-agent/index.js` (full seam) | `ai-agent/index.js` → delegates to `@animastor/ai-analysis` |
+| `requiredPorts` | yes | Port names this task needs |
+| `taskName` | yes | e.g. `'ai-agent/locations'` |
+| `stage` | yes | Progress stage key |
+| `progressMessage` | yes | `(ports) => string` — resolve progress text from ports |
+| `stepType` | yes | PG step type, e.g. `'analyze_locations'` |
+| `buildMessages` | yes | `(input, ports) => { messages, options? }` — build AI request |
+| `normalize` | no | `(result, input, ports) => any` — post-process raw AI result |
+| `failMessage` | no | `(err) => string` — custom failStep message (default: `err.message`) |
+| `onError` | no | `(err, step, ports) => any` — custom degradation (default: rethrow) |
 
-## 3. Package responsibilities
+## 3. What's in Core vs. Semantic
 
 ### @animastor/ai-agent (Core)
-
-**Owns:** The shared execution mechanism — the pattern every AI analysis task follows.
-
-```
-task → callAI → structured JSON → validation/error/degradation lifecycle
-```
-
-**Public API:**
-- `assertHostPorts(ports, required, taskName)` — fail-closed host port validation
-
-**Does NOT know:**
-- characters, locations, scenes, units, structure, voice
-- concrete analyzers, Book Writer, Importer
-- specific AI provider, callAI implementation
-- PG, Redis, fs, generation
-
-**Dependencies:** zero (pure mechanism)
+- `execute()` — generic lifecycle
+- `assertHostPorts()` — fail-closed port validation
+- Zero dependencies, zero domain knowledge
 
 ### @animastor/ai-analysis (Semantic Layer)
+- All analysis task definitions (locations, scenes, units, structure, characters, voices)
+- C19/C20 analyzer modules
+- Prompt assembly, normalization, context builders
 
-**Owns:** All AI analysis tasks and authoring operations.
+## 4. Task adoption status
 
-| Operation | Physical home | Function |
+| Task | Uses execute() | Notes |
 |---|---|---|
-| Structure / Chapter analysis | `services/structure-analyzer` (C19) | `analyzeBookStructure` |
-| Character extraction | `services/character-analyzer` (C20) | `extractCharacters` |
-| Voice authoring | `services/character-analyzer/voices` (C20) | `generateVoices` |
-| Location extraction | `tasks/locations.js` | `extractLocations` |
-| Scene analysis | `tasks/scenes.js` | `createScenes` |
-| Unit analysis | `tasks/units.js` | `createUnits` |
-| Shared context builder | `context.js` | `buildLocationsContext` |
+| locations | ✅ | Default throw degradation |
+| scenes | ✅ | Custom error message in normalize |
+| units | ✅ | Custom onError + failMessage for fallback |
+| structure-analyzer | ✅ | Custom onError with deterministic fallback |
+| character-analyzer | ✅ | Default throw degradation |
+| voices | ❌ | Pre-check skip (no viable chars → return before step creation) |
 
-**Public API:** All analysis functions re-exported through `src/index.js`.
+**voices** is intentionally excluded: it has a pre-AI-call skip check (no viable characters → return `{ voices: {} }` before creating a step). This doesn't fit the execute() lifecycle which always creates a step first.
 
-**Dependencies:** `@animastor/ai-agent` (Core), `@animastor/vbook-runtime` (pure utils)
+## 5. Architecture guards (updated)
 
-## 4. Dependency direction (enforced by guards)
+The guard test enforces:
+- All contour tasks import and call `execute()` from `@animastor/ai-agent`
+- Core contains only `index.js`, `ports.js`, and `execute.js`
+- No domain-specific functions exported from core
+- Degradation semantics preserved (throw vs. fallback)
 
-```
-host/backend
-    ↓
-@animastor/ai-analysis    (semantic analysis tasks)
-    ↓
-@animastor/ai-agent       (execution mechanism)
-```
+## 6. Evolution path
 
-**Forbidden directions (guards prevent):**
-- `ai-agent → ai-analysis` ✗
-- `ai-agent → pipeline` ✗
-- `ai-agent → ai-service/provider` ✗
-- `ai-agent → PG/Redis/fs` ✗
-- `ai-analysis → generation` ✗
+**Add a new analysis task:** Define a task object, call `execute()`. The lifecycle is handled.
 
-## 5. What is intentionally NOT in Core
+**Custom degradation:** Set `onError(err, step, ports)` to return a fallback value. Set `failMessage(err)` to customize the failStep message.
 
-The following are analysis/semantic concerns that live in `@animastor/ai-analysis`:
-
-- All analysis task implementations (F1–F7)
-- Prompt assembly (task-local, not centralized)
-- Output normalization (`normalizeSceneEnvironment`)
-- Context builders (`buildLocationsContext`)
-- C19/C20 analyzer modules (composition, not re-implementation)
-
-## 6. Backward compatibility
-
-The backend barrel at `backend/src/services/ai-agent/index.js` delegates to `@animastor/ai-analysis`:
-
-```javascript
-const analysis = require('@animastor/ai-analysis');
-module.exports = analysis;
-```
-
-Existing host adapters (`pipeline-steps.js`) continue to import from `../ai-agent` unchanged. New code should import directly from the appropriate package.
-
-## 7. Architecture guards (65 assertions)
-
-The guard test (`tests/architecture/ai-agent-contour-extraction-c21.test.js`) enforces:
-
-1. **Shared execution boundary** — barrel delegates to analysis package; analysis exports all tasks
-2. **Single LLM seam** — no task imports ai-service/SDK/fetch
-3. **Dependency boundary** — no PG/Redis/fs/Book Writer/Importer in analysis tasks
-4. **Separate task contracts** — each task owns its own prompt and step type
-5. **Task independence** — no task→task imports; acyclic graph
-6. **Generation boundary** — no image/video/audio generation in analysis tasks
-7. **Package architecture** — exactly two packages; core has zero deps; no per-function packages
-
-## 8. Evolution path
-
-**Improve one task:** Edit its task file in `packages/animastor-ai-analysis/src/tasks/` — siblings, core, and generation untouched.
-
-**Add a new analysis task:** Add `tasks/<name>.js`, export through the analysis package, add one host adapter in `pipeline-steps.js`.
-
-**Extract a per-function package** (when justified by a second consumer): Move its files from the analysis package; update the guard file lists.
-
-**Replace the Core mechanism:** Replace `packages/animastor-ai-agent/src/ports.js` — analysis tasks, adapters, and generation are untouched.
+**Pre-check skip pattern:** If your task needs to skip before step creation (like voices), keep it as a standalone function with manual lifecycle.

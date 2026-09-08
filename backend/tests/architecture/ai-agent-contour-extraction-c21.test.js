@@ -114,13 +114,15 @@ describe('C21 AI Agent contour: shared execution boundary', () => {
         expect(s, 'step adapters must not bypass the contour seam').to.not.match(/require\('\.\.\/structure-analyzer'\)/);
     });
 
-    it('every contour task performs fail-closed host-port validation through the shared mechanism', () => {
-        const s = src(path.join(REPO_ROOT, 'packages/animastor-ai-agent/src/ports.js'));
-        expect(s).to.match(/function assertHostPorts/);
-        expect(s).to.match(/missing host port/);
+    it('every contour task uses the shared execute() lifecycle (fail-closed port validation + step lifecycle)', () => {
+        const exe = src(path.join(REPO_ROOT, 'packages/animastor-ai-agent/src/execute.js'));
+        expect(exe).to.match(/assertHostPorts/);
+        const ports = src(path.join(REPO_ROOT, 'packages/animastor-ai-agent/src/ports.js'));
+        expect(ports).to.match(/missing host port/);
         for (const f of ['tasks/locations.js', 'tasks/scenes.js', 'tasks/units.js']) {
             const t = src(path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src', f));
-            expect(t, `${f} must use the shared assertHostPorts mechanism`).to.match(/assertHostPorts/);
+            expect(t, `${f} must import execute from @animastor/ai-agent`).to.match(/require\('@animastor\/ai-agent'\)/);
+            expect(t, `${f} must call execute()`).to.match(/execute\(/);
         }
     });
 
@@ -256,9 +258,13 @@ describe('C21 AI Agent contour: separate task contracts', () => {
     });
 
     it('the moved tasks keep their degradation semantics (throw vs fallback unit)', () => {
-        expect(src(path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src/tasks/locations.js'))).to.match(/await failStep\(step\.step_id, err\.message\);\s*\n\s*throw err/);
+        // locations and scenes: no onError → execute() default = failStep + rethrow
+        const loc = src(path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src/tasks/locations.js'));
+        expect(loc, 'locations must call execute()').to.match(/execute\(/);
+        expect(loc, 'locations must NOT define onError (default: throw)').to.not.match(/onError/);
         expect(src(path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src/tasks/scenes.js'))).to.match(/AI returned no scenes/);
         const units = src(path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src/tasks/units.js'));
+        expect(units, 'units must define onError for custom degradation').to.match(/onError/);
         expect(units).to.match(/AI failed, using fallback/);
         expect(units).to.match(/type: input\.scene\.type === 'dialogue' \? 'dialogue' : 'perception'/);
     });
@@ -410,7 +416,7 @@ describe('C21.1 AI Agent / AI Analysis: package architecture', () => {
 
     it('the ai-agent core package contains no task files (no domain logic)', () => {
         const coreDir = path.join(REPO_ROOT, 'packages/animastor-ai-agent/src');
-        const files = fs.readdirSync(coreDir);
-        expect(files, 'core src/ must contain only index.js and ports.js').to.deep.equal(['index.js', 'ports.js']);
+        const files = fs.readdirSync(coreDir).sort();
+        expect(files, 'core src/ must contain only index.js, ports.js, and execute.js').to.deep.equal(['execute.js', 'index.js', 'ports.js']);
     });
 });
