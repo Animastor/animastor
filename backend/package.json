@@ -17,6 +17,8 @@
     "pretest": "bash ../scripts/syntax-smoke.sh"
   },
   "dependencies": {
+    "@animastor/ai-agent": "file:../packages/animastor-ai-agent",
+    "@animastor/ai-analysis": "file:../packages/animastor-ai-analysis",
     "@animastor/editor": "file:../packages/animastor-editor",
     "@animastor/parser": "file:../packages/animastor-parser",
     "@animastor/player": "file:../packages/animastor-player",
