@@ -141,8 +141,11 @@ describe('C19 Structure Analyzer boundary: host ports', () => {
 
     it('analyzeBookStructure requires the port object (fail-closed when ports are missing)', () => {
         const s = src(path.join(REPO_ROOT, 'backend/src/services/structure-analyzer/index.js'));
-        expect(s).to.match(/missing host port/);
-        expect(s).to.match(/ports\.callAI|_ports\.callAI|callAI, logConversation/);
+        // C21.3: port validation is delegated to the shared execute() lifecycle
+        // (the task's requiredPorts list is the fail-closed contract)
+        expect(s).to.match(/requiredPorts/);
+        expect(s).to.match(/'callAI', 'logConversation'/);
+        expect(s).to.match(/execute\(structureTask/);
     });
 
     it('pipeline-steps.js passes the host ports explicitly (composition adapter)', () => {

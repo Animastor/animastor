@@ -1,118 +1,147 @@
-# C21.2 — AI Agent Core: Generic Execution Lifecycle
+# C21.3 — AI Agent Core: Hardened Generic Lifecycle
 
-**Status:** IMPLEMENTED. The generic `execute()` lifecycle replaces per-task lifecycle boilerplate. All analysis tasks delegate to the core lifecycle; C19/C20 backend modules also use it (except voices, which has a pre-check skip pattern).
+**Status:** IMPLEMENTED. The `execute()` lifecycle is a stable architectural contract: one guarded error region, failStep at most once (shielded), task-owned validation, `onError` with input access.
 **Date:** 2026-09-08
-**Baseline:** C21.1 (package separation)
-**Predecessors:** C18 (functional decomposition), C19 (structure-analyzer), C20 (character-analyzer), C21 (contour extraction), C21.1 (package separation)
+**Baseline:** C21.2 (`c9abbdf8`)
+**Predecessors:** C18 (functional decomposition), C19 (structure-analyzer), C20 (character-analyzer), C21 (contour extraction), C21.1 (package separation), C21.2 (generic execute())
 
 ---
 
-## 1. What changed (C21.1 → C21.2)
+## 1. What changed (C21.2 → C21.3)
 
-C21.1 established the two-package structure but left each analysis task defining its own lifecycle boilerplate (port validation, progress, step creation, AI call, logging, error handling). C21.2 extracts that into a single generic `execute()` function in `@animastor/ai-agent`.
+C21.2 introduced the generic `execute()` but its error lifecycle had gaps found by the C21.3 audit:
 
-### Before (each task duplicated the lifecycle):
-```javascript
-async function extractLocations(input, ports) {
-    const _ports = ports || {};
-    const REQUIRED_PORTS = [...];
-    const missing = REQUIRED_PORTS.filter(p => !_ports[p]);
-    if (missing.length) throw new Error(...);
-    const { callAI, logConversation, ... } = _ports;
-    _progress({ stage: 'extracting_locs', message: extractingLocationsMessage });
-    await updateSession(sessionId, { progress_msg: ... });
-    const step = await createStep(sessionId, 'analyze_locations', stepIndex || 0);
-    const messages = [...];
-    try {
-        const result = await callAI(messages, { maxTokens: 4096 });
-        const locations = result.locations || [];
-        await logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
-        await completeStep(step.step_id, result);
-        return locations;
-    } catch (err) {
-        await failStep(step.step_id, err.message);
-        throw err;
-    }
-}
-```
+| Gap in C21.2 | Fix in C21.3 |
+|---|---|
+| `buildMessages` ran OUTSIDE the try/catch — a prompt-assembly throw left the PG step dangling (created, neither completed nor failed) | `buildMessages` moved inside the guarded region: `createStep → try { buildMessages → callAI → normalize → log → complete } catch { failStep → onError/rethrow }` |
+| `failStep` was called unshielded — a failing failStep (PG down) masked the original task error | failStep is wrapped in its own try/catch: the original error is always preserved; the failStep failure is logged, never re-thrown over it |
+| `onError(err, step, ports)` had no access to `input` — tasks re-wrapped the task object with closures to close over input (units, structure) | Contract extended: `onError(err, step, ports, input)`. The closure re-wrapping (`taskWithInput`) is deleted; guards forbid it |
+| Tasks re-declared the default as `onError(err) { throw err; }` (redundant, misleading) | Redundant declarations removed; a guard forbids re-declaring the built-in default |
+| Header docs promised "structured JSON → validation" as if the core owned a generic validation hook — no such hook existed | False promise removed: **validation is task-owned** (lives in `normalize`; a throw there is treated exactly like an AI failure). The core defines no semantic schema and never will |
 
-### After (task defines only what's unique):
-```javascript
-const locationsTask = {
-    requiredPorts: [...],
-    taskName: 'ai-agent/locations',
-    stage: 'extracting_locs',
-    progressMessage: (ports) => ports.extractingLocationsMessage,
-    stepType: 'analyze_locations',
-    buildMessages(input, ports) { return { messages: [...], options: { maxTokens: 4096 } }; },
-    normalize(result) { return result.locations || []; },
-};
-
-async function extractLocations(input, ports) {
-    return execute(locationsTask, input, ports);
-}
-```
-
-## 2. The execute() lifecycle
+## 2. The execute() lifecycle (final contract)
 
 ```
-assertHostPorts → progress → updateSession → createStep → buildMessages
-  → callAI → normalize → logConversation → completeStep → return
+PRE-STEP (no PG step exists — an error propagates as-is, failStep NOT called):
+  1. assertHostPorts        (fail-closed)
+  2. progressMessage        (resolve from ports)
+  3. progress + updateSession
+  4. createStep
 
-  on error: failStep → onError (or rethrow)
+POST-STEP (one shared guarded region; failStep runs AT MOST ONCE):
+  5. buildMessages          (task-specific)
+  6. callAI                 (injected seam)
+  7. normalize              (task-owned validation + post-processing)
+  8. logConversation
+  9. completeStep
+ 10. return result
+
+On ANY error in 5–9:
+  a. failStep(step_id, failMessage(err) || err.message) — shielded
+  b. onError(err, step, ports, input) if defined → its return value becomes the result
+     otherwise → rethrow err
 ```
 
-### Task definition contract:
+### Why the pre-step/post-step split?
+
+Before `createStep` succeeds there is no step row to fail. Port validation, progress, and session updates therefore propagate their errors as-is — a misconfigured host fails loudly and immediately. After `createStep`, every failure (task bug, transport, validation, logging, completion) goes through the single shared path, so a step is never left in a non-terminal state and degradation rules always see the same error surface.
+
+### Task definition contract
 
 | Field | Required | Description |
 |---|---|---|
 | `requiredPorts` | yes | Port names this task needs |
-| `taskName` | yes | e.g. `'ai-agent/locations'` |
+| `taskName` | yes | e.g. `'ai-agent/locations'` (used in error messages) |
 | `stage` | yes | Progress stage key |
 | `progressMessage` | yes | `(ports) => string` — resolve progress text from ports |
 | `stepType` | yes | PG step type, e.g. `'analyze_locations'` |
 | `buildMessages` | yes | `(input, ports) => { messages, options? }` — build AI request |
-| `normalize` | no | `(result, input, ports) => any` — post-process raw AI result |
+| `normalize` | no | `(result, input, ports) => any` — **task-owned validation + post-processing**; throwing here is treated exactly like an AI failure |
 | `failMessage` | no | `(err) => string` — custom failStep message (default: `err.message`) |
-| `onError` | no | `(err, step, ports) => any` — custom degradation (default: rethrow) |
+| `onError` | no | `(err, step, ports, input) => any` — custom degradation (default: rethrow) |
+
+### Validation boundary (explicit)
+
+The core provides NO `validate` hook. Validation is a semantic concern:
+- shape checks ("must return scenes") live in the task's `normalize` (throw = failure);
+- task schemas never enter the core — a core that knows "scenes" is a broken core.
 
 ## 3. What's in Core vs. Semantic
 
-### @animastor/ai-agent (Core)
-- `execute()` — generic lifecycle
+### @animastor/ai-agent (Core) — MECHANISM
+- `execute()` — the generic lifecycle (progress, step, LLM call ordering, error/degradation dispatch)
 - `assertHostPorts()` — fail-closed port validation
-- Zero dependencies, zero domain knowledge
+- Zero dependencies, zero domain knowledge, zero I/O
 
-### @animastor/ai-analysis (Semantic Layer)
-- All analysis task definitions (locations, scenes, units, structure, characters, voices)
-- C19/C20 analyzer modules
-- Prompt assembly, normalization, context builders
+The core NEVER imports/knows: ai-analysis, backend host, concrete analyzers, prompts/rules/skills, providers, PG/Redis/fs, TTS/audio/image/video, pipeline orchestration. (Enforced by Guard 8, C21.3.)
+
+### @animastor/ai-analysis (Semantic Layer) — SEMANTICS
+- Task definitions: buildMessages (prompt assembly), normalize (validation), onError/failMessage (degradation)
+- C19/C20 analyzer modules (physically in backend/src/services, wired through the analysis seam)
+- Context builders
+
+Degradation stays task-specific: locations/scenes/characters throw (runner owns recovery), units returns a fallback unit, structure returns the deterministic map, voices keeps existing voices. The core only provides the hook.
 
 ## 4. Task adoption status
 
-| Task | Uses execute() | Notes |
+| Task | Uses execute() | Degradation |
 |---|---|---|
-| locations | ✅ | Default throw degradation |
-| scenes | ✅ | Custom error message in normalize |
-| units | ✅ | Custom onError + failMessage for fallback |
-| structure-analyzer | ✅ | Custom onError with deterministic fallback |
-| character-analyzer | ✅ | Default throw degradation |
-| voices | ❌ | Pre-check skip (no viable chars → return before step creation) |
+| locations | ✅ | default rethrow |
+| scenes | ✅ | normalize throws on empty → default rethrow |
+| units | ✅ | onError fallback unit + failMessage prefix |
+| structure-analyzer | ✅ | onError deterministic fallback |
+| character-analyzer | ✅ | default rethrow |
+| voices | ❌ manual lifecycle | pre-check skip (no viable chars → return before step creation); failStep + keep existing voices |
 
-**voices** is intentionally excluded: it has a pre-AI-call skip check (no viable characters → return `{ voices: {} }` before creating a step). This doesn't fit the execute() lifecycle which always creates a step first.
+**voices** stays manual intentionally: it can decide to skip BEFORE creating a step. This is the documented pre-check pattern for tasks whose step creation is conditional.
 
-## 5. Architecture guards (updated)
+## 5. The ai-analysis → backend seam (known debt, next seam)
 
-The guard test enforces:
-- All contour tasks import and call `execute()` from `@animastor/ai-agent`
-- Core contains only `index.js`, `ports.js`, and `execute.js`
-- No domain-specific functions exported from core
-- Degradation semantics preserved (throw vs. fallback)
+`packages/animastor-ai-analysis/src/index.js` still reaches into the host:
 
-## 6. Evolution path
+```javascript
+const { analyzeBookStructure } = require('../../../backend/src/services/structure-analyzer');
+const { extractCharacters, generateVoices } = require('../../../backend/src/services/character-analyzer');
+```
 
-**Add a new analysis task:** Define a task object, call `execute()`. The lifecycle is handled.
+This is a **known transitional seam** (C21.1) — NOT the target architecture. The dependency direction host → ai-analysis → ai-agent is preserved (only the host imports the analysis package; the analyzers never import packages), but the physical direction of these two requires is inverted.
 
-**Custom degradation:** Set `onError(err, step, ports)` to return a fallback value. Set `failMessage(err)` to customize the failStep message.
+**The next seam (documented, deliberately NOT executed in C21.3):**
+1. Move `backend/src/services/structure-analyzer/` and `backend/src/services/character-analyzer/` physically into `packages/animastor-ai-analysis/src/analyzer/{structure,character}/` (git mv, no code edits).
+2. Delete the two `../../../backend` requires; replace with relative `./analyzer/...`.
+3. The backend keeps a one-line barrel for compatibility.
+4. Guards: the analysis package must stop matching `/backend\/src/` in its require specifiers.
 
-**Pre-check skip pattern:** If your task needs to skip before step creation (like voices), keep it as a standalone function with manual lifecycle.
+Until that move, the seam is frozen: exactly two cross-requires, exactly these modules, listed in the package index header. A guard pins the seam to those two lines so it cannot silently grow.
+
+## 6. Architecture guards (C21.3 additions — Guard 8)
+
+New assertions on top of the C21/C21.1/C21.2 set:
+- `buildMessages` is inside the guarded try region (static order check)
+- `_ports.failStep(` is called exactly once in execute.js, and is shielded (own try/catch, "original error kept" log path)
+- `onError` is invoked with the 4-arg contract `(err, step, _ports, input)`
+- No semantic validate hook in the core; core code (comment-stripped) never mentions locations/scenes/units/characters/structure/voices
+- Core files require NOTHING external (zero-dep mechanism)
+- Core never touches PG/Redis/fs/fetch/ai-service/ai-caller/providers/TTS/audio/image/video (comment-stripped scan)
+- Tasks must not re-declare the default rethrow `onError(err){throw err}`
+- Tasks with input-dependent degradation use the onError contract arg — no `taskWithInput` closure re-wrapping
+- The ai-analysis → backend seam is pinned to exactly the two frozen cross-requires (structure-analyzer, character-analyzer)
+
+## 7. Unit tests (C21.3 edge cases)
+
+`backend/tests/execute-lifecycle.test.js` — 30 tests covering:
+- buildMessages throws → failStep once + rethrow / onError available / lifecycle ORDER (createStep → buildMessages → failStep)
+- callAI / normalize / logConversation / completeStep throws → failStep + original error
+- normalize throw == AI failure (validation is task-owned)
+- failStep itself throws → original error preserved (also with onError defined)
+- pre-step failures (port validation, createStep) → propagate WITHOUT failStep
+- port-validation failure → zero side effects
+- onError receives `(err, step, ports, input)`
+
+## 8. Evolution path
+
+**Add a new analysis task:** task object + `execute()`. Custom degradation via `onError`; custom failure text via `failMessage`.
+
+**Conditional step creation (skip pattern):** keep a manual lifecycle like voices — the core always creates a step.
+
+**Execute the physical move of C19/C20 modules:** see §5 — the seam is pinned and the steps are frozen.

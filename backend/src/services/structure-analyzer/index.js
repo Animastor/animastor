@@ -127,14 +127,14 @@ const structureTask = {
         return structure;
     },
 
-    onError(err, step, ports) {
+    onError(err, step, ports, input) {
         const detector = ports.detector || {
             extractCandidates,
             buildDeterministicMap,
             mapToStructureChapters,
         };
         console.error(`[AGENT] Step 0 (structure) FAILED: ${err.message} — using deterministic structure map`);
-        return _buildFallback({ sourceText: 'unknown' }, detector);
+        return _buildFallback(input, detector);
     },
 };
 
@@ -145,20 +145,7 @@ const structureTask = {
  * @returns {Promise<object>} StructureAnalysis
  */
 async function analyzeBookStructure(input, ports) {
-    // structureTask.onError needs input.sourceText for the fallback computation.
-    const taskWithInput = {
-        ...structureTask,
-        onError(err, step, _ports) {
-            const detector = _ports.detector || {
-                extractCandidates,
-                buildDeterministicMap,
-                mapToStructureChapters,
-            };
-            console.error(`[AGENT] Step 0 (structure) FAILED: ${err.message} — using deterministic structure map`);
-            return _buildFallback(input, detector);
-        },
-    };
-    return execute(taskWithInput, input, ports);
+    return execute(structureTask, input, ports);
 }
 
 module.exports = {

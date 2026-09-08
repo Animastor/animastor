@@ -263,4 +263,189 @@ describe('AI Agent Core: execute() lifecycle', () => {
         const ports = stubPorts();
         await execute(task, { sessionId: 's1' }, ports);
     });
+
+    // ── C21.3: error lifecycle edge cases ──────────────────────────────
+
+    describe('C21.3 error lifecycle', () => {
+        it('buildMessages throws → failStep called once + rethrow (no dangling step)', async () => {
+            let failCount = 0, failStepId = null;
+            const task = minimalTask({
+                buildMessages: () => { throw new Error('prompt assembly bug'); },
+            });
+            const ports = stubPorts({
+                failStep: async (id) => { failCount++; failStepId = id; },
+                callAI: async () => { throw new Error('callAI must not run after buildMessages threw'); },
+            });
+            try {
+                await execute(task, baseInput, ports);
+                expect.fail('should have thrown');
+            } catch (err) {
+                expect(err.message).to.equal('prompt assembly bug');
+            }
+            expect(failCount, 'failStep exactly once').to.equal(1);
+            expect(failStepId).to.equal('step-test_step-0');
+        });
+
+        it('buildMessages throws → onError degradation is still available', async () => {
+            const task = minimalTask({
+                buildMessages: () => { throw new Error('prompt assembly bug'); },
+                onError: (err) => ({ degraded: true, reason: err.message }),
+            });
+            const ports = stubPorts();
+            const result = await execute(task, baseInput, ports);
+            expect(result).to.deep.equal({ degraded: true, reason: 'prompt assembly bug' });
+        });
+
+        it('buildMessages throws before createStep exists? → NO: step IS created first; failStep runs', async () => {
+            // verifies lifecycle ORDER: createStep precedes buildMessages, so a
+            // buildMessages failure always has a step to fail
+            const order = [];
+            const task = minimalTask({
+                buildMessages: () => { order.push('buildMessages'); throw new Error('boom'); },
+            });
+            const ports = stubPorts({
+                createStep: async () => { order.push('createStep'); return { step_id: 's' }; },
+                failStep: async () => { order.push('failStep'); },
+            });
+            try { await execute(task, baseInput, ports); } catch (_) { /* expected */ }
+            expect(order).to.deep.equal(['createStep', 'buildMessages', 'failStep']);
+        });
+
+        it('normalize throws → failStep + rethrow (validation failure == AI failure)', async () => {
+            let failMsg;
+            const task = minimalTask({
+                normalize: () => { throw new Error('AI returned no scenes'); },
+            });
+            const ports = stubPorts({
+                callAI: async () => ({ scenes: [] }),
+                completeStep: async () => { throw new Error('completeStep must not run after normalize threw'); },
+                failStep: async (_id, msg) => { failMsg = msg; },
+            });
+            try {
+                await execute(task, baseInput, ports);
+                expect.fail('should have thrown');
+            } catch (err) {
+                expect(err.message).to.equal('AI returned no scenes');
+            }
+            expect(failMsg).to.equal('AI returned no scenes');
+        });
+
+        it('normalize throws → onError degradation is available (task validates + degrades)', async () => {
+            const task = minimalTask({
+                normalize: () => { throw new Error('schema mismatch'); },
+                onError: () => ({ fallback: true }),
+            });
+            const ports = stubPorts();
+            const result = await execute(task, baseInput, ports);
+            expect(result).to.deep.equal({ fallback: true });
+        });
+
+        it('logConversation throws → failStep called + original error propagates', async () => {
+            let failMsg;
+            const task = minimalTask();
+            const ports = stubPorts({
+                callAI: async () => ({ ok: 1 }),
+                logConversation: async () => { throw new Error('log write failed'); },
+                completeStep: async () => { throw new Error('completeStep must not run after log threw'); },
+                failStep: async (_id, msg) => { failMsg = msg; },
+            });
+            try {
+                await execute(task, baseInput, ports);
+                expect.fail('should have thrown');
+            } catch (err) {
+                expect(err.message).to.equal('log write failed');
+            }
+            expect(failMsg).to.equal('log write failed');
+        });
+
+        it('completeStep throws → failStep called + original error propagates', async () => {
+            let failMsg;
+            const task = minimalTask();
+            const ports = stubPorts({
+                callAI: async () => ({ ok: 1 }),
+                completeStep: async () => { throw new Error('complete PG error'); },
+                failStep: async (_id, msg) => { failMsg = msg; },
+            });
+            try {
+                await execute(task, baseInput, ports);
+                expect.fail('should have thrown');
+            } catch (err) {
+                expect(err.message).to.equal('complete PG error');
+            }
+            expect(failMsg).to.equal('complete PG error');
+        });
+
+        it('failStep itself throws → the ORIGINAL error is preserved (never masked)', async () => {
+            const task = minimalTask();
+            const ports = stubPorts({
+                callAI: async () => { throw new Error('transport down'); },
+                failStep: async () => { throw new Error('PG is down too'); },
+            });
+            try {
+                await execute(task, baseInput, ports);
+                expect.fail('should have thrown');
+            } catch (err) {
+                expect(err.message, 'original error, not the failStep error').to.equal('transport down');
+            }
+        });
+
+        it('failStep throws + onError defined → degradation result still returned', async () => {
+            const task = minimalTask({
+                onError: () => ({ degraded: true, despite: 'failStep failure' }),
+            });
+            const ports = stubPorts({
+                callAI: async () => { throw new Error('transport down'); },
+                failStep: async () => { throw new Error('PG is down too'); },
+            });
+            const result = await execute(task, baseInput, ports);
+            expect(result).to.deep.equal({ degraded: true, despite: 'failStep failure' });
+        });
+
+        it('pre-step failure (createStep throws) → propagates WITHOUT failStep (nothing to fail yet)', async () => {
+            let failCount = 0;
+            const task = minimalTask();
+            const ports = stubPorts({
+                createStep: async () => { throw new Error('cannot create step'); },
+                failStep: async () => { failCount++; },
+            });
+            try {
+                await execute(task, baseInput, ports);
+                expect.fail('should have thrown');
+            } catch (err) {
+                expect(err.message).to.equal('cannot create step');
+            }
+            expect(failCount, 'no step exists — failStep must NOT run').to.equal(0);
+        });
+
+        it('pre-step port validation failure → no session/step/LLM side effects at all', async () => {
+            const sideEffects = [];
+            const task = minimalTask({ requiredPorts: ['callAI', 'updateSession', 'absentPort'] });
+            const ports = stubPorts({
+                updateSession: async () => { sideEffects.push('updateSession'); },
+                createStep: async () => { sideEffects.push('createStep'); },
+                callAI: async () => { sideEffects.push('callAI'); },
+            });
+            try {
+                await execute(task, baseInput, ports);
+                expect.fail('should have thrown');
+            } catch (err) {
+                expect(err.message).to.match(/absentPort/);
+            }
+            expect(sideEffects).to.deep.equal([]);
+        });
+
+        it('onError receives (err, step, ports, input) — input enables input-dependent fallbacks', async () => {
+            let captured;
+            const task = minimalTask({
+                onError: (err, step, ports, input) => {
+                    captured = { err: err.message, stepId: step.step_id, hasPorts: !!ports.callAI, text: input.text };
+                    return 'fallback';
+                },
+            });
+            const ports = stubPorts({ callAI: async () => { throw new Error('x'); } });
+            const result = await execute(task, baseInput, ports);
+            expect(result).to.equal('fallback');
+            expect(captured).to.deep.equal({ err: 'x', stepId: 'step-test_step-0', hasPorts: true, text: 'test' });
+        });
+    });
 });

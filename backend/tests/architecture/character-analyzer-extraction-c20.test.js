@@ -106,8 +106,11 @@ describe('C20 Character Analyzer boundary: host ports', () => {
 
     it('extractCharacters requires the port object (fail-closed when ports are missing)', () => {
         const s = src(path.join(REPO_ROOT, 'backend/src/services/character-analyzer/index.js'));
-        expect(s).to.match(/missing host port/);
-        expect(s).to.match(/callAI, logConversation/);
+        // C21.3: port validation is delegated to the shared execute() lifecycle
+        // (the task's requiredPorts list is the fail-closed contract)
+        expect(s).to.match(/requiredPorts/);
+        expect(s).to.match(/'callAI', 'logConversation'/);
+        expect(s).to.match(/execute\(charactersTask/);
     });
 
     it('generateVoices requires the port object too (skill injection is a port)', () => {
@@ -168,10 +171,11 @@ describe('C20 Character Analyzer boundary: shared merge contract', () => {
 
 // ── Guard 8: module dependency surface (no hidden deps, no cycles) ───────────
 describe('C20 Character Analyzer boundary: dependency surface', () => {
-    it('index.js has no hidden dependencies beyond ./voices', () => {
+    it('index.js has no hidden dependencies beyond ./voices + the agent core', () => {
         const specs = requireSpecifiers(src(path.join(REPO_ROOT, 'backend/src/services/character-analyzer/index.js')));
-        const external = specs.filter((s) => s !== './voices');
-        expect(external, 'index.js must require nothing but ./voices').to.deep.equal([]);
+        // C21.3: @animastor/ai-agent (execute lifecycle) is the allowed core
+        const external = specs.filter((s) => s !== './voices' && s !== '@animastor/ai-agent');
+        expect(external, 'index.js must require nothing but ./voices + @animastor/ai-agent').to.deep.equal([]);
     });
 
     it('voices.js depends only on the shared identity predicate package export', () => {

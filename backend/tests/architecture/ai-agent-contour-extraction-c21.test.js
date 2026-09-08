@@ -29,7 +29,7 @@
 const { expect } = require('chai');
 const path = require('path');
 const fs = require('fs');
-const { REPO_ROOT, readSource, rel, requireSpecifiers, resolveSpecifier } = require('./helpers');
+const { REPO_ROOT, readSource, rel, requireSpecifiers, resolveSpecifier, listSourceFiles } = require('./helpers');
 
 // ── C21 AI Agent contour file set ────────────────────────────────────────────
 // The backend barrel + the C19/C20 analyzer modules it re-exports
@@ -50,10 +50,11 @@ const ANALYZER_MODULE_FILES = [
     'backend/src/services/character-analyzer/voices.js',
 ].map(f => path.join(REPO_ROOT, f));
 
-// C21.1: the two-level package files
+// C21.1/C21.3: the two-level package files
 const AGENT_CORE_FILES = [
     'packages/animastor-ai-agent/src/index.js',
     'packages/animastor-ai-agent/src/ports.js',
+    'packages/animastor-ai-agent/src/execute.js',
 ].map(f => path.join(REPO_ROOT, f));
 
 const ANALYSIS_PACKAGE_FILES = [
@@ -418,5 +419,105 @@ describe('C21.1 AI Agent / AI Analysis: package architecture', () => {
         const coreDir = path.join(REPO_ROOT, 'packages/animastor-ai-agent/src');
         const files = fs.readdirSync(coreDir).sort();
         expect(files, 'core src/ must contain only index.js, ports.js, and execute.js').to.deep.equal(['execute.js', 'index.js', 'ports.js']);
+    });
+});
+
+// ── Guard 8 (C21.3): hardened generic core contract ─────────────────────────
+describe('C21.3 AI Agent Core: hardened generic lifecycle', () => {
+    const CORE_EXECUTE = path.join(REPO_ROOT, 'packages/animastor-ai-agent/src/execute.js');
+    const CORE_PORTS = path.join(REPO_ROOT, 'packages/animastor-ai-agent/src/ports.js');
+    const ALL_CORE_FILES = [...AGENT_CORE_FILES];
+
+    it('buildMessages runs inside the guarded region (a prompt-assembly throw must fail the step, not dangle it)', () => {
+        const s = src(CORE_EXECUTE);
+        // the guarded try block opens BEFORE buildMessages
+        const tryIdx = s.indexOf('try {');
+        const buildIdx = s.indexOf('task.buildMessages(');
+        expect(tryIdx).to.be.greaterThan(-1);
+        expect(buildIdx).to.be.greaterThan(tryIdx);
+    });
+
+    it('failStep is called at most once and is shielded (a failStep throw never masks the original error)', () => {
+        const s = src(CORE_EXECUTE);
+        // count real invocations (JSDoc mentions don't count)
+        const failStepCalls = s.match(/_ports\.failStep\(/g) || [];
+        expect(failStepCalls, 'execute() must call _ports.failStep exactly once').to.have.lengthOf(1);
+        // shielded: failStep is wrapped in its own try/catch
+        expect(s).to.match(/try\s*\{\s*\n\s*const failMsg = task\.failMessage/);
+        expect(s).to.match(/catch \(failErr\)/);
+        expect(s).to.match(/original error kept/);
+    });
+
+    it('onError receives the task input (err, step, ports, input)', () => {
+        const s = src(CORE_EXECUTE);
+        expect(s).to.match(/task\.onError\(err, step, _ports, input\)/);
+    });
+
+    it('validation is task-owned: the core defines no semantic validate hook', () => {
+        const s = src(CORE_EXECUTE);
+        // no generic "validate" hook exists in the lifecycle — validation lives
+        // in task.normalize (documented contract)
+        expect(s, 'core must not promise a semantic validate hook').to.not.match(/\bvalidate\s*[:(]/);
+        for (const core of ALL_CORE_FILES) {
+            // comment-stripped: header comments legitimately enumerate the
+            // FORBIDDEN concepts while explaining the boundary
+            const code = src(core).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+            expect(code, `${rel(core)} must not know semantic schemas`).to.not.match(/\blocations\b|\bscenes\b|\bunits\b|\bcharacters\b|\bstructure\b|\bvoices\b/i);
+        }
+    });
+
+    it('the core never imports the host, the analysis layer, or any concrete analyzer', () => {
+        for (const f of ALL_CORE_FILES) {
+            const specs = requireSpecifiers(src(f));
+            const offenders = specs.filter((spec) => !spec.startsWith('./'));
+            expect(offenders, `${rel(f)} must require NOTHING external (zero-dependency mechanism)`).to.deep.equal([]);
+        }
+    });
+
+    it('the core never touches persistence, providers, or I/O (comment-stripped scan)', () => {
+        for (const f of ALL_CORE_FILES) {
+            const code = src(f).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+            for (const op of [/\bpg\b/, /\.query\(/, /\bredis\b/i, /\bfs\b/, /\bfetch\s*\(/, /\breadFileSync\b/, /\bwriteFileSync\b/, /ai-service/, /ai-caller/, /openai/, /anthropic/, /\btts\b/i, /\baudio\b/i, /\bimage\b/i, /\bvideo\b/i]) {
+                expect(code, `${rel(f)} must stay pure mechanism (no ${op})`).to.not.match(op);
+            }
+        }
+    });
+
+    it('redundant onError(err){throw err} definitions are not re-declared by tasks (default is built-in)', () => {
+        for (const f of ['packages/animastor-ai-analysis/src/tasks/locations.js',
+            'packages/animastor-ai-analysis/src/tasks/scenes.js',
+            'backend/src/services/character-analyzer/index.js']) {
+            const s = src(path.join(REPO_ROOT, f));
+            expect(s, `${rel(f)} must not re-declare the default rethrow`).to.not.match(/onError\s*\(\s*\w+\s*\)\s*\{\s*throw\s+\w+\s*;\s*\}/);
+        }
+    });
+
+    it('tasks with input-dependent degradation read input from the onError contract (no closure re-wrapping)', () => {
+        const units = src(path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src/tasks/units.js'));
+        expect(units, 'units onError must use the 4th contract arg (input)').to.match(/onError\s*\(\s*\w+\s*,\s*\w+\s*,\s*\w+\s*,\s*input\s*\)/);
+        expect(units, 'units must not re-wrap the task in createUnits').to.not.match(/taskWithInput/);
+        const structure = src(path.join(REPO_ROOT, 'backend/src/services/structure-analyzer/index.js'));
+        expect(structure, 'structure onError must use the 4th contract arg (input)').to.match(/onError\s*\(\s*\w+\s*,\s*\w+\s*,\s*\w+\s*,\s*input\s*\)/);
+        expect(structure, 'structure must not re-wrap the task in analyzeBookStructure').to.not.match(/taskWithInput/);
+    });
+
+    it('the ai-analysis → backend seam is frozen: exactly the two C19/C20 cross-requires, pinned to their modules', () => {
+        // C21.3: the transitional seam (packages → backend/src/services) must
+        // not silently grow. Exactly these two requires are allowed, matching
+        // exactly these modules. The physical move (C21.4 seam) replaces them.
+        const s = src(ANALYSIS_INDEX);
+        const backendReqs = requireSpecifiers(s).filter((spec) => /backend\//.test(spec));
+        expect(backendReqs, 'seam must stay at exactly two cross-requires').to.have.lengthOf(2);
+        expect(backendReqs).to.include('../../../backend/src/services/structure-analyzer');
+        expect(backendReqs).to.include('../../../backend/src/services/character-analyzer');
+        // the seam is documented in the package header
+        expect(s, 'the transitional seam must stay documented in the index header').to.match(/physically in backend\/src\/services/);
+        // no OTHER file in the analysis package reaches into the backend
+        const packageDir = path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src');
+        for (const f of listSourceFiles(packageDir)) {
+            if (f === ANALYSIS_INDEX) continue;
+            const offenders = requireSpecifiers(src(f)).filter((spec) => /backend\//.test(spec));
+            expect(offenders, `${rel(f)} must not reach into the backend (seam is index-only)`).to.deep.equal([]);
+        }
     });
 });

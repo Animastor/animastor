@@ -41,10 +41,6 @@ const charactersTask = {
         console.log(`[AGENT] Step 1 (characters): ${characters.length} extracted, ${Object.keys(mentions).length} mentions`);
         return { characters, mentions };
     },
-
-    onError(err) {
-        throw err;
-    },
 };
 
 async function extractCharacters(input, ports) {

@@ -96,10 +96,6 @@ const scenesTask = {
 
         return scenes;
     },
-
-    onError(err) {
-        throw err;
-    },
 };
 
 /**

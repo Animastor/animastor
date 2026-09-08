@@ -77,10 +77,10 @@ const unitsTask = {
         return `AI failed, using fallback: ${err.message}`;
     },
 
-    onError(err, step, ports) {
-        const sceneText = 'unknown';
-        console.warn(`[AGENT] Step 4 (scene) failed, using fallback: ${err.message}`);
-        return [{ text: sceneText, type: 'perception' }];
+    onError(err, step, ports, input) {
+        const sceneText = (input.scene.text || '').trim();
+        console.warn(`[AGENT] Step 4 (scene ${input.sceneIndex}) failed, using fallback: ${err.message}`);
+        return [{ text: sceneText, type: input.scene.type === 'dialogue' ? 'dialogue' : 'perception' }];
     },
 };
 
@@ -91,19 +91,7 @@ const unitsTask = {
  * @returns {Promise<object[]>} units
  */
 async function createUnits(input, ports) {
-    // unitsTask.onError needs access to input.scene for the fallback.
-    // The core execute() calls onError(err, step, ports), so we close over input here.
-    const taskWithInput = {
-        ...unitsTask,
-        onError(err, step, _ports) {
-            const sceneText = (input.scene.text || '').trim();
-            const msg = `AI failed, using fallback: ${err.message}`;
-            // failStep is already called by execute() — we just return the fallback
-            console.warn(`[AGENT] Step 4 (scene ${input.sceneIndex}) failed, using fallback: ${err.message}`);
-            return [{ text: sceneText, type: input.scene.type === 'dialogue' ? 'dialogue' : 'perception' }];
-        },
-    };
-    return execute(taskWithInput, input, ports);
+    return execute(unitsTask, input, ports);
 }
 
 module.exports = { createUnits, unitsTask };
