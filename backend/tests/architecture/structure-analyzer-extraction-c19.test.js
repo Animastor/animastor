@@ -181,7 +181,10 @@ describe('C19 Structure Analyzer boundary: compatibility barrel', () => {
 
     it('bootstrap + pipeline-steps reach the analyzer through the new seam (no old inline logic)', () => {
         const steps = src(path.join(REPO_ROOT, 'backend/src/services/agent/pipeline-steps.js'));
-        expect(steps).to.match(/structure-analyzer/);
+        // C21: the structure adapter routes through the shared ai-agent contour
+        // seam, which re-exports the C19 module — the seam, not the module
+        // path, is now the host-facing contract.
+        expect(steps).to.match(/ai-agent/);
         expect(steps).to.match(/analyzeBookStructure/);
         const bootstrap = src(path.join(REPO_ROOT, 'backend/src/services/agent/bootstrap.js'));
         expect(bootstrap, 'bootstrap must not build the structure prompt inline anymore').to.not.match(/Analyze the structure of this text/);

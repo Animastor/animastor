@@ -204,7 +204,10 @@ describe('C20 Character Analyzer boundary: contract exports', () => {
 
     it('pipeline-steps.js routes characters + voices through the module seam (no inline AI logic)', () => {
         const s = src(STEPS);
-        expect(s).to.match(/character-analyzer/);
+        // C21: the adapters route through the shared ai-agent contour seam,
+        // which re-exports the C20 module — the seam, not the module path, is
+        // now the host-facing contract.
+        expect(s).to.match(/ai-agent/);
         expect(s).to.match(/extractCharacters\(/);
         expect(s).to.match(/generateVoices\(/);
         expect(s, 'no inline characters prompt assembly left in the host adapter').to.not.match(/Extract all characters from this text/);

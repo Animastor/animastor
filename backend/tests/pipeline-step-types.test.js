@@ -11,12 +11,16 @@ const path = require('path');
 // sync with the step types actually used by the pipeline.
 
 describe('pipeline step types vs agent_steps.step_type CHECK constraint', () => {
-    // Step sources live in the host steps file AND in the analyzer modules
-    // (C19: structure-analyzer, C20: character-analyzer) — scan all of them.
+    // Step sources live in the host steps file, the analyzer modules
+    // (C19: structure-analyzer, C20: character-analyzer) and the C21 ai-agent
+    // contour tasks — scan all of them.
     const stepSources = [
         '../src/services/agent/pipeline-steps.js',
         '../src/services/character-analyzer/index.js',
         '../src/services/character-analyzer/voices.js',
+        '../src/services/ai-agent/tasks/locations.js',
+        '../src/services/ai-agent/tasks/scenes.js',
+        '../src/services/ai-agent/tasks/units.js',
     ].map(f => path.join(__dirname, f));
 
     const usedTypes = new Set(

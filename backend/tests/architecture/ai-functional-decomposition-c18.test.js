@@ -33,7 +33,7 @@ const {
     REPO_ROOT, readSource, requireSpecifiers, resolveSpecifier,
 } = require('./helpers');
 
-// ── C18 contour file set (functional modules F1–F18, C19/C20 physical splits) ──
+// ── C18 contour file set (functional modules F1–F18; C19/C20 physical splits + C21 contour) ──
 const CONTOUR_FILES = [
     'backend/src/services/structure-detector-deterministic.js',
     'backend/src/services/structure-analyzer/index.js',
@@ -41,6 +41,12 @@ const CONTOUR_FILES = [
     'backend/src/services/structure-detector.js',
     'backend/src/services/character-analyzer/index.js',
     'backend/src/services/character-analyzer/voices.js',
+    'backend/src/services/ai-agent/index.js',
+    'backend/src/services/ai-agent/ports.js',
+    'backend/src/services/ai-agent/context.js',
+    'backend/src/services/ai-agent/tasks/locations.js',
+    'backend/src/services/ai-agent/tasks/scenes.js',
+    'backend/src/services/ai-agent/tasks/units.js',
     'backend/src/services/agent/pipeline-steps.js',
     'backend/src/services/agent/pipeline-runner.js',
     'backend/src/services/agent/parallel-analysis-orchestrator.js',
@@ -185,6 +191,12 @@ describe('C18 functional decomposition: Book Writer boundary', () => {
         'backend/src/services/structure-detector.js',
         'backend/src/services/character-analyzer/index.js',
         'backend/src/services/character-analyzer/voices.js',
+        'backend/src/services/ai-agent/index.js',
+        'backend/src/services/ai-agent/ports.js',
+        'backend/src/services/ai-agent/context.js',
+        'backend/src/services/ai-agent/tasks/locations.js',
+        'backend/src/services/ai-agent/tasks/scenes.js',
+        'backend/src/services/ai-agent/tasks/units.js',
         'backend/src/services/agent/pipeline-steps.js',
         'backend/src/services/agent/pipeline-runner.js',
         'backend/src/services/agent/parallel-analysis-orchestrator.js',

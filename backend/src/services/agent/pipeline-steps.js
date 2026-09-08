@@ -1,9 +1,13 @@
 // ======================================================
 // Agent Pipeline Steps
 // ======================================================
-// Individual AI pipeline steps: structure analysis, character extraction,
-// location extraction, scene creation (title + location + environment-override),
-// unit creation, visual creation.
+// Individual AI pipeline step functions. Since C21 the AI ANALYSIS tasks
+// (structure/characters/voices/locations/scenes/units) physically live in
+// the ai-agent contour (services/ai-agent + the C19/C20 analyzer modules);
+// the analysis steps below are THIN HOST ADAPTERS that inject the host
+// ports into the contour seam (services/ai-agent) — composition only.
+// The generation/post-processing steps (visuals, reconciliation, polish,
+// fantasy repair) stay host-side and reach the LLM via ai-caller.
 
 const aiCaller = require('./ai-caller');
 const imageUtils = require('./image-utils');
@@ -13,13 +17,17 @@ const {
 } = require('../agent-session');
 const { estimateSpeechDurationSec } = require('../placeholder-audio');
 const {
-    PROGRESS_STAGES, SYSTEM_PROMPTS, MAX_SCENES_PER_CHUNK,
+    PROGRESS_STAGES, SYSTEM_PROMPTS,
     IMAGE_PROMPT_MAX_CHARS, UNIT_TEXT_MAX_CHARS, SCENE_TEXT_MAX_CHARS,
     fillLang,
 } = require('../agent-prompts');
 const { normalizeCharacterRefs } = require('../../image/image-service');
 const { sanitizeVideoTokens, tokensToString } = require('../../book/lazy-book/appearance');
-const { findUnverifiedSnakeTokens, canonicalizeText, desnakeifyText, findCrossPromptGaps, participantFieldIds, sanitizeEnvironment } = require('../../utils/snake-guard');
+const { findUnverifiedSnakeTokens, canonicalizeText, desnakeifyText, findCrossPromptGaps, participantFieldIds } = require('../../utils/snake-guard');
+// Shared pure prompt-context builder lives in the ai-agent contour (C21):
+// the location registry context block is consumed by contour tasks (scenes)
+// AND by the host-side polish steps below — one implementation, no copies.
+const { buildLocationsContext } = require('../ai-agent');
 
 /**
  * Normalize names/aliases → character_id in an AI-written visual text.
@@ -38,19 +46,21 @@ function normalizeVisualText(text, characters, mentions) {
 }
 
 /**
- * Build the location context block for agent prompts.
- * Includes each location's GLOBAL environment template so the scene split step
- * can check the scene against it and write only per-scene overrides.
+ * Shared host-port block for the analysis adapters: the SAME wiring for
+ * every contour task (C21 §3 — one host seam, injected per call).
  */
-function buildLocationsContext(locations) {
-    return (locations || []).map(l => {
-        const env = l.environment || {};
-        const envParts = ['time', 'season', 'lighting', 'weather', 'mood', 'atmosphere']
-            .filter(k => env[k])
-            .map(k => `${k}: ${env[k]}`);
-        const envStr = envParts.length > 0 ? ` (default environment: ${envParts.join(', ')})` : '';
-        return `- ${l.id}: ${l.name || l.id} (${l.type || 'unknown'})${envStr}`;
-    }).join('\n') || 'None';
+function analysisHostPorts(extra = {}) {
+    return {
+        callAI: aiCaller.callAI,
+        logConversation: aiCaller.logConversation,
+        updateSession,
+        createStep,
+        completeStep,
+        failStep,
+        prompt: (name) => SYSTEM_PROMPTS[name],
+        fillLang,
+        ...extra,
+    };
 }
 
 // ── Out-of-format prompt guard ──────────────────────────────────────
@@ -163,46 +173,12 @@ function stillMissingIds(unit, participants, knownIds, direction) {
     return idsInPrompt.filter(id => !idsInAction.includes(id));
 }
 
-// Allowed per-scene environment override fields (subset of the location template
-// + country/epoch for deviations from the book's default setting).
-const SCENE_ENV_FIELDS = ['time', 'season', 'lighting', 'weather', 'mood', 'atmosphere', 'country', 'epoch'];
-
-/**
- * Normalize a scene's location.environment: keep ONLY known fields with
- * non-empty string values; drop the environment object entirely if empty
- * (including when the AI returned only hallucinated/unknown fields).
- * Guards against hallucinated fields from the scene split step.
- */
-function normalizeSceneEnvironment(scene) {
-    const loc = scene.location;
-    if (!loc || typeof loc !== 'object') return scene;
-    const raw = loc.environment;
-    if (!raw || typeof raw !== 'object') return scene;
-    // Keep only known fields, then drop placeholder values ("not applicable",
-    // "n/a", "unknown", "—", …): an agent that cannot answer must leave the
-    // field absent — a placeholder would be injected into the image prompt.
-    const clean = {};
-    for (const key of SCENE_ENV_FIELDS) {
-        const v = raw[key];
-        if (typeof v === 'string' && v.trim()) clean[key] = v.trim();
-    }
-    const sanitized = sanitizeEnvironment(clean);
-    if (Object.keys(sanitized).length === 0) {
-        // Nothing valid remained — drop the environment entirely (removes
-        // hallucinated junk fields and lets the location template be the
-        // fallback at prompt build time).
-        const newLoc = { ...loc };
-        delete newLoc.environment;
-        return { ...scene, location: newLoc };
-    }
-    return { ...scene, location: { ...loc, environment: sanitized } };
-}
-
 // ======================================================
-// Agent Pipeline Step — Structure Analysis (host adapter, C19)
+// Agent Pipeline Step — Structure Analysis (host adapter, C19/C21)
 // ======================================================
 // The Structure Analyzer functional module lives in
-// services/structure-analyzer (C19 physical extraction). It reaches the
+// services/structure-analyzer (C19 physical extraction) and is reachable
+// through the shared ai-agent contour seam (C21). It reaches the
 // LLM ONLY through an injected callAI port and owns no persistence; the
 // host-side wiring (PG session/steps, conversation log, prompts, provider
 // context) is passed in here — this adapter is the composition point.
@@ -211,8 +187,8 @@ function normalizeSceneEnvironment(scene) {
 // (characters/locations/scenes/units/visuals).
 
 async function stepAnalyzeStructure(sessionId, sourceText, stepIndex, progress, language, options = {}) {
-    const structureAnalyzer = require('../structure-analyzer');
-    return structureAnalyzer.analyzeBookStructure(
+    const aiAgent = require('../ai-agent');
+    return aiAgent.analyzeBookStructure(
         {
             sourceText,
             candidates: options.candidates,
@@ -221,34 +197,24 @@ async function stepAnalyzeStructure(sessionId, sourceText, stepIndex, progress, 
             stepIndex,
             progress,
         },
-        {
-            callAI: aiCaller.callAI,
-            logConversation: aiCaller.logConversation,
-            updateSession,
-            createStep,
-            completeStep,
-            failStep,
-            analyzingStructureMessage: PROGRESS_STAGES.analyzing_structure,
-            prompt: (name) => SYSTEM_PROMPTS[name],
-            fillLang,
-        }
+        analysisHostPorts({ analyzingStructureMessage: PROGRESS_STAGES.analyzing_structure })
     );
 }
 
 // ======================================================
-// Agent Pipeline Step — Character Extraction (host adapter, C20)
+// Agent Pipeline Step — Character Extraction (host adapter, C20/C21)
 // ======================================================
 // The Character Analyzer functional module lives in
-// services/character-analyzer (C20 physical extraction). It reaches the
-// LLM ONLY through an injected callAI port and owns no persistence; the
-// host-side wiring (PG session/steps, conversation log, prompts, provider
-// context) is passed in here — this adapter is the composition point.
-// Replacing Character Analysis means replacing character-analyzer, not
-// touching this adapter's siblings (structure/locations/scenes/units/visuals).
+// services/character-analyzer (C20 physical extraction), reachable through
+// the shared ai-agent contour seam (C21). It reaches the LLM ONLY through
+// an injected callAI port and owns no persistence; the host-side wiring is
+// passed in here — this adapter is the composition point. Replacing
+// Character Analysis means replacing character-analyzer, not touching this
+// adapter's siblings (structure/locations/scenes/units/visuals).
 
 async function stepExtractCharacters(sessionId, text, stepIndex, progress, language) {
-    const characterAnalyzer = require('../character-analyzer');
-    return characterAnalyzer.extractCharacters(
+    const aiAgent = require('../ai-agent');
+    return aiAgent.extractCharacters(
         {
             windowText: text,
             language,
@@ -256,188 +222,96 @@ async function stepExtractCharacters(sessionId, text, stepIndex, progress, langu
             stepIndex,
             progress,
         },
-        {
-            callAI: aiCaller.callAI,
-            logConversation: aiCaller.logConversation,
-            updateSession,
-            createStep,
-            completeStep,
-            failStep,
-            extractingCharactersMessage: PROGRESS_STAGES.extracting_chars,
-            prompt: (name) => SYSTEM_PROMPTS[name],
-            fillLang,
-        }
+        analysisHostPorts({ extractingCharactersMessage: PROGRESS_STAGES.extracting_chars })
     );
 }
+
+// ======================================================
+// Agent Pipeline Step — Location Extraction (host adapter, C21)
+// ======================================================
+// Location Analysis (F3) moved from this file into the ai-agent contour
+// (services/ai-agent/tasks/locations.js). Same pattern as C19/C20: the task
+// owns prompt + JSON contract; the LLM seam and persistence are injected
+// ports; degradation (throw → runner keeps the existing set) is unchanged.
 
 async function stepExtractLocations(sessionId, text, characters, stepIndex, progress, language) {
-    const _progress = progress || (() => {});
-    _progress({ stage: 'extracting_locs', message: PROGRESS_STAGES.extracting_locs });
-    await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.extracting_locs });
-
-    const step = await createStep(sessionId, 'analyze_locations', stepIndex || 0);
-
-    const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name} (${c.role || 'unknown'})`).join('\n') || 'No characters yet';
-    const prompt = fillLang(
-        SYSTEM_PROMPTS.locations.replace('%EXISTING_CHARACTERS%', charsContext),
-        language
+    const aiAgent = require('../ai-agent');
+    return aiAgent.extractLocations(
+        {
+            windowText: text,
+            characters,
+            language,
+            sessionId,
+            stepIndex,
+            progress,
+        },
+        analysisHostPorts({ extractingLocationsMessage: PROGRESS_STAGES.extracting_locs })
     );
-
-    const messages = [
-        { role: 'system', content: prompt },
-        { role: 'user', content: `Extract all locations from this text:\n\n\`\`\`\n${text}\n\`\`\`` },
-    ];
-
-    try {
-        const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
-        const locations = result.locations || [];
-        await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
-        await completeStep(step.step_id, locations);
-        console.log(`[AGENT] Step 2 (locations): ${locations.length} extracted`);
-        return locations;
-    } catch (err) {
-        await failStep(step.step_id, err.message);
-        throw err;
-    }
 }
+
+// ======================================================
+// Agent Pipeline Step — Scene Analysis (host adapter, C21)
+// ======================================================
+// Scene Analysis (F4) moved from this file into the ai-agent contour
+// (services/ai-agent/tasks/scenes.js, with the deterministic
+// normalizeSceneEnvironment output guard). Coverage validation, the repair
+// retry and the deterministic fallback remain runner-owned — unchanged.
 
 async function stepCreateScenes(sessionId, text, characters, locations, stepIndex, progress, repairHint, chunkSize, language, bookDefault) {
-    // No artificial limit — AI creates natural narrative episodes.
-    // The pipeline caps to chunkSize later and caches extras.
-    const _progress = progress || (() => {});
-    _progress({ stage: 'creating_scenes', message: PROGRESS_STAGES.creating_scenes });
-    await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.creating_scenes });
-
-    const step = await createStep(sessionId, 'create_scenes', stepIndex || 0);
-
-    const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name}`).join('\n') || 'None';
-    const locsContext = buildLocationsContext(locations);
-
-    // Book-level default country/epoch (from stepAnalyzeStructure) — tells the
-    // scene split agent what the book's default setting is, so it can write
-    // country/epoch overrides ONLY for scenes that genuinely deviate (flashbacks,
-    // travel to another country, etc.). When absent, tell the agent to infer.
-    const bookDefaultParts = [];
-    if (bookDefault?.country) bookDefaultParts.push(`country: ${bookDefault.country}`);
-    if (bookDefault?.epoch) bookDefaultParts.push(`epoch: ${bookDefault.epoch}`);
-    const bookDefaultStr = bookDefaultParts.length > 0
-        ? bookDefaultParts.join('\n')
-        : 'not specified — infer the book\'s default country/epoch from the text itself';
-
-    const prompt = fillLang(
-        SYSTEM_PROMPTS.scenes
-            .replace('%EXISTING_CHARACTERS%', charsContext)
-            .replace('%EXISTING_LOCATIONS%', locsContext)
-            .replace('%BOOK_DEFAULT%', bookDefaultStr),
-        language
+    const aiAgent = require('../ai-agent');
+    return aiAgent.createScenes(
+        {
+            sceneText: text,
+            characters,
+            locations,
+            bookDefault,
+            repairHint,
+            chunkSize,
+            language,
+            sessionId,
+            stepIndex,
+            progress,
+        },
+        analysisHostPorts({ creatingScenesMessage: PROGRESS_STAGES.creating_scenes })
     );
-
-    let repairText = '';
-    if (repairHint) {
-        repairText = `\n\nPrevious scene split failed source coverage validation.\nReason: ${repairHint.reason || 'unknown'}.\nMissing or problematic source fragment:\n\`\`\`\n${repairHint.gap_preview || ''}\n\`\`\`\nReturn a corrected split that starts at the first narrative word and covers a contiguous prefix of the provided text without gaps. Do not skip, overlap, paraphrase, or summarize anything inside the returned scenes. Unused tail text is allowed.`;
-    }
-
-    const messages = [
-        { role: 'system', content: prompt },
-        { role: 'user', content: `Split this text into scenes:\n\n\`\`\`\n${text}\n\`\`\`${repairText}` },
-    ];
-
-    try {
-        const result = await aiCaller.callAI(messages, { maxTokens: 6144 });
-        const scenes = (result.scenes || []).map(normalizeSceneEnvironment);
-        if (scenes.length === 0) throw new Error('AI returned no scenes');
-
-        const withTitle = scenes.filter(s => s.title).length;
-        const withLoc = scenes.filter(s => s.location?.id).length;
-        const withEnv = scenes.filter(s => s.location?.environment && Object.keys(s.location.environment).length > 0).length;
-        const missingTitle = scenes.length - withTitle;
-        const missingLoc = scenes.length - withLoc;
-        const s0 = scenes[0] || {};
-        console.log(`[AGENT] Step 3 (scenes): ${scenes.length} created, title=${withTitle}/${scenes.length}, location.id=${withLoc}/${scenes.length}, env.override=${withEnv}/${scenes.length}, s0.keys=[${Object.keys(s0).join(',')}], s0.title=${JSON.stringify(s0.title)}, s0.location=${JSON.stringify(s0.location)}`);
-        if (missingTitle > 0) {
-            console.warn(`[AGENT] Step 3: ${missingTitle} scenes MISSING title`);
-        }
-        if (missingLoc > 0) {
-            console.warn(`[AGENT] Step 3: ${missingLoc} scenes MISSING location.id`);
-        }
-
-        await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
-        await completeStep(step.step_id, scenes);
-        return scenes;
-    } catch (err) {
-        await failStep(step.step_id, err.message);
-        throw err;
-    }
 }
+
+// ======================================================
+// Agent Pipeline Step — Unit Analysis (host adapter, C21)
+// ======================================================
+// Unit Analysis (F5) moved from this file into the ai-agent contour
+// (services/ai-agent/tasks/units.js). The failure degradation (fallback unit
+// instead of throw) stays inside the task — unchanged. The long-unit
+// duration splitter (unit-splitter) remains a host-wired post-processor.
 
 async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepIndex, progress, mentions) {
-    const _progress = progress || (() => {});
-    const msg = PROGRESS_STAGES.creating_units(sceneIndex);
-    _progress({ stage: 'creating_units', message: msg });
-    await updateSession(sessionId, { progress_msg: msg });
-
-    const step = await createStep(sessionId, 'create_units', stepIndex || 0, sceneIndex);
-
-    const sceneText = (scene.text || '').trim();
-    const truncatedText = sceneText.length > 3000 ? sceneText.substring(0, 3000) + '...' : sceneText;
-    const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name}`).join('\n') || 'None';
-
-    const knownIds = new Set((characters || []).map(c => c.id).filter(Boolean));
-    const mentionsContext = (mentions && typeof mentions === 'object' && Object.keys(mentions).length > 0)
-        ? '\n## Role/title → character_id mappings\n' +
-          'When the text refers to a character by role or title (e.g. "редактор", "глава журнала", "незнакомец в плаще"),\n' +
-          'use the mapped character_id below. If a role references an id NOT in the Known Characters list,\n' +
-          'describe the character literarily in natural language instead:\n' +
-          Object.entries(mentions)
-            .filter(([, charId]) => knownIds.has(charId))
-            .map(([alias, charId]) => `  "${alias}" → ${charId}`).join('\n')
-        : '';
-
-    const prompt = SYSTEM_PROMPTS.units
-        .replace('%SCENE_TEXT%', truncatedText)
-        .replace('%EXISTING_CHARACTERS%', charsContext + mentionsContext);
-
-    const messages = [
-        { role: 'system', content: prompt },
-        { role: 'user', content: `Decompose this scene into visual units:\n\n\`\`\`\n${truncatedText}\n\`\`\`` },
-    ];        try {
-        const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
-        const units = result.units || [];
-        if (units.length === 0) {
-            const fallbackUnit = { text: sceneText, type: scene.type === 'dialogue' ? 'dialogue' : 'narration' };
-            if (fallbackUnit.type === 'dialogue') {
-                fallbackUnit.audio = { text: sceneText };
-            }
-            units.push(fallbackUnit);
-        }
-        // Log speaker presence for dialogue units
-        const dialogueUnits = units.filter(u => u.type === 'dialogue');
-        const withSpeaker = dialogueUnits.filter(u => u.audio?.speaker);
-        if (dialogueUnits.length > 0) {
-            console.log(`[AGENT] Step 4 (units scene ${sceneIndex}): ${dialogueUnits.length} dialogue units, ${withSpeaker.length} with audio.speaker`);
-        }
-        await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
-        await completeStep(step.step_id, units);
-        console.log(`[AGENT] Step 4 (units scene ${sceneIndex}): ${units.length} units`);
-        return units;
-    } catch (err) {
-        await failStep(step.step_id, `AI failed, using fallback: ${err.message}`);
-        console.warn(`[AGENT] Step 4 (scene ${sceneIndex}) failed, using fallback: ${err.message}`);
-        return [{ text: sceneText, type: scene.type === 'dialogue' ? 'dialogue' : 'perception' }];
-    }
+    const aiAgent = require('../ai-agent');
+    return aiAgent.createUnits(
+        {
+            scene,
+            sceneIndex,
+            characters,
+            mentions,
+            sessionId,
+            stepIndex,
+            progress,
+        },
+        analysisHostPorts({ creatingUnitsMessage: PROGRESS_STAGES.creating_units })
+    );
 }
 
 // ======================================================
-// Agent Pipeline Step — Voice Generation (host adapter, C20)
+// Agent Pipeline Step — Voice Generation (host adapter, C20/C21)
 // ======================================================
 // F7 voice authoring lives in character-analyzer/voices.js (the audio-
-// adjacent half of the Character Analyzer). It still mutates
-// characters[i].voice in place — the write-back contract is unchanged;
-// only the wiring moved behind the module seam.
+// adjacent half of the Character Analyzer), reachable through the shared
+// ai-agent contour seam (C21). It is AI ANALYSIS/AUTHORING — voice
+// DESCRIPTIONS for TTS, not audio generation. It still mutates
+// characters[i].voice in place — the write-back contract is unchanged.
 
 async function stepGenerateVoices(sessionId, text, characters, stepIndex, progress, language, promptProfiles) {
-    const characterAnalyzer = require('../character-analyzer');
-    return characterAnalyzer.generateVoices(
+    const aiAgent = require('../ai-agent');
+    return aiAgent.generateVoices(
         {
             windowText: text,
             characters,
@@ -447,18 +321,10 @@ async function stepGenerateVoices(sessionId, text, characters, stepIndex, progre
             stepIndex,
             progress,
         },
-        {
-            callAI: aiCaller.callAI,
-            logConversation: aiCaller.logConversation,
-            updateSession,
-            createStep,
-            completeStep,
-            failStep,
+        analysisHostPorts({
             voiceGenerationMessage: PROGRESS_STAGES.voice_generation,
-            prompt: (name) => SYSTEM_PROMPTS[name],
-            fillLang,
             buildSkill: promptProfileLoader.buildSkillSection,
-        }
+        })
     );
 }
 
