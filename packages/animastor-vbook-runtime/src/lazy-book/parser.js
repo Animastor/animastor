@@ -77,29 +77,37 @@ function injectChapterMarkers(text) {
 //   { title, startLine, endLine, startOffset, endOffset, length }
 // plus new fields: { type, label, number }.
 //
-// ── structure-detector PORT (@animastor/vbook-runtime preparation) ──────
+// ── structure-detector PORT (C13 Parser contract) ───────────────────────
 // This module does not require the host's structure-detector directly.
 // The host composition root (backend.cjs) binds the real implementation
 // once at startup via setStructureDetector(); standalone package tests
 // inject a stub. Fail-closed: until a detector is bound, splitIntoChapters
 // throws instead of guessing a structure.
 //
-// Port contract (the seed of the future C13 Parser contract):
-//   detector.buildDeterministicMap(sourceText) → ChapterMap
+// Port contract — StructureDetectorPort (frozen in
+// packages/animastor-vbook-runtime/src/contracts/parser-contract.js,
+// documented in docs/parser-contract-c13.md):
+//   detector.buildDeterministicMap(sourceText) → ParserResult
 //     { title?, author?, hasPrologue, hasEpilogue, parts,
 //       segments: [{ type, label, title, number, headerLine,
 //                    startOffset, endOffset, source }] }
+//   Acceptable alias: buildChapterMap (same signature/return).
+// Offsets anchor the EXACT sourceText instance — no trim/normalize/re-decode
+// is allowed between the Parser and its consumers.
+
+const contracts = require('../contracts/parser-contract');
+const legacyProjection = require('../contracts/legacy-projection');
 
 let structureDetector = null;
 
 /**
  * Bind the structure-detector implementation for this process.
- * Expects an object exposing at least buildDeterministicMap(sourceText).
+ * Exposes at least buildDeterministicMap(sourceText) (alias: buildChapterMap).
  * Host composition root binds the real services/structure-detector; the
  * package's own tests bind a stub.
  */
 function setStructureDetector(detector) {
-    if (!detector || typeof detector.buildDeterministicMap !== 'function') {
+    if (!contracts.isValidStructureDetectorPort(detector)) {
         throw new Error('vbook: structureDetector must expose buildDeterministicMap(sourceText)');
     }
     structureDetector = detector;
@@ -112,61 +120,15 @@ function getStructureDetector() {
     return structureDetector;
 }
 
-function offsetToLine(lines, offset) {
-    let acc = 0;
-    for (let i = 0; i < lines.length; i++) {
-        const lineEnd = acc + lines[i].length;
-        if (offset < lineEnd) return i;
-        acc = lineEnd + 1;
-    }
-    return Math.max(0, lines.length - 1);
-}
-
 function splitIntoChapters(text) {
-    const map = getStructureDetector().buildDeterministicMap(text);
-    const lines = text.split('\n');
-    const chapters = [];
-
-    for (const seg of map.segments) {
-        const startOffset = seg.startOffset || 0;
-        const endOffset = Math.max(startOffset, seg.endOffset || text.length);
-        const startLine = offsetToLine(lines, startOffset);
-        const endLine = offsetToLine(lines, Math.max(startOffset, endOffset - 1));
-
-        // 'body'/'poem' segments become plain chapters WITHOUT a structural label.
-        const isPlain = seg.type === 'body' || seg.type === 'poem';
-        const type = isPlain ? 'chapter' : seg.type;
-        const title = isPlain ? null : (seg.title || seg.label || null);
-
-        chapters.push({
-            title,
-            type,
-            label: isPlain ? null : (seg.label || null),
-            number: seg.number ?? null,
-            startLine,
-            endLine,
-            startOffset,
-            endOffset,
-            length: endOffset - startOffset,
-        });
-    }
-
-    // Safety net: never return an empty chapter list.
-    if (chapters.length === 0) {
-        chapters.push({
-            title: null,
-            type: 'chapter',
-            label: null,
-            number: null,
-            startLine: 0,
-            endLine: Math.max(0, lines.length - 1),
-            startOffset: 0,
-            endOffset: text.length,
-            length: text.length,
-        });
-    }
-
-    return chapters;
+    const detector = getStructureDetector();
+    const buildMap = typeof detector.buildDeterministicMap === 'function'
+        ? detector.buildDeterministicMap
+        : detector.buildChapterMap; // contract alias (docs/parser-contract-c13.md §6)
+    const map = buildMap.call(detector, text);
+    // Legacy DTO = documented projection of the canonical ParserResult
+    // (contracts/legacy-projection.js; shape frozen by the contract tests).
+    return legacyProjection.mapToLegacyChapters(map, text);
 }
 
 function firstMeaningfulChapter(chapters, sourceText) {
@@ -224,4 +186,14 @@ module.exports = {
     firstMeaningfulChapter, detectLanguage,
     injectChapterMarkers,
     setStructureDetector, getStructureDetector,
+    // C13 Parser contract surface (validation + legacy projection helpers).
+    // Pure additive exports — nothing existing is renamed or reshaped.
+    validateParserResult: contracts.validateParserResult,
+    validateParserSegment: contracts.validateParserSegment,
+    assertValidParserResult: contracts.assertValidParserResult,
+    validateLanguageResult: contracts.validateLanguageResult,
+    PARSER_CONTRACT_VERSION: contracts.PARSER_CONTRACT_VERSION,
+    isValidStructureDetectorPort: contracts.isValidStructureDetectorPort,
+    mapToLegacyChapters: legacyProjection.mapToLegacyChapters,
+    segmentToLegacyChapter: legacyProjection.segmentToLegacyChapter,
 };

@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### C13 Parser contract (typed, additive — no behavior change)
+
+- `src/contracts/parser-contract.js` — canonical `ParserResult`/`ChapterMap`
+  DTO + `ParserSegment` JSDoc types, `PARSER_CONTRACT_VERSION = 1`,
+  `validateParserResult`/`validateParserSegment`/`validateLanguageResult`,
+  `assertValidParserResult`, and the `StructureDetectorPort` shape check
+  (`isValidStructureDetectorPort`/`assertStructureDetectorPort`).
+- `src/contracts/legacy-projection.js` — the legacy chapter DTO defined as a
+  projection of the canonical map (`segmentToLegacyChapter`,
+  `mapToLegacyChapters`); `splitIntoChapters()` now delegates to it
+  (behavior byte-identical, pinned by contract tests).
+- `setStructureDetector()` additionally accepts the documented port alias
+  `buildChapterMap`; the required method stays `buildDeterministicMap`
+  (fail-closed semantics and error message unchanged).
+- `lazy-book/parser` additive exports: contract validators + projection
+  helpers + `PARSER_CONTRACT_VERSION`.
+- New export paths: `./contracts/parser-contract`, `./contracts/legacy-projection`.
+- Docs: `docs/parser-contract-c13.md`. No parser algorithm, data format,
+  or AI/Importer behavior changed.
+
 ## 0.1.0 — 2026-09-07
 
 ### Physical extraction (relocation checklist §2 COMPLETE)

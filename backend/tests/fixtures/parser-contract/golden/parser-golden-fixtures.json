@@ -1,0 +1,380 @@
+{
+  "contractVersion": 1,
+  "note": "Golden fixtures for the C13 Parser contract. Each fixture records the canonical ParserResult produced by buildDeterministicMap plus its legacy chapter projection (splitIntoChapters). Offsets anchor the exact \"text\" instance. Regenerate only on a contract version bump.",
+  "fixtures": [
+    {
+      "name": "single-chapter-ru",
+      "description": "One explicit \"Глава 1\" chapter covering the whole text.",
+      "text": "Глава 1. Начало\n\nУтро выдалось тихим, и город ещё не проснулся. Он шёл по пустой улице, слушая, как под ногами хрустит свежий песок, и думал о том, что всё только начинается. Утро выдалось тихим, и город ещё не проснулся. Он шёл по пустой улице, слушая, как под ногами хрустит свежий песок, и думал о том, что всё только начинается. Утро выдалось тихим, и город ещё не проснулся. Он шёл по пустой улице, слушая, как под ногами хрустит свежий песок, и думал о том, что всё только начинается. ",
+      "expectedMap": {
+        "title": null,
+        "author": null,
+        "hasPrologue": false,
+        "hasEpilogue": false,
+        "parts": [],
+        "segments": [
+          {
+            "type": "chapter",
+            "label": "Глава",
+            "title": "Начало",
+            "number": 1,
+            "headerLine": "Глава 1. Начало",
+            "startOffset": 0,
+            "endOffset": 491,
+            "source": "detect"
+          }
+        ],
+        "source": "detect"
+      },
+      "expectedLegacyChapters": [
+        {
+          "title": "Начало",
+          "type": "chapter",
+          "label": "Глава",
+          "number": 1,
+          "startLine": 0,
+          "endLine": 2,
+          "startOffset": 0,
+          "endOffset": 491,
+          "length": 491
+        }
+      ]
+    },
+    {
+      "name": "multiple-chapters-ru",
+      "description": "Three numbered chapters in reading order.",
+      "text": "Глава 1. Земля\n\nЮра, инженер по искусственному интеллекту, всё чаще замечал странный парадокс: чем совершеннее становились технологии, тем реже человек пытался понять самого себя. Юра, инженер по искусственному интеллекту, всё чаще замечал странный парадокс: чем совершеннее становились технологии, тем реже человек пытался понять самого себя. Юра, инженер по искусственному интеллекту, всё чаще замечал странный парадокс: чем совершеннее становились технологии, тем реже человек пытался понять самого себя. \n\nГлава 2. Первый полёт\n\nПока большинство людей спорило о будущем, небольшая группа инженеров, учёных и исследователей просто начала его строить. Настал день первого пилотируемого полёта. Пока большинство людей спорило о будущем, небольшая группа инженеров, учёных и исследователей просто начала его строить. Настал день первого пилотируемого полёта. Пока большинство людей спорило о будущем, небольшая группа инженеров, учёных и исследователей просто начала его строить. Настал день первого пилотируемого полёта. \n\nГлава 3. Процветание\n\nПрошли годы. Кольцевая станция превратилась в живой научный город, где технологии помогали человеку раскрывать собственные способности. Прошли годы. Кольцевая станция превратилась в живой научный город, где технологии помогали человеку раскрывать собственные способности. Прошли годы. Кольцевая станция превратилась в живой научный город, где технологии помогали человеку раскрывать собственные способности. ",
+      "expectedMap": {
+        "title": null,
+        "author": null,
+        "hasPrologue": false,
+        "hasEpilogue": false,
+        "parts": [],
+        "segments": [
+          {
+            "type": "chapter",
+            "label": "Глава",
+            "title": "Земля",
+            "number": 1,
+            "headerLine": "Глава 1. Земля",
+            "startOffset": 0,
+            "endOffset": 510,
+            "source": "detect"
+          },
+          {
+            "type": "chapter",
+            "label": "Глава",
+            "title": "Первый полёт",
+            "number": 2,
+            "headerLine": "Глава 2. Первый полёт",
+            "startOffset": 510,
+            "endOffset": 1024,
+            "source": "detect"
+          },
+          {
+            "type": "chapter",
+            "label": "Глава",
+            "title": "Процветание",
+            "number": 3,
+            "headerLine": "Глава 3. Процветание",
+            "startOffset": 1024,
+            "endOffset": 1454,
+            "source": "detect"
+          }
+        ],
+        "source": "detect"
+      },
+      "expectedLegacyChapters": [
+        {
+          "title": "Земля",
+          "type": "chapter",
+          "label": "Глава",
+          "number": 1,
+          "startLine": 0,
+          "endLine": 4,
+          "startOffset": 0,
+          "endOffset": 510,
+          "length": 510
+        },
+        {
+          "title": "Первый полёт",
+          "type": "chapter",
+          "label": "Глава",
+          "number": 2,
+          "startLine": 4,
+          "endLine": 8,
+          "startOffset": 510,
+          "endOffset": 1024,
+          "length": 514
+        },
+        {
+          "title": "Процветание",
+          "type": "chapter",
+          "label": "Глава",
+          "number": 3,
+          "startLine": 8,
+          "endLine": 10,
+          "startOffset": 1024,
+          "endOffset": 1454,
+          "length": 430
+        }
+      ]
+    },
+    {
+      "name": "prologue-chapters-epilogue-ru",
+      "description": "Title+author line, prologue, two chapters, epilogue.",
+      "text": "За пределами алгоритмов. С.А. Хабаров.\n\nПролог. Мир на переломе эпох\n\nПервая половина XXI века стала временем стремительного научного прогресса. Искусственный интеллект научился решать задачи, которые ещё недавно считались исключительно человеческими. Первая половина XXI века стала временем стремительного научного прогресса. Искусственный интеллект научился решать задачи, которые ещё недавно считались исключительно человеческими. Первая половина XXI века стала временем стремительного научного прогресса. Искусственный интеллект научился решать задачи, которые ещё недавно считались исключительно человеческими. \n\nГлава 1. Земля\n\nЮра, инженер по искусственному интеллекту, всё чаще замечал странный парадокс: чем совершеннее становились технологии, тем реже человек пытался понять самого себя. Юра, инженер по искусственному интеллекту, всё чаще замечал странный парадокс: чем совершеннее становились технологии, тем реже человек пытался понять самого себя. Юра, инженер по искусственному интеллекту, всё чаще замечал странный парадокс: чем совершеннее становились технологии, тем реже человек пытался понять самого себя. \n\nГлава 2. Первый полёт\n\nПока большинство людей спорило о будущем, небольшая группа инженеров, учёных и исследователей просто начала его строить. Пока большинство людей спорило о будущем, небольшая группа инженеров, учёных и исследователей просто начала его строить. Пока большинство людей спорило о будущем, небольшая группа инженеров, учёных и исследователей просто начала его строить. \n\nЭпилог. Новый рассвет\n\nПрошли годы. Кольцевая станция превратилась в живой научный город, и город встретил новый рассвет. Прошли годы. Кольцевая станция превратилась в живой научный город, и город встретил новый рассвет. Прошли годы. Кольцевая станция превратилась в живой научный город, и город встретил новый рассвет. ",
+      "expectedMap": {
+        "title": {
+          "text": "За пределами алгоритмов",
+          "source": "detect",
+          "candidateId": "c0"
+        },
+        "author": {
+          "text": "С.А. Хабаров",
+          "source": "detect",
+          "candidateId": "c0"
+        },
+        "hasPrologue": true,
+        "hasEpilogue": true,
+        "parts": [],
+        "segments": [
+          {
+            "type": "prologue",
+            "label": "Пролог",
+            "title": "Мир на переломе эпох",
+            "number": null,
+            "headerLine": "Пролог. Мир на переломе эпох",
+            "startOffset": 40,
+            "endOffset": 618,
+            "source": "detect"
+          },
+          {
+            "type": "chapter",
+            "label": "Глава",
+            "title": "Земля",
+            "number": 1,
+            "headerLine": "Глава 1. Земля",
+            "startOffset": 618,
+            "endOffset": 1128,
+            "source": "detect"
+          },
+          {
+            "type": "chapter",
+            "label": "Глава",
+            "title": "Первый полёт",
+            "number": 2,
+            "headerLine": "Глава 2. Первый полёт",
+            "startOffset": 1128,
+            "endOffset": 1516,
+            "source": "detect"
+          },
+          {
+            "type": "epilogue",
+            "label": "Эпилог",
+            "title": "Новый рассвет",
+            "number": null,
+            "headerLine": "Эпилог. Новый рассвет",
+            "startOffset": 1516,
+            "endOffset": 1836,
+            "source": "detect"
+          }
+        ],
+        "source": "detect"
+      },
+      "expectedLegacyChapters": [
+        {
+          "title": "Мир на переломе эпох",
+          "type": "prologue",
+          "label": "Пролог",
+          "number": null,
+          "startLine": 2,
+          "endLine": 6,
+          "startOffset": 40,
+          "endOffset": 618,
+          "length": 578
+        },
+        {
+          "title": "Земля",
+          "type": "chapter",
+          "label": "Глава",
+          "number": 1,
+          "startLine": 6,
+          "endLine": 10,
+          "startOffset": 618,
+          "endOffset": 1128,
+          "length": 510
+        },
+        {
+          "title": "Первый полёт",
+          "type": "chapter",
+          "label": "Глава",
+          "number": 2,
+          "startLine": 10,
+          "endLine": 14,
+          "startOffset": 1128,
+          "endOffset": 1516,
+          "length": 388
+        },
+        {
+          "title": "Новый рассвет",
+          "type": "epilogue",
+          "label": "Эпилог",
+          "number": null,
+          "startLine": 14,
+          "endLine": 16,
+          "startOffset": 1516,
+          "endOffset": 1836,
+          "length": 320
+        }
+      ]
+    },
+    {
+      "name": "no-explicit-chapters-ru",
+      "description": "Bare narrative without any headings: single body segment, no title.",
+      "text": "Она открыла дверь и вошла. В комнате пахло кофе и старой бумагой. Кто-то ждал её у окна, и этот кто-то не обернулся, когда скрипнула половица. Она открыла дверь и вошла. В комнате пахло кофе и старой бумагой. Кто-то ждал её у окна, и этот кто-то не обернулся, когда скрипнула половица. Она открыла дверь и вошла. В комнате пахло кофе и старой бумагой. Кто-то ждал её у окна, и этот кто-то не обернулся, когда скрипнула половица. ",
+      "expectedMap": {
+        "title": null,
+        "author": null,
+        "hasPrologue": false,
+        "hasEpilogue": false,
+        "parts": [],
+        "segments": [
+          {
+            "type": "body",
+            "label": null,
+            "title": null,
+            "number": null,
+            "headerLine": null,
+            "startOffset": 0,
+            "endOffset": 429,
+            "source": "detect"
+          }
+        ],
+        "source": "detect"
+      },
+      "expectedLegacyChapters": [
+        {
+          "title": null,
+          "type": "chapter",
+          "label": null,
+          "number": null,
+          "startLine": 0,
+          "endLine": 0,
+          "startOffset": 0,
+          "endOffset": 429,
+          "length": 429
+        }
+      ]
+    },
+    {
+      "name": "russian-titled-body",
+      "description": "Russian title line + body text without chapters.",
+      "text": "Тихая осень в старом городе\n\nСнег ложился на крыши домов, и город засыпал под тёплым одеялом тумана. Фонари мерцали редкими островками света, отражаясь в мокром асфальте. Снег ложился на крыши домов, и город засыпал под тёплым одеялом тумана. Фонари мерцали редкими островками света, отражаясь в мокром асфальте. Снег ложился на крыши домов, и город засыпал под тёплым одеялом тумана. Фонари мерцали редкими островками света, отражаясь в мокром асфальте. ",
+      "expectedMap": {
+        "title": {
+          "text": "Тихая осень в старом городе",
+          "source": "detect",
+          "candidateId": "c0"
+        },
+        "author": null,
+        "hasPrologue": false,
+        "hasEpilogue": false,
+        "parts": [],
+        "segments": [
+          {
+            "type": "body",
+            "label": null,
+            "title": null,
+            "number": null,
+            "headerLine": null,
+            "startOffset": 27,
+            "endOffset": 455,
+            "source": "detect"
+          }
+        ],
+        "source": "detect"
+      },
+      "expectedLegacyChapters": [
+        {
+          "title": null,
+          "type": "chapter",
+          "label": null,
+          "number": null,
+          "startLine": 1,
+          "endLine": 2,
+          "startOffset": 27,
+          "endOffset": 455,
+          "length": 428
+        }
+      ]
+    },
+    {
+      "name": "english-chapters-en",
+      "description": "English title + two numbered chapters.",
+      "text": "The Long Road Home\n\nJohn Smith\n\nChapter 1. Departure\n\nThe morning train pulled out of the station under a grey sky, and Thomas watched the city dissolve into fields and rivers he had never learned to name. The morning train pulled out of the station under a grey sky, and Thomas watched the city dissolve into fields and rivers he had never learned to name. The morning train pulled out of the station under a grey sky, and Thomas watched the city dissolve into fields and rivers he had never learned to name. \n\nChapter 2. Arrival\n\nBy the time the letter reached him, the road home had already changed its shape, and the house at the end of it no longer waited for anyone. By the time the letter reached him, the road home had already changed its shape, and the house at the end of it no longer waited for anyone. By the time the letter reached him, the road home had already changed its shape, and the house at the end of it no longer waited for anyone. ",
+      "expectedMap": {
+        "title": {
+          "text": "The Long Road Home",
+          "source": "detect",
+          "candidateId": "c0"
+        },
+        "author": {
+          "text": "John Smith",
+          "source": "detect",
+          "candidateId": "c1"
+        },
+        "hasPrologue": false,
+        "hasEpilogue": false,
+        "parts": [],
+        "segments": [
+          {
+            "type": "chapter",
+            "label": "Chapter",
+            "title": "Departure",
+            "number": 1,
+            "headerLine": "Chapter 1. Departure",
+            "startOffset": 32,
+            "endOffset": 512,
+            "source": "detect"
+          },
+          {
+            "type": "chapter",
+            "label": "Chapter",
+            "title": "Arrival",
+            "number": 2,
+            "headerLine": "Chapter 2. Arrival",
+            "startOffset": 512,
+            "endOffset": 955,
+            "source": "detect"
+          }
+        ],
+        "source": "detect"
+      },
+      "expectedLegacyChapters": [
+        {
+          "title": "Departure",
+          "type": "chapter",
+          "label": "Chapter",
+          "number": 1,
+          "startLine": 4,
+          "endLine": 8,
+          "startOffset": 32,
+          "endOffset": 512,
+          "length": 480
+        },
+        {
+          "title": "Arrival",
+          "type": "chapter",
+          "label": "Chapter",
+          "number": 2,
+          "startLine": 8,
+          "endLine": 10,
+          "startOffset": 512,
+          "endOffset": 955,
+          "length": 443
+        }
+      ]
+    }
+  ]
+}

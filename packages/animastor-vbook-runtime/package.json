@@ -9,6 +9,8 @@
         "./bundle-validator.cjs": "./src/bundle-validator.cjs",
         "./books-root": "./src/books-root.js",
         "./language-detector": "./src/language-detector.js",
+        "./contracts/parser-contract": "./src/contracts/parser-contract.js",
+        "./contracts/legacy-projection": "./src/contracts/legacy-projection.js",
         "./character-identity": "./src/character-identity.js",
         "./snake-guard": "./src/snake-guard.js",
         "./scene-title-utils": "./src/scene-title-utils.js",

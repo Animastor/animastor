@@ -169,10 +169,14 @@ describe('VB-T3: structure-detector connects only via the injectable port', () =
     it('the port is fail-closed: splitIntoChapters throws without a bound detector', () => {
         // Fresh module instance — binding state is process-global, so load an
         // isolated copy of the module to probe the unbound state.
+        // (filename/paths must be set BEFORE _compile: parser.js now has
+        // top-level relative requires — the C13 contracts module.)
         const Module = require('module');
         const parserPath = path.join(PACKAGE_SRC, 'lazy-book', 'parser.js');
         const src = fs.readFileSync(parserPath, 'utf8');
         const m = new Module('parser-unbound-probe', null);
+        m.filename = parserPath;
+        m.paths = Module._nodeModulePaths(path.dirname(parserPath));
         m._compile(src, parserPath);
         expect(() => m.exports.splitIntoChapters('текст')).to.throw(/structureDetector is not bound/);
     });
@@ -188,6 +192,8 @@ describe('VB-T3: structure-detector connects only via the injectable port', () =
         const parserPath = path.join(PACKAGE_SRC, 'lazy-book', 'parser.js');
         const src = fs.readFileSync(parserPath, 'utf8');
         const m = new Module('parser-stub-probe', null);
+        m.filename = parserPath;
+        m.paths = Module._nodeModulePaths(path.dirname(parserPath));
         m._compile(src, parserPath);
         const text = 'Пролог\n\n' + 'x'.repeat(60) + '\n\nГлава 1\n\n' + 'y'.repeat(60);
         m.exports.setStructureDetector({
