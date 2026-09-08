@@ -1,8 +1,8 @@
 # Editor Module Extraction Audit — Editor contour → `packages/animastor-editor/`
 
-**Status:** Phase 2 COMPLETE (contract freeze + extraction-readiness audit; behavior-neutral, no physical move). Phase 1 (route split) landed as `f24987ed`; Phase 1.1 (editor-ports.cjs zero host requires) landed as `c2b0fc2d`. This section: §Phase 2 below.
-**Date:** 2026-09-08 (Phase 1 recon); 2026-09-08 (Phase 2 freeze)
-**Baseline:** HEAD `dd85db71` (Phase 1 + 1.1 + C17–C19.1 landed; note: a C20 AI WIP was present in the working tree during part of the audit — transient, unrelated to Editor, and closed by the time of the final suite run).
+**Status:** Phase 3 COMPLETE (B1 resolved: `CYR_LATIN_MAP` + `cyrToLatin` extracted to `utils/cyr-latin-map.js`, closure reduced from 5 to 3 host files). Phase 2 (contract freeze + extraction-readiness audit). Phase 1 (route split) landed as `f24987ed`; Phase 1.1 (editor-ports.cjs zero host requires) landed as `c2b0fc2d`.
+**Date:** 2026-09-08 (Phases 1/1.1/2/3)
+**Baseline:** HEAD after Phase 3 (B1 resolved, all tests passing).
 **Baseline:** HEAD `f41f0aad` ("arch(player): extract Player package" — the Player physical move landed **during** this audit; the measurement started against `9a794464` + the staged move and was re-verified against the landed commit, which is byte-identical to the staged set). All Editor-contour claims are measured against the landed tree, where Player files resolve from `packages/animastor-player/src/`.
 **Context:** VBook runtime physically extracted (`@animastor/vbook-runtime@0.1.0`, commit `7175099d`); Player physically extracted (`@animastor/player@0.1.0`, commit `f41f0aad`); Editor is the next candidate in the extraction queue per `PHASE_NEXT_MODULE_EXTRACTION_RECONNAISSANCE.md` §4.7 / §6 (ranked #5, "after Player", shares the post-commit-hook port problem).
 **Related:** `PHASE_6_EDITOR_PLAYER.md` (Editor facade T1–T7 guards), `PHASE_7_EXTRACTION_READINESS.md` §2.4 (Editor 🟠 verdict: facade 🟢 / contour 🟠), `PLAYER_ROUTE_SPLIT_CHECKLIST.md` (the route-split + physical-move playbook this audit follows), `VBOOK_EXTRACTION_READINESS_AUDIT.md` (upstream, COMPLETE), `MODULAR_PRODUCT_ARCHITECTURE.md` §6/§26 (graduation checklist).
@@ -514,7 +514,7 @@ The contour = 5 files (1,742 LOC total): `editor-routes.cjs` (764, 11 endpoints)
 | `read-recovery.cjs` | **none** (ctx-injected) | pure |
 | `editor-ports.cjs` | **none** (Phase 1.1) | seam |
 
-### P2.1.2 Transitive closure — THE Phase 2 finding (B1)
+### P2.1.2 Transitive closure — B1 (RESOLVED in Phase 3)
 
 The require closure of the contour (registrars + helpers) reaches exactly:
 
@@ -523,12 +523,11 @@ routes/editor/** (intra-contour)
 └─ backend/src/book/lazy-book/paths.js       — PURE SHIM: one-line re-export of
                                                @animastor/vbook-runtime/lazy-book/paths
 └─ backend/src/utils/entity-id.js           — Editor-only transliteration (move candidate)
-    └─ backend/src/image/helpers.js          — HIDDEN HOST LEG (cyrToLatin)
-        └─ backend/src/utils/string-utils.js
-            └─ backend/src/config/runtime-config.js  — host config domain
+    └─ backend/src/utils/cyr-latin-map.js   — PHASE 3: pure CYR_LATIN_MAP + cyrToLatin
+                                               (zero deps; extracted from image/helpers.js)
 ```
 
-**B1 — the single hidden dependency:** `entity-id` requires `image/helpers` for the `cyrToLatin` transliteration map, dragging `utils/string-utils` + `config/runtime-config` into the contour's closure. E2 (Phase 1) whitelisted the `utils/entity-id` specifier but did not walk its closure. This is the only blocker-class item found; resolution options at move time (Phase 3): (a) move `entity-id` into the package and port `cyrToLatin` as a pure transliteration table (its own file in vbook-runtime — the map is pure data + one function), or (b) ADR `entity-id` → `@animastor/vbook-runtime` (id-grammar territory, matching the Phase 1 recon §5.4 recommendation). Both keep behavior identical. **Frozen as-is by E6** (pinned closure: exactly those 5 host files, no more).
+**B1 — RESOLVED in Phase 3:** the old hidden chain (`entity-id → image/helpers → string-utils → runtime-config`) is gone. `cyrToLatin` is now imported from the standalone `utils/cyr-latin-map.js` (pure data + function, zero dependencies). The closure contains 3 host files (down from 5), all pure/editor-domain. See §P3.
 
 ### P2.1.3 deps legs (injected at registration — frozen by E4)
 
@@ -618,7 +617,7 @@ New suite `backend/tests/architecture/editor-extraction-readiness.test.js`:
 |---|---|
 | **E4** | deps member matrix of both registrars + read-recovery ctx fields (a new host leg = conscious matrix update) |
 | **E5** | editorPorts shape: exactly 7 keys, identity pass-through, fail-closed on missing mandatory legs, composition-root wiring of all 7 |
-| **E6** | the transitive require closure: only intra-contour + the 5 pinned host files (B1 made explicit and visible); `lazy-book/paths` stays a pure shim; `scene-patch-utils` stays pure |
+| **E6** | the transitive require closure: only intra-contour + the 3 pinned host files (B1 resolved: `entity-id → cyr-latin-map`, no image/string-utils/runtime-config); `lazy-book/paths` stays a pure shim; `scene-patch-utils` stays pure |
 | **E7** | package future boundary: contour = exactly 5 files; no package requires editor modules; `packages/animastor-editor` does NOT exist yet (physical-move gate) |
 | **E8** | no editorPorts bypass: zero `require()` inside handler bodies (lazy host legs), deps destructured once (no secondary `deps.*` access), no agent/generation domain imports |
 
@@ -626,26 +625,116 @@ Together with Phase 1's E1 (26-endpoint surface + no leakage), E2 (require isola
 
 ## P2.6 Extraction readiness — can Editor move without host modules?
 
-**YES.** The move set is exactly: 5 contour files + `backend/src/editor/index.cjs` (facade) + 6 test files (+ fixture) + the two id-grammar legs (B1). Everything else — every PG repo, Redis helper, service, middleware, orchestration/runtime module — arrives through the frozen ports seam and **stays host-side forever**. The `entity-id` closure (B1) is the only item needing an architectural decision at move time; E6 pins it so the decision cannot be skipped silently.
+**YES.** The move set is exactly: 5 contour files + `backend/src/editor/index.cjs` (facade) + 6 test files (+ fixture) + the id-grammar legs (`entity-id.js` + `cyr-latin-map.js`). Everything else — every PG repo, Redis helper, service, middleware, orchestration/runtime module — arrives through the frozen ports seam and **stays host-side forever**. B1 is resolved: `entity-id` → `cyr-latin-map` is a pure, zero-dependency module — the cleanest possible extraction boundary.
 
 ## P2.7 Blockers
 
 | # | Item | Severity | Status |
 |---|---|---|---|
-| B1 | `utils/entity-id` transitive closure reaches `image/helpers` → `utils/string-utils` → `config/runtime-config` (the `cyrToLatin` map) | Medium | **Documented + frozen by E6** — resolve at move time: port `cyrToLatin` as pure data into the package/vbook-runtime, or ADR `entity-id` into vbook-runtime. No behavior change either way. |
+| B1 | `utils/entity-id` transitive closure reaches `image/helpers` → `utils/string-utils` → `config/runtime-config` (the `cyrToLatin` map) | ~~Medium~~ | **RESOLVED in Phase 3**: `CYR_LATIN_MAP` + `cyrToLatin` extracted to `utils/cyr-latin-map.js` (pure, zero deps). Closure reduced from 5 to 3 host files. See §P3. |
 | — | No other blockers: zero reverse deps, zero cycles, zero Player/generation coupling, zero globals, HTTP surface frozen, ports frozen, test ownership enumerable | — | clear |
 
 ## P2.8 Verdict
 
-**READY WITH CONDITIONS** — the physical move to `packages/animastor-editor` (Phase 3) can proceed after resolving B1 (one ADR-class decision, no code risk). Conditions: (1) B1 resolution lands with the move; (2) the 6 test files move per P2.4 with the prompt-builder assertions split out host-side; (3) the move is executed as the single atomic playbook commit (skeleton → `git mv` → registrar require swap → E7 package-boundary gate flipped to the new path, mirroring the Player's `phase10d`/`vbook-package-boundary` pattern).
+**READY FOR PHYSICAL MOVE** — B1 resolved in Phase 3 (§P3.7). The 6 test files move per P2.4 with the prompt-builder assertions split out host-side; the move is executed as the single atomic playbook commit (skeleton → `git mv` → registrar require swap → E7 package-boundary gate flipped to the new path, mirroring the Player's `phase10d`/`vbook-package-boundary` pattern).
 
-## P2.9 Verification (Phase 2 commands)
+## P2.9 Verification (Phase 2 commands — pre-B1-resolve baseline)
 
-- Guards: `npx mocha --exit tests/architecture/editor-extraction-readiness.test.js` → **17 passing** (E4–E8).
+- Guards: `npx mocha --exit tests/architecture/editor-extraction-readiness.test.js` → **17 passing** (E4–E8, pre-B1-resolve).
 - Editor suites: `entity-crud-routes`, `behavior-crud`, `character-passport-patch`, `scene-passport-patch`, `scene-patch-utils`, `book-metadata-patch`, `config-routes`, `ai-editor-mode` → **108 passing**.
 - Editor-family combined run (guards E1–E8 + T1–T7 + 5 functional suites) → **154 passing, 0 failing**.
 - Full backend suite at freeze time: **572 passing, 0 failing** (two earlier C17/C18-boundary failures observed mid-audit were resolved by the parallel C19/C19.1 AI commits `aeb8b775`/`dd85db71`; re-verified clean after rebase of the working state — no Editor-related failures at any point).
 - HTTP parity: E1 functional registration (26 pairs) + `git show f24987ed~1` endpoint diff — identical.
 - Closure walk: E6 pins the 5-file host closure; `book/lazy-book/paths.js` verified as the exact one-line shim.
 
+**Post-B1-resolve (Phase 3):** guards → 21 passing; combined → 124 passing; full suite → 575 passing, 0 failing. See §P3.8.
+
 Nothing in the Editor runtime changed in Phase 2: zero production-code edits — only the new guard suite and this document.
+
+---
+
+# Phase 3 — Resolve B1 Extraction Boundary
+
+**Scope:** eliminate blocker B1 (`entity-id → image/helpers → string-utils → runtime-config`) by extracting the pure transliteration map into a zero-dependency module. No runtime behavior change, no HTTP semantics change, no physical package move, no port contract change.
+**Date:** 2026-09-08
+**Baseline:** HEAD after Phase 2 commit (`358c2155`).
+
+## P3.1 What B1 was
+
+The Phase 2 audit found a single hidden dependency chain in the Editor contour's transitive require closure:
+
+```
+entity-crud-routes.cjs → utils/entity-id.js → image/helpers.js (cyrToLatin)
+    → utils/string-utils.js → config/runtime-config.js
+```
+
+`entity-id.js` imported only `cyrToLatin` from `image/helpers.js`. But `image/helpers.js` also imported `getOutputPath`/`escapeRegExp` from `string-utils.js`, which in turn imported `config.OUTPUT_DIR` from `runtime-config.js`. This dragged the entire host config/utility chain into the Editor contour's closure — the single hidden host implementation edge.
+
+## P3.2 Chosen resolution
+
+Extract `CYR_LATIN_MAP` + `cyrToLatin` into `utils/cyr-latin-map.js` — a **pure data + one pure function** module with **zero** dependencies. Both `entity-id.js` and `image/helpers.js` import from this canonical source. The transitive chain collapses:
+
+```
+BEFORE (B1):
+  entity-id → image/helpers → string-utils → runtime-config   (4 host modules)
+
+AFTER (B1 resolved):
+  entity-id → cyr-latin-map                                    (1 host module, pure)
+```
+
+**Why this is safe:**
+- `CYR_LATIN_MAP` and `cyrToLatin` are pure data + a one-line char-by-char mapper — zero side effects, zero config, zero I/O.
+- Both consumers (`entity-id.js` and `image/helpers.js`) already used only this function + map from `image/helpers.js`. No behavioral change.
+- `image/helpers.js` re-exports `CYR_LATIN_MAP` + `cyrToLatin` so its existing consumers (`character-utils.js`, `prompt-builder.js`, `video-workflows.js`) are unaffected.
+- `utils/cyr-latin-map.js` has zero `require()` calls — it is the simplest possible module in the codebase.
+
+## P3.3 Changed files
+
+| File | Change |
+|---|---|
+| `backend/src/utils/cyr-latin-map.js` | **NEW** — canonical `CYR_LATIN_MAP` + `cyrToLatin` (zero deps) |
+| `backend/src/utils/entity-id.js` | `require('../image/helpers')` → `require('./cyr-latin-map')` (1 line) |
+| `backend/src/image/helpers.js` | imports `CYR_LATIN_MAP`/`cyrToLatin` from `../utils/cyr-latin-map` instead of defining inline; re-exports unchanged |
+| `backend/tests/architecture/editor-extraction-readiness.test.js` | E6 closure walk updated: ALLOWED_HOST_FILES reduced from 5 to 3 (removed `image/helpers.js`, `string-utils.js`, `runtime-config.js`); 4 new B1-resolution guards added |
+
+## P3.4 Dependency closure (post-B1-resolve)
+
+The contour's transitive require closure now reaches exactly **3 host files** (down from 5):
+
+```
+routes/editor/** (5 intra-contour files)
+└─ book/lazy-book/paths.js       — pure shim: re-export of @animastor/vbook-runtime
+└─ utils/entity-id.js            — Editor-only id transliteration
+    └─ utils/cyr-latin-map.js    — pure CYR_LATIN_MAP + cyrToLatin (zero deps)
+```
+
+**Gone:** `image/helpers.js`, `utils/string-utils.js`, `config/runtime-config.js` — no longer in the closure.
+
+## P3.5 Ports / contract
+
+No port changes. `editorPorts` is unchanged (7 ports, same shape). `entity-id.js` is a module-scope require, not a port — it stays as-is. The `promptLimit` port (`IMAGE_PROMPT_MAX_CHARS`) is unrelated to B1 and unchanged.
+
+## P3.6 Guards (strengthened E6)
+
+New E6 assertions in `editor-extraction-readiness.test.js`:
+
+| Guard | Freezes |
+|---|---|
+| E6 closure walk | closure = exactly 3 host files (lazy-book/paths + entity-id + cyr-latin-map); no image/string-utils/runtime-config |
+| **B1-resolution** (new) | explicit check: `image/helpers.js`, `string-utils.js`, `runtime-config.js` NOT in closure |
+| **cyr-latin-map purity** (new) | `utils/cyr-latin-map.js` has zero requires, exports `CYR_LATIN_MAP` + `cyrToLatin` |
+| **entity-id import path** (new) | `entity-id.js` requires `./cyr-latin-map`, NOT `../image/helpers` |
+
+Total E6 tests: 7 (up from 4 in Phase 2). Total editor-extraction-readiness suite: 21 (up from 17).
+
+## P3.7 Verdict
+
+**READY FOR PHYSICAL MOVE** — B1 is resolved. The contour's transitive closure contains only pure/intra-contour modules + the vbook-runtime shim. No `config/runtime-config`, no `utils/string-utils`, no `image/helpers` anywhere in the closure. The single remaining host dependency beyond the shim is `entity-id.js` + its pure `cyr-latin-map` — both are editor-domain id-grammar modules that move with the package at Phase 3 time.
+
+## P3.8 Verification (Phase 3 commands)
+
+- B1 guards: `cd backend && npx mocha --exit tests/architecture/editor-extraction-readiness.test.js` → **21 passing** (E4–E8 + 4 B1-resolution tests).
+- Editor-family combined run (E1–E8 + T1–T7 + functional suites): `cd backend && npx mocha --exit tests/architecture/editor-extraction-readiness.test.js tests/architecture/editor-route-split.test.js tests/architecture/phase6-editor-player.test.js tests/entity-crud-routes.test.js tests/behavior-crud.test.js tests/character-passport-patch.test.js tests/scene-passport-patch.test.js tests/scene-patch-utils.test.js` → **124 passing, 0 failing**.
+- Full backend suite: `cd backend && npm test` → **575 passing, 0 failing**.
+- Syntax smoke: `bash scripts/syntax-smoke.sh backend` → all production JS/CJS files pass.
+- Functional verification: `node -e "const e = require('./src/utils/entity-id'); console.log(e.toEntityId('Привет мир'))"` → `privet_mir` (identical to pre-B1-resolve).`/

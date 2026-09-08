@@ -18,12 +18,12 @@
 //        (registrars + helpers, excluding the composition-root seam
 //        itself) reaches ONLY intra-contour files, the two host id
 //        grammar shims (book/lazy-book/paths — a pure re-export of
-//        @animastor/vbook-runtime — and utils/entity-id) and node
-//        builtins — PLUS the pinned transitive entity-id closure
-//        (utils/entity-id → image/helpers → utils/string-utils →
-//        config/runtime-config), the single hidden host leg found by
-//        the Phase 2 audit (blocker B1; to be carried into the package
-//        at move time via a cyrToLatin port or an entity-id move).
+//        @animastor/vbook-runtime — and utils/entity-id) and the pure
+//        transliteration map (utils/cyr-latin-map — zero deps) plus
+//        node builtins. B1 is resolved: the old hidden chain
+//        (entity-id → image/helpers → string-utils → runtime-config)
+//        is gone — entity-id now imports cyrToLatin from the
+//        standalone utils/cyr-latin-map module.
 //   E7 — Editor package future boundary: the contour is carried by
 //        exactly the five files; no package requires editor modules;
 //        the physical packages/animastor-editor does not exist yet.
@@ -204,18 +204,19 @@ describe('E6: contour require closure reaches only intra-contour + the pinned id
     // the composition-root shape file and holds zero requires (pinned by
     // E2); its deps arrive from backend.cjs.
     const START = [...EDITOR_REGISTRARS, ...EDITOR_HELPERS];
-    // Host files allowed inside the closure (the Phase 2 dependency matrix):
+    // Host files allowed inside the closure (the Phase 3 dependency matrix):
     //   book/lazy-book/paths.js — pure re-export shim of @animastor/vbook-runtime
     //     (post-move the package imports the runtime export directly);
     //   utils/entity-id.js — Editor-only id transliteration (move candidate);
-    //   image/helpers.js, utils/string-utils.js, config/runtime-config.js —
-    //     the entity-id transitive closure (blocker B1, pinned below).
+    //   utils/cyr-latin-map.js — pure CYR_LATIN_MAP + cyrToLatin (zero deps,
+    //     the canonical transliteration source; entity-id + image/helpers both
+    //     import from here).
+    // B1 resolved: image/helpers.js, utils/string-utils.js, and
+    // config/runtime-config.js are NO LONGER in the closure.
     const ALLOWED_HOST_FILES = new Set([
         path.join(BACKEND_SRC, 'book', 'lazy-book', 'paths.js'),
         path.join(BACKEND_SRC, 'utils', 'entity-id.js'),
-        path.join(BACKEND_SRC, 'image', 'helpers.js'),
-        path.join(BACKEND_SRC, 'utils', 'string-utils.js'),
-        path.join(BACKEND_SRC, 'config', 'runtime-config.js'),
+        path.join(BACKEND_SRC, 'utils', 'cyr-latin-map.js'),
     ]);
 
     function walkClosure() {
@@ -250,15 +251,14 @@ describe('E6: contour require closure reaches only intra-contour + the pinned id
             offenders.map((e) => `${e.from} → ${e.to}`),
             'editor contour closure gained a new host module — extend the Phase 2 dependency matrix consciously',
         ).to.deep.equal([]);
-        // The pinned host set is exact (B1: the entity-id closure reaches
-        // into the image domain — the single hidden host leg of Phase 2).
+        // The pinned host set is exact — B1 resolved: only the pure
+        // transliteration chain (entity-id → cyr-latin-map) plus the
+        // vbook-runtime shim remain; no image/string-utils/runtime-config.
         const reachedHost = [...new Set(edges.map((e) => e.to))].sort();
         expect(reachedHost).to.deep.equal([
             'backend/src/book/lazy-book/paths.js',
-            'backend/src/config/runtime-config.js',
-            'backend/src/image/helpers.js',
+            'backend/src/utils/cyr-latin-map.js',
             'backend/src/utils/entity-id.js',
-            'backend/src/utils/string-utils.js',
         ]);
     });
 
@@ -270,6 +270,33 @@ describe('E6: contour require closure reaches only intra-contour + the pinned id
     it('scene-patch-utils stays pure (zero requires)', () => {
         const specs = requireSpecifiers(codeOf(EDITOR_HELPERS[0]));
         expect(specs, 'scene-patch-utils is the shared pure helper — it must not gain requires').to.deep.equal([]);
+    });
+
+    it('B1 resolved: the closure no longer reaches image/helpers, string-utils, or runtime-config', () => {
+        const edges = walkClosure();
+        const reachedHost = edges.map((e) => e.to);
+        const forbidden = [
+            'backend/src/image/helpers.js',
+            'backend/src/utils/string-utils.js',
+            'backend/src/config/runtime-config.js',
+        ];
+        for (const f of forbidden) {
+            expect(reachedHost, `B1 regression: ${f} must not be in the editor closure`).to.not.include(f);
+        }
+    });
+
+    it('cyr-latin-map is a pure zero-dependency module (the canonical transliteration source)', () => {
+        const code = codeOf(path.join(BACKEND_SRC, 'utils', 'cyr-latin-map.js'));
+        const specs = requireSpecifiers(code);
+        expect(specs, 'cyr-latin-map must not require any host module').to.deep.equal([]);
+        expect(code).to.match(/CYR_LATIN_MAP/);
+        expect(code).to.match(/function cyrToLatin/);
+    });
+
+    it('entity-id imports cyrToLatin from cyr-latin-map (not from image/helpers)', () => {
+        const code = codeOf(path.join(BACKEND_SRC, 'utils', 'entity-id.js'));
+        expect(code).to.match(/require\(['"]\.\/cyr-latin-map['"]\)/);
+        expect(code).to.not.match(/require\(['"].*image\/helpers['"]\)/);
     });
 });
 

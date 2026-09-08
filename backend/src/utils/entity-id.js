@@ -1,15 +1,14 @@
 // ======================================================
 // Entity ID Utilities — manual entity add (characters /
 // locations / voices from the Editor).
-// The transliteration itself reuses cyrToLatin from
-// image/helpers.js — the project's single Cyrillic→Latin
-// map — never duplicated here. This module only folds the
-// transliterated text into the project's snake_case id
-// standard (the same shape normalizeForMatch /
-// canonicalizeMixedScriptId produce).
+// The transliteration reuses the canonical cyrToLatin from
+// utils/cyr-latin-map (pure data + function, zero deps).
+// This module folds the transliterated text into the
+// project's snake_case id standard (the same shape
+// normalizeForMatch / canonicalizeMixedScriptId produce).
 // ======================================================
 
-const { cyrToLatin } = require('../image/helpers');
+const { cyrToLatin } = require('./cyr-latin-map');
 
 /** Canonical id format: lowercase latin snake (a-z, 0-9, single _ separators). */
 const CANONICAL_ID_RE = /^[a-z0-9]+(?:_[a-z0-9]+)*$/;
