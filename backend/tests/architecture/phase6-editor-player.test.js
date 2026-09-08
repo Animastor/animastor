@@ -255,15 +255,12 @@ describe('T6: contour routes do not gain new implementation-detail deps', () => 
             '../../book/lazy-book/paths',
         ],
         'routes/editor/editor-ports.cjs': [
-            // The port module IS the host seam by design: it wires the host
-            // implementations (entity-cleanup factory, audit service, agent
-            // constant, workspace-ownership) into the port object at the
-            // composition root. Contour registrars never require these
-            // directly (frozen above).
-            '../../services/entity-cleanup.cjs',
-            '../../services/source-coverage-audit',
-            '../../services/agent-prompts',
-            '../../middleware/workspace-ownership',
+            // Phase 1.1: the port module has zero host require() calls.
+            // All host legs (entity-cleanup, source-coverage-audit,
+            // agent-prompts, workspace-ownership) are now constructed in
+            // the composition root (backend.cjs) and passed as ready-made
+            // references. This keeps editor-ports.cjs portable for the
+            // future packages/animastor-editor move.
         ],
         'packages/animastor-player/src/player-routes.cjs': [
             // Player package registrar — only intra-package wiring is allowed.

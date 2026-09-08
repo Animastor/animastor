@@ -208,15 +208,10 @@ describe('E2: the editor contour requires no host implementation (ports seam onl
         expect(offenders, 'editor contour must receive host legs via editorPorts only').to.deep.equal([]);
     });
 
-    it('editor-ports.cjs (the seam) has its host-wiring require set frozen', () => {
+    it('editor-ports.cjs (the seam) has zero host requires (Phase 1.1)', () => {
         const src = codeOf(readSource(EDITOR_PORTS));
         const specs = [...src.matchAll(/require\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1]);
-        expect(specs.sort(), 'editor-ports host-wiring set changed — update the freeze consciously').to.deep.equal([
-            '../../middleware/workspace-ownership',
-            '../../services/agent-prompts',
-            '../../services/entity-cleanup.cjs',
-            '../../services/source-coverage-audit',
-        ]);
+        expect(specs, 'editor-ports.cjs must not host-require anything — host legs arrive via deps').to.deep.equal([]);
     });
 
     it('no contour file opens Redis or raw PG client connections directly', () => {

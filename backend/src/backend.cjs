@@ -302,11 +302,28 @@ const routeDeps = {
     //   purge             — entity-cleanup purgeScene/purgeUnit (structure deletes)
     //   resolveOwnership  — workspace-ownership attach (POST /book/blank)
     //   recoveryCtx       — read-recovery dependencies (redis chunk repair)
+    //   The four host legs that were previously required inside
+    //   editor-ports.cjs (entity-cleanup, source-coverage-audit,
+    //   agent-prompts, workspace-ownership) are now constructed in the
+    //   composition root and passed as ready-made references so that
+    //   editor-ports.cjs holds zero host require() calls (Phase 1.1).
     editorPorts: require('./routes/editor/editor-ports.cjs')({
         deps: {
-            redis, config, storage, runtime, bookDiff, book,
-            sceneAssetsRepo, placeholderAudio, activeScenes, state,
-            getAllChunks, saveChunk, utils,
+            sceneAssetsRepo,
+            placeholderAudio,
+            // Host implementations — already created/resolved above or below;
+            // editor-ports.cjs must not require them itself.
+            auditCoverage: require('./services/source-coverage-audit'),
+            promptLimit: require('./services/agent-prompts').IMAGE_PROMPT_MAX_CHARS,
+            purge: entityCleanup,
+            resolveOwnership: async (bookId, meta) => {
+                const workspaceOwnership = require('./middleware/workspace-ownership');
+                return workspaceOwnership.resolveWorkspaceForBook(bookId, meta);
+            },
+            recoveryCtx: {
+                redis, book, state, activeScenes, config, getAllChunks, saveChunk,
+                log: (utils && utils.log) || ((...a) => console.log(new Date().toISOString(), ...a)),
+            },
         },
     }),
 };

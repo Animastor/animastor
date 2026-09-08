@@ -35,19 +35,26 @@
 // change; the E-guards (editor-route-split.test.js E1–E3) freeze the
 // HTTP surface and the contour's require isolation.
 //
-// This module itself is part of the Editor contour and must stay
-// dependency-free (it only re-shapes what the composition root passes in)
-// so the future physical move to packages/animastor-editor can carry it
-// as-is (the implementations stay host-side forever).
+// This module itself is part of the Editor contour and MUST NOT contain
+// any host require() calls (services, middleware, PG repos, Redis) — it
+// only re-shapes what the composition root passes in so the future
+// physical move to packages/animastor-editor can carry it as-is (the
+// implementations stay host-side forever).  Phase 1.1 removed the last
+// four host requires (entity-cleanup, source-coverage-audit, agent-prompts,
+// workspace-ownership); these are now constructed in backend.cjs and passed
+// as ready-made references.
 
 module.exports = function createEditorPorts({ deps }) {
     const {
-        redis, config, storage, runtime, bookDiff, book,
-        sceneAssetsRepo, placeholderAudio, activeScenes, state,
-        getAllChunks, saveChunk, utils,
+        // ── host legs carried from the composition root ──────────
+        // All host implementations arrive as already-resolved references;
+        // editor-ports.cjs itself holds ZERO host require() calls so that
+        // the future packages/animastor-editor move carries only this file
+        // and the contour registrars — the host services stay host-side.
+        sceneAssetsRepo, placeholderAudio,
+        auditCoverage, promptLimit,
+        purge, resolveOwnership, recoveryCtx,
     } = deps;
-
-    const log = (utils && utils.log) || ((...a) => console.log(new Date().toISOString(), ...a));
 
     // ── PG scene-assets port ────────────────────────────
     // The contour's post-commit fan-out (version bumps + dirty-unit
@@ -64,42 +71,13 @@ module.exports = function createEditorPorts({ deps }) {
         throw new Error('createEditorPorts: placeholderAudio is required (read-repair port)');
     }
 
-    // ── entity-cleanup port (structure deletes) ────────
-    // The factory stays host-side (services/entity-cleanup.cjs); the contour
-    // calls purge.purgeScene / purge.purgeUnit.
-    const entityCleanup = require('../../services/entity-cleanup.cjs')(redis, config, {
-        utils: { log }, storage, runtime, bookDiff, book,
-    });
-
     return {
-        // PG scene-assets (post-commit derived state)
         sceneAssetsRepo,
-
-        // Read-time placeholder recovery (GET /book/:bookId)
         placeholderAudio,
-
-        // POST /book/:bookId/source-coverage — host audit service
-        auditCoverage: require('../../services/source-coverage-audit'),
-
-        // Editor-save prompt guard ceiling (agent-domain constant)
-        promptLimit: require('../../services/agent-prompts').IMAGE_PROMPT_MAX_CHARS,
-
-        // Structure-delete deep cleanup (scene/unit purge)
-        purge: entityCleanup,
-
-        // POST /book/blank ownership attach (workspace-ownership)
-        resolveOwnership: async (bookId, meta) => {
-            const workspaceOwnership = require('../../middleware/workspace-ownership');
-            return workspaceOwnership.resolveWorkspaceForBook(bookId, meta);
-        },
-
-        // Read-time Redis chunk repair — the ctx the recovery helper needs.
-        // The helper itself (read-recovery.cjs) is contour-owned; its
-        // dependencies (redis, book, state, activeScenes, config,
-        // getAllChunks, saveChunk, log) are host legs and arrive via this
-        // ctx object, exactly the pre-split shape.
-        recoveryCtx: {
-            redis, book, state, activeScenes, config, getAllChunks, saveChunk, log,
-        },
+        auditCoverage,
+        promptLimit,
+        purge,
+        resolveOwnership,
+        recoveryCtx,
     };
 };
