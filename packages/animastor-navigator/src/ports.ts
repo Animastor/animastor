@@ -1,17 +1,17 @@
-// NavigatorPorts — the complete host contract of the future @animastor/navigator
-// package (docs/architecture/navigator-module-extraction-audit.md, Phase 1 prep).
+// NavigatorPorts — the complete host contract of the @animastor/navigator
+// package (docs/architecture/navigator-module-extraction-audit.md).
 //
 // Dependency direction (frozen by arch guards):
 //
 //   host app (main.tsx / AppShell.tsx) ──composition──▶ app/navigatorAdapters.ts
 //   app/navigatorAdapters.ts ──implements──▶ NavigatorPorts (this file)
-//   Navigator surface (pages/NavigatePage.tsx) ──consumes ONLY──▶ NavigatorPorts
+//   Navigator surface ──consumes ONLY──▶ NavigatorPorts
 //
 // The Navigator must never import generateStore / playbackStore / positionStore /
 // resourceInvalidations / resilientReloader / AppShell / api/client / app/i18n /
 // app/icons / app/router / app/desktop directly. The ONLY host-side place where
 // those modules meet this contract is app/navigatorAdapters.ts. This file imports
-// nothing but Preact types — it is the future package's public surface.
+// nothing but Preact types — it is the package's public surface.
 //
 // Port payload types are Navigator-local structural types (NOT imports of the
 // host store types): the host adapter bridges them, and TypeScript rejects the

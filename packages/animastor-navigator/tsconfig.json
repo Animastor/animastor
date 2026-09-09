@@ -15,12 +15,7 @@
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "isolatedModules": true,
-    "types": ["vite/client"],
-    "baseUrl": ".",
-    "paths": {
-      "@animastor/navigator": ["../../packages/animastor-navigator/src"]
-    }
+    "isolatedModules": true
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src"]
 }

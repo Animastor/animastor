@@ -1,6 +1,5 @@
 // @vitest-environment happy-dom
-// Navigator characterization tests (navigator-module-extraction-audit.md,
-// Phase 1 prep — blockers N1 seek seam + N4 missing tests).
+// Navigator characterization tests (navigator-module-extraction-audit.md).
 //
 // They pin the CURRENT behavior of the Navigator surface through the
 // NavigatorPorts contract with fake ports — no host store is imported:
@@ -18,8 +17,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import { NavigatePage, buildStructure } from '../../pages/NavigatePage';
-import type { ActivePosition, NavigatorPorts } from './ports';
+import { NavigatePage, buildStructure } from '../src/NavigatePage';
+import type { ActivePosition, NavigatorPorts } from '../src/ports';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────
 
@@ -310,7 +309,7 @@ describe('NavigatePage (ports-injected characterization)', () => {
     expect(fakes.navigateToPlay).toHaveBeenCalledTimes(1);
   });
 
-  it('desktop active row shows the ⏯ button → seek + navigate to /play', async () => {
+  it('desktop active row shows the play button → seek + navigate to /play', async () => {
     const { ports, fakes } = makePorts({ book: BOOK, bookId: 'b-1', isDesktop: true });
     ports.position.position.value = POSITION;
     render(<NavigatePage ports={ports} />);
@@ -320,7 +319,7 @@ describe('NavigatePage (ports-injected characterization)', () => {
     expect(fakes.seekToPosition).toHaveBeenCalledTimes(1);
   });
 
-  it('mobile renders no ⏯ button and double-click does not navigate', async () => {
+  it('mobile renders no play button and double-click does not navigate', async () => {
     const { ports, fakes } = makePorts({ book: BOOK, bookId: 'b-1', isDesktop: false });
     ports.position.position.value = POSITION;
     render(<NavigatePage ports={ports} />);

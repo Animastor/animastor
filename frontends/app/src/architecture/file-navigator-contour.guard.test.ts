@@ -1,10 +1,9 @@
-// Architecture contour guards — File & Navigator extraction reconnaissance
+// Architecture contour guards — File & Navigator extraction
 // (docs/architecture/file-module-extraction-audit.md,
 //  docs/architecture/navigator-module-extraction-audit.md).
 //
-// Phase-0 guards only: they FREEZE the measured boundary so drift before the
-// physical extraction is caught. They do not create packages and do not move
-// production code. Each assertion cites the audit section it pins.
+// Phase 2 guards: Navigator physically extracted to @animastor/navigator package.
+// Each assertion cites the audit section it pins.
 
 import { describe, it, expect } from 'vitest';
 
@@ -46,31 +45,12 @@ function allSourceFiles(): string[] {
 }
 
 const FILE_PAGE = 'pages/FilePage.tsx';
-const NAV_PAGE = 'pages/NavigatePage.tsx';
-const NAV_PORTS = 'modules/navigator/ports.ts';
 const NAV_ADAPTERS = 'app/navigatorAdapters.ts';
 
-// ── Audit §Phase 1 — Navigator host boundary (Phase 1 prep: ports in-app) ──
-// The Navigator surface must reach the host ONLY through its ports contract.
-const NAV_FORBIDDEN = [
-  '../state/playbackStore',
-  '../state/generateStore',
-  '../state/positionStore',
-  '../state/resourceInvalidations',
-  '../state/resilientReloader',
-  '../app/AppShell',
-  '../app/navigatorAdapters',
-  '../api/client',
-  '../app/i18n',
-  '../app/icons',
-  '../app/router',
-  '../app/desktop',
-].sort();
-
-// The ports contract file is self-contained: Preact types only.
-const PORTS_ALLOWED = ['@preact/signals', 'preact'].sort();
+// ── Audit §Phase 1 — Navigator host boundary (frozen, carries into Phase 2) ──
 
 // The host adapter is the single seam that wires the shared infrastructure.
+// Phase 2: adapter imports from @animastor/navigator instead of local modules.
 const ADAPTERS_REQUIRED = [
   '../state/generateStore',
   '../state/positionStore',
@@ -78,15 +58,14 @@ const ADAPTERS_REQUIRED = [
   '../state/resilientReloader',
   '../state/playbackStore',
   '../api/client',
-  '../modules/navigator/ports',
+  '@animastor/navigator',
   './i18n',
   './router',
   './desktop',
   './icons',
 ].sort();
 
-// ── Audit §Phase 1 — allowed import sets (measured at baseline 8987fb84) ──
-// New specifier ⇒ boundary drift ⇒ update the audit BEFORE touching code.
+// ── Audit §Phase 1 — allowed import sets (frozen at baseline) ──
 const FILE_ALLOWED = [
   'preact',
   'preact/hooks',
@@ -96,13 +75,6 @@ const FILE_ALLOWED = [
   '../app/router',
   '../lib/ui',
   '../state/generateStore',
-].sort();
-
-const NAV_ALLOWED = [
-  'preact',
-  'preact/hooks',
-  '../api/models',
-  '../modules/navigator/ports',
 ].sort();
 
 describe('File contour guard (file-module-extraction-audit.md)', () => {
@@ -135,23 +107,26 @@ describe('File contour guard (file-module-extraction-audit.md)', () => {
   });
 });
 
-describe('Navigator contour guard (navigator-module-extraction-audit.md)', () => {
-  it('Phase 1 — dependency boundary: NavigatePage imports only the frozen set', () => {
-    expect(importSpecifiers(NAV_PAGE)).toEqual(NAV_ALLOWED);
+describe('Navigator contour guard (navigator-module-extraction-audit.md, Phase 2)', () => {
+  it('Phase 2 — host imports NavigatePage ONLY from @animastor/navigator', () => {
+    const main = requireRaw('main.tsx');
+    expect(main).toContain("import { NavigatePage } from '@animastor/navigator'");
+    expect(main).not.toContain("import { NavigatePage } from './pages/NavigatePage'");
+    expect(main).not.toContain("import { NavigatePage } from '../pages/NavigatePage'");
+
+    const shell = requireRaw('app/AppShell.tsx');
+    expect(shell).toContain("import { NavigatePage } from '@animastor/navigator'");
+    expect(shell).not.toContain("import { NavigatePage } from '../pages/NavigatePage'");
   });
 
-  it('Phase 1 prep — Navigator reaches the host only through ports (no direct store/infra imports)', () => {
-    const specs = importSpecifiers(NAV_PAGE);
-    for (const banned of NAV_FORBIDDEN) {
-      expect(specs, `NavigatePage must not import ${banned} — go through NavigatorPorts`).not.toContain(banned);
-    }
+  it('Phase 2 — host adapter imports from @animastor/navigator (not local modules/navigator)', () => {
+    const specs = importSpecifiers(NAV_ADAPTERS);
+    expect(specs).toContain('@animastor/navigator');
+    expect(specs).not.toContain('../modules/navigator/ports');
+    expect(specs).not.toContain('../pages/NavigatePage');
   });
 
-  it('Phase 1 prep — ports contract is self-contained (Preact types only, no host imports)', () => {
-    expect(importSpecifiers(NAV_PORTS)).toEqual(PORTS_ALLOWED);
-  });
-
-  it('Phase 1 prep — the host adapter is the single composition seam for the shared infrastructure', () => {
+  it('Phase 2 — adapter wires all host infrastructure seams', () => {
     const specs = importSpecifiers(NAV_ADAPTERS);
     for (const required of ADAPTERS_REQUIRED) {
       expect(specs, `navigatorAdapters must wire ${required}`).toContain(required);
@@ -163,34 +138,44 @@ describe('Navigator contour guard (navigator-module-extraction-audit.md)', () =>
     expect(requireRaw('app/AppShell.tsx')).toContain('<NavigatePage ports={navigatorPorts} />');
   });
 
-  it('Phase 2 — zero reverse dependencies: only main.tsx and AppShell import the pages', () => {
+  it('Phase 2 — no old Navigator remnants: pages/NavigatePage.tsx deleted from host', () => {
+    const fileKeys = Object.keys(RAW_SOURCES);
+    expect(fileKeys).not.toContain('/src/pages/NavigatePage.tsx');
+  });
+
+  it('Phase 2 — no old Navigator remnants: modules/navigator/ deleted from host', () => {
+    const fileKeys = Object.keys(RAW_SOURCES);
+    const navModuleKeys = fileKeys.filter((k) => k.startsWith('/src/modules/navigator/'));
+    expect(navModuleKeys).toEqual([]);
+  });
+
+  it('Phase 2 — zero reverse dependencies: only main.tsx, AppShell, and navigatorAdapters import @animastor/navigator', () => {
+    const allowedConsumers = ['main.tsx', 'app/AppShell.tsx', 'app/navigatorAdapters.ts'];
     const consumers = allSourceFiles()
-      .filter((f) => f !== 'main.tsx' && f !== 'app/AppShell.tsx' && !f.startsWith('pages/'))
-      // The ports contract is the Navigator boundary, not a page consumer
-      // (it contains no page reference — the include check below passes only
-      // for real page imports).
-      .filter((f) => !f.startsWith('modules/navigator/'))
+      .filter((f) => !allowedConsumers.includes(f))
       .filter((f) => {
         const src = requireRaw(f);
-        return src.includes('pages/FilePage') || src.includes('pages/NavigatePage');
+        return src.includes('@animastor/navigator');
       });
     expect(consumers).toEqual([]);
   });
+
+  it('Phase 2 — no duplicate Navigator implementation in host (no pages/NavigatePage references)', () => {
+    const fileKeys = Object.keys(RAW_SOURCES);
+    const hasOldPage = fileKeys.some((k) => k.includes('NavigatePage') && k.startsWith('/src/pages/'));
+    expect(hasOldPage).toBe(false);
+  });
 });
 
-describe('Shared guards (both contours)', () => {
+describe('Shared guards', () => {
   it('Cycle guard — no page imports AppShell (desktop.ts:1-6 contract)', () => {
-    for (const page of [FILE_PAGE, NAV_PAGE]) {
-      expect(importSpecifiers(page)).not.toContain('../app/AppShell');
-    }
+    expect(importSpecifiers(FILE_PAGE)).not.toContain('../app/AppShell');
   });
 
-  it('Package boundary — pages never import features/ or other pages', () => {
-    for (const page of [FILE_PAGE, NAV_PAGE]) {
-      for (const spec of importSpecifiers(page)) {
-        expect(spec, `${page} must not import ${spec}`).not.toMatch(/features\//);
-        expect(spec, `${page} must not import another page`).not.toMatch(/\.\.\/pages\//);
-      }
+  it('Package boundary — FilePage never imports features/ or other pages', () => {
+    for (const spec of importSpecifiers(FILE_PAGE)) {
+      expect(spec, `FilePage must not import ${spec}`).not.toMatch(/features\//);
+      expect(spec, `FilePage must not import another page`).not.toMatch(/\.\.\/pages\//);
     }
   });
 

@@ -1,10 +1,10 @@
 import type { JSX } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import type { BookChapter, BookData, BookScene, BookUnit } from '../api/models';
-import { unitIndex } from '../api/models';
+import type { BookChapter, BookData, BookScene, BookUnit } from './models';
+import { unitIndex } from './models';
 import type {
   ActivePosition, NavigatorIconProps, NavigatorPorts, NavigatorT,
-} from '../modules/navigator/ports';
+} from './ports';
 
 // NavigatePage — 1:1 with NavigateFragment + fragment_navigate.xml (stage 5).
 //  - Position bar (include_position_bar) — label from bookData + ActivePosition.
@@ -18,11 +18,9 @@ import type {
 //  - Auto-expand the current position's scene (expandedScenes follows position).
 //  - Reload structure on playbackPrepared (generation completion).
 //
-// Host boundary (docs/architecture/navigator-module-extraction-audit.md):
-// the page consumes ONLY the injected NavigatorPorts — never the host stores
-// (playbackStore / generateStore / positionStore / resourceInvalidations /
-// resilientReloader), api/client, app/i18n, app/icons, app/router, app/desktop
-// or AppShell. The host wires the real implementations in app/navigatorAdapters.ts.
+// Host boundary: the page consumes ONLY the injected NavigatorPorts — never
+// the host stores, api/client, app/i18n, app/icons, app/router, app/desktop
+// or AppShell. The host wires the real implementations in navigatorAdapters.ts.
 
 export type NavItem =
   | { kind: 'chapter'; id: string; label: string; expanded: boolean; chapterId?: string | null }

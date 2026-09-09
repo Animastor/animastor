@@ -17,7 +17,7 @@ import { navigateTo, position as positionSignal } from '../state/positionStore';
 import { bookResource, onResourceInvalidated } from '../state/resourceInvalidations';
 import { resilientReload, sharedRecovery } from '../state/resilientReloader';
 import { seekToPosition } from '../state/playbackStore';
-import type { NavigatorPorts } from '../modules/navigator/ports';
+import type { NavigatorPorts } from '@animastor/navigator';
 
 // ShellModePort host implementation: the same query as useDesktopShell
 // (min-width: 1180px), backed by a signal so a Navigator rendered through the

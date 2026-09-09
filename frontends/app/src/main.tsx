@@ -6,7 +6,7 @@ import { FilePage } from './pages/FilePage';
 import { GeneratePage } from './pages/GeneratePage';
 import { PlayPage } from './pages/PlayPage';
 import { EditPage } from './pages/EditPage';
-import { NavigatePage } from './pages/NavigatePage';
+import { NavigatePage } from '@animastor/navigator';
 import { SettingsPage } from './pages/SettingsPage';
 import { LibraryPage } from './pages/LibraryPage';
 import { WorkflowsPage } from './pages/WorkflowsPage';

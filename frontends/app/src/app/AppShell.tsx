@@ -8,7 +8,7 @@ import type { GenerationStatus } from '../state/generateStore';
 import { IconFile, IconGenerate, IconPlay, IconEdit, IconMap, IconChevronLeft, IconChevronRight, IconFolder, IconAdd } from './icons';
 import type { IconProps } from './icons';
 import { FilePage } from '../pages/FilePage';
-import { NavigatePage } from '../pages/NavigatePage';
+import { NavigatePage } from '@animastor/navigator';
 import { AiAssistantPage } from '../pages/AiAssistantPage';
 import { UserMenu } from '../features/auth/UserMenu';
 import { bookId as openBookId, phase as playerPhase, blankBookJustCreated } from '../state/generateStore';
