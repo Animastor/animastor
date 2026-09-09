@@ -270,14 +270,43 @@ describe('Navigator contour guard (navigator-module-extraction-audit.md, Phase 2
 });
 
 describe('Shared guards', () => {
-  it('Cycle guard — no file imports AppShell (desktop.ts:1-6 contract)', () => {
-    // FilePage is now in the package; no host File page exists to import AppShell.
-    // Verify the host AppShell doesn't appear in any state/store module imports.
+  it('Cycle guard — no state/store module imports AppShell (desktop.ts:1-6 contract)', () => {
+    // AppShell mounts pages; pages must never import AppShell back. This guard
+    // ensures no state module (fileStore, generateStore, playbackStore, etc.)
+    // reaches AppShell, which would create a cycle through the shell.
+    const stateModules = allSourceFiles().filter((f) => f.startsWith('state/') && !f.includes('.test.'));
+    for (const mod of stateModules) {
+      const specs = importSpecifiers(mod);
+      const appShellRefs = specs.filter((s) => /AppShell/i.test(s));
+      expect(appShellRefs, `${mod} must not import AppShell`).toEqual([]);
+    }
+  });
+
+  it('Cycle guard — fileStore never imports AppShell or any shell module', () => {
+    const specs = importSpecifiers(FILE_STORE);
+    const appShellRefs = specs.filter((s) => /AppShell/i.test(s));
+    expect(appShellRefs, 'fileStore must not import AppShell').toEqual([]);
+    const routerRefs = specs.filter((s) => /app\/router/.test(s));
+    expect(routerRefs, 'fileStore must not reach shell router').toEqual([]);
   });
 
   it('Package boundary — @animastor/file must not import features/ or other pages', () => {
-    // Verified by the package's own boundary.test.ts; here we pin that the
-    // package entry is the ONLY place @animastor/file appears in host imports.
+    // The package has its own boundary.test.ts that scans src/; here we pin
+    // from the host side that the package entry is the ONLY way to reach it.
+    const consumers = allSourceFiles()
+      .filter((f) => {
+        const specs = importSpecifiers(f);
+        return specs.some((s) => s.includes('@animastor/file'));
+      });
+    expect(consumers.sort()).toEqual(FILE_CONSUMERS_ALLOWED);
+  });
+
+  it('No shared-state duplication — fileStore does not re-export bookId/buildId/phase/errorMessage', () => {
+    const src = requireRaw(FILE_STORE);
+    // These shared signals live in generateStore; fileStore must not create
+    // separate exports that would fork the session identity.
+    expect(src).not.toMatch(/export const (bookId|buildId|phase|errorMessage)\b/);
+    expect(src).not.toMatch(/export let (bookId|buildId|phase|errorMessage)\b/);
   });
 });
 
