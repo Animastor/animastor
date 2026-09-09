@@ -1,11 +1,14 @@
 {
   "name": "@animastor/navigator",
   "version": "0.1.0",
-  "description": "Animastor Navigator — book structure navigation tree (chapters/scenes/units) as a ports-based Preact module. The host app provides every runtime dependency (seek, book source, position, invalidations, reload, shell mode, navigation, http, i18n, icons) through the injected NavigatorPorts contract — no host stores, api client, router or i18n kit inside the package.",
+  "description": "Preact/Web UI module: Animastor Navigator — book structure navigation tree (chapters/scenes/units) for the web frontend. NOT a platform-independent or domain module — it renders through Preact and consumes host capabilities only via the injected NavigatorPorts contract (seek, book source, position, invalidations, reload, shell mode, navigation, http, i18n, icons).",
   "keywords": [
     "animastor",
     "navigator",
     "preact",
+    "web-ui",
+    "frontend",
+    "ui-component",
     "signals",
     "book-structure",
     "ports-and-adapters"

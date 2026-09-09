@@ -1,5 +1,7 @@
 # Navigator Module Extraction Audit — Navigator contour → `@animastor/navigator`
 
+> **Package scope (fixed, `41016f23`+):** `@animastor/navigator` is a **specialized Preact/Web UI module** for the browser frontend (`frontends/app`). It is **not** a platform-independent or domain module: rendering is Preact JSX/DOM, the desktop/mobile fork is web-shell-specific (`matchMedia` port), and thumbnails/scroll behavior are web-specific. The Android/native Navigator (`NavigateFragment`) is a separate implementation — this package does not target it directly. Domain logic stays host-owned behind `NavigatorPorts`; a cross-platform `navigator-core` split, if ever needed, is a separate future task (NOT part of this package).
+
 **Status:** Phase 0 reconnaissance COMPLETE + **Phase 1 boundary preparation COMPLETE** (ports in-app, extraction still NOT performed — `NavigatePage.tsx` has NOT moved, no package exists).
 **Date:** 2026-09-09
 **Baseline:** HEAD `8987fb84` ("arch(generation): add module extraction reconnaissance"). All measurements taken against this tree; production runtime untouched.
@@ -215,7 +217,7 @@ No backend blockers: both consumed endpoints already live in extracted backend p
 | Host dependencies | **11 direct host modules → now all behind 10 ports** (Phase 1 prep) |
 | Ports | **10 implemented** (`seek`, `bookSource`, `position`, `invalidations`, `reload`, `shellMode`, `navigation`, `http`, `i18n`, `icons`) — contract in `modules/navigator/ports.ts`, adapters in `app/navigatorAdapters.ts` |
 | Cross-module coupling | **YES** — as a consumer of Player (seek), Generation (session/completion), Editor (canonical JSON + invalidations), Shell (panel + routes) — all mediated by ports |
-| Key-question answer | **Navigator is part of the shell navigation infrastructure** (a stateless navigation *surface* over the shared `positionStore`), not an independent domain module. Extraction is viable only as a UI component package over ports |
+| Key-question answer | **Navigator is part of the shell navigation infrastructure** (a stateless navigation *surface* over the shared `positionStore`), not an independent domain module. Extraction is viable only as a **Preact/Web UI component package** over ports — the package is deliberately NOT platform-independent (no `navigator-core` split; Android/native UI out of scope) |
 | Boundary status | **Ports-in-app COMPLETE**: the boundary imports no store/infra module (guard-enforced); remaining work is the physical move (Phase 6 steps 3–4) |
 | Main risks | ~~(1) direct Player-store import~~ resolved; (2) desktop/mobile fork explicit + tested; (3) freshness triad characterized; (4) ~~no tests~~ 27 added |
 | Recommended extraction order | **Before File** — cheapest contour in the queue; validates the ports pattern the File slice split will need |

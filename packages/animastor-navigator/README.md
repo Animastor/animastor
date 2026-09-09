@@ -2,7 +2,9 @@
 
 Book-structure navigation tree (chapters → scenes → units) for Animastor, packaged as a standalone Preact module.
 
-The Navigator owns no runtime infrastructure. Every host dependency — playback seek, book source, shared position, invalidation bus, reload pipeline, desktop/mobile shell mode, navigation, HTTP, i18n, icons — arrives through the [`NavigatorPorts`](#navigatorports) contract injected as a prop. The package never imports host stores, the API client, router, i18n or icon kit, so it can be mounted by any host that implements the ports.
+> **Scope — Preact/Web UI module.** This package is a **specialized Web/Frontend UI module** built on **Preact** (+ `@preact/signals`), for embedding into browser-based Animastor hosts (`frontends/app`). It is **not** a platform-independent or domain module: it renders DOM through Preact JSX, and its rendering semantics (desktop/mobile fork, thumbnails, `scrollIntoView`, `matchMedia`-driven shell mode) are web-specific. It is **not intended for Android/native UI** — the Android Navigator (`NavigateFragment` / `fragment_navigate.xml`) remains a separate native implementation; this package does not target it directly. Domain logic (book model, seek, reload, invalidations) stays host-owned behind the ports — extracting a cross-platform `navigator-core` is a possible future task, not part of this package.
+
+The Navigator owns no runtime infrastructure. Every host dependency — playback seek, book source, shared position, invalidation bus, reload pipeline, desktop/mobile shell mode, navigation, HTTP, i18n, icons — arrives through the [`NavigatorPorts`](#navigatorports) contract injected as a prop. The package never imports host stores, the API client, router, i18n or icon kit, so it can be mounted by any **Preact** host that implements the ports.
 
 ## Install
 
@@ -78,6 +80,7 @@ render(<NavigatePage ports={ports} />, document.getElementById('app'));
 - The package imports only `preact`, `preact/hooks`, `preact/jsx-runtime` and `@preact/signals`.
 - Host stores, `api/client`, router, i18n, icons, `AppShell` and adapter modules are **forbidden** inside the package (enforced by boundary tests in the repository).
 - `@animastor/navigator → host` = forbidden; `host → @animastor/navigator` = allowed through the public entry point only.
+- **Technology boundary**: `@animastor/navigator` is a **Preact/Web UI module** — not a cross-platform or domain package. No `navigator-core` split exists yet; the Android/native Navigator is out of scope for this package.
 
 ## Development
 
