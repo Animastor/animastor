@@ -1,6 +1,6 @@
 # File Module Extraction Audit — File contour → `@animastor/file`
 
-**Status:** Phase 0 reconnaissance COMPLETE + **Phase 1-prep boundary COMPLETE (extraction NOT performed — no package exists yet)**.
+**Status:** Phase 0 reconnaissance COMPLETE + **Phase 1-prep boundary COMPLETE** + **B1 state split COMPLETE (extraction NOT performed — no package exists yet)**.
 **Date:** 2026-09-09
 **Baseline:** HEAD `8987fb84` ("arch(generation): add module extraction reconnaissance"). All measurements taken against this tree; production runtime untouched.
 **Scope:** frontend web app (`frontends/app/src`) only. Android parity is contractual (same API surface in `BackendApi.kt` / `FileFragment.kt`), not code-shared — same verdict as the Editor/Player audits. The backend is a contract, not a dependency to move (its contours are already packages: `@animastor/editor`, `@animastor/player`).
@@ -284,3 +284,77 @@ Rendering (cards, i18n, empty-session disable rules), status priority (error > e
 ### Remaining blockers (unchanged from Phase 5)
 
 B1 slice split (`generateStore` → `fileStore`), B2 `generateStore ⇄ playbackStore` cycle (resolved for the slice at extraction via the composition root), B4 cross-module backend surface, B6 shared `phase` contract. B3 (shell embedding) is now **prepared** (explicit ports), B5 (no tests) is **resolved** by the characterization suite. The physical `packages/animastor-file` cut is a separate task.
+
+---
+
+## B1 split — File state isolated from generateStore (2026-09-09)
+
+**Status:** done, no package cut, no behavior change. Commit: `refactor(file): isolate file state from generate store` (branch `c21.4-physically-extract-analysis-from-backend`, baseline `48526385`).
+
+### What became the owner of File state
+
+`frontends/app/src/state/fileStore.ts` (host app code — NOT a package) now owns the whole File contour state + flows that were embedded in `generateStore.ts`:
+
+| Moved into `fileStore.ts` | Former place |
+|---|---|
+| `importMessages`, `isExporting`, `exportProgress`, `navigationEvent` (signals), `setExporting`, `setExportProgress` | generateStore "FILE SCREEN STATE (stage 3)" section |
+| `importBookFromFile`, `openBookById`, `closeBook`, `createBlankBook`, `restoreBookSession` | generateStore unified-import / deep-link / close sections |
+
+The flows are verbatim ports: same endpoints, same phase transitions, same navigation-event sequencing, same error fallbacks. `generateStore` keeps NO re-exports of the moved functions (consumers were updated directly — `main.tsx`, `SettingsPage.tsx`; no shim release cycle needed inside one repo).
+
+### What stayed shared (in generateStore) and why
+
+| Shared state | Why it stays |
+|---|---|
+| `bookId`, `buildId`, `loadBook` + the localStorage session (`animastor:currentBook`, per-user stash) | Session identity read by Generate/Play/Edit/AiAssistant/Settings/AppShell/navigatorAdapters (7 consumers); the storage/stash contract is exercised by `authStore` and `state/__tests__/auth-book-session.test.ts`. A package-private copy would fork identity. `fileStore` writes it ONLY via the injected `session.loadBook` seam. |
+| `phase` | Written by BOTH slices (File flows: LOADING_BOOK/IMPORTING_TXT/SCENE_READY/IDLE; generation slice: GENERATING/SCENE_READY/IDLE) and read by AppShell as the desktop bounce mirror (audit B6). One signal, two writers — fileStore writes through the same signal object. |
+| `errorMessage` | `cancelGeneration()` (generation slice) clears it for both surfaces; keeping it host-side avoids a behavior change. |
+| `dirtySummary`, `blankBookJustCreated` | Consumed by EditPage / AppShell; cleared/set by File flows through the seam. |
+| Generation reset internals (`resetProgressState`, `clearVBookProgress`, `isRegenerating`, `vbookPollToken`, `importCompleteReceived`, timer/stream teardown) | Belong to the generation slice; exposed to fileStore as a narrow documented surface: `setRegenerating`, `bumpVBookPollToken`, `markImportIncomplete`, `stopGenerationSession` (new export). |
+
+### The seams (fileStore ↔ host)
+
+```
+fileStore (File-owned state + flows)
+   ├── session:          { bookId, buildId, phase, errorMessage, dirtySummary,
+   │                       blankBookJustCreated, loadBook }        ← generateStore signals
+   ├── generationReset:  { resetProgressState, clearVBookProgress,
+   │                       setRegenerating, bumpVBookPollToken,
+   │                       markImportIncomplete, stopGenerationSession } ← generateStore
+   ├── playbackPrepared: { emit }                                   ← generateStore.emitPlaybackPrepared
+   └── player:           { closeBook }                              ← playbackStore.closeBook
+```
+
+Wiring happens ONCE in `app/fileAdapters.ts` (`wireFileStore(...)` at module load) — the composition root remains the only place where the File contract meets host infrastructure. Un-wired use fails loudly (`wireFileStore() was not called`), no silent no-ops.
+
+### generateStore ⇄ playbackStore cycle — RESOLVED (not broken, dissolved)
+
+The cycle existed only because `generateStore.closeBook()` (File slice) released the player. The split moved that call with the slice: `fileStore.closeBook` now calls `playbackStore.closeBook` through the injected `player` seam, and **generateStore no longer imports playbackStore at all**. The remaining edge is one-directional (`playbackStore → generateStore.onPlaybackPrepared`), which is not a cycle. No duplicates, no temporary signal copies, no singletons, no Player behavior change. The guard suite was strengthened accordingly: the old "one frozen cycle allowed" rule became **"zero state-module cycles"** plus an explicit assertion that `generateStore.ts` does not import `playbackStore`.
+
+### Guards (strengthened, none weakened)
+
+All Phase 1-prep guards kept. Added in `architecture/file-navigator-contour.guard.test.ts`:
+
+- File UI (`pages/FilePage.tsx` + `modules/file/**`) must not import `generateStore` **or** `fileStore` (both arrive via FilePorts).
+- `fileAdapters.ts` must wire `../state/fileStore` + `../state/playbackStore` in addition to the previous seams.
+- `fileStore.ts` must NOT re-declare `bookId`/`buildId`/`phase`/`errorMessage` (no fork) and must NOT import `generateStore`/`playbackStore` directly (seam-injected only).
+- Zero state-module cycles (see above).
+
+### Tests
+
+- New `state/fileStore.test.ts` (21 tests): initial/export state, unwired-seam failure, import (vbook / TXT with and without assets / failure / transition reset), open (identity, URL tolerance, failure), create blank (success + failure), close (identity + position + session + player release), restore (persisted / server fallback / offline / race guard / stale-session drop), identity no-fork (File flows write THE shared signals; authStore stash round-trip through them), generation-reset seam invocation. Only the HTTP transport is mocked — generateStore/positionStore are real, so the identity assertions are meaningful.
+- `app/fileAdapters.test.ts` updated: identity signals must be the generateStore signals themselves; File-owned signals must be the fileStore signals themselves.
+- `auth-book-session.test.ts` updated for the `restoreBookSession` move (wires the same seams as the host).
+
+### Manual regression coverage (not executable in this environment — honest gaps)
+
+Import / drag & drop / Open / Create New Book / Export-download / `/file` `/library` `/edit` `/play` routes / desktop File panel / deep links / navigation events are covered by the automated suites (characterization + fileStore + adapters + guards + build). Browser-level smoke (real backend, real media, Safari/Chrome) was NOT run here — listed as the remaining manual verification step before the physical cut.
+
+### Remaining blockers before the physical `@animastor/file` cut
+
+- **B4** — cross-module backend surface (`POST /book/blank` = Editor contour, `assets-state` = Player contour): documentation-only, still open.
+- **B6** — shared `phase` contract: PREPARED but structurally unresolved — the signal is still written by both slices; the physical cut needs an explicit who-owns-which-values contract (the seam interface already documents the File-owned values).
+- **B2 residue** — resolved for the File slice (cycle dissolved); the audit's original B2 wording about the package boundary is satisfied by the `player` seam.
+- Manual browser smoke (above).
+
+B1 itself: **CLOSED** — all File state/actions that can be separated ARE separated; everything left in generateStore is genuinely shared (documented above), and fileStore has zero imports of generateStore/playbackStore.

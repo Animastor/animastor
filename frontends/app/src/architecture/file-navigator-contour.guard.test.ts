@@ -6,6 +6,12 @@
 // File Phase 1-prep guards: FilePage consumes ONLY injected FilePorts; the host
 // composition root (app/fileAdapters.ts) is the single seam to the shared
 // infrastructure. Each assertion cites the audit section it pins.
+//
+// B1 split guards: File state lives in state/fileStore.ts (host-owned); the
+// File UI contour (pages/FilePage.tsx + modules/file/**) reaches it only via
+// FilePorts + fileAdapters, the shared session identity is NOT forked, and the
+// generateStore ⇄ playbackStore cycle is dissolved (the File-slice closeBook
+// player release moved with the slice into fileStore's `player` seam).
 
 import { describe, it, expect } from 'vitest';
 
@@ -50,6 +56,7 @@ const FILE_PAGE = 'pages/FilePage.tsx';
 const NAV_ADAPTERS = 'app/navigatorAdapters.ts';
 const FILE_ADAPTERS = 'app/fileAdapters.ts';
 const FILE_PORTS = 'modules/file/ports.ts';
+const FILE_STORE = 'state/fileStore.ts';
 
 // ── Audit §Phase 1 — Navigator host boundary (frozen, carries into Phase 2) ──
 
@@ -80,7 +87,9 @@ const FILE_PAGE_ALLOWED = [
 ].sort();
 
 // The composition root is the ONLY host place where the File contract meets
-// the shared infrastructure (same seam rule as navigatorAdapters).
+// the shared infrastructure (same seam rule as navigatorAdapters). B1 split:
+// the root now wires BOTH the fileStore (File-owned state) and generateStore
+// (shared session identity) + playbackStore (player release port).
 const FILE_ADAPTERS_REQUIRED = [
   '../api/client',
   './i18n',
@@ -88,6 +97,8 @@ const FILE_ADAPTERS_REQUIRED = [
   '../lib/ui',
   './icons',
   '../state/generateStore',
+  '../state/fileStore',
+  '../state/playbackStore',
   '../modules/file/ports',
 ].sort();
 
@@ -133,7 +144,7 @@ describe('File contour guard (file-module-extraction-audit.md)', () => {
     expect(consumers).toEqual([]);
   });
 
-  it('Phase 1 — FilePage touches no Player store directly (state reach goes through generateStore)', () => {
+  it('Phase 1 — FilePage touches no Player store directly (state reach goes through FilePorts)', () => {
     const specs = importSpecifiers(FILE_PAGE);
     expect(specs).not.toContain('../state/playbackStore');
     expect(specs).not.toContain('../state/positionStore');
@@ -262,8 +273,55 @@ describe('Shared guards', () => {
       expect(spec, `FilePage must not import another page`).not.toMatch(/\.\.\/pages\//);
     }
   });
+});
 
-  it('Cycle guard — generateStore ⇄ playbackStore stays the ONLY state-module cycle (frozen, documented)', () => {
+describe('B1 split guards — fileStore ownership + cycle dissolution (file-module-extraction-audit.md)', () => {
+  it('B1 — File UI never imports the fileStore (FilePage knows only FilePorts)', () => {
+    const specs = importSpecifiers(FILE_PAGE);
+    expect(specs).not.toContain('../state/fileStore');
+    expect(specs).not.toContain('state/fileStore');
+  });
+
+  it('B1 — the File contour never reaches generateStore or fileStore directly (both via FilePorts)', () => {
+    const contourFiles = allSourceFiles()
+      .filter((f) => (f.startsWith('modules/file/') || f === FILE_PAGE) && !f.includes('.test.'));
+    expect(contourFiles.length).toBeGreaterThan(0);
+    for (const f of contourFiles) {
+      const specs = importSpecifiers(f).join(' ');
+      expect(specs, `${f} must not import generateStore`).not.toContain('generateStore');
+      expect(specs, `${f} must not import fileStore`).not.toContain('fileStore');
+    }
+  });
+
+  it('B1 — fileStore owns NO identity: bookId/buildId/phase/errorMessage are not re-declared there', () => {
+    const src = requireRaw(FILE_STORE);
+    // A fork would re-declare these signals; fileStore must only receive them
+    // through the injected session seam.
+    expect(src).not.toMatch(/export const (bookId|buildId|phase|errorMessage)\b/);
+    expect(src).toMatch(/interface SessionSeam/); // the seam contract exists
+  });
+
+  it('B1 — fileStore reaches shared state only downward (generateStore NOT re-exported through it)', () => {
+    const specs = importSpecifiers(FILE_STORE);
+    // fileStore may import positionStore + api client; it must NOT import
+    // generateStore or playbackStore (both arrive via the injected seams —
+    // that is what keeps the future package boundary honest).
+    expect(specs).not.toContain('./generateStore');
+    expect(specs).not.toContain('./playbackStore');
+  });
+
+  it('Cycle guard (dissolved) — generateStore no longer imports playbackStore; playbackStore → generateStore stays one-way', () => {
+    // The old generateStore ⇄ playbackStore cycle existed ONLY for the File
+    // slice's closeBook player release. B1 moved closeBook into fileStore with
+    // an injected player port, so the generateStore leg is gone. This is a
+    // strengthening of the old "one allowed cycle" rule: ZERO cycles now.
+    expect(importSpecifiers('state/generateStore.ts')).not.toContain('./playbackStore');
+    expect(importSpecifiers('state/playbackStore.ts')).toContain('./generateStore');
+    // The player release moved into the composition root's wiring:
+    expect(importSpecifiers(FILE_ADAPTERS)).toContain('../state/playbackStore');
+  });
+
+  it('Cycle guard — NO state-module cycle exists at all (was: one frozen cycle allowed)', () => {
     const stateModules = allSourceFiles()
       .filter((f) => f.startsWith('state/') && f.endsWith('.ts') && !f.includes('.test.'));
 
@@ -274,27 +332,18 @@ describe('Shared guards', () => {
       const targets = importSpecifiers(mod)
         .filter((s) => s.startsWith('./') && s !== base)
         .map((s) => `state/${s.replace('./', '')}`)
-        // Bundler imports are extensionless ("./playbackStore"); keep only
-        // specifiers that point at a state/*.ts module that actually exists.
         .filter((t) => known.has(`${t}.ts`) || known.has(t))
         .map((t) => (known.has(`${t}.ts`) ? `${t}.ts` : t));
       edges.set(mod, targets);
     }
 
-    // The documented runtime cycle (generateStore.ts:21-23, playbackStore.test.ts:30).
-    expect(edges.get('state/generateStore.ts')).toContain('state/playbackStore.ts');
-    expect(edges.get('state/playbackStore.ts')).toContain('state/generateStore.ts');
-
-    // No other state-module cycle may appear.
     for (const [from, targets] of edges) {
       for (const to of targets) {
-        if (edges.get(to)?.includes(from)) {
-          expect(
-            [from, to].sort(),
-            'unexpected state-module cycle — see audits Phase 2',
-          ).toEqual(['state/generateStore.ts', 'state/playbackStore.ts']);
-        }
+        expect(edges.get(to), `state cycle ${from} → ${to}`).not.toContain(from);
       }
     }
+    // Documented post-B1 shape (all one-directional):
+    expect(edges.get('state/playbackStore.ts')).toContain('state/generateStore.ts');
+    expect(edges.get('state/generateStore.ts')).not.toContain('state/playbackStore.ts');
   });
 });

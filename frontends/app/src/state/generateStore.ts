@@ -3,24 +3,22 @@
 // progress panel state (computeProgressRows), the generation timer, the SSE
 // progress stream, and emits `playbackPrepared` which the playback coordinator
 // (playbackStore.wirePlaybackCoordination) forwards to PlaybackViewModel.
-// Stage 3 adds the File-screen slice of GenUiState (phase, importMessages,
-// errorMessage), isExporting/exportProgress, and the unified import flow
-// (importBookFromFile / openBookById / closeBook) with one-shot navigation events.
 // Stage 4 adds the Generate screen slice: layer config, worker counts, VBook
 // progress, task-aware progress panel, and generation start/cancel actions.
+// The File-screen slice (import/open/create/close flows + import/export
+// bookkeeping) moved to state/fileStore.ts (audit blocker B1 split) — this
+// store keeps ONLY the shared session identity (bookId/buildId + loadBook) and
+// the shared status signals (phase/errorMessage) written by both slices.
 import { signal } from '@preact/signals';
-import { getJson, postJson, postJsonLong, postMultipart, putJson, sse } from '../api/client';
+import { getJson, postJson, postJsonLong, putJson, sse } from '../api/client';
 import type {
-  AssetsStateResponse, BookData, BookStatus, DiffSummary, ImportResponse, LayerConfigResponse,
-  ProgressPanelResponse, ProgressTask, RecentBooksResponse, RegenerateResponse, WorkerCounts, ProgressEvent,
+  AssetsStateResponse, BookData, BookStatus, DiffSummary, LayerConfigResponse,
+  ProgressPanelResponse, ProgressTask, RegenerateResponse, WorkerCounts, ProgressEvent,
 } from '../api/models';
 import { sceneRefs } from '../api/models';
 import type { SceneRef } from '../api/models';
-import { navigateTo, clearPosition, position } from './positionStore';
+import { navigateTo, position } from './positionStore';
 import { vbookStageLabel } from '../app/i18n';
-// Runtime-only circular import (MainActivity.closeBook resets BOTH ViewModels —
-// GenerateViewModel + PlaybackViewModel; the player is released here too).
-import { closeBook as closePlayerBook } from './playbackStore';
 
 export type GenerationStatus = 'IDLE' | 'RUNNING' | 'ERROR' | 'SUCCESS';
 export type VBookStage = 'IDLE' | 'ANALYZING' | 'CREATING_SCENES' | 'COMPLETED';
@@ -186,8 +184,47 @@ export const dirtySummary = signal<DiffSummary | null>(null);
 export function setDirtySummary(s: DiffSummary | null): void { dirtySummary.value = s; }
 
 // ═══════════════════════════════════════════════════════════════
-//  FILE SCREEN STATE (stage 3) — 1:1 with the GenUiState slice
-//  FileFragment consumes + GenerateViewModel.isExporting/exportProgress
+//  FILE SLICE SEAMS (audit blocker B1 split)
+//  The File contour moved to state/fileStore.ts; the File flows still reset
+//  generation internals that live in THIS module. Those internals are exposed
+//  here as a narrow, documented surface — wired into fileStore by the
+//  composition root (app/fileAdapters.ts). Nothing here changes generation
+//  behavior. The old closeBook's player release (the File leg of the
+//  generateStore ⇄ playbackStore cycle) is now an injected call through
+//  fileStore's `player` seam — this module no longer imports playbackStore.
+// ═══════════════════════════════════════════════════════════════
+
+/** Full generation-session teardown used by fileStore.closeBook: stops the
+ *  SSE progress stream + wall-clock timer, invalidates the VBook agent poll,
+ *  clears in-flight worker tracking and the nav-icon generation status.
+ *  (Previously inlined in the File-slice closeBook.) */
+export function stopGenerationSession(): void {
+  vbookPollToken++;
+  stopProgressStream();
+  stopTimer();
+  setGenerationStatus('IDLE');
+  resetProgressState();
+}
+
+/** Mirror isRegenerating (File open flows reset it before a new transition). */
+export function setRegenerating(v: boolean): void { isRegenerating.value = v; }
+
+/** Invalidate an in-flight VBook agent poll (module-scope token bump — the
+ *  poller aborts on token mismatch; used by every File open flow). */
+export function bumpVBookPollToken(): void { vbookPollToken++; }
+
+/** Mark the SSE import_complete handshake as not-yet-received so a stale
+ *  latch from the previous import can't instantly finish the next poll. */
+export function markImportIncomplete(): void { importCompleteReceived = false; }
+
+// ═══════════════════════════════════════════════════════════════
+//  SHARED BOOK-SESSION STATUS (audit B6 — single source of truth)
+//  `phase`/`errorMessage` are written by BOTH slices: the File flows
+//  (now in state/fileStore.ts — LOADING_BOOK / IMPORTING_TXT / SCENE_READY /
+//  IDLE + error) and the generation slice below (GENERATING on restore,
+//  SCENE_READY on build finish, IDLE on cancel). AppShell reads `phase` as the
+//  desktop bounce mirror, GeneratePage mirrors it too. The signals stay HERE;
+//  fileStore writes them through the injected session seam — never a fork.
 // ═══════════════════════════════════════════════════════════════
 
 export type PlayerPhase =
@@ -195,23 +232,7 @@ export type PlayerPhase =
   | 'SCENE_READY' | 'PLAYING' | 'PAUSED' | 'IMPORTING_TXT';
 
 export const phase = signal<PlayerPhase>('IDLE');
-export const importMessages = signal<string[]>([]);
 export const errorMessage = signal<string | null>(null);
-export const isExporting = signal(false);
-export const exportProgress = signal(0);
-
-/** One-shot navigation request emitted by the import/deep-link flow
- *  (GenerateViewModel.NavigationEvent equivalent). Consumed by FilePage,
- *  which resets it — so a new import never double-navigates. */
-export const navigationEvent = signal<'play' | 'generate' | null>(null);
-
-export function setExporting(v: boolean): void {
-  isExporting.value = v;
-  if (!v) exportProgress.value = 0;
-}
-export function setExportProgress(v: number): void {
-  exportProgress.value = v;
-}
 
 // ═══════════════════════════════════════════════════════════════
 //  GENERATE SCREEN STATE (stage 4) — 1:1 with GenerateViewModel
@@ -1291,214 +1312,12 @@ export async function checkAndRestoreGenerationState(): Promise<void> {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  UNIFIED IMPORT — POST /book/import (server-side format detection)
-//  Mirrors GenerateViewModel.importBookFromFile: loads the book, emits
-//  playbackPrepared, and requests navigation to Play/Generate depending on
-//  format + scene list + asset availability.
+//  FILE SLICE SEAMS (audit blocker B1 split — see the section above
+//  "FILE SLICE SEAMS" near the top of this file for the contract).
+//  importBookFromFile / openBookById / closeBook / createBlankBook /
+//  restoreBookSession and the File screen bookkeeping signals
+//  (importMessages/isExporting/exportProgress/navigationEvent) now live in
+//  state/fileStore.ts. Shared state (bookId/buildId/phase/errorMessage +
+//  the persisted session) stays HERE as the single source of truth; fileStore
+//  writes it through the seams wired in app/fileAdapters.ts.
 // ═══════════════════════════════════════════════════════════════
-
-export async function importBookFromFile(file: File): Promise<void> {
-  // Reset worker tracking and vbook progress from a previous session, so two
-  // progress bars never appear when re-opening a book.
-  resetProgressState();
-  clearVBookProgress();
-  vbookPollToken++;
-  isRegenerating.value = false;
-  importCompleteReceived = false;
-  dirtySummary.value = null;
-  phase.value = 'LOADING_BOOK';
-  errorMessage.value = null;
-  importMessages.value = [];
-  navigationEvent.value = null;
-  try {
-    const res = await postMultipart<ImportResponse>('/book/import', file, 'file', file.name);
-    const bId = res.book_id;
-    loadBook(bId, res.build_id ?? '');
-    const bookData = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`).catch(() => null);
-    const scenes = bookData ? sceneRefs(bookData) : [];
-    const first = scenes.find((s) => s.sceneType === 'cover') ?? scenes[0] ?? null;
-    navigateTo({ chapterId: first?.chapterId ?? null, sceneId: first?.sceneId ?? null, unitIndex: 0 });
-
-    if (res.format === 'vbook') {
-      // snapshot is a server-side convenience — non-fatal if it fails
-      void postJson(`/book/${encodeURIComponent(bId)}/snapshot`).catch(() => {});
-      emitPlaybackPrepared({ bookId: bId, buildId: buildId.value, scenes });
-      phase.value = scenes.length ? 'SCENE_READY' : 'IDLE';
-      navigationEvent.value = scenes.length ? 'play' : 'generate';
-    } else {
-      // TXT path — technical steps shown on the File screen (take(4))
-      importMessages.value = ['✓ File selected', '✓ TXT read', '✓ Encoding detected', '✓ VBook structure created'];
-      phase.value = 'IMPORTING_TXT';
-      emitPlaybackPrepared({ bookId: bId, buildId: buildId.value, scenes });
-      const assets = await getJson<AssetsStateResponse>(`/book/${encodeURIComponent(bId)}/assets-state`).catch(() => null);
-      phase.value = scenes.length ? 'SCENE_READY' : 'IDLE';
-      navigationEvent.value = scenes.length && assets?.has_assets ? 'play' : 'generate';
-    }
-  } catch (e) {
-    phase.value = 'IDLE';
-    errorMessage.value = (e as Error).message || 'Import failed';
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  DEEP LINK — /file?book=<id> (or ?open=<id>)
-//  Web equivalent of the .vbook ACTION_VIEW intent: the linked file is already
-//  on the server, so we load it by id (GET /book/{id}) instead of uploading
-//  bytes, then follow the same importBookFromFile navigation logic. §12.
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * Restore the last-opened book on boot (GenerateViewModel.restoreBookSession).
- * Reads the persisted session from localStorage, validates it against the
- * server, and falls back to the most recent server book (GET /api/v1/books) so
- * a book imported/opened from another client shows up here too. Loads the book
- * data + warms the player via playbackPrepared, without emitting a navigation
- * event (the user stays on the current tab — same as Android).
- *
- * No-op when a book is already open (import or ?book= deep link raced ahead).
- *
- * @returns true if a book was restored.
- */
-export async function restoreBookSession(): Promise<boolean> {
-  if (bookId.value) return false;
-
-  // 1. Persisted session.
-  let id: string | null = null;
-  let bld = '';
-  try {
-    const raw = localStorage.getItem(BOOK_STORE_KEY);
-    if (raw) {
-      const p = JSON.parse(raw) as { id?: string; build?: string };
-      if (p.id) { id = p.id; bld = p.build ?? ''; }
-    }
-  } catch { /* ignore */ }
-
-  // 2. Validate against the server.
-  if (id) {
-    const ok = await getJson<BookStatus>(`/book/${encodeURIComponent(id)}/status`)
-      .then(() => true)
-      .catch(() => false);
-    if (!ok) id = null;
-  }
-
-  // 3. Fallback: most recent book known to the server.
-  if (!id) {
-    try {
-      const res = await getJson<RecentBooksResponse>('/books');
-      const first = res.books?.[0];
-      if (first?.book_id) { id = first.book_id; bld = first.build_id ?? ''; }
-    } catch { /* offline — nothing to restore */ }
-  }
-  if (!id) return false;
-  // A deep link / import may have opened a book while we were validating.
-  if (bookId.value) return false;
-
-  loadBook(id, bld);
-  try {
-    const bookData = await getJson<BookData>(`/book/${encodeURIComponent(id)}`);
-    const bId = bookData.manifest?.book_id || id;
-    // A ?book= deep link / import may have opened another book while we were
-    // fetching — never clobber it with the restored session.
-    if (bookId.value && bookId.value !== id) return false;
-    loadBook(bId, bookData.manifest?.build_id || bld);
-    const scenes = sceneRefs(bookData);
-    const first = scenes.find((s) => s.sceneType === 'cover') ?? scenes[0] ?? null;
-    navigateTo({ chapterId: first?.chapterId ?? null, sceneId: first?.sceneId ?? null, unitIndex: 0 });
-    emitPlaybackPrepared({ bookId: bId, buildId: buildId.value, scenes });
-    phase.value = scenes.length ? 'SCENE_READY' : 'IDLE';
-    return true;
-  } catch (e) {
-    // Book vanished between validation and load — drop the stale session.
-    console.warn('restoreBookSession: load failed, clearing session:', (e as Error).message);
-    loadBook('', '');
-    return false;
-  }
-}
-
-export async function openBookById(param: string): Promise<void> {
-  let id = decodeURIComponent(param).trim();
-  // tolerate copy-pasted download URLs (…/book/<id>/download → last segment)
-  if (id.includes('/')) id = id.split('/').filter(Boolean).pop() ?? id;
-  if (!id) return;
-  resetProgressState();
-  clearVBookProgress();
-  vbookPollToken++;
-  isRegenerating.value = false;
-  importCompleteReceived = false;
-  dirtySummary.value = null;
-  phase.value = 'LOADING_BOOK';
-  errorMessage.value = null;
-  importMessages.value = [];
-  navigationEvent.value = null;
-  try {
-    const bookData = await getJson<BookData>(`/book/${encodeURIComponent(id)}`);
-    const bId = bookData.manifest?.book_id || id;
-    loadBook(bId, bookData.manifest?.build_id || '');
-    const scenes = sceneRefs(bookData);
-    const first = scenes.find((s) => s.sceneType === 'cover') ?? scenes[0] ?? null;
-    navigateTo({ chapterId: first?.chapterId ?? null, sceneId: first?.sceneId ?? null, unitIndex: 0 });
-    emitPlaybackPrepared({ bookId: bId, buildId: buildId.value, scenes });
-    const assets = await getJson<AssetsStateResponse>(`/book/${encodeURIComponent(bId)}/assets-state`).catch(() => null);
-    phase.value = scenes.length ? 'SCENE_READY' : 'IDLE';
-    navigationEvent.value = scenes.length && assets?.has_assets ? 'play' : 'generate';
-  } catch (e) {
-    phase.value = 'IDLE';
-    errorMessage.value = (e as Error).message || 'Book not found';
-  }
-}
-
-/** closeBook() — GenerateViewModel.closeBook equivalent (Create New Book card). */
-export function closeBook(): void {
-  vbookPollToken++;
-  stopProgressStream();
-  stopTimer();
-  isRegenerating.value = false;
-  setGenerationStatus('IDLE');
-  loadBook('', ''); // also clears the persisted session
-  phase.value = 'IDLE';
-  errorMessage.value = null;
-  importMessages.value = [];
-  navigationEvent.value = null;
-  dirtySummary.value = null;
-  clearVBookProgress();
-  clearPosition();
-  closePlayerBook();
-}
-
-/**
- * Create New Visual Book → Editor (Create New Book card).
- * POST /book/blank scaffolds the minimal valid structure (zero chapter → one
- * scene → one unit); we load it and anchor the shared position at its first
- * scene so the Edit screen opens ready. The AI assistant stays available but is
- * no longer the mandatory entry point.
- *
- * @returns the new book id, or null on failure.
- */
-export async function createBlankBook(): Promise<string | null> {
-  resetProgressState();
-  clearVBookProgress();
-  vbookPollToken++;
-  isRegenerating.value = false;
-  importCompleteReceived = false;
-  dirtySummary.value = null;
-  phase.value = 'LOADING_BOOK';
-  errorMessage.value = null;
-  importMessages.value = [];
-  navigationEvent.value = null;
-  try {
-    const res = await postJson<{ book_id: string }>('/book/blank', { title: 'Новая книга' });
-    const bId = res.book_id;
-    loadBook(bId, '');
-    const bookData = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`);
-    const scenes = sceneRefs(bookData);
-    const first = scenes.find((s) => s.sceneType === 'cover') ?? scenes[0] ?? null;
-    navigateTo({ chapterId: first?.chapterId ?? null, sceneId: first?.sceneId ?? null, unitIndex: 0 });
-    phase.value = 'SCENE_READY';
-    blankBookJustCreated.value = true;
-    return bId;
-  } catch (e) {
-    phase.value = 'IDLE';
-    errorMessage.value = (e as Error).message || 'Failed to create book';
-    return null;
-  }
-}

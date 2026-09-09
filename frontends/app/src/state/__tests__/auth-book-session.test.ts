@@ -26,7 +26,7 @@ vi.mock('../../api/client', () => ({
   sse: vi.fn(),
 }));
 
-// Mock playback / position side-effect imports used by generateStore module init.
+// Mock playback / position side-effect imports used by generateStore/fileStore module init.
 vi.mock('../playbackStore', () => ({
   closeBook: vi.fn(),
   wirePlaybackCoordination: vi.fn(),
@@ -151,9 +151,35 @@ describe('login() book session restore', () => {
 
 describe('browser refresh after logout — session does not leak', () => {
   it('anonymous context does not see stashed authenticated book', async () => {
-    const { loadBook, restoreBookSession } = await import('../generateStore');
+    const generateStore = await import('../generateStore');
+    const fileStore = await import('../fileStore');
     const { authMe, logout } = await import('../authStore');
     const { postJson, getJson } = await import('../../api/client');
+
+    // Wire the fileStore seams exactly as the host composition root does —
+    // restoreBookSession lives in fileStore since the B1 split, and the shared
+    // session identity still comes from generateStore.
+    fileStore.wireFileStore({
+      generationReset: {
+        resetProgressState: generateStore.resetProgressState,
+        clearVBookProgress: generateStore.clearVBookProgress,
+        setRegenerating: generateStore.setRegenerating,
+        bumpVBookPollToken: generateStore.bumpVBookPollToken,
+        markImportIncomplete: generateStore.markImportIncomplete,
+        stopGenerationSession: generateStore.stopGenerationSession,
+      },
+      playbackPrepared: { emit: vi.fn() },
+      player: { closeBook: vi.fn() },
+      session: {
+        bookId: generateStore.bookId,
+        buildId: generateStore.buildId,
+        phase: generateStore.phase,
+        errorMessage: generateStore.errorMessage,
+        dirtySummary: generateStore.dirtySummary,
+        blankBookJustCreated: generateStore.blankBookJustCreated,
+        loadBook: generateStore.loadBook,
+      },
+    });
 
     authMe.value = {
       authenticated: true,
@@ -161,13 +187,13 @@ describe('browser refresh after logout — session does not leak', () => {
       workspace: { id: 'ws1', name: 'ws', type: 'personal' },
     };
     (postJson as ReturnType<typeof vi.fn>).mockResolvedValue({});
-    loadBook('import_1786345731767_1786345734345', '');
+    generateStore.loadBook('import_1786345731767_1786345734345', '');
 
     await logout();
 
     (getJson as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('not found'));
 
-    const restored = await restoreBookSession();
+    const restored = await fileStore.restoreBookSession();
     expect(restored).toBe(false);
     expect(ls.getItem(BOOK_KEY)).toBeNull();
   });
