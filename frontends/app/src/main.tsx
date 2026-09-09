@@ -20,6 +20,7 @@ import { wirePlaybackCoordination, wirePlaybackLifecycle } from './state/playbac
 import { restoreBookSession, bookId } from './state/generateStore';
 import { authMe } from './state/authStore';
 import { navigatorPorts } from './app/navigatorAdapters';
+import { filePorts } from './app/fileAdapters';
 
 // MainActivity.setupPlaybackCoordination() equivalent — forwards
 // generateStore.playbackPrepared to PlaybackViewModel (stage 4).
@@ -35,8 +36,8 @@ void restoreBookSession();
 function Routes() {
   return (
     <Router>
-      <FilePage path="/" />
-      <FilePage path="/file" />
+      <FilePage path="/" ports={filePorts} />
+      <FilePage path="/file" ports={filePorts} />
       <GeneratePage path="/generate" />
       <PlayPage path="/play" />
       <EditPage path="/edit" />

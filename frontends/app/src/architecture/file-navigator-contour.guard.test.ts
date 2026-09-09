@@ -3,7 +3,9 @@
 //  docs/architecture/navigator-module-extraction-audit.md).
 //
 // Phase 2 guards: Navigator physically extracted to @animastor/navigator package.
-// Each assertion cites the audit section it pins.
+// File Phase 1-prep guards: FilePage consumes ONLY injected FilePorts; the host
+// composition root (app/fileAdapters.ts) is the single seam to the shared
+// infrastructure. Each assertion cites the audit section it pins.
 
 import { describe, it, expect } from 'vitest';
 
@@ -46,6 +48,8 @@ function allSourceFiles(): string[] {
 
 const FILE_PAGE = 'pages/FilePage.tsx';
 const NAV_ADAPTERS = 'app/navigatorAdapters.ts';
+const FILE_ADAPTERS = 'app/fileAdapters.ts';
+const FILE_PORTS = 'modules/file/ports.ts';
 
 // ── Audit §Phase 1 — Navigator host boundary (frozen, carries into Phase 2) ──
 
@@ -65,21 +69,68 @@ const ADAPTERS_REQUIRED = [
   './icons',
 ].sort();
 
-// ── Audit §Phase 1 — allowed import sets (frozen at baseline) ──
-const FILE_ALLOWED = [
+// ── Audit §Phase 1-prep — File host boundary (the FilePorts seam) ──
+
+// FilePage may import ONLY preact + the ports contract. Everything else is
+// host infrastructure and must be reached through injected FilePorts.
+const FILE_PAGE_ALLOWED = [
   'preact',
   'preact/hooks',
+  '../modules/file/ports',
+].sort();
+
+// The composition root is the ONLY host place where the File contract meets
+// the shared infrastructure (same seam rule as navigatorAdapters).
+const FILE_ADAPTERS_REQUIRED = [
   '../api/client',
-  '../app/i18n',
-  '../app/icons',
-  '../app/router',
+  './i18n',
+  './router',
   '../lib/ui',
+  './icons',
   '../state/generateStore',
+  '../modules/file/ports',
+].sort();
+
+// Host files allowed to reference the File page or its ports (entry points +
+// composition root + this guard's subject files).
+const FILE_CONSUMERS_ALLOWED = [
+  'main.tsx',
+  'app/AppShell.tsx',
+  'app/fileAdapters.ts',
 ].sort();
 
 describe('File contour guard (file-module-extraction-audit.md)', () => {
-  it('Phase 1 — dependency boundary: FilePage imports only the frozen set', () => {
-    expect(importSpecifiers(FILE_PAGE)).toEqual(FILE_ALLOWED);
+  it('Phase 1-prep — dependency boundary: FilePage imports ONLY preact + FilePorts (host infra FORBIDDEN)', () => {
+    expect(importSpecifiers(FILE_PAGE)).toEqual(FILE_PAGE_ALLOWED);
+  });
+
+  it('Phase 1-prep — FilePorts contract imports nothing but Preact types', () => {
+    for (const spec of importSpecifiers(FILE_PORTS)) {
+      expect(spec, `modules/file/ports.ts must not depend on ${spec}`).toMatch(/^(@preact\/signals|preact(?:\/.*)?)$/);
+    }
+  });
+
+  it('Phase 1-prep — "File → frontends/app infrastructure" is FORBIDDEN for the whole modules/file/ contour', () => {
+    const contourFiles = allSourceFiles().filter((f) => f.startsWith('modules/file/') && !f.includes('.test.'));
+    expect(contourFiles.length).toBeGreaterThan(0);
+    for (const f of [...contourFiles, FILE_PAGE]) {
+      for (const spec of importSpecifiers(f)) {
+        expect(spec, `${f} reaches host infrastructure via "${spec}"`).not.toMatch(/\.\.\/(api|app|state|lib|features|pages)\//);
+        expect(spec, `${f} reaches host infrastructure via "${spec}"`).not.toMatch(/^\.\/(api|app|state|lib|features|pages)\//);
+        expect(spec, `${f} reaches AppShell directly`).not.toContain('AppShell');
+      }
+    }
+  });
+
+  it('Phase 1-prep — host → File: only entry points and the composition root reference the File contour', () => {
+    const consumers = allSourceFiles()
+      .filter((f) => !f.includes('.test.'))
+      .filter((f) => !FILE_CONSUMERS_ALLOWED.includes(f) && !f.startsWith('modules/file/') && f !== FILE_PAGE)
+      .filter((f) => {
+        const specs = importSpecifiers(f).join(' ');
+        return specs.includes('pages/FilePage') || specs.includes('modules/file');
+      });
+    expect(consumers).toEqual([]);
   });
 
   it('Phase 1 — FilePage touches no Player store directly (state reach goes through generateStore)', () => {
@@ -88,17 +139,31 @@ describe('File contour guard (file-module-extraction-audit.md)', () => {
     expect(specs).not.toContain('../state/positionStore');
   });
 
-  it('Phase 0 — entry points: routes "/" + "/file", START_ROUTE, desktop panel mount', () => {
-    const main = requireRaw('main.tsx');
-    expect(main).toContain('<FilePage path="/" />');
-    expect(main).toContain('<FilePage path="/file" />');
-    expect(requireRaw('app/router.ts')).toMatch(/START_ROUTE:\s*Route\s*=\s*'\/file'/);
-    expect(requireRaw('app/AppShell.tsx')).toContain('<FilePage />');
+  it('Phase 1-prep — adapter wires all host infrastructure seams (single composition root)', () => {
+    const specs = importSpecifiers(FILE_ADAPTERS);
+    for (const required of FILE_ADAPTERS_REQUIRED) {
+      expect(specs, `fileAdapters must wire ${required}`).toContain(required);
+    }
   });
 
-  it('Phase 2 — hidden dependency frozen: "animastor:open-file" lives only in AppShell + FilePage', () => {
+  it('Phase 0 — entry points: routes "/" + "/file", START_ROUTE, desktop panel mount (ports composed)', () => {
+    const main = requireRaw('main.tsx');
+    expect(main).toContain('<FilePage path="/" ports={filePorts} />');
+    expect(main).toContain('<FilePage path="/file" ports={filePorts} />');
+    expect(requireRaw('app/router.ts')).toMatch(/START_ROUTE:\s*Route\s*=\s*'\/file'/);
+    expect(requireRaw('app/AppShell.tsx')).toContain('<FilePage ports={filePorts} />');
+  });
+
+  it('Phase 1-prep — hidden dependency made explicit: "animastor:open-file" has ONE definition (fileAdapters) and AppShell dispatches through it', () => {
+    // The raw event-name literal lives ONLY in the host adapter (single source
+    // of truth); the File surface must not know it at all.
     const holders = allSourceFiles().filter((f) => requireRaw(f).includes('animastor:open-file')).sort();
-    expect(holders).toEqual(['app/AppShell.tsx', 'pages/FilePage.tsx']);
+    expect(holders).toEqual(['app/fileAdapters.ts']);
+    // AppShell dispatches the open request through the adapter's constant.
+    const shell = requireRaw('app/AppShell.tsx');
+    expect(shell).toContain("import { filePorts, OPEN_FILE_EVENT } from './fileAdapters'");
+    expect(shell).toContain('new CustomEvent(OPEN_FILE_EVENT)');
+    expect(requireRaw(FILE_PAGE).includes('animastor:open-file')).toBe(false);
   });
 
   it('Phase 4 — session-stash test ownership (auth-book-session covers the File session slice)', () => {
@@ -187,7 +252,7 @@ describe('Navigator contour guard (navigator-module-extraction-audit.md, Phase 2
 });
 
 describe('Shared guards', () => {
-  it('Cycle guard — no page imports AppShell (desktop.ts:1-6 contract)', () => {
+  it('Cycle guard — FilePage never imports AppShell (desktop.ts:1-6 contract)', () => {
     expect(importSpecifiers(FILE_PAGE)).not.toContain('../app/AppShell');
   });
 

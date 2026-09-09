@@ -17,6 +17,7 @@ import type { BookData } from '../api/models';
 import { sceneRefs } from '../api/models';
 import { useDesktopShell } from './desktop';
 import { navigatorPorts } from './navigatorAdapters';
+import { filePorts, OPEN_FILE_EVENT } from './fileAdapters';
 
 const DESKTOP_PANEL_PREFS_KEY = 'animastor_desktop_panels';
 
@@ -234,7 +235,7 @@ function DesktopWorkspace({ path, isSecondary, children }: { path: string; isSec
               {filePanelCollapsed ? <IconChevronRight width={18} height={18} /> : <IconChevronLeft width={18} height={18} />}
             </button>
           </div>
-          <FilePage />
+          <FilePage ports={filePorts} />
         </aside>
         <main class="desktop-main">
           {hasWorkspaceMode ? children
@@ -250,9 +251,10 @@ function DesktopWorkspace({ path, isSecondary, children }: { path: string; isSec
             )
             : <DesktopStartState
                 onOpenFile={() => {
-                  // Show the File panel and let its always-mounted picker open.
+                  // Show the File panel and let its always-mounted picker open
+                  // (via FileOpenRequestPort — fileAdapters.ts OPEN_FILE_EVENT).
                   setPanelPrefs((prefs) => ({ ...prefs, filePanelCollapsed: false }));
-                  window.dispatchEvent(new CustomEvent('animastor:open-file'));
+                  window.dispatchEvent(new CustomEvent(OPEN_FILE_EVENT));
                 }}
                 onCreateAI={() => setAssistantOpen(true)}
               />}

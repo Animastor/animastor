@@ -1,14 +1,8 @@
 import type { JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { t, tf } from '../app/i18n';
-import { navigate } from '../app/router';
-import {
-  bookId, buildId, phase, errorMessage, importMessages, isExporting,
-  navigationEvent, importBookFromFile, openBookById, closeBook, setExporting, setExportProgress, createBlankBook
-} from '../state/generateStore';
-import { getBlob } from '../api/client';
-import { toast } from '../lib/ui';
-import { IconFolder, IconAdd, IconLibrary, IconDownload, IconImage, IconVolumeUp, IconVideo } from '../app/icons';
+import type {
+  FileExportType, FilePorts,
+} from '../modules/file/ports';
 
 // FilePage — 1:1 with FileFragment (fragment_file.xml, stage 3).
 //  - Import .vbook/txt: <input type=file> + drag-drop → POST /book/import
@@ -25,38 +19,36 @@ import { IconFolder, IconAdd, IconLibrary, IconDownload, IconImage, IconVolumeUp
 //    export progress/saved status as Android (setMerging/setProgress/setSaved).
 //  - Deep link: /file?book=<id> (or ?open=<id>) loads an existing server-side
 //    book (web equivalent of the .vbook ACTION_VIEW intent, see 06 §12).
+//
+// Host boundary (docs/architecture/file-module-extraction-audit.md):
+// the page consumes ONLY the injected FilePorts — never the host stores
+// (generateStore), api/client, app/i18n, app/icons, app/router, lib/ui or
+// AppShell. The host wires the real implementations in app/fileAdapters.ts.
 
-type ExportType = 'book' | 'storyboard' | 'audio' | 'video';
-
-export function FilePage(props: { path?: string }) {
-  void props;
+export function FilePage(props: { path?: string; ports: FilePorts }) {
+  const { ports } = props;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [exportStatus, setExportStatus] = useState<{ text: string; pct?: number } | null>(null);
 
   // The desktop shell's no-book empty state (central workspace) can trigger the
-  // always-mounted File panel's picker via a custom event (Phase 9) — one
-  // "Open" action from the middle of the screen instead of hunting the panel.
-  useEffect(() => {
-    const onOpenFile = () => fileInputRef.current?.click();
-    window.addEventListener('animastor:open-file', onOpenFile);
-    return () => window.removeEventListener('animastor:open-file', onOpenFile);
-  }, []);
+  // always-mounted File panel's picker via the FileOpenRequestPort (Phase 9's
+  // one "Open" action from the middle of the screen instead of hunting the
+  // panel). The host adapter owns the underlying window event.
+  useEffect(() => ports.openRequests.onOpenRequest(() => fileInputRef.current?.click()), [ports]);
 
-  // ── Deep link: ?book=<id> / ?open=<id> — processed once per page instance,
-  // then the param is stripped so tab re-mounts and back/forward don't re-trigger.
+  // ── Deep link: ?book=<id> / ?open=<id> — processed once per page instance
+  // (the adapter strips the param so tab re-mounts and back/forward don't
+  // re-trigger). ──
   const deepLinkDone = useRef(false);
   useEffect(() => {
     if (deepLinkDone.current) return;
     deepLinkDone.current = true;
-    const params = new URLSearchParams(location.search);
-    const bookParam = params.get('book') ?? params.get('open');
+    const bookParam = ports.deepLink.takeBookParam();
     if (bookParam) {
-      const clean = location.pathname + location.hash;
-      history.replaceState(null, '', clean);
-      void openBookById(bookParam);
+      void ports.actions.openBookById(bookParam);
     }
-  }, []);
+  }, [ports]);
 
   // ── Consume one-shot navigation events from import/deep-link (1:1 with
   // FileFragment collecting viewModel.navigationEvent, guarded by
@@ -67,26 +59,26 @@ export function FilePage(props: { path?: string }) {
     const go = (ev: 'play' | 'generate') => {
       if (hasNavigated.current) return;
       hasNavigated.current = true;
-      navigationEvent.value = null;
-      navigate(ev === 'play' ? '/play' : '/generate');
+      ports.session.navigationEvent.value = null;
+      ports.navigation.navigate(ev === 'play' ? '/play' : '/generate');
     };
-    const unsub = navigationEvent.subscribe((ev) => { if (ev) go(ev); });
-    const initial = navigationEvent.value;
+    const unsub = ports.session.navigationEvent.subscribe((ev) => { if (ev) go(ev); });
+    const initial = ports.session.navigationEvent.value;
     if (initial) go(initial);
     return unsub;
-  }, []);
+  }, [ports]);
 
   // ── Signal-derived UI (reads in render auto-subscribe, like AppShell) ──
-  const exporting = isExporting.value;
-  const bid = bookId.value;
-  const build = buildId.value;
-  const phaseNow = phase.value;
+  const exporting = ports.session.isExporting.value;
+  const bid = ports.session.bookId.value;
+  const build = ports.session.buildId.value;
+  const phaseNow = ports.session.phase.value;
   const bookOk = bid.trim() !== '' && build.trim() !== '';
   const sceneReady = phaseNow === 'SCENE_READY' || phaseNow === 'PLAYING';
   const bookEnabled = !exporting && bid.trim() !== '';
   const mediaEnabled = !exporting && bookOk && sceneReady;
 
-  const err = errorMessage.value;
+  const err = ports.session.errorMessage.value;
   const importing = phaseNow === 'IMPORTING_TXT';
   const loading = phaseNow === 'LOADING_BOOK' || phaseNow === 'GENERATING' || phaseNow === 'DOWNLOADING';
 
@@ -102,56 +94,56 @@ export function FilePage(props: { path?: string }) {
     showBar = true;
     if (exportStatus.pct != null) { determinate = true; pct = exportStatus.pct; }
   } else if (importing) {
-    const msgs = importMessages.value;
+    const msgs = ports.session.importMessages.value;
     if (msgs.length) statusText = msgs[msgs.length - 1];
-    else { statusText = t('file_status_opening'); showBar = true; }
+    else { statusText = ports.i18n.t('file_status_opening'); showBar = true; }
   } else if (loading) {
     showBar = true;
-    statusText = phaseNow === 'LOADING_BOOK' ? t('file_status_opening')
-      : phaseNow === 'GENERATING' ? t('file_status_generating')
-      : t('file_status_checking');
+    statusText = phaseNow === 'LOADING_BOOK' ? ports.i18n.t('file_status_opening')
+      : phaseNow === 'GENERATING' ? ports.i18n.t('file_status_generating')
+      : ports.i18n.t('file_status_checking');
   }
 
   const runImport = (file: File) => {
     if (!file) return;
     hasNavigated.current = false; // Android: hasSwitchedToPlay = false before importBookFromFile
-    void importBookFromFile(file);
+    void ports.actions.importBookFromFile(file);
   };
 
-  const doExport = async (type: ExportType) => {
-    const bId = bookId.value;
-    const buildNow = buildId.value;
+  const doExport = async (type: FileExportType) => {
+    const bId = ports.session.bookId.value;
+    const buildNow = ports.session.buildId.value;
     if (!bId) return;
-    if (type !== 'book' && (!buildNow || !(phase.value === 'SCENE_READY' || phase.value === 'PLAYING'))) return;
-    setExporting(true);
+    if (type !== 'book' && (!buildNow || !(ports.session.phase.value === 'SCENE_READY' || ports.session.phase.value === 'PLAYING'))) return;
+    ports.actions.setExporting(true);
     try {
       const qs = type === 'book' ? '' : `?build_id=${encodeURIComponent(buildNow)}`;
       const path = type === 'book' ? `/book/${encodeURIComponent(bId)}/download`
         : type === 'storyboard' ? `/book/${encodeURIComponent(bId)}/storyboard${qs}`
         : type === 'audio' ? `/book/${encodeURIComponent(bId)}/audio${qs}`
         : `/book/${encodeURIComponent(bId)}/export${qs}`;
-      const statusMsg = type === 'storyboard' ? t('export_preparing_storyboard')
-        : type === 'audio' ? t('export_merging_audio')
-        : type === 'video' ? t('export_merging_video')
-        : t('export_preparing');
+      const statusMsg = type === 'storyboard' ? ports.i18n.t('export_preparing_storyboard')
+        : type === 'audio' ? ports.i18n.t('export_merging_audio')
+        : type === 'video' ? ports.i18n.t('export_merging_video')
+        : ports.i18n.t('export_preparing');
       setExportStatus({ text: statusMsg });
-      const blob = await getBlob(path, undefined, (p) => {
-        setExportProgress(p);
-        setExportStatus({ text: tf('export_progress', Math.round(p * 100)), pct: Math.round(p * 100) });
+      const blob = await ports.http.getBlob(path, (p) => {
+        ports.actions.setExportProgress(p);
+        setExportStatus({ text: ports.i18n.tf('export_progress', Math.round(p * 100)), pct: Math.round(p * 100) });
       });
       const filename = type === 'video' ? `${bId}_final.mp4`
         : type === 'storyboard' ? `${bId}_storyboard.zip`
         : type === 'audio' ? `${bId}.mp3`
         : `${bId}.vbook`;
       triggerDownload(blob, filename);
-      setExportStatus({ text: t('export_saved') });
+      setExportStatus({ text: ports.i18n.t('export_saved') });
       await new Promise((r) => setTimeout(r, 3000));
       setExportStatus(null);
     } catch (e) {
       setExportStatus(null);
-      toast(`${t('download_failed')}: ${(e as Error).message}`, 4000);
+      ports.toast.toast(`${ports.i18n.t('download_failed')}: ${(e as Error).message}`, 4000);
     } finally {
-      setExporting(false);
+      ports.actions.setExporting(false);
     }
   };
 
@@ -175,7 +167,7 @@ export function FilePage(props: { path?: string }) {
       <button
         type="button"
         class={'file-card' + (dragOver ? ' file-card--drag' : '')}
-        aria-label={t('file_from_device')}
+        aria-label={ports.i18n.t('file_from_device')}
         onClick={() => fileInputRef.current?.click()}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
@@ -186,10 +178,10 @@ export function FilePage(props: { path?: string }) {
           if (f) runImport(f);
         }}
       >
-        <span class="file-card__icon"><IconFolder width={24} height={24} /></span>
+        <span class="file-card__icon"><ports.icons.Folder width={24} height={24} /></span>
         <span class="file-card__body">
-          <span class="file-card__title">{t('file_from_device')}</span>
-          <span class="file-card__desc">{t('file_from_device_desc')}</span>
+          <span class="file-card__title">{ports.i18n.t('file_from_device')}</span>
+          <span class="file-card__desc">{ports.i18n.t('file_from_device_desc')}</span>
         </span>
       </button>
 
@@ -197,19 +189,19 @@ export function FilePage(props: { path?: string }) {
       <button
         type="button"
         class="file-card"
-        aria-label={t('file_create')}
+        aria-label={ports.i18n.t('file_create')}
         onClick={() => {
-          closeBook();
-          void createBlankBook().then((id) => {
-            if (id) navigate('/edit');
+          ports.actions.closeBook();
+          void ports.actions.createBlankBook().then((id) => {
+            if (id) ports.navigation.navigate('/edit');
           });
         }}
       >
         {/* ic_create.xml — same glyph as ic_add */}
-        <span class="file-card__icon"><IconAdd width={24} height={24} /></span>
+        <span class="file-card__icon"><ports.icons.Add width={24} height={24} /></span>
         <span class="file-card__body">
-          <span class="file-card__title">{t('file_create')}</span>
-          <span class="file-card__desc">{t('file_create_desc')}</span>
+          <span class="file-card__title">{ports.i18n.t('file_create')}</span>
+          <span class="file-card__desc">{ports.i18n.t('file_create_desc')}</span>
         </span>
       </button>
 
@@ -217,22 +209,22 @@ export function FilePage(props: { path?: string }) {
       <button
         type="button"
         class="file-card"
-        aria-label={t('library_button')}
-        onClick={() => navigate('/library')}
+        aria-label={ports.i18n.t('library_button')}
+        onClick={() => ports.navigation.navigate('/library')}
       >
-        <span class="file-card__icon"><IconLibrary width={24} height={24} /></span>
+        <span class="file-card__icon"><ports.icons.Library width={24} height={24} /></span>
         <span class="file-card__body">
-          <span class="file-card__title">{t('library_button')}</span>
-          <span class="file-card__desc">{t('empty_state')}</span>
+          <span class="file-card__title">{ports.i18n.t('library_button')}</span>
+          <span class="file-card__desc">{ports.i18n.t('empty_state')}</span>
         </span>
       </button>
 
       {/* Download section */}
-      <h2 class="file-page__label">{t('download_section')}</h2>
-      <DownloadCard icon={<IconDownload width={24} height={24} />} title={t('download_book')} desc={t('download_book_desc')} enabled={bookEnabled} onClick={() => void doExport('book')} />
-      <DownloadCard icon={<IconImage width={24} height={24} />} title={t('download_storyboard')} desc={t('download_storyboard_desc')} enabled={mediaEnabled} onClick={() => void doExport('storyboard')} />
-      <DownloadCard icon={<IconVolumeUp width={24} height={24} />} title={t('download_audio')} desc={t('download_audio_desc')} enabled={mediaEnabled} onClick={() => void doExport('audio')} />
-      <DownloadCard icon={<IconVideo width={24} height={24} />} title={t('download_video')} desc={t('download_video_desc')} enabled={mediaEnabled} onClick={() => void doExport('video')} />
+      <h2 class="file-page__label">{ports.i18n.t('download_section')}</h2>
+      <DownloadCard icon={<ports.icons.Download width={24} height={24} />} title={ports.i18n.t('download_book')} desc={ports.i18n.t('download_book_desc')} enabled={bookEnabled} onClick={() => void doExport('book')} />
+      <DownloadCard icon={<ports.icons.Image width={24} height={24} />} title={ports.i18n.t('download_storyboard')} desc={ports.i18n.t('download_storyboard_desc')} enabled={mediaEnabled} onClick={() => void doExport('storyboard')} />
+      <DownloadCard icon={<ports.icons.VolumeUp width={24} height={24} />} title={ports.i18n.t('download_audio')} desc={ports.i18n.t('download_audio_desc')} enabled={mediaEnabled} onClick={() => void doExport('audio')} />
+      <DownloadCard icon={<ports.icons.Video width={24} height={24} />} title={ports.i18n.t('download_video')} desc={ports.i18n.t('download_video_desc')} enabled={mediaEnabled} onClick={() => void doExport('video')} />
 
       {/* Progress bar + status (LinearProgressIndicator + statusText) */}
       {showBar && (

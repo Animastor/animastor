@@ -1,6 +1,6 @@
 # File Module Extraction Audit — File contour → `@animastor/file`
 
-**Status:** Phase 0 reconnaissance COMPLETE (extraction NOT performed — this document records the audit only).
+**Status:** Phase 0 reconnaissance COMPLETE + **Phase 1-prep boundary COMPLETE (extraction NOT performed — no package exists yet)**.
 **Date:** 2026-09-09
 **Baseline:** HEAD `8987fb84` ("arch(generation): add module extraction reconnaissance"). All measurements taken against this tree; production runtime untouched.
 **Scope:** frontend web app (`frontends/app/src`) only. Android parity is contractual (same API surface in `BackendApi.kt` / `FileFragment.kt`), not code-shared — same verdict as the Editor/Player audits. The backend is a contract, not a dependency to move (its contours are already packages: `@animastor/editor`, `@animastor/player`).
@@ -217,3 +217,70 @@ Ports and their purpose:
 | Cross-module coupling | **YES** — Editor (blank-book + /edit), Player (playbackPrepared, closeBook, assets-state), Generation (reset interplay), AiAssistant (blankBookJustCreated) |
 | Main risks | (1) slicing the shared store without forking session/phase state; (2) the pre-existing store cycle; (3) desktop panel embedding contract; (4) no existing File tests to catch regressions |
 | Recommended extraction order | **After Navigator** (Navigator is a 1-file move with zero state ownership — cheap warm-up) and after the `fileStore` in-app split lands; package cut last |
+
+---
+
+## Phase 1-prep — Extraction boundary PREPARED (2026-09-09)
+
+**Status:** done, no package cut, no behavior change. Mirrors the Navigator prep (`navigator-module-extraction-audit.md`): the File surface now consumes ONLY the injected `FilePorts` contract; the shared infrastructure is wired in a single host-owned composition root.
+
+### The seam
+
+```
+FilePage.tsx (UI, ports={filePorts})
+   ↓
+modules/file/ports.ts        ← FilePorts contract (imports only Preact types)
+   ↓
+app/fileAdapters.ts          ← host-owned composition root (ONLY seam)
+   ↓
+existing Animastor infrastructure (generateStore, api/client, i18n, router, icons, lib/ui)
+```
+
+### What was created
+
+| File | Role |
+|---|---|
+| `frontends/app/src/modules/file/ports.ts` | `FilePorts` contract — File-local structural types; imports only `@preact/signals` + Preact types. Future public surface of `@animastor/file`. |
+| `frontends/app/src/app/fileAdapters.ts` | Host composition root: wires generateStore signals/actions, `api/client.getBlob`, `t`/`tf`, `navigate`, `toast`, icons, `OPEN_FILE_EVENT`, deep-link `?book=`/`?open=` grammar into `filePorts`. |
+| `frontends/app/src/modules/file/file.test.tsx` | Characterization tests through fake ports (19 tests — see below). |
+| `frontends/app/src/app/fileAdapters.test.ts` | Wiring tests: session signals are the generateStore signals **themselves** (no fork); i18n resolves real keys; open-request subscribe/unsubscribe; deep-link read+strip. |
+
+### FilePorts (measured from the audit, NOT a NavigatorPorts copy)
+
+| Port | Seams | Notes |
+|---|---|---|
+| `session: FileSessionPort` | generateStore signals | `bookId`/`buildId`/`phase`/`errorMessage`/`importMessages`/`isExporting`/`navigationEvent` received as signals — host stays the single source of truth (B6). |
+| `actions: FileActionsPort` | generateStore slice | `importBookFromFile`, `openBookById`, `closeBook`, `createBlankBook`, `setExporting`, `setExportProgress` — the B1 slice, injected until the split. |
+| `http: FileHttpPort` | api/client | `getBlob` (export/download). |
+| `i18n: FileI18nPort` | app/i18n | `t`/`tf` with a frozen `FileI18nKey` set. |
+| `toast: FileToastPort` | lib/ui | export-failure toast. |
+| `navigation: FileNavigationPort` | app/router | restricted to `/play` \| `/generate` \| `/edit` \| `/library`. |
+| `openRequests: FileOpenRequestPort` | window event | hidden dep #1 made explicit (`animastor:open-file` — literal now lives ONLY in the adapter). |
+| `deepLink: FileDeepLinkPort` | location | hidden dep #3 made explicit (`?book=`/`?open=` read + strip). |
+| `icons: FileIconsPort` | app/icons | the 7 File glyphs. |
+
+Deliberately **absent** (no Navigator mechanical copy): no SeekPort, no PositionPort, no invalidation/reload ports at the page level — the page never reached positionStore/playbackStore/resourceInvalidations/resilientReloader; those are reachable only inside the B1 slice, which stays host until the physical cut.
+
+### Entry points (frozen by guards)
+
+1. `main.tsx` — `<FilePage path="/" ports={filePorts} />` + `<FilePage path="/file" ports={filePorts} />`
+2. `app/router.ts` — `START_ROUTE = '/file'`
+3. `app/AppShell.tsx` — desktop always-mounted panel `<FilePage ports={filePorts} />` + dispatch via `OPEN_FILE_EVENT`
+
+### Guards (architecture/file-navigator-contour.guard.test.ts — File section, Navigator guards untouched)
+
+- FilePage imports ONLY `preact`, `preact/hooks`, `../modules/file/ports` — anything else is a failure ("File → frontends/app infrastructure = FORBIDDEN").
+- `modules/file/**` may not import `api/`, `app/`, `state/`, `lib/`, `features/`, `pages/`, or AppShell.
+- `modules/file/ports.ts` imports nothing but Preact types.
+- Host → File only from `main.tsx`, `AppShell.tsx`, `fileAdapters.ts` (reverse-dependency allow-list).
+- `fileAdapters.ts` must wire all seven infrastructure seams.
+- `animastor:open-file` literal: exactly one definition (`fileAdapters.ts`); AppShell dispatches via `OPEN_FILE_EVENT`; FilePage must not contain it.
+- Entry points + ports-composed mounts pinned as above.
+
+### Characterization tests (19, all through fake ports — no host store)
+
+Rendering (cards, i18n, empty-session disable rules), status priority (error > export > importing > loading, else hidden; LOADING_BOOK/GENERATING/DOWNLOADING mapping; import-messages last-line rule), download enable rules (book vs media), import picker + drag-drop, Create New Book (close → create → /edit; null id → no nav), Library → /library, one-shot `navigationEvent` handshake (initial consumption, reset, `hasNavigated` guard, re-arm on new import), export flow (path grammar incl. `build_id` encoding, progress, Saved status, failure toast, `isExporting` release, no-book/no-phase guards), open-request port, deep-link once-per-mount.
+
+### Remaining blockers (unchanged from Phase 5)
+
+B1 slice split (`generateStore` → `fileStore`), B2 `generateStore ⇄ playbackStore` cycle (resolved for the slice at extraction via the composition root), B4 cross-module backend surface, B6 shared `phase` contract. B3 (shell embedding) is now **prepared** (explicit ports), B5 (no tests) is **resolved** by the characterization suite. The physical `packages/animastor-file` cut is a separate task.
