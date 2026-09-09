@@ -19,6 +19,7 @@ import { applyTheme, applyLanguage } from './app/theme';
 import { wirePlaybackCoordination, wirePlaybackLifecycle } from './state/playbackStore';
 import { restoreBookSession, bookId } from './state/generateStore';
 import { authMe } from './state/authStore';
+import { navigatorPorts } from './app/navigatorAdapters';
 
 // MainActivity.setupPlaybackCoordination() equivalent — forwards
 // generateStore.playbackPrepared to PlaybackViewModel (stage 4).
@@ -39,7 +40,7 @@ function Routes() {
       <GeneratePage path="/generate" />
       <PlayPage path="/play" />
       <EditPage path="/edit" />
-      <NavigatePage path="/navigate" />
+      <NavigatePage path="/navigate" ports={navigatorPorts} />
       <SettingsPage path="/settings" />
       <SettingsPage path="/settings/vbook" section="vbook" />
       <SettingsPage path="/settings/worker" section="worker" />

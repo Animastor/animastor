@@ -16,6 +16,7 @@ import { getJson } from '../api/client';
 import type { BookData } from '../api/models';
 import { sceneRefs } from '../api/models';
 import { useDesktopShell } from './desktop';
+import { navigatorPorts } from './navigatorAdapters';
 
 const DESKTOP_PANEL_PREFS_KEY = 'animastor_desktop_panels';
 
@@ -271,7 +272,7 @@ function DesktopWorkspace({ path, isSecondary, children }: { path: string; isSec
               {navigatorPanelCollapsed ? <IconChevronLeft width={18} height={18} /> : <IconChevronRight width={18} height={18} />}
             </button>
           </div>
-          <NavigatePage />
+          <NavigatePage ports={navigatorPorts} />
         </aside>
       </div>
       {/* Assistant dock — contextual overlay below the header (plan §8). The

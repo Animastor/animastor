@@ -47,6 +47,43 @@ function allSourceFiles(): string[] {
 
 const FILE_PAGE = 'pages/FilePage.tsx';
 const NAV_PAGE = 'pages/NavigatePage.tsx';
+const NAV_PORTS = 'modules/navigator/ports.ts';
+const NAV_ADAPTERS = 'app/navigatorAdapters.ts';
+
+// ── Audit §Phase 1 — Navigator host boundary (Phase 1 prep: ports in-app) ──
+// The Navigator surface must reach the host ONLY through its ports contract.
+const NAV_FORBIDDEN = [
+  '../state/playbackStore',
+  '../state/generateStore',
+  '../state/positionStore',
+  '../state/resourceInvalidations',
+  '../state/resilientReloader',
+  '../app/AppShell',
+  '../app/navigatorAdapters',
+  '../api/client',
+  '../app/i18n',
+  '../app/icons',
+  '../app/router',
+  '../app/desktop',
+].sort();
+
+// The ports contract file is self-contained: Preact types only.
+const PORTS_ALLOWED = ['@preact/signals', 'preact'].sort();
+
+// The host adapter is the single seam that wires the shared infrastructure.
+const ADAPTERS_REQUIRED = [
+  '../state/generateStore',
+  '../state/positionStore',
+  '../state/resourceInvalidations',
+  '../state/resilientReloader',
+  '../state/playbackStore',
+  '../api/client',
+  '../modules/navigator/ports',
+  './i18n',
+  './router',
+  './desktop',
+  './icons',
+].sort();
 
 // ── Audit §Phase 1 — allowed import sets (measured at baseline 8987fb84) ──
 // New specifier ⇒ boundary drift ⇒ update the audit BEFORE touching code.
@@ -64,17 +101,8 @@ const FILE_ALLOWED = [
 const NAV_ALLOWED = [
   'preact',
   'preact/hooks',
-  '../api/client',
   '../api/models',
-  '../app/desktop',
-  '../app/i18n',
-  '../app/icons',
-  '../app/router',
-  '../state/generateStore',
-  '../state/playbackStore',
-  '../state/positionStore',
-  '../state/resilientReloader',
-  '../state/resourceInvalidations',
+  '../modules/navigator/ports',
 ].sort();
 
 describe('File contour guard (file-module-extraction-audit.md)', () => {
@@ -112,14 +140,36 @@ describe('Navigator contour guard (navigator-module-extraction-audit.md)', () =>
     expect(importSpecifiers(NAV_PAGE)).toEqual(NAV_ALLOWED);
   });
 
-  it('Phase 0 — entry points: route "/navigate" + desktop panel mount', () => {
-    expect(requireRaw('main.tsx')).toContain('<NavigatePage path="/navigate" />');
-    expect(requireRaw('app/AppShell.tsx')).toContain('<NavigatePage />');
+  it('Phase 1 prep — Navigator reaches the host only through ports (no direct store/infra imports)', () => {
+    const specs = importSpecifiers(NAV_PAGE);
+    for (const banned of NAV_FORBIDDEN) {
+      expect(specs, `NavigatePage must not import ${banned} — go through NavigatorPorts`).not.toContain(banned);
+    }
+  });
+
+  it('Phase 1 prep — ports contract is self-contained (Preact types only, no host imports)', () => {
+    expect(importSpecifiers(NAV_PORTS)).toEqual(PORTS_ALLOWED);
+  });
+
+  it('Phase 1 prep — the host adapter is the single composition seam for the shared infrastructure', () => {
+    const specs = importSpecifiers(NAV_ADAPTERS);
+    for (const required of ADAPTERS_REQUIRED) {
+      expect(specs, `navigatorAdapters must wire ${required}`).toContain(required);
+    }
+  });
+
+  it('Phase 0 — entry points: route "/navigate" + desktop panel mount (ports composed)', () => {
+    expect(requireRaw('main.tsx')).toContain('<NavigatePage path="/navigate" ports={navigatorPorts} />');
+    expect(requireRaw('app/AppShell.tsx')).toContain('<NavigatePage ports={navigatorPorts} />');
   });
 
   it('Phase 2 — zero reverse dependencies: only main.tsx and AppShell import the pages', () => {
     const consumers = allSourceFiles()
       .filter((f) => f !== 'main.tsx' && f !== 'app/AppShell.tsx' && !f.startsWith('pages/'))
+      // The ports contract is the Navigator boundary, not a page consumer
+      // (it contains no page reference — the include check below passes only
+      // for real page imports).
+      .filter((f) => !f.startsWith('modules/navigator/'))
       .filter((f) => {
         const src = requireRaw(f);
         return src.includes('pages/FilePage') || src.includes('pages/NavigatePage');

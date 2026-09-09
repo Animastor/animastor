@@ -1,11 +1,12 @@
 # Navigator Module Extraction Audit — Navigator contour → `@animastor/navigator`
 
-**Status:** Phase 0 reconnaissance COMPLETE (extraction NOT performed — this document records the audit only).
+**Status:** Phase 0 reconnaissance COMPLETE + **Phase 1 boundary preparation COMPLETE** (ports in-app, extraction still NOT performed — `NavigatePage.tsx` has NOT moved, no package exists).
 **Date:** 2026-09-09
 **Baseline:** HEAD `8987fb84` ("arch(generation): add module extraction reconnaissance"). All measurements taken against this tree; production runtime untouched.
+**Phase 1 prep (this change):** the Navigator surface now consumes only the injected `NavigatorPorts` contract; host stores are wired host-side in `app/navigatorAdapters.ts`. Contour guards extended (14 assertions) + 27 characterization tests added.
 **Scope:** frontend web app (`frontends/app/src`) only. Android parity is contractual (`NavigateFragment.kt` / `BackendApi.kt`), not code-shared. Backend is a contract only (its contours are already packages: `@animastor/editor`, `@animastor/player`).
 **Related:** `file-module-extraction-audit.md` (sister audit), `editor-module-extraction-audit.md` (frontend-stays-app-code precedent), `PLAYER_ROUTE_SPLIT_CHECKLIST.md`, `MODULAR_PRODUCT_ARCHITECTURE.md`.
-**Guards added:** `frontends/app/src/architecture/file-navigator-contour.guard.test.ts` (11 assertions, shared with the File audit) — freezes entry points, the allowed-import boundary of both pages, the reverse-dependency boundary, and the state-module cycle set.
+**Guards:** `frontends/app/src/architecture/file-navigator-contour.guard.test.ts` (14 assertions, shared with the File audit) — freezes entry points, the allowed-import boundary of both pages, the reverse-dependency boundary, the state-module cycle set, the Navigator ports-only boundary (no direct store/infra imports from the page), the self-containment of `modules/navigator/ports.ts`, and the adapter composition seam.
 
 ---
 
@@ -107,64 +108,100 @@ Backend HTTP surface consumed (contract only):
 4. **Reload triggers triad** (`bookId` change, `onPlaybackPrepared`, EXTERNAL invalidation) — an implicit freshness contract with the shell: the tree is expected to be current without manual reload on desktop where the panel stays mounted.
 5. **`unitIndex` offset semantics** (`api/models.ts:489`, "unitOffset+1 when the scene exists") — positional math shared with AiAssistant; if the package vendored it, the two would drift.
 
-## Phase 3 — Contract
+## Phase 3 — Contract (FINAL, implemented in-app)
 
-Proposed public API of `@animastor/navigator`:
+Dependency direction (enforced by guards):
+
+```
+main.tsx / AppShell.tsx (host composition)
+        │ ports={navigatorPorts}
+        ▼
+app/navigatorAdapters.ts  ──implements──▶  NavigatorPorts (modules/navigator/ports.ts)
+        │ imports host infra                                        ▲
+        ▼                                                           │ consumes ONLY this
+state/playbackStore · state/generateStore · state/positionStore ────┘ (via ports, never directly)
+state/resourceInvalidations · state/resilientReloader
+api/client · app/i18n · app/icons · app/router · app/desktop
+```
+
+The Navigator surface (`pages/NavigatePage.tsx`) imports **only**: `preact`, `preact/hooks`, `../api/models` (types + the pure `unitIndex` helper — shared types must not drift, audit hidden-dep #5), and `../modules/navigator/ports`. Everything else reaches it through the injected ports. `modules/navigator/ports.ts` is self-contained (imports only Preact types) — it becomes the package's public contract verbatim; the port payload types are Navigator-local structural types so the host adapter fails to compile if a host store type drifts.
+
+Implemented contract (`modules/navigator/ports.ts`):
 
 ```ts
-export function NavigatorPage(props: { ports: NavigatorPorts; embedded?: boolean }): JSX.Element;
-
 export interface NavigatorPorts {
-  bookSource: { bookId: Signal<string>; buildId: Signal<string>; onPlaybackPrepared(fn): () => void };
-  position: { position: Signal<ActivePosition>; navigateTo(p: Partial<ActivePosition>): void };
-  seek: { seekToPosition(ch: string, sc: string, unitIndex: number, unitId: string | null): Promise<void> };
-  invalidations: { onResourceInvalidated(fn): () => void; bookResource(id: string): string };
-  reload: { resilientReload<T>(opts): Promise<{ kind: 'success'; value: T } | { kind: 'failed' }>; sharedRecovery(): unknown };
-  http: { getJson<T>(path: string): Promise<T>; mediaUrl(path: string): string };
-  navigation: { navigate(route: string, opts?: { replace?: boolean }): void };
-  shellMode: { isDesktop(): boolean };            // replaces useDesktopShell fork
-  i18n: { t(key: string): string };
-  icons?: { ImageOff: JSX.Element; Play: JSX.Element };  // UI-kit adapter
+  seek: { seekToPosition(chapterId, sceneId, unitIndex, unitId): Promise<void> };       // SeekPort (N1)
+  bookSource: { bookId: Signal<string>; buildId: Signal<string>; onPlaybackPrepared(fn): () => void }; // BookSourcePort (N2)
+  position: { position: Signal<ActivePosition>; navigateTo(p: Partial<ActivePosition>): void };        // PositionPort (N3)
+  invalidations: { onResourceInvalidated(fn): () => void; bookResource(bookId): string };              // InvalidationPort
+  reload: { resilientReload<T>(opts): Promise<ReloadResult<T>>; sharedRecovery(): NetworkRecoverySignal }; // ReloadPort
+  shellMode: { isDesktop(): boolean };     // ShellModePort (N5)
+  navigation: { navigateToPlay(): void };  // NavigationPort — /play literal stays host
+  http: { getJson<T>(path): Promise<T>; mediaUrl(path): string };  // HttpPort — media base stays host
+  i18n: { t(key: NavigatorI18nKey): string };                       // I18nPort
+  icons: { Play(props): JSX.Element; ImageOff(props): JSX.Element }; // UI-kit adapter
 }
 ```
 
-Ports and their purpose:
-- `PositionPort` — the shared SharedPositionManager stays host (Edit/Play/Generate write it too); Navigator writes through `navigateTo` and reads `position`.
-- `SeekPort` — the Player seam. Replaces the direct `playbackStore.seekToPosition` import (the audit's biggest coupling). Keeps the package free of the 2117-LOC store and of the `generateStore ⇄ playbackStore` cycle.
-- `BookSourcePort` — session identity (`bookId`/`buildId`) and the generation-completion event, without importing `generateStore`.
-- `InvalidationPort` + `ReloadPort` — the shared data-freshness pipelines; the module contributes a consumer, not a producer.
-- `HttpPort` — `getJson` for `/book/:id` and `mediaUrl` for the preview grammar (media base stays host-owned).
-- `NavigationPort` — `/play` route knowledge stays shell-owned (route table lives in `app/router`).
-- `ShellModePort` — makes the desktop/mobile behavioral fork explicit and testable instead of a `matchMedia` side effect.
-- `I18nPort` / icons adapter — shared presentation seams.
+Design decisions frozen by the implementation:
+
+- **SeekPort** is a 1:1 passthrough of `playbackStore.seekToPosition` — identical async/error semantics, no Player state copy, no store import from the boundary.
+- **BookSourcePort** keeps `bookId`/`buildId` as the host's signals (no source-of-truth fork); `onPlaybackPrepared` narrows the payload to `{ bookId, buildId }` — the only fields the Navigator reads.
+- **PositionPort** passes the host signal object itself (identity preserved → identical reactivity); no `positionStore` duplication.
+- **Invalidation/Reload** stay separate minimal contracts (`InvalidationPort`, `ReloadPort`); `resourceInvalidations`/`resilientReloader` are not moved and producers (Edit/AI) are untouched.
+- **ShellModePort.isDesktop()** is a plain function in the contract; the host adapter backs it with a signal fed by the same `min-width: 1180px` matchMedia query as `useDesktopShell`, so a port-rendered Navigator stays live-reactive to the shell breakpoint (behavior parity; desktop select-only vs mobile select + `/play` fork unchanged).
+- **NavigationPort.navigateToPlay()** has no route parameter — the `/play` literal lives only in `app/navigatorAdapters.ts`; no route table moves into the Navigator.
+- **HttpPort/I18nPort/icons** are injected; `api/client`, `app/i18n`, `app/icons` are not copied and not imported by the boundary. `mediaUrl` keeps the preview URL grammar host-owned.
+
+**Internal Navigator (future package contents):** `pages/NavigatePage.tsx` — the component, `buildStructure`, `chapterLabel`/`sceneLabel`/`unitLabel` (now exported pure functions taking the injected `t`), `NavItem`, `UnitThumb` (takes `mediaUrl` + the fallback icon as props).
+
+**Host-owned (stays in app):** all stores, `api/client`, `app/i18n`, `app/icons`, `app/router`, `app/desktop`, `app/navigatorAdapters.ts` (the single composition seam), and the composition points `main.tsx` / `AppShell.tsx` (`<NavigatePage path="/navigate" ports={navigatorPorts} />` / `<NavigatePage ports={navigatorPorts} />`).
+
+**Forbidden for the Navigator boundary** (guard-enforced): direct imports of `playbackStore`, `generateStore`, `positionStore`, `resourceInvalidations`, `resilientReloader`, `AppShell`, the host adapters file itself, `api/client`, `app/i18n`, `app/icons`, `app/router`, `app/desktop`.
+
+## Phase 3.5 — Phase 1 prep performed (this change)
+
+| Artifact | What |
+|---|---|
+| `src/modules/navigator/ports.ts` | the `NavigatorPorts` contract above — zero host imports, future public API |
+| `src/app/navigatorAdapters.ts` | host-owned adapters: seek → `playbackStore`, bookSource → `generateStore` signals + `onPlaybackPrepared`, position → `positionStore`, invalidations/reload, shellMode → matchMedia-backed signal (same query as `useDesktopShell`), navigation → `navigate('/play')`, http → `api/client`, i18n, icons |
+| `src/pages/NavigatePage.tsx` | refactored 1:1 to consume the injected ports; same file, same DOM, same interactions; pure helpers exported for tests |
+| `src/main.tsx` / `src/app/AppShell.tsx` | composition: pass `ports={navigatorPorts}` |
+| Contour guards | 14 assertions: original 11 kept (updated for the composed entry points + ports-only NAV allowed set), +3 new: boundary imports no store/infra module; `ports.ts` self-contained; adapter wires every host module |
+| `src/modules/navigator/navigator.test.tsx` | 27 characterization tests (below) |
+| `frontends/app/package.json` | devDeps `happy-dom`, `@testing-library/preact`, `@testing-library/dom` (test environment only) |
+
+Not done (hard limits respected): no `packages/animastor-navigator`, `NavigatePage.tsx` not moved, backend/API untouched, no user-visible behavior change, no unrelated refactors, no shared-store changes.
 
 ## Phase 4 — Test ownership
 
-| Test | After extraction |
+| Test | Status |
 |---|---|
-| Dedicated Navigator tests | **Do not exist today** — gap. `chapterLabel`/`sceneLabel`/`unitLabel`/`buildStructure` are pure functions and are the natural first package-owned unit tests (chapter override map, ≤3-chapter default expansion, position auto-expand, is_special cover/prologue labels) |
+| `src/modules/navigator/navigator.test.tsx` (27, ADDED in Phase 1 prep) | Characterization through fake ports, no host store imported: `buildStructure` (labels, "Chapter N — Title" digit rule, override map both directions, ≤3-chapter default, scene style/type grammar, active unit, `iu0000` fallback id, empty book); special chapter labels (cover/prologue/capitalized fallback); current-position auto-expand on mount + follow-position re-expand; position bar labels (positioned/fallback/empty); **desktop/mobile unit-tap fork** (mobile: `navigateTo` + seek + `/play`; desktop: select-only, dbl-click and ⏯ button → seek + `/play`, no ⏯ on mobile); seek args parity (`('ch-1','sc-1a',0,'iu-1')`) + seek skipped when the scene is not real; reload-trigger triad (playbackPrepared same-book re-fetch / foreign book ignored; EXTERNAL invalidation for `book:<id>` re-fetches, LOCAL and foreign resources ignored); preview thumbnail grammar via `HttpPort.mediaUrl`; `/book/:id` path via `HttpPort.getJson`; no-book empty state |
+| Contour guards (`architecture/file-navigator-contour.guard.test.ts`) | 14 assertions in the host app — freeze the 1-file contour, the ports-only boundary, the adapter seam, entry points, reverse deps, and the state-module cycle set |
 | `resilientReloader.test.ts` | Stays host (shared pipeline, not Navigator-owned) |
 | `resourceInvalidations.test.ts` | Stays host (shared bus) |
 | `playback*.test.ts` | Stay host (Player store — includes `seekToPosition` coverage) |
-| Contour guards (`architecture/file-navigator-contour.guard.test.ts`) | Stay in the host app; freeze the 1-file contour + allowed imports until the package exists |
+
+Blocker N4 (no dedicated tests) is RESOLVED as of Phase 1 prep.
 
 ## Phase 5 — Extraction blockers
 
-1. **N1 — `seekToPosition` direct import (PRIMARY).** `NavigatePage.tsx:14` imports the Player store. The package cannot take `playbackStore` (it would drag the whole player engine + media cache + the store cycle in). Requires the `SeekPort` seam. *Why a blocker: without it the package boundary is fictional.*
-2. **N2 — `generateStore` session signals + `onPlaybackPrepared`.** Same reasoning; `BookSourcePort` required. *Why a blocker: `generateStore` is the app hub; importing it from a package would invert the dependency direction.*
-3. **N3 — shared `positionStore`.** 27 LOC but shared by 5 modules; moving it would fork the SharedPositionManager. Must stay host behind `PositionPort`. *Why a blocker: it is the app's navigation infrastructure — exactly what the key question identified.*
-4. **N4 — no dedicated tests.** Pure helpers are currently untested; extraction would move code without a safety net. *Why a blocker: cheap to fix first, expensive to discover later.*
-5. **N5 — shell embedding + behavioral fork.** Desktop panel mount (`AppShell.tsx:274`) and the `isDesktop` fork (`NavigatePage.tsx:85,308,336,349`) are shell contracts; `useDesktopShell` must become an injected port or the package makes a global `matchMedia` assumption. *Why a blocker: embedding outside the desktop query would change unit-tap semantics silently.*
-6. **N6 — freshness contract.** The reload-trigger triad must keep exact timing (bookId change / playbackPrepared / EXTERNAL invalidation) or the always-mounted desktop panel shows stale structure. *Why a blocker: behavioral, invisible in unit tests without characterization.*
+1. **N1 — `seekToPosition` direct import (PRIMARY).** ~~Requires the `SeekPort` seam.~~ **RESOLVED (Phase 1 prep):** the page consumes `SeekPort`; `playbackStore` is wired only in `app/navigatorAdapters.ts`; guard-enforced.
+2. **N2 — `generateStore` session signals + `onPlaybackPrepared`.** ~~`BookSourcePort` required.~~ **RESOLVED (Phase 1 prep):** `BookSourcePort` implemented; `generateStore` unreachable from the boundary (guard).
+3. **N3 — shared `positionStore`.** **RESOLVED (Phase 1 prep):** `PositionPort` passes the host signal through; no fork; guard-enforced.
+4. **N4 — no dedicated tests.** **RESOLVED (Phase 1 prep):** 27 characterization tests in `src/modules/navigator/navigator.test.tsx`.
+5. **N5 — shell embedding + behavioral fork.** **RESOLVED (Phase 1 prep):** `ShellModePort.isDesktop()` injected; host adapter keeps the same 1180px query live-reactive via a signal; fork behavior pinned by tests (desktop select-only + dbl-click/⏯; mobile select + `/play`).
+6. **N6 — freshness contract.** **CHARACTERIZED (Phase 1 prep):** the reload-trigger triad (bookId change / `onPlaybackPrepared` same-book / EXTERNAL `book:<id>` invalidation, LOCAL ignored) is pinned by tests through fake ports. The remaining risk (exact timing on the always-mounted desktop panel) is covered because the port fakes preserve the triad semantics 1:1.
 
 No backend blockers: both consumed endpoints already live in extracted backend packages — HTTP is the contract.
 
-## Phase 6 — Extraction plan (no implementation in this phase)
+## Phase 6 — Extraction plan (steps 1–2 DONE in this phase)
 
-1. **Characterization tests first** — unit-test the pure helpers (`chapterLabel`/`sceneLabel`/`unitLabel`/`buildStructure` override-map semantics) and one integration test for the reload-trigger triad with fake ports (vitest, node env).
-2. **Introduce `NavigatorPorts` in-app (no package yet)** — refactor `NavigatePage` to receive ports via props; default composition (`main.tsx`/`AppShell.tsx`) wires the current host modules. No behavior change; guard test still passes with the same allowed-import list minus store imports for the page.
-3. **Move the file** to `src/modules/navigator/` (still in-app) with its new tests; verify desktop panel + mobile tab behavior unchanged.
-4. **Cut `packages/animastor-navigator`** — physical move, `@animastor/navigator@0.1.0`, host keeps the ports wiring; peer-dependency on `preact`/`@preact/signals` per the repo's npm checklist pattern.
+1. ~~**Characterization tests first**~~ — **DONE**: 27 tests, fake ports, vitest + happy-dom + `@testing-library/preact` (devDeps only).
+2. ~~**Introduce `NavigatorPorts` in-app (no package yet)**~~ — **DONE**: `NavigatePage` receives `ports` via props; `main.tsx`/`AppShell.tsx` wire `navigatorPorts` from `app/navigatorAdapters.ts`; no behavior change; guards updated (11 kept + 3 new) and green.
+3. **Move the file** to `src/modules/navigator/` (still in-app) with its tests; verify desktop panel + mobile tab behavior unchanged. Guards: `NAV_PAGE` path + reverse-dep filter update.
+4. **Cut `packages/animastor-navigator`** — physical move, `@animastor/navigator@0.1.0`, host keeps the ports wiring (`ports.ts` → package `index.ts`); peer-dependency on `preact`/`@preact/signals` per the repo's npm checklist pattern. Decision deferred to that step: shared `api/models` types + `unitIndex` (currently imported by the page as types + pure helper — must not drift, see hidden dep #5).
 5. **Verify** — vitest + `tsc --noEmit` + smoke: mobile unit-tap → Play switch; desktop select/⏯/dbl-click; AI-patch invalidation refreshes tree; generation completion refreshes tree; no-book empty state.
 
 ## Final verdict
@@ -175,9 +212,10 @@ No backend blockers: both consumed endpoints already live in extracted backend p
 |---|---|
 | Complexity | **LOW (2/5)** — 1 movable file, zero owned state, zero cycles, 2 consumers |
 | Potentially movable files | **1** (`NavigatePage.tsx`, 407 LOC) |
-| Host dependencies | **11** direct host modules |
-| Ports | **9** (BookSource, Position, Seek, Invalidation, Reload, Http, Navigation, ShellMode, I18n/UI) |
-| Cross-module coupling | **YES** — as a consumer of Player (seek), Generation (session/completion), Editor (canonical JSON + invalidations), Shell (panel + routes) |
+| Host dependencies | **11 direct host modules → now all behind 10 ports** (Phase 1 prep) |
+| Ports | **10 implemented** (`seek`, `bookSource`, `position`, `invalidations`, `reload`, `shellMode`, `navigation`, `http`, `i18n`, `icons`) — contract in `modules/navigator/ports.ts`, adapters in `app/navigatorAdapters.ts` |
+| Cross-module coupling | **YES** — as a consumer of Player (seek), Generation (session/completion), Editor (canonical JSON + invalidations), Shell (panel + routes) — all mediated by ports |
 | Key-question answer | **Navigator is part of the shell navigation infrastructure** (a stateless navigation *surface* over the shared `positionStore`), not an independent domain module. Extraction is viable only as a UI component package over ports |
-| Main risks | (1) direct Player-store import must become a seam; (2) desktop/mobile behavioral fork must be explicit; (3) freshness-contract timing on the always-mounted panel; (4) no existing tests |
+| Boundary status | **Ports-in-app COMPLETE**: the boundary imports no store/infra module (guard-enforced); remaining work is the physical move (Phase 6 steps 3–4) |
+| Main risks | ~~(1) direct Player-store import~~ resolved; (2) desktop/mobile fork explicit + tested; (3) freshness triad characterized; (4) ~~no tests~~ 27 added |
 | Recommended extraction order | **Before File** — cheapest contour in the queue; validates the ports pattern the File slice split will need |

@@ -1,18 +1,10 @@
 import type { JSX } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { getJson, mediaUrl } from '../api/client';
 import type { BookChapter, BookData, BookScene, BookUnit } from '../api/models';
 import { unitIndex } from '../api/models';
-import { t } from '../app/i18n';
-import { navigate } from '../app/router';
-import { useDesktopShell } from '../app/desktop';
-import { bookId, buildId, onPlaybackPrepared } from '../state/generateStore';
-import { navigateTo, position as positionSignal } from '../state/positionStore';
-import type { ActivePosition } from '../state/positionStore';
-import { bookResource, onResourceInvalidated } from '../state/resourceInvalidations';
-import { resilientReload, sharedRecovery } from '../state/resilientReloader';
-import { seekToPosition } from '../state/playbackStore';
-import { IconImageOff, IconPlay } from '../app/icons';
+import type {
+  ActivePosition, NavigatorIconProps, NavigatorPorts, NavigatorT,
+} from '../modules/navigator/ports';
 
 // NavigatePage — 1:1 with NavigateFragment + fragment_navigate.xml (stage 5).
 //  - Position bar (include_position_bar) — label from bookData + ActivePosition.
@@ -22,11 +14,17 @@ import { IconImageOff, IconPlay } from '../app/icons';
 //    thumbnail, active = accent + secondaryContainer).
 //  - Chapter tap toggles collapse (web fixes the Android chapter-toggle lost on
 //    rebuild — see 06 §14); scene tap toggles expandedScenes; unit tap →
-//    positionStore.navigateTo + playbackStore.seekToPosition + switch to Play tab.
+//    PositionPort.navigateTo + SeekPort.seekToPosition + (mobile) /play.
 //  - Auto-expand the current position's scene (expandedScenes follows position).
 //  - Reload structure on playbackPrepared (generation completion).
+//
+// Host boundary (docs/architecture/navigator-module-extraction-audit.md):
+// the page consumes ONLY the injected NavigatorPorts — never the host stores
+// (playbackStore / generateStore / positionStore / resourceInvalidations /
+// resilientReloader), api/client, app/i18n, app/icons, app/router, app/desktop
+// or AppShell. The host wires the real implementations in app/navigatorAdapters.ts.
 
-type NavItem =
+export type NavItem =
   | { kind: 'chapter'; id: string; label: string; expanded: boolean; chapterId?: string | null }
   | {
       kind: 'scene'; id: string; label: string; expanded: boolean;
@@ -39,7 +37,7 @@ type NavItem =
     };
 
 // Chapter label — 1:1 with NavigateFragment.rebuildStructure chLabel rules.
-function chapterLabel(ch: BookChapter, chIdx: number): string {
+export function chapterLabel(ch: BookChapter, chIdx: number, t: NavigatorT): string {
   const chTitle = ch.chapter_title?.slice(0, 60).replace(/\n/g, ' ')?.trim();
   const isSpecial = ch.is_special === true;
   if (isSpecial) {
@@ -61,7 +59,7 @@ function chapterLabel(ch: BookChapter, chIdx: number): string {
   return `${t('navigate_chapter')} ${chIdx + 1}`;
 }
 
-function sceneLabel(sc: BookScene, scIdx: number): string {
+export function sceneLabel(sc: BookScene, scIdx: number, t: NavigatorT): string {
   const scTitle = sc.scene_title?.slice(0, 60).replace(/\n/g, ' ')?.trim();
   const scNum = sc.display_index ?? scIdx + 1;
   return scTitle
@@ -69,20 +67,76 @@ function sceneLabel(sc: BookScene, scIdx: number): string {
     : `${t('navigate_scene')} ${scNum}`;
 }
 
-function unitLabel(u: BookUnit, uIdx: number): string {
+export function unitLabel(u: BookUnit, uIdx: number, t: NavigatorT): string {
   const textPreview = u.text?.replace(/\n/g, ' ')?.trim();
   return textPreview
     ? `${t('navigate_unit')} ${uIdx + 1} — ${textPreview}`
     : `${t('navigate_unit')} ${uIdx + 1}`;
 }
 
-export function NavigatePage(props: { path?: string }) {
-  void props;
+// rebuildStructure — pure: chapters → scenes → units (Android parity).
+export function buildStructure(
+  data: BookData,
+  pos: ActivePosition,
+  scenes: Set<string>,
+  chapterExp: Map<string, boolean>,
+  t: NavigatorT,
+): NavItem[] {
+  const chapters = data.chapters ?? [];
+  const out: NavItem[] = [];
+  chapters.forEach((ch, chIdx) => {
+    const chapterId = ch.chapter_id ?? null;
+    const label = chapterLabel(ch, chIdx, t);
+    // Default rule: current chapter or ≤3 chapters are expanded (Android parity).
+    // The user override map wins over the default in both directions — 06 §14.
+    const defaultExpanded = chapterId === pos.chapterId || chapters.length <= 3;
+    const expanded = chapterId != null
+      ? (chapterExp.get(chapterId) ?? defaultExpanded)
+      : defaultExpanded;
+    out.push({ kind: 'chapter', id: chapterId ?? `ch${chIdx}`, label, expanded, chapterId });
+    if (!expanded) return;
+    (ch.scenes ?? []).forEach((sc, scIdx) => {
+      const scKey = chapterId != null && sc.scene_id != null ? `${chapterId}|${sc.scene_id}` : null;
+      const scExpanded = scKey != null && scenes.has(scKey);
+      const scType = sc.type;
+      const scStyle = sc.style;
+      // Android onBind: "… — type (style)" with style, else "… (type | scene)"
+      const scText = scStyle != null
+        ? `${sceneLabel(sc, scIdx, t)} — ${scType} (${scStyle})`
+        : `${sceneLabel(sc, scIdx, t)} (${scType ?? t('navigate_scene_type')})`;
+      out.push({
+        kind: 'scene', id: sc.scene_id ?? `sc${scIdx}`, label: scText, expanded: scExpanded,
+        chapterId, sceneId: sc.scene_id,
+      });
+      if (!scExpanded) return;
+      (sc.units ?? []).forEach((u, uIdx) => {
+        const isActive = chapterId === pos.chapterId && sc.scene_id === pos.sceneId && uIdx === pos.unitIndex;
+        out.push({
+          kind: 'unit',
+          id: u.id ?? `u${uIdx}`,
+          label: unitLabel(u, uIdx, t),
+          type: u.type,
+          isActive,
+          chapterId,
+          sceneId: sc.scene_id ?? null,
+          unitId: u.id ?? `iu${String(uIdx).padStart(4, '0')}`,
+          index: uIdx,
+        });
+      });
+    });
+  });
+  return out;
+}
+
+export function NavigatePage(props: { path?: string; ports: NavigatorPorts }) {
+  const ports = props.ports;
+  const { bookSource, position, seek, invalidations, reload, navigation, shellMode, http, i18n, icons } = ports;
+  const positionSignal = position.position;
   // Desktop (plan §4.3): the Navigator is a persistent right panel, so unit
   // selection updates the shared position but must NOT force a mode switch to
   // /play — that would interrupt editing. Mobile keeps the Android 1:1
   // switchToPlayTab() behaviour.
-  const isDesktop = useDesktopShell();
+  const isDesktop = shellMode.isDesktop();
   const [bookData, setBookData] = useState<BookData | null>(null);
   const [loading, setLoading] = useState(false);
   // Start with the current position's scene already expanded — avoids the
@@ -98,7 +152,7 @@ export function NavigatePage(props: { path?: string }) {
   // same no-op toggle bug Android has (06 §14). The map fixes both directions.
   const [chapterExpanded, setChapterExpanded] = useState<Map<string, boolean>>(new Map());
   const [items, setItems] = useState<NavItem[]>([]);
-  const [posLabel, setPosLabel] = useState(t('navigate_no_position'));
+  const [posLabel, setPosLabel] = useState(i18n.t('navigate_no_position'));
   const listRef = useRef<HTMLDivElement | null>(null);
   const loadingRef = useRef(false);
   // Lazy-init so the auto-expand effect treats the mount position as already seen.
@@ -108,12 +162,12 @@ export function NavigatePage(props: { path?: string }) {
     lastPositionKey.current = p.chapterId && p.sceneId ? `${p.chapterId}|${p.sceneId}` : null;
   }
 
-  const bid = bookId.value;
-  const bld = buildId.value;
+  const bid = bookSource.bookId.value;
+  const bld = bookSource.buildId.value;
 
   // ── Load book (loadBook with isLoading guard like NavigateFragment) ──
   const loadBook = useCallback(async () => {
-    const bId = bookId.value;
+    const bId = bookSource.bookId.value;
     if (!bId) {
       setBookData(null);
       setLoading(false);
@@ -122,20 +176,20 @@ export function NavigatePage(props: { path?: string }) {
     if (loadingRef.current) return;
     loadingRef.current = true;
     setLoading(true);
-    const result = await resilientReload({
-      recovery: sharedRecovery(),
-      attempt: () => getJson<BookData>(`/book/${encodeURIComponent(bId)}`),
+    const result = await reload.resilientReload({
+      recovery: reload.sharedRecovery(),
+      attempt: () => http.getJson<BookData>(`/book/${encodeURIComponent(bId)}`),
     });
     if (result.kind === 'success') setBookData(result.value);
     loadingRef.current = false;
     setLoading(false);
-  }, []);
+  }, [bookSource, reload, http]);
 
   useEffect(() => {
     void loadBook();
     // observeGenerationCompletion — reload structure when generation finishes
-    return onPlaybackPrepared((prep) => {
-      if (bookId.value && bookId.value === prep.bookId) void loadBook();
+    return bookSource.onPlaybackPrepared((prep) => {
+      if (bookSource.bookId.value && bookSource.bookId.value === prep.bookId) void loadBook();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bid, loadBook]);
@@ -146,10 +200,10 @@ export function NavigatePage(props: { path?: string }) {
   // units without a manual reload. Matters on desktop where this panel stays
   // mounted; on mobile the remount fetches fresh data anyway.
   useEffect(() => {
-    return onResourceInvalidated((e) => {
-      const currentBook = bookId.value;
+    return invalidations.onResourceInvalidated((e) => {
+      const currentBook = bookSource.bookId.value;
       if (e.kind !== 'EXTERNAL') return;
-      if (!currentBook || e.resource !== bookResource(currentBook)) return;
+      if (!currentBook || e.resource !== invalidations.bookResource(currentBook)) return;
       void loadBook();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -166,63 +220,16 @@ export function NavigatePage(props: { path?: string }) {
   }, [positionSignal.value]);
 
   // ── Build the structure items (rebuildStructure) ──
-  const buildStructure = useCallback((data: BookData, pos: ActivePosition, scenes: Set<string>, chapterExp: Map<string, boolean>): NavItem[] => {
-    const chapters = data.chapters ?? [];
-    const out: NavItem[] = [];
-    chapters.forEach((ch, chIdx) => {
-      const chapterId = ch.chapter_id ?? null;
-      const label = chapterLabel(ch, chIdx);
-      // Default rule: current chapter or ≤3 chapters are expanded (Android parity).
-      // The user override map wins over the default in both directions — 06 §14.
-      const defaultExpanded = chapterId === pos.chapterId || chapters.length <= 3;
-      const expanded = chapterId != null
-        ? (chapterExp.get(chapterId) ?? defaultExpanded)
-        : defaultExpanded;
-      out.push({ kind: 'chapter', id: chapterId ?? `ch${chIdx}`, label, expanded, chapterId });
-      if (!expanded) return;
-      (ch.scenes ?? []).forEach((sc, scIdx) => {
-        const scKey = chapterId != null && sc.scene_id != null ? `${chapterId}|${sc.scene_id}` : null;
-        const scExpanded = scKey != null && scenes.has(scKey);
-        const scType = sc.type;
-        const scStyle = sc.style;
-        // Android onBind: "… — type (style)" with style, else "… (type | scene)"
-        const scText = scStyle != null
-          ? `${sceneLabel(sc, scIdx)} — ${scType} (${scStyle})`
-          : `${sceneLabel(sc, scIdx)} (${scType ?? t('navigate_scene_type')})`;
-        out.push({
-          kind: 'scene', id: sc.scene_id ?? `sc${scIdx}`, label: scText, expanded: scExpanded,
-          chapterId, sceneId: sc.scene_id,
-        });
-        if (!scExpanded) return;
-        (sc.units ?? []).forEach((u, uIdx) => {
-          const isActive = chapterId === pos.chapterId && sc.scene_id === pos.sceneId && uIdx === pos.unitIndex;
-          out.push({
-            kind: 'unit',
-            id: u.id ?? `u${uIdx}`,
-            label: unitLabel(u, uIdx),
-            type: u.type,
-            isActive,
-            chapterId,
-            sceneId: sc.scene_id ?? null,
-            unitId: u.id ?? `iu${String(uIdx).padStart(4, '0')}`,
-            index: uIdx,
-          });
-        });
-      });
-    });
-    return out;
-  }, []);
-
   useEffect(() => {
     if (!bookData) { setItems([]); return; }
-    setItems(buildStructure(bookData, positionSignal.value, expandedScenes, chapterExpanded));
+    setItems(buildStructure(bookData, positionSignal.value, expandedScenes, chapterExpanded, i18n.t));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookData, positionSignal.value, expandedScenes, chapterExpanded, buildStructure]);
+  }, [bookData, positionSignal.value, expandedScenes, chapterExpanded, i18n.t]);
 
   // ── Position bar label (updatePositionBar) ──
   useEffect(() => {
     const p = positionSignal.value;
-    if (!p.chapterId || !bookData) { setPosLabel(t('navigate_no_position')); return; }
+    if (!p.chapterId || !bookData) { setPosLabel(i18n.t('navigate_no_position')); return; }
     const ch = bookData.chapters?.find((c) => c.chapter_id === p.chapterId);
     const sc = ch?.scenes?.find((s) => s.scene_id === p.sceneId);
     const isSpecial = ch?.is_special === true;
@@ -233,11 +240,11 @@ export function NavigatePage(props: { path?: string }) {
     let chLabel = '';
     if (isSpecial) {
       const type = (ch?.type ?? '').toLowerCase();
-      chLabel = type === 'cover' ? t('navigate_cover')
-        : type === 'prologue' ? t('navigate_prologue')
+      chLabel = type === 'cover' ? i18n.t('navigate_cover')
+        : type === 'prologue' ? i18n.t('navigate_prologue')
         : chTitle ?? (ch?.type ? ch.type.charAt(0).toUpperCase() + ch.type.slice(1) : '');
     } else if (ch?.display_number != null) {
-      const prefix = `${t('navigate_chapter')} ${ch.display_number}`;
+      const prefix = `${i18n.t('navigate_chapter')} ${ch.display_number}`;
       if (chTitle && !/^\p{L}+\s+\d+$/u.test(chTitle)) {
         chLabel = /\d/.test(chTitle) ? chTitle : `${prefix} — ${chTitle}`;
       } else {
@@ -247,15 +254,15 @@ export function NavigatePage(props: { path?: string }) {
       chLabel = chTitle;
     }
     if (!chLabel) { setPosLabel(''); return; }
-    const scLabel = scIdx > 0 ? `${t('navigate_scene')} ${scIdx}` : '';
-    const unitText = uIdx > 0 ? `${t('navigate_unit')} ${uIdx}` : '';
+    const scLabel = scIdx > 0 ? `${i18n.t('navigate_scene')} ${scIdx}` : '';
+    const unitText = uIdx > 0 ? `${i18n.t('navigate_unit')} ${uIdx}` : '';
     // Android computes the same final label in every branch (chTitle folds into
     // chLabel; only scTitle changes the separator) — collapse to one expression.
     const full = scTitle
       ? `${chLabel} / ${scLabel} — ${scTitle} / ${unitText}`
       : `${chLabel} / ${scLabel} / ${unitText}`;
     setPosLabel(full);
-  }, [positionSignal.value, bookData]);
+  }, [positionSignal.value, bookData, i18n.t]);
 
   // ── Scroll to the active unit after rebuild (scrollToActivePosition) ──
   useEffect(() => {
@@ -267,19 +274,19 @@ export function NavigatePage(props: { path?: string }) {
   // ── Item interactions ──
   const selectUnit = useCallback((item: Extract<NavItem, { kind: 'unit' }>) => {
     // 1:1 with NavigateFragment unit click — seek only when the scene is real
-    navigateTo({ chapterId: item.chapterId, sceneId: item.sceneId, unitId: item.unitId, unitIndex: item.index });
+    position.navigateTo({ chapterId: item.chapterId, sceneId: item.sceneId, unitId: item.unitId, unitIndex: item.index });
     if (item.chapterId != null && item.sceneId != null) {
-      void seekToPosition(item.chapterId, item.sceneId, item.index, item.unitId);
+      void seek.seekToPosition(item.chapterId, item.sceneId, item.index, item.unitId);
     }
-  }, []);
+  }, [position, seek]);
 
   // Explicit "open in Player" (plan §4.3): select the unit, then switch the
   // workspace to Player. Desktop single-click only selects; double-click or the
   // play button on the active row are the explicit playback actions.
   const openInPlayer = useCallback((item: Extract<NavItem, { kind: 'unit' }>) => {
     selectUnit(item);
-    navigate('/play');
-  }, [selectUnit]);
+    navigation.navigateToPlay();
+  }, [selectUnit, navigation]);
 
   const onItemClick = (item: NavItem) => {
     if (item.kind === 'chapter') {
@@ -305,7 +312,7 @@ export function NavigatePage(props: { path?: string }) {
       });
     } else if (item.kind === 'unit') {
       selectUnit(item);
-      if (!isDesktop) navigate('/play'); // switchToPlayTab()
+      if (!isDesktop) navigation.navigateToPlay(); // switchToPlayTab()
     }
   };
 
@@ -336,6 +343,8 @@ export function NavigatePage(props: { path?: string }) {
           onDblClick={() => { if (isDesktop) openInPlayer(item); }}
         >
           <UnitThumb
+            mediaUrl={http.mediaUrl}
+            imageOff={icons.ImageOff}
             bookId={bid}
             buildId={bld}
             chapterId={item.chapterId}
@@ -350,11 +359,11 @@ export function NavigatePage(props: { path?: string }) {
           <button
             type="button"
             class="nav-unit-row__play"
-            aria-label={t('navigate_open_in_player')}
-            title={t('navigate_open_in_player')}
+            aria-label={i18n.t('navigate_open_in_player')}
+            title={i18n.t('navigate_open_in_player')}
             onClick={() => openInPlayer(item)}
           >
-            <IconPlay width={16} height={16} />
+            <icons.Play width={16} height={16} />
           </button>
         )}
       </div>
@@ -374,10 +383,10 @@ export function NavigatePage(props: { path?: string }) {
 
       {/* Empty state */}
       {!bid && !loading && (
-        <div class="nav-empty">{t('navigate_empty')}</div>
+        <div class="nav-empty">{i18n.t('navigate_empty')}</div>
       )}
       {bid && !loading && items.length === 0 && (
-        <div class="nav-empty">{t('navigate_empty')}</div>
+        <div class="nav-empty">{i18n.t('navigate_empty')}</div>
       )}
 
       {/* Structure list (RecyclerView) */}
@@ -390,7 +399,10 @@ export function NavigatePage(props: { path?: string }) {
 
 // Unit preview thumbnail — 1:1 with loadUnitPreview: GET /preview/{book}/{ch}/{sc}/{iu}
 // with build_id; fallback to the ic_image_off icon (tinted onSurfaceVariant).
-function UnitThumb({ bookId: bid, buildId: bld, chapterId, sceneId, unitId }: {
+// The media base stays host-owned (HttpPort.mediaUrl — preview grammar contract).
+function UnitThumb({ mediaUrl, imageOff: ImageOff, bookId: bid, buildId: bld, chapterId, sceneId, unitId }: {
+  mediaUrl: (path: string) => string;
+  imageOff: (props: NavigatorIconProps) => JSX.Element;
   bookId: string; buildId: string; chapterId: string | null; sceneId: string | null; unitId: string;
 }) {
   const [failed, setFailed] = useState(false);
@@ -398,7 +410,7 @@ function UnitThumb({ bookId: bid, buildId: bld, chapterId, sceneId, unitId }: {
   if (failed) {
     return (
       <span class="nav-item__thumb">
-        <IconImageOff width={22} height={22} />
+        <ImageOff width={22} height={22} />
       </span>
     );
   }
