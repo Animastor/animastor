@@ -35,8 +35,8 @@
         "url": "https://github.com/Animastor/animastor/issues"
     },
     "dependencies": {
-        "@animastor/ai-agent": "file:../animastor-ai-agent",
-        "@animastor/vbook-runtime": "file:../animastor-vbook-runtime"
+        "@animastor/ai-agent": "^0.1.0",
+        "@animastor/vbook-runtime": "^0.1.0"
     },
     "devDependencies": {
         "chai": "^6.2.2",
