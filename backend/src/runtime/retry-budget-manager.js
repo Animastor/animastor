@@ -1,3 +1,4 @@
+const mediaRegistry = require('../generation/media-registry');
 // ======================================================
 // RETRY BUDGET MANAGER (MINIMAL)
 // ======================================================
@@ -21,7 +22,8 @@ function log(msg) { console.log(`${logPrefix} ${msg}`); }
 // CONFIGURATION
 // ======================================================
 
-const PER_SCENE_LIMITS = { audio: 10, image: 10, video: 5 };
+// S-2: per-scene limits resolved through media registry
+function _perSceneLimit(stage) { return mediaRegistry.resolveRetryBudget(stage, 10); }
 const GLOBAL_LIMITS = { retriesPerMinute: 100, retriesPerWorkerPerMinute: 20 };
 const FAILURE_TYPE_LIMITS = { transient: 50, permanent: 0, infrastructure: 30, orchestration: 20 };
 
@@ -52,7 +54,7 @@ function getWorkerBudgetKey(workerId) {
 async function getSceneStageBudget(redis, bookId, chapterId, sceneId, stage) {
     const key = getSceneStageBudgetKey(bookId, chapterId, sceneId, stage);
     const current = await redis.get(key);
-    const defaultValue = PER_SCENE_LIMITS[stage] || 10;
+    const defaultValue = _perSceneLimit(stage);
     return parseInt(current || String(defaultValue), 10);
 }
 
@@ -94,7 +96,7 @@ async function getWorkerBudget(redis, workerId) {
 async function consumeSceneStageBudget(redis, bookId, chapterId, sceneId, stage) {
     const key = getSceneStageBudgetKey(bookId, chapterId, sceneId, stage);
     const current = await redis.get(key);
-    const value = parseInt(current || String(PER_SCENE_LIMITS[stage] || 10), 10);
+    const value = parseInt(current || String(_perSceneLimit(stage)), 10);
 
     if (value <= 0) {
         return { consumed: false, remaining: 0, exceeded: true };
@@ -164,7 +166,7 @@ async function consumeWorkerBudget(redis, workerId) {
 async function checkRetryBudget(redis, bookId, chapterId, sceneId, stage, failureType, workerId) {
     const sceneBudget = await getSceneStageBudget(redis, bookId, chapterId, sceneId, stage);
     const budgets = {
-        sceneStage: { current: sceneBudget, limit: PER_SCENE_LIMITS[stage], allowed: sceneBudget > 0 }
+        sceneStage: { current: sceneBudget, limit: _perSceneLimit(stage), allowed: sceneBudget > 0 }
     };
 
     if (sceneBudget <= 0) {
@@ -200,7 +202,7 @@ async function checkRetryBudget(redis, bookId, chapterId, sceneId, stage, failur
  */
 async function consumeRetryBudget(redis, bookId, chapterId, sceneId, stage, failureType, workerId) {
     const budgets = {
-        sceneStage: { ...await consumeSceneStageBudget(redis, bookId, chapterId, sceneId, stage), limit: PER_SCENE_LIMITS[stage] },
+        sceneStage: { ...await consumeSceneStageBudget(redis, bookId, chapterId, sceneId, stage), limit: _perSceneLimit(stage) },
         byType: await consumeFailureTypeBudget(redis, failureType),
         global: await consumeGlobalBudget(redis),
         worker: await consumeWorkerBudget(redis, workerId)
@@ -213,8 +215,11 @@ async function consumeRetryBudget(redis, bookId, chapterId, sceneId, stage, fail
 // ======================================================
 
 module.exports = {
-    // Config (для диагностики)
-    PER_SCENE_LIMITS,
+    // Config (для диагностики) — S-2: lazy view over the media registry
+    PER_SCENE_LIMITS: new Proxy({}, {
+        get(_, stage) { return mediaRegistry.resolveRetryBudget(String(stage), undefined); },
+        ownKeys() { return mediaRegistry.listMediaTypes(); },
+    }),
     GLOBAL_LIMITS,
     FAILURE_TYPE_LIMITS,
 

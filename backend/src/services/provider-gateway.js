@@ -148,13 +148,15 @@ const chat = {
 // (Job Protocol v2). Provider-specific workflow knowledge (workflow JSON,
 // node mapping) stays inside the generation domain — the gateway only
 // exposes the dispatch boundary and the ComfyUIProvider seam.
-const GENERATION_JOB_TYPES = ['audio', 'image', 'video'];
+// S-2: generation job types resolved from the media registry.
+const GENERATION_JOB_TYPES = () => require('../generation/media-registry').listMediaTypes();
 
 const generation = {
     // dispatch boundary — backend → GPU Hub POST /task (sendUnified owns
     // routing, timeouts and the server-derived workspace lane).
     sendJob: (taskSpec) => gpuDispatcher.sendUnified(taskSpec),
-    JOB_TYPES: GENERATION_JOB_TYPES,
+    // S-2: resolved lazily so registry init order never matters
+    get JOB_TYPES() { return GENERATION_JOB_TYPES(); },
     // Provider-specific seam: ComfyUI workflows/connectors. The workflow
     // implementations are NOT rewritten in Phase 3; this seam is the
     // future single entry for generation code that still touches

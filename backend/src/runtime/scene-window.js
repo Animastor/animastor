@@ -17,6 +17,8 @@
 // if the window is complete.
 
 const config = require('../config/runtime-config');
+// S-2: per-asset stale shape derived from media registry
+const { listMediaTypes: _mediaTypes } = require('../generation/media-registry');
 const book = require('../book');
 const state = require('../state');
 const orchestrator = require('../orchestration/orchestrator');
@@ -253,7 +255,7 @@ async function checkSceneContentCache(redis, buildId, bookId, chapterId, sceneId
  * 'ready' writes from overriding a pending force-regen.
  */
 async function _checkAssetVersionStale(bookId, chapterId, sceneId, buildId) {
-    const stale = { audio: false, image: false, video: false };
+    const stale = Object.fromEntries(_mediaTypes().map(t => [t, false]));
     try {
         const sceneResult = await pgQuery(`
             SELECT content_version, audio_config_version FROM scenes

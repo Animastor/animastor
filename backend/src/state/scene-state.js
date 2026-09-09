@@ -9,11 +9,35 @@
 // ======================================================
 
 const ASSET_STATE_KEY_PREFIX = 'animastor:asset-state';
-// S-2 NOTE: ASSETS is a static array here because state.js loads before
-// the media registry is populated (backend.cjs init order). The registry
-// provides resolveAssets() for new code that needs dynamic resolution.
-// Existing callers of ASSETS remain unchanged.
-const ASSETS = ['audio', 'image', 'video'];
+// S-2 COMPLETION: ASSETS is a lazy view over the media registry (the single
+// source of registered media types). The media-registry self-bootstraps its
+// default registrations on first access, so module load order no longer
+// requires a static fallback here.
+// Consumers keep the same shape and semantics: array equality with
+// ['audio', 'image', 'video'], ASSETS.includes(asset) validation, join().
+const mediaRegistry = require('../generation/media-registry');
+const ASSETS = new Proxy([], {
+    get(_, key) {
+        const assets = mediaRegistry.listMediaTypes();
+        if (key === 'includes') return (a) => assets.includes(a);
+        if (key === 'join') return (sep) => assets.join(sep);
+        if (key === Symbol.iterator) return function* () { yield* assets; };
+        if (typeof key === 'string' && /^\d+$/.test(key)) return assets[Number(key)];
+        if (key === 'length') return assets.length;
+        const arrProps = ['indexOf', 'filter', 'map', 'forEach', 'slice', 'concat', 'some', 'every'];
+        if (arrProps.includes(key)) return assets[key].bind(assets);
+        return undefined;
+    },
+    ownKeys() { return mediaRegistry.listMediaTypes().map((_, i) => String(i)).concat('length'); },
+    getOwnPropertyDescriptor(_, key) {
+        const assets = mediaRegistry.listMediaTypes();
+        if (key === 'length') return { value: assets.length, enumerable: false, configurable: true };
+        if (typeof key === 'string' && /^\d+$/.test(key) && Number(key) < assets.length) {
+            return { value: assets[Number(key)], enumerable: true, configurable: true, writable: true };
+        }
+        return undefined;
+    },
+});
 
 /** @type {{ [name: string]: string }} */
 const AssetState = {

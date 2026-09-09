@@ -42,6 +42,8 @@
 const path = require('path');
 const fs = require('fs');
 const fsStore = require('../storage/filesystem-store');
+// S-2: stage list resolved from media registry
+const { listMediaTypes: _mediaTypes } = require('../generation/media-registry');
 
 const PENDING_PURGE_SET = 'animastor:pending-purge';
 const PENDING_PURGE_ATTEMPTS_PREFIX = 'animastor:pending-purge-attempts';
@@ -61,7 +63,7 @@ module.exports = function (redis, config, deps) {
     const OUTPUT_DIR = (config || {}).OUTPUT_DIR;
     const log = deps.utils?.log || ((...a) => console.log(new Date().toISOString(), ...a));
 
-    const ALL_STAGES = ['audio', 'image', 'video'];
+    const ALL_STAGES = () => _mediaTypes();
     const ASSET_EXTENSIONS = ['.mp3', '.png', '.mp4'];
 
     // ── Step bookkeeping ──────────────────────────────
@@ -233,7 +235,7 @@ module.exports = function (redis, config, deps) {
             if (dispatchEngine && typeof dispatchEngine.clearLeasesForScenes === 'function') {
                 const cancelled = await dispatchEngine.clearLeasesForScenes(
                     redis, bookId,
-                    [{ chapter_id: chapterId, scene_id: sceneId, stages: ALL_STAGES }],
+                    [{ chapter_id: chapterId, scene_id: sceneId, stages: ALL_STAGES() }],
                 );
                 if (cancelled.dispatchIds && cancelled.dispatchIds.length > 0) {
                     await dispatchEngine.clearHubDispatches(cancelled.dispatchIds, { context: 'ENTITY-DELETE-SCENE' });
@@ -318,7 +320,7 @@ module.exports = function (redis, config, deps) {
             if (dispatchEngine && typeof dispatchEngine.clearLeasesForScenes === 'function') {
                 const cancelled = await dispatchEngine.clearLeasesForScenes(
                     redis, bookId,
-                    [{ chapter_id: chapterId, scene_id: sceneId, stages: ALL_STAGES }],
+                    [{ chapter_id: chapterId, scene_id: sceneId, stages: ALL_STAGES() }],
                 );
                 if (cancelled.dispatchIds && cancelled.dispatchIds.length > 0) {
                     await dispatchEngine.clearHubDispatches(cancelled.dispatchIds, { context: 'ENTITY-DELETE-UNIT' });
@@ -371,7 +373,7 @@ module.exports = function (redis, config, deps) {
             chapter_id: chapterId,
             scene_id: sceneId,
             reason: 'changed',
-            dirty_layers: ['audio', 'image', 'video'],
+            dirty_layers: _mediaTypes(),
         }];
         if (bookSync && typeof bookSync.reconcileFromDiff === 'function') {
             await bookSync.reconcileFromDiff(bookId, dirtyScenes, book);

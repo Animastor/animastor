@@ -1,6 +1,6 @@
 # Generation Module Extraction — Architectural Reconnaissance
 
-**Status:** READ-ONLY reconnaissance (reconnaissance / audit only). No production code changed, no files moved, no `packages/animastor-generation` created, no runtime behavior touched. — **Update (S-1, same date):** the seam step S-1 (§19.1) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): isolate vbook session control from generation routes"): VBook session SQL was removed from the Generation route layer behind the `AgentSessionControl` port (`backend/src/services/agent-session-control.js`); guards added (`backend/tests/architecture/generation-vbook-boundary.test.js`, S1-A..S1-E). HTTP surface untouched. Details: §12 update, §13 update, §19 S-1 status, §22 checklist. — **Update (S-2):** the seam step S-2 (§19.2) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): registry media capabilities"): media registry created (`generation/media-registry.js`); audio/image/video registered via `generation/default-registrations.js`; dispatch branching in scene-orchestrator uses EXECUTORS map; route validation derives from registry; guards S2-A..S2-F added (`tests/architecture/generation-media-registry.test.js`). §22 checklist updated, §22.1–§22.8 added.
+**Status:** READ-ONLY reconnaissance (reconnaissance / audit only). No production code changed, no files moved, no `packages/animastor-generation` created, no runtime behavior touched. — **Update (S-1, same date):** the seam step S-1 (§19.1) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): isolate vbook session control from generation routes"): VBook session SQL was removed from the Generation route layer behind the `AgentSessionControl` port (`backend/src/services/agent-session-control.js`); guards added (`backend/tests/architecture/generation-vbook-boundary.test.js`, S1-A..S1-E). HTTP surface untouched. Details: §12 update, §13 update, §19 S-1 status, §22 checklist. — **Update (S-2):** the seam step S-2 (§19.2) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): registry media capabilities"): media registry created (`generation/media-registry.js`); audio/image/video registered via `generation/default-registrations.js`; dispatch branching in scene-orchestrator uses EXECUTORS map; route validation derives from registry; guards S2-A..S2-F added (`tests/architecture/generation-media-registry.test.js`). §22 checklist updated, §22.1–§22.8 added. — **Update (S-2 Completion Pass):** full hardcoded-media sweep completed (§22.9): core capability knowledge centralized through the registry across runtime/orchestration/metrics/storage/services; duplicate canonical configuration eliminated (registry reads runtime-config; stale prometheus/runtime-metrics quota/TTL drift removed); registry self-bootstraps; error semantics frozen by new guards S2-G..S2-J; the 5 `completeStage` facade tests broken by the original S-2 commit fixed (backward-compat handler resolution).
 **Date:** 2026-09-09
 **Baseline:** HEAD `2172fac5` ("arch(ai): physically extract analysis from backend")
 **Method:** static require-graph tracing over `backend/src/**`, route registration audit (`backend.cjs`), Redis key-family audit (`tests/architecture/redis-registry.js`), PG repository/table audit, frontend store/page tracing (`frontends/app/src`), cross-checked against existing architecture docs (`PHASE_NEXT_MODULE_EXTRACTION_RECONNAISSANCE.md`, `MODULAR_PRODUCT_ARCHITECTURE.md` §C8/C9/C12, `PHASE_5_ORCHESTRATION_RUNTIME.md`, `COMFYUI_WORKFLOW_CONNECTOR_RECONNAISSANCE.md`). Where documentation and code disagree, **the code wins** and the discrepancy is flagged.
@@ -656,7 +656,7 @@ Explicitly **not** exported: dispatch-engine internals, lease keys, asset-state 
 
 ## 22. S-2 Registry-ization Result
 
-**Status:** DONE (commit: arch(generation): registry media capabilities)
+**Status:** DONE — including S-2 Completion Pass (§22.9): hardcoded-media sweep complete, duplicates eliminated, guards S2-G…S2-J green.
 
 ### 22.1 Media Types Found and Registered
 
@@ -744,12 +744,107 @@ These hardcoded patterns remain because they are acceptable config-level couplin
 
 **S-3: Provider seam migration** — route the 5 `gpu.send` bypass sites through `comfyui-provider`; delete node-id fallbacks; fold `image/connector-utils` into the provider. The registry provides the foundation for this by establishing the media-type abstraction layer.
 
+### 22.9 S-2 Completion Pass (2026-09-09)
+
+**Status:** DONE. Full sweep of hardcoded media knowledge across `backend/src`; core capability knowledge centralized through the registry; duplicate canonical configuration eliminated; error semantics frozen by tests.
+
+#### 22.9.1 Hardcoded dependencies found → moved to registry
+
+| Location | Before | After |
+|---|---|---|
+| `scene-state.js:16` | static `ASSETS = ['audio','image','video']` | lazy Proxy view over `mediaRegistry.listMediaTypes()` (self-bootstrap makes load order irrelevant); deep-equal shape preserved |
+| `gpu-dispatcher.js` | `DEFAULT_TYPE_TIMEOUT_MS` map, `validTypes` array, stats switch | `resolveJobTimeout()` (registry is now the canonical home of the 30/30/60-min job timeouts), `hasMediaType()`, dynamic counter key |
+| `dispatch-engine.js` | `LEASE_TTLS` / `QUOTAS` maps built from runtime-config keys | lazy Proxy views resolving through registry on every read (exported shape preserved for tests/metrics) |
+| `lease-manager.js` | `LEASE_TOTAL_TTLS` map | lazy Proxy view over registry |
+| `retry-budget-manager.js` | `PER_SCENE_LIMITS = {audio:10,image:10,video:5}` | `resolveRetryBudget()` resolver + lazy export view; registry is the canonical home of these limits |
+| `circuit-breaker.js` | `SERVICE_TARGETS` hardcoded AUDIO/IMAGE/VIDEO | media entries spread from `listMediaTypes()`; infra targets (redis/filesystem/…) stay local |
+| `runtime-scheduler.js` | `STATE_TO_STAGE`/`STAGE_TO_STATE` maps, default layer config `{audio_enabled,…}` | lazy Proxy maps + registry-derived defaults; per-type scheduling branching stays (see 22.9.2) |
+| `reconciliation-engine.js` (5 sites) | `['audio','image','video']` iterations + `enabled` map | `listMediaTypes()` + registry-derived `enabled` map |
+| `counter-reconciliation.js` | stage lists + `driftStatus` map | registry list + derived map |
+| `runtime-persistence.js` | circuits map, counter keys, `perAsset` default | all derived from registry |
+| `runtime-metrics.js` | `quotas = {maxAudio:3,maxImage:2,maxVideo:1}` — **stale duplicate drifting from production 8/4/2** | derived from `resolveMaxActive()` — drift removed |
+| `metrics/prometheus.js` | `QUOTA_MAX {3,2,1}`, `LEASE_TTLS {15,20,30min}`, `STAGES` — **stale duplicates drifting from production values** | all resolved from registry — drift removed (metrics were lying about quota_max) |
+| `worker-repo.js` | `WORKER_TYPES` array | `listMediaTypes()` (validation semantics unchanged) |
+| `provider-gateway.js` | `GENERATION_JOB_TYPES` array | lazy getter resolving from registry |
+| `book-diff.cjs`, `book-sync.js`, `entity-cleanup.cjs` | hardcoded default dirty layers / filter list | registry-derived |
+| `scene-window.js` | `stale = {audio:false,…}` shape | registry-derived shape |
+| `orchestrator.js` | `markDirtyScene` default array, `setSceneAllReady` iteration/state map, `resetScenes` default, FAIL_EVENT_TYPES hardcoded | all derived from registry (FAIL_EVENT_TYPES built from journal constants per type) |
+| `book/generation-routes.cjs` | registry-aware fallbacks `: ['audio','image','video']` | fallbacks removed — registry is always populated (self-bootstrap) |
+
+#### 22.9.2 Deliberately left local (media implementation knowledge)
+
+| Location | Pattern | Justification |
+|---|---|---|
+| `scene-orchestrator.js` | per-media executors (audio/image/video dispatch bodies) | concrete media implementations — exactly what stays inside media modules after extraction |
+| `scene-callbacks.js` | per-media completion handlers + `Stage` constant | media implementation |
+| `event-journal.js` | 15 per-type event types | Redis journal contract; renaming breaks stored events |
+| `runtime-scheduler.js` | per-type enablement branching, video→image dependency chain, `PLACEHOLDER` audio gate | scheduling semantics are per-media by nature; deferred to S-5 |
+| `dispatch-engine.js` | `stage === 'image'` IU in-flight markers | image-specific dispatch evidence mechanism |
+| `routes/generation-routes.cjs` | stale_dispatch acceptance for audio/video, audio/video orchestrator ternary | recovery semantics of those media orchestrators |
+| `connector-routes.cjs`, `worker-setup-routes.cjs` | per-type profile listing/validation | outside the generation contour (S2-E forbids registry import there); connector/profile UI vocabulary |
+| `profile-override.js`, `prompt-profile-loader.js` | `TYPE_FIELDS`, skill grouping | connector/skill-layer implementation vocabulary, not capability config |
+| `scene-asset-registry.js` | `['audio','image','video','storyboard']` | PG asset registry incl. non-media `storyboard` — not a media-type list |
+| `prompt-dependency-registry.js` | `['id','type','audio','image','video']` | JSON unit field names, not media types |
+| `cleanup-service.cjs` | per-type counters mirror | dead display stats (nothing increments them); removing is a cleanup, not S-2 |
+| `runtime-config.js` | `WORKER_HEARTBEAT_TYPES` | infra constant owned by config layer; consistency with registry enforced by S2-G guard, not by registry ownership |
+| `active-scenes-index.js` | `assetStates.audio/.image/.video` field access | FSM data shape (hash fields), not a capability map |
+| `packages/animastor-contracts` | `JOB_TYPES` incl. `iu_image` | frozen Job Protocol (S-3 boundary); registry deliberately does not mirror it |
+
+#### 22.9.3 Duplicate configuration eliminated
+
+**Yes, duplicates existed and were removed:**
+
+1. `default-registrations.js` restated `maxActive 8/4/2`, `leaseTtlS 20/30min`, `stuckMinutes 15/30/60` as literals while `runtime-config.js` owned the same numbers → registry now **reads** `QUOTAS`, `LEASE_TTL_S`, `STUCK_THRESHOLDS` from runtime-config; literals gone (enforced by S2-G).
+2. `metrics/prometheus.js` `QUOTA_MAX {3,2,1}` and `runtime-metrics.js` `quotas {3,2,1}` — **stale drift** from production 8/4/2 (quota_max metrics were wrong) → resolved from registry.
+3. `prometheus.js` `LEASE_TTLS {15,20,30}` — drift from production lease TTLs (audio lease is dynamic from `GPU_TIMEOUT_MS`) → resolved from registry.
+4. `gpu-dispatcher.js` `DEFAULT_TYPE_TIMEOUT_MS` {30,30,60} — not present in runtime-config anywhere → **registry (`timeout.jobMs`) is its canonical home now** (documented in default-registrations).
+5. `retry-budget-manager.js` `PER_SCENE_LIMITS` {10,10,5} — also nowhere in runtime-config → canonical home is registry (`retry.perSceneLimit`).
+
+Post-fix invariant (S2-G test): registry values are byte-identical to runtime-config for lease TTL / quotas / stuck thresholds; `WORKER_HEARTBEAT_TYPES` is set-equal to registered types. No second source of truth exists.
+
+#### 22.9.4 Load-order safety
+
+`media-registry.js` now **self-bootstraps**: the first access to an empty registry lazily `require`s `default-registrations` (idempotent through the module cache). This removes the old constraint that `backend.cjs` must register before any runtime module loads — tests that require `dispatch-engine`/`circuit-breaker` directly get a populated registry. `_clearRegistry()` (test hook) suppresses re-bootstrap so tests keep full control.
+
+#### 22.9.5 Error semantics frozen (S2-D strengthened → S2-I)
+
+Real runtime error paths exercised by tests, all semantics unchanged after registry-ization:
+- `gpu-dispatcher.sendUnified('hologram')` → throws exactly `Invalid job type` (the dispatch layer's pre-registry message)
+- `scene-state.unsafeRestoreAssetState('hologram')` → returns `null` + error log (no throw — pre-existing contract)
+- `scene-orchestrator.dispatchSceneStage` unknown stage → throws (unknown-stage path)
+- registry resolvers on unknown type → `undefined`/`false` (no crash, no default-registration)
+- route validation (`book/generation-routes.cjs`) rejects non-registry worker types with the same 400 body
+
+#### 22.9.6 Task types unchanged (S2-J)
+
+1:1 mapping preserved: `audio → ['audio']`, `image → ['image']`, `video → ['video']`. No aliases, no `iu_image` (that is a frozen Job Protocol type owned by `packages/animastor-contracts`), no `cover` (image-flow profile). Guarded by S2-J.
+
+#### 22.9.7 Cover / image_units decisions re-verified
+
+- `cover` still NOT a registry entry; still a book-model label flowing through image+audio (re-checked: cancel-worker 'cover' branch and regenerate cover-prepending unchanged)
+- `image_units` still a neutral cross-media contract; registry does not own it (no `image_units` references added to registry)
+
+#### 22.9.8 Guards added (S2-G … S2-J)
+
+| Guard | Description | Status |
+|---|---|---|
+| S2-G | No duplicate canonical media config (literals banned in default-registrations; registry ≡ runtime-config; heartbeat types ≡ registry types; stale quota/TTL literals banned in metrics) | GREEN |
+| S2-H | Core runtime/orchestration/metrics/storage/services contain no standalone audio/image/video maps (scan with documented allow-list) | GREEN |
+| S2-I | Unknown media/task type flows through existing error paths with unchanged messages/shapes | GREEN |
+| S2-J | Registry task types match production task types 1:1; no protocol subtypes leaked into registry | GREEN |
+
+`phase7-extraction-readiness.test.js` P7-T6 gateway delegate baseline updated for the new `media-registry` delegate.
+
+#### 22.9.9 S-2 verdict
+
+**S-2 COMPLETE.** All Generation-core media-type knowledge flows through `generation/media-registry.js`; media implementation knowledge stays inside media modules with documented justification; no duplicate canonical configuration anywhere; task types, Redis keys, FSM, HTTP API, workers untouched; production behavior unchanged (pre-existing baseline failures — image-ghost 15, bootstrap AI-env 1 — identical before/after, unrelated to S-2). Also fixed en route: the 5 `completeStage` facade tests broken since the original S-2 commit (getStageHandler backward-compat resolution in orchestrator).
+
 ---
 
 ## 23. Extraction Readiness Checklist (what must be true before physical extraction)
 
 - [x] S-1 route split done (VBook SQL out; import leg separated) — **VBook SQL half DONE (AgentSessionControl port, guards green); `/api/v1/generate` import-leg split explicitly deferred to its own PR (contract frozen, no VBook exposure)**
-- [x] S-2 media-type registry (no hard-coded audio/image/video arrays) — **DONE: `generation/media-registry.js` created; audio/image/video registered via `generation/default-registrations.js`; dispatch branching in `scene-orchestrator.js` uses EXECUTORS map; route validation derives from registry; guards S2-A..S2-F green (735 architecture tests + 218 generation unit tests + 6 route integration tests passing)**
+- [x] S-2 media-type registry (no hard-coded audio/image/video arrays) — **DONE incl. Completion Pass (§22.9): all core runtime/orchestration/metrics/storage/services media maps resolve through the registry (dispatch-engine, gpu-dispatcher, retry-budget, circuit-breaker, scheduler, reconciliation, persistence, prometheus, worker-repo, gateway, book services, scene-state); duplicate canonical config eliminated (registry reads runtime-config; stale prometheus/runtime-metrics quota+TTL drift removed; registry is canonical home of job timeouts + per-scene retry limits); registry self-bootstraps (load-order safe); guards S2-A..S2-J green (747 architecture tests + full Generation unit/route/boundary batches passing)**
 - [ ] S-3 provider seam live; zero `gpu.send` bypasses; zero node-id literals
 - [ ] S-4 assembly-profile + pure utils relocated
 - [ ] S-5 runtime→orchestration cycle reduced to injected contracts (R5 unfrozen)

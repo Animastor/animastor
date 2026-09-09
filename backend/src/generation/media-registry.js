@@ -15,20 +15,38 @@
 //   - Task types are unchanged
 //   - Workers/GPU Hub/ComfyUI are untouched
 //
-// COVERAGE — where media-type knowledge is now centralized:
-//   state/scene-state.js         ASSETS array (line 12)
-//   generation-progress.js       WORKER_TYPES set (line 12)
-//   gpu-dispatcher.js            validTypes (line 139), DEFAULT_TYPE_TIMEOUT_MS
-//   dispatch-engine.js           LEASE_TTLS, QUOTAS keys
-//   retry-budget-manager.js      PER_SCENE_LIMITS
-//   circuit-breaker.js           SERVICE_TARGETS
-//   runtime-config.js            QUOTAS, LEASE_TTL_S, WORKER_HEARTBEAT_TYPES
-//   routes/book/generation-routes.cjs  validWorkerTypes, layer-config fields
-//   orchestration/scene-orchestrator.js dispatch branching
-//   orchestration/orchestrator.js       stage handler/fail maps
-//   orchestration/event-journal.js      per-type event types
-//   orchestration/scene-callbacks.js    Stage constants
-//   runtime/runtime-scheduler.js        shouldScheduleAssets branching
+// COVERAGE — where media-type knowledge is centralized (S-2 completion):
+//   state/scene-state.js         ASSETS — lazy view over registry
+//   services/generation-progress.js  WORKER_TYPES — registry (no fallback)
+//   runtime/gpu-dispatcher.js     validTypes → hasMediaType, DEFAULT_TYPE_TIMEOUT_MS → resolveJobTimeout
+//   runtime/dispatch-engine.js    LEASE_TTLS/QUOTAS — lazy views over registry
+//   runtime/lease-manager.js      LEASE_TOTAL_TTLS — lazy view over registry
+//   runtime/retry-budget-manager.js  PER_SCENE_LIMITS — registry resolver
+//   runtime/circuit-breaker.js    SERVICE_TARGETS media entries — registry
+//   runtime/runtime-scheduler.js  STATE_TO_STAGE/STAGE_TO_STATE, layer defaults
+//   runtime/reconciliation-engine.js / counter-reconciliation.js / runtime-persistence.js
+//                                stage lists — registry
+//   runtime/runtime-metrics.js    quotas — registry (stale {3,2,1} duplicate removed)
+//   metrics/prometheus.js         QUOTA_MAX/LEASE_TTLS/STAGES — registry
+//                                (stale {3,2,1}/{15,20,30} duplicates removed)
+//   storage worker-repo.js        WORKER_TYPES — registry
+//   services/provider-gateway.js GENERATION_JOB_TYPES — registry
+//   services/book-diff.cjs / book-sync.js / entity-cleanup.cjs — registry
+//   orchestration/orchestrator.js  stage lists, fail-event map — registry
+//   routes/book/generation-routes.cjs  validWorkerTypes — registry (no fallback)
+//
+// DELIBERATELY LOCAL (media implementation knowledge, documented in
+// docs/architecture/generation-module-extraction-reconnaissance.md §22):
+//   orchestration/scene-orchestrator.js  per-media executors (audio/image/video)
+//   orchestration/scene-callbacks.js     per-media completion handlers
+//   orchestration/event-journal.js        per-media event types (workflow contract)
+//   runtime/runtime-scheduler.js          video→image dependency chain, per-type branching
+//   dispatch-engine.js                    image IU in-flight markers
+//   routes/connector-routes.cjs           connector profiles (outside generation contour, S2-E)
+//   routes/worker-setup-routes.cjs        worker setup profiles (outside contour)
+//   config/runtime-config.js              WORKER_HEARTBEAT_TYPES (infra constant;
+//                                        consistency guarded by S2-G, not registry-owned)
+//   packages/animastor-contracts           Job Protocol JOB_TYPES incl. iu_image (frozen, S-3 boundary)
 
 const logPrefix = '[MEDIA-REGISTRY]';
 function log(msg) { console.log(`${logPrefix} ${msg}`); }
@@ -39,6 +57,29 @@ function log(msg) { console.log(`${logPrefix} ${msg}`); }
 
 /** @type {Map<string, MediaCapability>} */
 const registry = new Map();
+
+// ======================================================
+// SELF-BOOTSTRAP (S-2 completion)
+// ======================================================
+// backend.cjs populates the registry at startup (require of
+// default-registrations). But runtime modules are also loaded directly by
+// tests — possibly BEFORE any explicit registration. To make the registry
+// order-independent, the first access to an empty registry lazily loads the
+// default registrations. _clearRegistry() (test hook) suppresses re-bootstrap
+// so tests keep full control over registry contents.
+
+let bootstrapped = false;
+
+function _ensureBootstrapped() {
+    if (bootstrapped || registry.size > 0) return;
+    bootstrapped = true;
+    try {
+        // Module cache makes this idempotent for the startup require.
+        require('./default-registrations');
+    } catch (err) {
+        console.error(`${logPrefix} bootstrap failed: ${err.message}`);
+    }
+}
 
 // ======================================================
 // MEDIA CAPABILITY CONTRACT
@@ -85,6 +126,7 @@ function registerMediaType(capability) {
     }
     registry.set(capability.mediaType, capability);
     log(`Registered: ${capability.mediaType} (taskTypes=${JSON.stringify(capability.taskTypes)}, timeout=${capability.timeout?.jobMs}ms)`);
+    bootstrapped = true;
 }
 
 /**
@@ -93,6 +135,7 @@ function registerMediaType(capability) {
  * @returns {MediaCapability | undefined}
  */
 function getMediaType(mediaType) {
+    _ensureBootstrapped();
     return registry.get(mediaType);
 }
 
@@ -102,6 +145,7 @@ function getMediaType(mediaType) {
  * @returns {boolean}
  */
 function hasMediaType(mediaType) {
+    _ensureBootstrapped();
     return registry.has(mediaType);
 }
 
@@ -110,6 +154,7 @@ function hasMediaType(mediaType) {
  * @returns {string[]}
  */
 function listMediaTypes() {
+    _ensureBootstrapped();
     return [...registry.keys()];
 }
 
@@ -118,6 +163,7 @@ function listMediaTypes() {
  * @returns {MediaCapability[]}
  */
 function listCapabilities() {
+    _ensureBootstrapped();
     return [...registry.values()];
 }
 
@@ -131,6 +177,7 @@ function listCapabilities() {
  * @returns {Set<string>}
  */
 function resolveValidWorkerTypes() {
+    _ensureBootstrapped();
     const types = new Set();
     for (const cap of registry.values()) {
         for (const t of cap.taskTypes) {
@@ -146,6 +193,7 @@ function resolveValidWorkerTypes() {
  * @returns {string[]}
  */
 function resolveAssets() {
+    _ensureBootstrapped();
     return [...registry.keys()];
 }
 
@@ -239,6 +287,7 @@ function resolveCancelStages(mediaType) {
  * @returns {boolean}
  */
 function isValidWorkerType(workerType) {
+    _ensureBootstrapped();
     return registry.has(workerType);
 }
 
@@ -266,9 +315,10 @@ function timeoutConfigKey(mediaType) {
 // TEST HOOKS
 // ======================================================
 
-/** Clear all registrations (test isolation). */
+/** Clear all registrations (test isolation). Suppresses lazy re-bootstrap. */
 function _clearRegistry() {
     registry.clear();
+    bootstrapped = true;
 }
 
 /** Get raw registry (test inspection). */

@@ -30,7 +30,10 @@ const TOKEN_SECRET_BYTES = 32; // cryptographic randomness for the bearer part
 const TOKEN_PREFIX = 'wrk';
 const TOKEN_DISPLAY_PREFIX_LEN = 8; // chars of the secret shown as mask
 
-const WORKER_TYPES = ['audio', 'image', 'video'];
+// S-2: worker types resolved from the media registry (single source of
+// truth for the media-type list). Validation semantics unchanged.
+const { listMediaTypes } = require('../../../generation/media-registry');
+const WORKER_TYPES = () => listMediaTypes();
 // FAIL CLOSED identity model (PW-4): every worker is one of three modes —
 //   private — owned by exactly one workspace, serves only that workspace;
 //   share   — owned by a workspace, volunteered to the community pool;
@@ -100,7 +103,7 @@ async function createWorker({ workspaceId, name, workerType, mode = 'private', c
         throw new Error(`mode must be 'private' or 'share' here (system is admin-only)`);
     }
     if (!workspaceId) throw new Error('workspaceId is required');
-    if (!WORKER_TYPES.includes(workerType)) throw new Error(`workerType must be one of: ${WORKER_TYPES.join(', ')}`);
+    if (!WORKER_TYPES().includes(workerType)) throw new Error(`workerType must be one of: ${WORKER_TYPES().join(', ')}`);
     const workerId = crypto.randomUUID();
     const { token, secretHash, tokenPrefix } = generateCredential(workerId);
     const { rows } = await query(`
@@ -119,7 +122,7 @@ async function createWorker({ workspaceId, name, workerType, mode = 'private', c
  * @returns {Promise<{worker:object, token:string}>}
  */
 async function createSystemWorker({ name, workerType, createdBy }) {
-    if (!WORKER_TYPES.includes(workerType)) throw new Error(`workerType must be one of: ${WORKER_TYPES.join(', ')}`);
+    if (!WORKER_TYPES().includes(workerType)) throw new Error(`workerType must be one of: ${WORKER_TYPES().join(', ')}`);
     const workerId = crypto.randomUUID();
     const { token, secretHash, tokenPrefix } = generateCredential(workerId);
     const { rows } = await query(`
@@ -211,7 +214,7 @@ async function listActive(now = Date.now()) {
  * @returns {Promise<boolean>}
  */
 async function hasActivePrivateWorkerOfType(workspaceId, workerType) {
-    if (!workspaceId || !WORKER_TYPES.includes(workerType)) return false;
+    if (!workspaceId || !WORKER_TYPES().includes(workerType)) return false;
     const { rows } = await query(`
         SELECT 1 FROM workers
         WHERE workspace_id = $1 AND worker_type = $2
@@ -703,7 +706,7 @@ async function hasGrantForUser(workerId, userId, now = Date.now()) {
  * @returns {Promise<object|null>} { policy_id, scope_kind, expires_at } | null
  */
 async function findGrantPolicyForRouting(workspaceId, ownerUserId, workerType, now = Date.now()) {
-    if (!workspaceId || !ownerUserId || !WORKER_TYPES.includes(workerType)) return null;
+    if (!workspaceId || !ownerUserId || !WORKER_TYPES().includes(workerType)) return null;
     const { rows } = await query(`
         SELECT p.policy_id, p.scope_kind, p.expires_at
         FROM share_policy_grants g

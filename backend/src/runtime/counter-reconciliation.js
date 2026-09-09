@@ -9,6 +9,9 @@
 
 const logPrefix = '[DRIFT]';
 
+// S-2: registered stage list resolved from media registry
+const mediaRegistry = require('../generation/media-registry');
+
 function log(msg) {
     console.log(`${logPrefix} ${msg}`);
 }
@@ -131,7 +134,7 @@ async function getCounterWithDriftCheck(redis, stage) {
  * Returns reconciliation report.
  */
 async function reconcileCounters(redis) {
-    const stages = ['audio', 'image', 'video'];
+    const stages = mediaRegistry.listMediaTypes();
     const report = {
         timestamp: new Date().toISOString(),
         stages: {},
@@ -201,7 +204,7 @@ async function reconcileCounters(redis) {
  * Get current counter status.
  */
 async function getCountersStatus(redis) {
-    const stages = ['audio', 'image', 'video'];
+    const stages = mediaRegistry.listMediaTypes();
     const status = {};
 
     for (const stage of stages) {
@@ -222,11 +225,9 @@ async function getReconciliationMetrics(redis) {
         timestamp: new Date().toISOString(),
         counters: status,
         totalActiveLeases: totalLeases,
-        driftStatus: {
-            audio: status.audio.drift !== 0,
-            image: status.image.drift !== 0,
-            video: status.video.drift !== 0
-        }
+        driftStatus: Object.fromEntries(
+            mediaRegistry.listMediaTypes().map(t => [t, status[t] && status[t].drift !== 0])
+        )
     };
 }
 

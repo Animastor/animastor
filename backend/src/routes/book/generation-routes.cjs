@@ -131,10 +131,8 @@ module.exports = function(app, redis, deps) {
             const { type, task_id: taskId } = req.body || {};
 
             // S-2: valid cancel types derived from registry with fallback
-            const registeredTypes = mediaRegistry.listMediaTypes();
-            const cancelValidTypes = registeredTypes.length > 0
-                ? [...registeredTypes, 'cover', 'vbook']
-                : ['audio', 'image', 'video', 'cover', 'vbook'];
+            // S-2 COMPLETION: valid types always from registry (no hardcoded fallback)
+            const cancelValidTypes = [...mediaRegistry.listMediaTypes(), 'cover', 'vbook'];
             if (!taskId && (!type || !cancelValidTypes.includes(type))) {
                 return res.status(400).json({
                     error: 'Provide task_id or a worker type: audio, image, video, cover, vbook',
@@ -407,16 +405,16 @@ module.exports = function(app, redis, deps) {
                 }
                 requestedWorkerTypes = [...new Set(workerTypes)];
             } else {
-                requestedWorkerTypes = ['audio', 'image', 'video'].filter(
+                requestedWorkerTypes = mediaRegistry.listMediaTypes().filter(
                     type => persistedLayerCfg[`${type}_enabled`] !== false
                 );
             }
             const requestedTypeSet = new Set(requestedWorkerTypes);
-            const requestLayerCfg = {
-                audio_enabled: requestedTypeSet.has('audio'),
-                image_enabled: requestedTypeSet.has('image'),
-                video_enabled: requestedTypeSet.has('video'),
-            };
+            // S-2: layer config fields derived from registry
+            const requestLayerCfg = {};
+            for (const t of mediaRegistry.listMediaTypes()) {
+                requestLayerCfg[`${t}_enabled`] = requestedTypeSet.has(t);
+            }
 
             const allScenes = book.collectScenes(loadedBook);
             let filteredDirty;

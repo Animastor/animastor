@@ -16,6 +16,8 @@ const syncFs = require('fs');
 const syncPath = require('path');
 
 const state = require('../state');
+// S-2: registered stage list resolved from media registry
+const mediaRegistry = require('../generation/media-registry');
 const storage = require('../storage');
 const config = require('../config/runtime-config');
 const journal = require('../orchestration/event-journal');
@@ -289,7 +291,7 @@ async function checkOrphanGeneratingState(redis, bookId, chapterId, sceneId) {
     const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
     const orphans = [];
 
-    for (const stage of ['audio', 'image', 'video']) {
+    for (const stage of mediaRegistry.listMediaTypes()) {
         if (assetStates[stage] !== state.AssetState.GENERATING) continue;
 
         const evidence = await dispatchEngine.getDispatchEvidence(redis, bookId, chapterId, sceneId, stage);
@@ -751,7 +753,7 @@ async function checkStaleDispatchLeases(redis, bookId, chapterId, sceneId) {
     const staleLeases = [];
 
     // Check all stages for lease existence
-    const stages = ['audio', 'image', 'video'];
+    const stages = mediaRegistry.listMediaTypes();
 
     for (const stage of stages) {
         const leaseKey = dispatchEngine.getLeaseKey(bookId, chapterId, sceneId, stage);
@@ -1177,7 +1179,7 @@ async function applyFix(redis, fix) {
                 // timer + completion marker). A bare `del` would leak the
                 // quota slot and the in-memory renewal timer, and could race a
                 // concurrent re-acquire (no token check).
-                for (const stage of ['audio', 'image', 'video']) {
+                for (const stage of mediaRegistry.listMediaTypes()) {
                     const result = await dispatchEngine.cancelActiveDispatch(
                         redis, scene.bookId, scene.chapterId, scene.sceneId, stage,
                         'stale_lease_recovery'
@@ -1414,7 +1416,7 @@ async function reconcileAll(redis) {
     } while (cursor !== 0);
 
     // Check counter drift once globally (leases vs counters are system-wide, not per-scene)
-    for (const stage of ['audio', 'image', 'video']) {
+    for (const stage of mediaRegistry.listMediaTypes()) {
         const driftCheck = await counterReconciliation.getCounterWithDriftCheck(redis, stage);
         if (driftCheck && !driftCheck.correct) {
             report.inconsistentScenes.push({
@@ -2115,7 +2117,7 @@ async function rebuildWorkList(redis) {
     const orchestrator = require('../orchestration/orchestrator');
 
     const AssetState = state.AssetState;
-    const STAGES = ['audio', 'image', 'video'];
+    const STAGES = mediaRegistry.listMediaTypes();
 
     // 0. Fail-closed: книги с cancellation tombstone (Operation #1)
     const cancelled = new Set();
@@ -2143,11 +2145,9 @@ async function rebuildWorkList(redis) {
             const buildId = loadedBook?.manifest?.build_id || 'default';
             const buildDir = syncPath.join(config.OUTPUT_DIR, buildId);
             const layerCfg = await layerConfig.get(redis, bookId);
-            const enabled = {
-                audio: layerCfg.audio_enabled !== false,
-                image: layerCfg.image_enabled !== false,
-                video: layerCfg.video_enabled !== false,
-            };
+            const enabled = Object.fromEntries(
+                mediaRegistry.listMediaTypes().map(t => [t, layerCfg[t + '_enabled'] !== false])
+            );
 
             // 2. Dirty-маркеры из PG (audit gap 2): каждый marker РЕАЛЬНО влияет
             // на WORK_TO_DO. Раньше dirtyScenes собирался, но не использовался —

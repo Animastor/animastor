@@ -95,20 +95,18 @@ const tickDurationHistogram = new client.Histogram({
 // CONFIGURATION
 // ======================================================
 
-const QUOTA_KEYS = [
-    'animastor:runtime:active-audio',
-    'animastor:runtime:active-image',
-    'animastor:runtime:active-video',
-];
+// S-2: media types, quotas and lease TTLs resolved from the media registry
+// (canonical config flows runtime-config → default-registrations → registry).
+// The former local QUOTA_MAX {3,2,1} / LEASE_TTLS {15,20,30} were stale
+// duplicates that drifted from production values (8/4/2) — removed.
+const mediaRegistry = require('../generation/media-registry');
 
-const QUOTA_MAX = { audio: 3, image: 2, video: 1 };
-const STAGES = ['audio', 'image', 'video'];
+const QUOTA_KEYS = () => mediaRegistry.listMediaTypes().map(t => `animastor:runtime:active-${t}`);
 
-const LEASE_TTLS = {
-    audio: 15 * 60,    // 15 minutes
-    image: 20 * 60,    // 20 minutes
-    video: 30 * 60,    // 30 minutes
-};
+const STAGES = () => mediaRegistry.listMediaTypes();
+const QUOTA_MAX = (stage) => mediaRegistry.resolveMaxActive(stage);
+
+const LEASE_TTL = (stage) => mediaRegistry.resolveLeaseTtl(stage);
 
 const LEASE_SAMPLE_LIMIT = 20; // sample up to 20 leases per stage for age
 
@@ -121,15 +119,15 @@ const LEASE_SAMPLE_LIMIT = 20; // sample up to 20 leases per stage for age
  * 3 GET calls — very cheap.
  */
 async function collectQuotas(redis) {
-    const [audioVal, imageVal, videoVal] = await Promise.all(
-        QUOTA_KEYS.map(k => redis.get(k).then(v => parseInt(v || '0', 10)))
+    const stages = STAGES();
+    const values = await Promise.all(
+        QUOTA_KEYS().map(k => redis.get(k).then(v => parseInt(v || '0', 10)))
     );
+    const usage = Object.fromEntries(stages.map((s, i) => [s, values[i]]));
 
-    const usage = { audio: audioVal, image: imageVal, video: videoVal };
-
-    for (const stage of STAGES) {
+    for (const stage of stages) {
         const u = usage[stage];
-        const max = QUOTA_MAX[stage];
+        const max = QUOTA_MAX(stage);
         quotaUsageGauge.set({ stage }, u);
         quotaMaxGauge.set({ stage }, max);
         quotaUtilisationGauge.set({ stage }, max > 0 ? u / max : 0);
@@ -149,7 +147,7 @@ async function collectLeases(redis) {
         try { metrics = JSON.parse(metricsRaw); } catch (_) {}
     }
 
-    for (const stage of STAGES) {
+    for (const stage of STAGES()) {
         const leaseCount = metrics[`active${stage.charAt(0).toUpperCase() + stage.slice(1)}Leases`];
         if (leaseCount !== undefined) {
             activeLeasesGauge.set({ stage }, leaseCount);
@@ -157,7 +155,7 @@ async function collectLeases(redis) {
     }
 
     // Sample lease age from first N leases per stage
-    for (const stage of STAGES) {
+    for (const stage of STAGES()) {
         let totalAge = 0;
         let sampled = 0;
         let cursor = '0';
@@ -172,7 +170,7 @@ async function collectLeases(redis) {
                 if (sampled >= LEASE_SAMPLE_LIMIT) break;
                 const ttl = await redis.ttl(key);
                 if (ttl > 0) {
-                    totalAge += LEASE_TTLS[stage] - ttl;
+                    totalAge += LEASE_TTL(stage) - ttl;
                     sampled++;
                 }
             }

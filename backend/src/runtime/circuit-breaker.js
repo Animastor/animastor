@@ -17,6 +17,9 @@
 // - filesystem operations
 // - external worker callbacks
 
+// S-2: media service targets resolved from the registry
+const mediaRegistry = require('../generation/media-registry');
+
 const logPrefix = '[CIRCUIT]';
 
 function log(msg) {
@@ -98,9 +101,8 @@ function getCircuitHalfOpenKey(service) {
 // ======================================================
 
 const SERVICE_TARGETS = {
-    AUDIO: 'audio',
-    IMAGE: 'image',
-    VIDEO: 'video',
+    // S-2: media types resolved from registry at runtime
+    ...Object.fromEntries(mediaRegistry.listMediaTypes().map(t => [t.toUpperCase(), t])),
     REDIS: 'redis',
     FILESYSTEM: 'filesystem',
     WORKER_CALLBACK: 'worker_callback',

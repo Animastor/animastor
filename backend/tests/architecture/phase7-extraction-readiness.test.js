@@ -204,6 +204,8 @@ describe('P7-T6: Provider Gateway delegate and consumer sets stay explicit', () 
         './workspace-ai-provider',
         './ai-connector/shared-pool',
         '../generation/comfyui-provider',
+        // S-2: media registry — gateway's JOB_TYPES now resolves through it
+        '../generation/media-registry',
         '../runtime/gpu-dispatcher',
         '../storage/postgres/repositories/ai-connector-repo',
     ];

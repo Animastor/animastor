@@ -39,12 +39,19 @@ const LEASE_RENEWAL_TTL_ADD = 180;
 // ЕДИНЫЙ источник — LEASE_TTL_S в config/runtime-config.js (тот же реестр,
 // что dispatch-engine использует при первоначальном acquire). Renewal
 // переставляет lease на LEASE_TOTAL_TTLS[stage] + LEASE_RENEWAL_TTL_ADD.
-const runtimeConfig = require('../config/runtime-config');
-const LEASE_TOTAL_TTLS = {
-    audio: runtimeConfig.LEASE_TTL_S.AUDIO,
-    image: runtimeConfig.LEASE_TTL_S.IMAGE,
-    video: runtimeConfig.LEASE_TTL_S.VIDEO
-};
+// S-2: lease TTL resolved through the media registry (values still owned by
+// runtime-config — registry reads them at registration time). LEASE_TOTAL_TTLS
+// stays exported as a lazy view for backward compatibility (tests assert the
+// runtime-config unification through it).
+const mediaRegistry = require('../generation/media-registry');
+const LEASE_TOTAL_TTLS = new Proxy({}, {
+    get(_, stage) { return mediaRegistry.resolveLeaseTtl(stage); },
+    ownKeys() { return mediaRegistry.listMediaTypes(); },
+    getOwnPropertyDescriptor(_, stage) {
+        const v = mediaRegistry.resolveLeaseTtl(stage);
+        return v === undefined ? undefined : { value: v, enumerable: true, configurable: true };
+    },
+});
 
 // ======================================================
 // STALE-LEASE SEMANTICS (audit c8b79f6, incident 2026-08-28)

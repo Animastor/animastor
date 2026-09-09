@@ -18,6 +18,8 @@
 // - counter drift
 
 const counterReconciliation = require('./counter-reconciliation');
+// S-2: media types and quotas resolved from media registry
+const mediaRegistry = require('../generation/media-registry');
 
 const logPrefix = '[METRICS]';
 
@@ -139,11 +141,7 @@ async function getCurrentMetrics(redis, additionalData = {}) {
     ]);
 
     // Get quota settings
-    const quotas = {
-        maxAudio: 3,
-        maxImage: 2,
-        maxVideo: 1
-    };
+    const quotas = Object.fromEntries(mediaRegistry.listMediaTypes().map(t => ['max' + t.charAt(0).toUpperCase() + t.slice(1), mediaRegistry.resolveMaxActive(t)]));
 
     // Get lease renewal count
     const renewalKey = 'animastor:runtime:renewal-timers';

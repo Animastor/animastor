@@ -18,6 +18,9 @@
 // (dispatch-engine уже делает require('../orchestration') внутри функции).
 // Развязка интерфейсом — отдельная задача (после К.4).
 
+// S-2: media-type knowledge (stage lists, fail-event map) resolved via registry
+const mediaRegistry = require('../generation/media-registry');
+
 // ── markDirty ─────────────────────────────────────────
 // Единственный способ объявить «нужна регенерация». Делегирует в
 // deps.bookDiff.markDirtyScenes — это метод DI-инстанса (book-diff.cjs —
@@ -76,7 +79,15 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId, 
     const { log, warn, error } = require('./scene-utils');
     const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
 
-    const handler = callbacks.getStageHandler(stage);
+    // S-2: resolve the completion handler through the registry-driven map.
+    // Fallback to the direct named handlers keeps backward compatibility with
+    // partial stubs of scene-callbacks (older test contracts inject only the
+    // three named handlers) — in production getStageHandler is always present.
+    const handler = (callbacks.getStageHandler && callbacks.getStageHandler(stage))
+        || (callbacks.STAGE_HANDLERS && callbacks.STAGE_HANDLERS[stage])
+        || (stage === 'audio' && callbacks.handleAudioCompleted)
+        || (stage === 'image' && callbacks.handleImageCompleted)
+        || (stage === 'video' && callbacks.handleVideoCompleted);
     if (!handler) {
         throw new Error(`orchestrator.completeStage: unknown stage '${stage}'`);
     }
@@ -240,11 +251,12 @@ async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reas
 
     // S-2: fail event type map — derived from journal event types.
     // Maps media type → failure event type for the event journal.
-    const FAIL_EVENT_TYPES = {
-        audio: journal.EventType.AUDIO_FAILED,
-        image: journal.EventType.IMAGE_FAILED,
-        video: journal.EventType.VIDEO_FAILED,
-    };
+    // S-2: fail event types derived from journal event types
+    const FAIL_EVENT_TYPES = {};
+    for (const t of mediaRegistry.listMediaTypes()) {
+        const key = `${t.toUpperCase()}_FAILED`;
+        if (journal.EventType[key]) FAIL_EVENT_TYPES[t] = journal.EventType[key];
+    }
     const eventType = FAIL_EVENT_TYPES[stage];
     if (!eventType) {
         throw new Error(`orchestrator.failStage: unknown stage '${stage}'`);
@@ -327,7 +339,7 @@ async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reas
 // T5: PG side-effect — синхронно пишет scene_assets.status='stale' для каждого ассета.
 // Это зеркалит то, как completeStage пишет status='ready'. Если PG недоступен —
 // только warning в лог, Redis write не откатывается.
-async function markDirtyScene(redis, bookId, chapterId, sceneId, assets = ['audio', 'image', 'video'], buildId = null) {
+async function markDirtyScene(redis, bookId, chapterId, sceneId, assets = mediaRegistry.listMediaTypes(), buildId = null) {
     const state = require('../state');
     for (const asset of assets) {
         await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.DIRTY);
@@ -454,7 +466,7 @@ async function setSceneAllReady(redis, bookId, chapterId, sceneId, buildId = nul
     const { log, warn } = require('./scene-utils');
 
     const states = await state.getAssetStates(redis, bookId, chapterId, sceneId);
-    for (const asset of ['audio', 'image', 'video']) {
+    for (const asset of mediaRegistry.listMediaTypes()) {
         const current = states?.[asset];
         const check = state.validateAssetTransition(current, state.AssetState.READY);
         if (!check.valid && current !== state.AssetState.READY) {
@@ -472,7 +484,7 @@ async function setSceneAllReady(redis, bookId, chapterId, sceneId, buildId = nul
     });
     await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
         journal.EventType.SCENE_ALL_READY, state.AssetState.READY,
-        { assets: ['audio', 'image', 'video'], buildId }).catch(() => {});
+        { assets: mediaRegistry.listMediaTypes(), buildId }).catch(() => {});
 }
 
 // ── setSceneGenerating ──────────────────────────────
@@ -634,7 +646,7 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
     const leaseResetScenes = scenes.map(ds => ({
         chapter_id: ds.chapter_id,
         scene_id: ds.scene_id,
-        stages: (ds.dirty_layers || ['audio', 'image', 'video']).filter(stage =>
+        stages: (ds.dirty_layers || mediaRegistry.listMediaTypes()).filter(stage =>
             layerCfg?.[`${stage}_enabled`] !== false
         ),
     }));

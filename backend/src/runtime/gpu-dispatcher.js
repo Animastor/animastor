@@ -1,3 +1,4 @@
+const mediaRegistry = require('../generation/media-registry');
 const config = require('../config/runtime-config');
 const jobSchema = require('./job-schema');
 const { PROTOCOL_VERSION } = jobSchema;
@@ -6,12 +7,7 @@ const logPrefix = '[GPU]';
 function log(msg) { console.log(`${logPrefix} ${msg}`); }
 function warn(msg) { console.warn(`${logPrefix} ⚠️ ${msg}`); }
 
-const stats = {
-    audio_jobs_started: 0,
-    image_jobs_started: 0,
-    video_jobs_started: 0,
-    failed_jobs: 0
-};
+const stats = { failed_jobs: 0 };
 
 // ======================================================
 // PW-2: WORKSPACE RESOLUTION & ROUTING (server-derived)
@@ -118,17 +114,9 @@ function clearRoutingCaches() {
     grantCache.clear();
 }
 
-/**
- * Default timeouts per job type (ms). Used when layer-config
- * provides per-type timeout values.
- */
-const DEFAULT_TYPE_TIMEOUT_MS = {
-    audio: 30 * 60 * 1000,   // 30 min
-    image: 30 * 60 * 1000,   // 30 min
-    video: 60 * 60 * 1000,   // 60 min
-};
-
-
+// S-2: per-type default job timeout moved to the media registry
+// (generation/default-registrations.js, timeout.jobMs) — values preserved
+// from the former DEFAULT_TYPE_TIMEOUT_MS (audio/image 30 min, video 60 min).
 
 // T4: Структурированный результат отправки
 // { sent: true, jobId } или { sent: false, error }
@@ -136,8 +124,7 @@ async function sendUnified(taskSpec) {
     if (!taskSpec.job_id || !taskSpec.params || !taskSpec.job_type) {
         throw new Error("Invalid task specification");
     }
-    const validTypes = ['audio', 'image', 'video'];
-    if (!validTypes.includes(taskSpec.job_type)) {
+    if (!mediaRegistry.hasMediaType(taskSpec.job_type)) {
         throw new Error("Invalid job type");
     }
     if (!taskSpec.dispatch_id || typeof taskSpec.dispatch_id !== 'string') {
@@ -149,10 +136,10 @@ async function sendUnified(taskSpec) {
         throw new Error(`Invalid job_id: ${taskSpec.job_id}`);
     }
 
-    // Per-type timeout: use taskSpec.timeout_ms if provided, else use DEFAULT_TYPE_TIMEOUT_MS,
-    // else fall back to config.GPU_TIMEOUT_MS (global default).
+    // Per-type timeout: use taskSpec.timeout_ms if provided, else the
+    // registry default for this media type, else config.GPU_TIMEOUT_MS.
     const timeoutMs = taskSpec.timeout_ms
-        ?? DEFAULT_TYPE_TIMEOUT_MS[taskSpec.job_type]
+        ?? mediaRegistry.resolveJobTimeout(taskSpec.job_type)
         ?? config.GPU_TIMEOUT_MS
         ?? 600_000;
 
@@ -217,11 +204,9 @@ async function sendUnified(taskSpec) {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
             log(`Task sent: ${payload.job_id} (${payload.job_type}), build: ${payload.build_id}, dispatch: ${payload.dispatch_id}, ws: ${workspaceId || (policyLane ? `policy:${policyLane.policy_id}` : '(system pool)')}`);
-            switch (payload.job_type) {
-                case 'audio': stats.audio_jobs_started++; break;
-                case 'image': stats.image_jobs_started++; break;
-                case 'video': stats.video_jobs_started++; break;
-            }
+            // S-2: per-type counters keyed dynamically — no hardcoded media list
+            const typeKey = `${payload.job_type}_jobs_started`;
+            stats[typeKey] = (stats[typeKey] || 0) + 1;
             return { sent: true, jobId: payload.job_id, dispatchId: payload.dispatch_id };
         } catch (err) {
             lastError = err;

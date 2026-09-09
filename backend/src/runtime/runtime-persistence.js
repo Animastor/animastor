@@ -6,6 +6,8 @@
 // Provides recovery mechanism on startup.
 
 const state = require('../state');
+// S-2: registered stage list resolved from media registry
+const mediaRegistry = require('../generation/media-registry');
 const runtimeMetrics = require('./runtime-metrics');
 const activeScenesIndex = require('./active-scenes-index');
 const circuitBreaker = require('./circuit-breaker');
@@ -126,11 +128,10 @@ async function generateSnapshot(redis) {
     const counters = await getRuntimeCounters(redis);
 
     // Get circuit breaker state
-    const circuits = {
-        audio: await circuitBreaker.checkDispatch(redis, 'audio'),
-        image: await circuitBreaker.checkDispatch(redis, 'image'),
-        video: await circuitBreaker.checkDispatch(redis, 'video')
-    };
+    const circuits = {};
+    for (const stage of mediaRegistry.listMediaTypes()) {
+        circuits[stage] = await circuitBreaker.checkDispatch(redis, stage);
+    }
 
     const snapshot = {
         type: RuntimeStateType.SNAPSHOT,
@@ -310,9 +311,7 @@ async function storeRuntimeMetrics(redis, metrics) {
  */
 async function getRuntimeCounters(redis) {
     const counterKeys = [
-        'animastor:runtime:active-audio',
-        'animastor:runtime:active-image',
-        'animastor:runtime:active-video',
+        ...mediaRegistry.listMediaTypes().map(t => `animastor:runtime:active-${t}`),
         'animastor:runtime:retry:count'
     ];
 
@@ -589,7 +588,7 @@ async function recoverActiveScenes(redis, snapshot) {
 
     for (const scene of snapshot.activeScenes) {
         // T8: syncLinearState удалён — per-asset state единственный source of truth
-        const perAsset = { audio: 'new', image: 'new', video: 'new' };
+        const perAsset = Object.fromEntries(mediaRegistry.listMediaTypes().map(t => [t, 'new']));
         await state.unsafeRestoreAssetStates(redis, scene.bookId, scene.chapterId, scene.sceneId, perAsset);
         recovered++;
 

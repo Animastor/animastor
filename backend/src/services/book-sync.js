@@ -21,6 +21,8 @@
 //
 const bookSource = require('./book-source');
 const { query } = require('../storage/postgres/database');
+// S-2: default/regenerated layer list resolved from media registry
+const { listMediaTypes: _mediaTypes, isValidWorkerType: _isMediaType } = require('../generation/media-registry');
 const { computeSceneHash } = require('../utils/scene-hash');
 const { getOutdatedByVersions } = require('../storage/postgres/repositories/scene-assets-repo');
 
@@ -268,12 +270,10 @@ async function markGenerationTasksStale(bookId, dirtyScenes) {
             ? splitKey(entry)
             : [entry.chapter_id, entry.scene_id];
         const dirtyLayers = isLegacyKey
-            ? ['audio', 'image', 'video']
+            ? _mediaTypes()
             : (Array.isArray(entry.dirty_layers)
                 ? entry.dirty_layers
-                : ['audio', 'image', 'video']).filter(layer =>
-                layer === 'audio' || layer === 'image' || layer === 'video'
-            );
+                : _mediaTypes()).filter(layer => _isMediaType(layer));
         if (!chapterId || !sceneId || dirtyLayers.length === 0) continue;
 
         const r = await query(`

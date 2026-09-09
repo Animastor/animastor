@@ -7,6 +7,11 @@
 // This module is imported ONCE at startup (by backend.cjs or
 // generation/index.js) to populate the registry.
 //
+// S-2 COMPLETION: Values are READ from runtime-config (the
+// canonical source of truth) — NOT hardcoded here. This
+// eliminates duplicate configuration between registry and
+// runtime-config.
+//
 // COVER CLASSIFICATION:
 //   'cover' is NOT a separate media type — it is a chapter-type
 //   label in the book model. When cover generation runs, it
@@ -22,35 +27,42 @@
 //   The registry does not own it — it stays as a neutral contract.
 
 const { registerMediaType } = require('./media-registry');
+const runtimeConfig = require('../config/runtime-config');
 
 // ======================================================
 // AUDIO
 // ======================================================
+// Config values are READ from runtime-config (the canonical source) — the
+// registry does not duplicate them. jobMs defaults are the registry's own
+// canonical home: they were previously hardcoded in gpu-dispatcher's
+// DEFAULT_TYPE_TIMEOUT_MS and existed nowhere in runtime-config.
+// retry.perSceneLimit likewise (previously retry-budget-manager's
+// PER_SCENE_LIMITS) — also not present in runtime-config.
 registerMediaType({
     mediaType: 'audio',
     taskTypes: ['audio'],
     timeout: {
-        jobMs: 30 * 60 * 1000,    // 30 min (from runtime-config GPU_TIMEOUT_MS for audio)
-        leaseTtlS: undefined,       // computed from GPU_TIMEOUT_MS: ceil(STALL_FAILSAFE/1000)+60
+        jobMs: 30 * 60 * 1000,    // 30 min (was gpu-dispatcher DEFAULT_TYPE_TIMEOUT_MS.audio)
+        leaseTtlS: runtimeConfig.LEASE_TTL_S.AUDIO,
     },
     quota: {
-        maxActive: 8,               // runtime-config QUOTAS.MAX_ACTIVE_AUDIO
+        maxActive: runtimeConfig.QUOTAS.MAX_ACTIVE_AUDIO,
     },
     retry: {
-        perSceneLimit: 10,          // retry-budget-manager PER_SCENE_LIMITS.audio
+        perSceneLimit: 10,
     },
     circuit: {
-        serviceName: 'audio',       // circuit-breaker SERVICE_TARGETS.AUDIO
+        serviceName: 'audio',
     },
     stuck: {
-        generatingMinutes: 15,      // runtime-config STUCK_THRESHOLDS.AUDIO_GENERATING
-        pendingMinutes: 15,         // runtime-config STUCK_THRESHOLDS.AUDIO_PENDING
+        generatingMinutes: runtimeConfig.STUCK_THRESHOLDS.AUDIO_GENERATING,
+        pendingMinutes: runtimeConfig.STUCK_THRESHOLDS.AUDIO_PENDING,
     },
     progress: {
-        strategy: 'chunk',          // progress-panel countAudio: chunk-based counting
+        strategy: 'chunk',
     },
     cancel: {
-        clearsStages: ['audio'],    // cancel-worker clears audio stage only
+        clearsStages: ['audio'],
     },
     artifact: {
         suffix: '.mp3',
@@ -64,27 +76,27 @@ registerMediaType({
     mediaType: 'image',
     taskTypes: ['image'],
     timeout: {
-        jobMs: 30 * 60 * 1000,    // 30 min (runtime-config default)
-        leaseTtlS: 20 * 60,        // runtime-config LEASE_TTL_S.IMAGE
+        jobMs: 30 * 60 * 1000,    // 30 min (was gpu-dispatcher DEFAULT_TYPE_TIMEOUT_MS.image)
+        leaseTtlS: runtimeConfig.LEASE_TTL_S.IMAGE,
     },
     quota: {
-        maxActive: 4,               // runtime-config QUOTAS.MAX_ACTIVE_IMAGE
+        maxActive: runtimeConfig.QUOTAS.MAX_ACTIVE_IMAGE,
     },
     retry: {
-        perSceneLimit: 10,          // retry-budget-manager PER_SCENE_LIMITS.image
+        perSceneLimit: 10,
     },
     circuit: {
-        serviceName: 'image',       // circuit-breaker SERVICE_TARGETS.IMAGE
+        serviceName: 'image',
     },
     stuck: {
-        generatingMinutes: 30,      // runtime-config STUCK_THRESHOLDS.IMAGE_GENERATING
-        pendingMinutes: 30,         // runtime-config STUCK_THRESHOLDS.IMAGE_PENDING
+        generatingMinutes: runtimeConfig.STUCK_THRESHOLDS.IMAGE_GENERATING,
+        pendingMinutes: runtimeConfig.STUCK_THRESHOLDS.IMAGE_PENDING,
     },
     progress: {
-        strategy: 'iu',             // progress-panel countImage: IU-based counting
+        strategy: 'iu',
     },
     cancel: {
-        clearsStages: ['image'],    // cancel-worker clears image stage only
+        clearsStages: ['image'],
     },
     artifact: {
         suffix: '.png',
@@ -98,27 +110,27 @@ registerMediaType({
     mediaType: 'video',
     taskTypes: ['video'],
     timeout: {
-        jobMs: 60 * 60 * 1000,    // 60 min (runtime-config DEFAULT_TYPE_TIMEOUT_MS.video)
-        leaseTtlS: 30 * 60,        // runtime-config LEASE_TTL_S.VIDEO
+        jobMs: 60 * 60 * 1000,    // 60 min (was gpu-dispatcher DEFAULT_TYPE_TIMEOUT_MS.video)
+        leaseTtlS: runtimeConfig.LEASE_TTL_S.VIDEO,
     },
     quota: {
-        maxActive: 2,               // runtime-config QUOTAS.MAX_ACTIVE_VIDEO
+        maxActive: runtimeConfig.QUOTAS.MAX_ACTIVE_VIDEO,
     },
     retry: {
-        perSceneLimit: 5,           // retry-budget-manager PER_SCENE_LIMITS.video
+        perSceneLimit: 5,
     },
     circuit: {
-        serviceName: 'video',       // circuit-breaker SERVICE_TARGETS.VIDEO
+        serviceName: 'video',
     },
     stuck: {
-        generatingMinutes: 60,      // runtime-config STUCK_THRESHOLDS.VIDEO_GENERATING
-        pendingMinutes: 60,         // runtime-config STUCK_THRESHOLDS.VIDEO_PENDING
+        generatingMinutes: runtimeConfig.STUCK_THRESHOLDS.VIDEO_GENERATING,
+        pendingMinutes: runtimeConfig.STUCK_THRESHOLDS.VIDEO_PENDING,
     },
     progress: {
-        strategy: 'scene',          // progress-panel countSceneStage: per-scene ready check
+        strategy: 'scene',
     },
     cancel: {
-        clearsStages: ['video'],    // cancel-worker clears video stage only
+        clearsStages: ['video'],
     },
     artifact: {
         suffix: '.mp4',

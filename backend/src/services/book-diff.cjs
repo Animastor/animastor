@@ -7,6 +7,8 @@
 const fs = require('fs');
 const path = require('path');
 const registry = require('./prompt-dependency-registry');
+// S-2: default dirty layers resolved from media registry
+const { listMediaTypes: _mediaTypes } = require('../generation/media-registry');
 
 module.exports = function(redis, config, deps) {
     const { state, book, layerConfig, genScope, activeScenes, getChunk, saveChunk } = deps;
@@ -107,7 +109,7 @@ module.exports = function(redis, config, deps) {
                     chapter_id: newS.chapter_id,
                     scene_id: newS.scene_id,
                     reason: 'added',
-                    dirty_layers: ['audio', 'image', 'video'],
+                    dirty_layers: _mediaTypes(),
                 });
             } else {
                 // Check for changes
@@ -135,7 +137,7 @@ module.exports = function(redis, config, deps) {
                     chapter_id: oldMap[key].chapter_id,
                     scene_id: oldMap[key].scene_id,
                     reason: 'removed',
-                    dirty_layers: ['audio', 'image', 'video'],
+                    dirty_layers: _mediaTypes(),
                 });
             }
         }

@@ -231,6 +231,214 @@ describe('architecture: Generation media registry (S-2)', () => {
             expect(offenders).to.deep.equal([]);
         });
     });
+
+    // ==================================================
+    // S2-G: No duplicate canonical media configuration
+    // ==================================================
+    // runtime-config is the canonical owner of numeric config (QUOTAS,
+    // LEASE_TTL_S, STUCK_THRESHOLDS). The registry must READ those values
+    // (default-registrations) — never restate them as its own literals.
+    describe('S2-G: No duplicate canonical media configuration', () => {
+        it('default-registrations reads config values from runtime-config, not literals', () => {
+            const regFile = readSource(path.join(BACKEND_SRC, 'generation', 'default-registrations.js'));
+            // Strip comments — only code statements may reference config
+            const code = codeOf(regFile);
+
+            // Canonical numeric literals that live in runtime-config must not
+            // be restated in code (quota values, lease TTLs, stuck thresholds)
+            const forbidden = [
+                /quota:\s*\{\s*maxActive:\s*(?:8|4|2)\b/,
+                /leaseTtlS:\s*(?:20|30)\s*\*\s*60/,
+                /generatingMinutes:\s*(?:15|30|60)\b/,
+                /pendingMinutes:\s*(?:15|30|60)\b/,
+            ];
+            const offenders = forbidden.filter(re => re.test(code)).map(String);
+            expect(offenders, 'registry must read canonical values from runtime-config').to.deep.equal([]);
+
+            // And the wiring must actually reference runtime-config
+            expect(code, 'default-registrations must require runtime-config').to.match(/require\([^)]*runtime-config/);
+        });
+
+        it('registry capability values match runtime-config exactly (no drift)', () => {
+            require(path.join(BACKEND_SRC, 'generation', 'default-registrations'));
+            const registry = require(path.join(BACKEND_SRC, 'generation', 'media-registry'));
+            const cfg = require(path.join(BACKEND_SRC, 'config', 'runtime-config'));
+
+            expect(registry.resolveLeaseTtl('audio')).to.equal(cfg.LEASE_TTL_S.AUDIO);
+            expect(registry.resolveLeaseTtl('image')).to.equal(cfg.LEASE_TTL_S.IMAGE);
+            expect(registry.resolveLeaseTtl('video')).to.equal(cfg.LEASE_TTL_S.VIDEO);
+            expect(registry.resolveMaxActive('audio')).to.equal(cfg.QUOTAS.MAX_ACTIVE_AUDIO);
+            expect(registry.resolveMaxActive('image')).to.equal(cfg.QUOTAS.MAX_ACTIVE_IMAGE);
+            expect(registry.resolveMaxActive('video')).to.equal(cfg.QUOTAS.MAX_ACTIVE_VIDEO);
+            expect(registry.resolveStuckThresholds('audio').generatingMinutes).to.equal(cfg.STUCK_THRESHOLDS.AUDIO_GENERATING);
+            expect(registry.resolveStuckThresholds('image').generatingMinutes).to.equal(cfg.STUCK_THRESHOLDS.IMAGE_GENERATING);
+            expect(registry.resolveStuckThresholds('video').generatingMinutes).to.equal(cfg.STUCK_THRESHOLDS.VIDEO_GENERATING);
+        });
+
+        it('runtime-config WORKER_HEARTBEAT_TYPES stays consistent with registry types', () => {
+            const registry = require(path.join(BACKEND_SRC, 'generation', 'media-registry'));
+            const cfg = require(path.join(BACKEND_SRC, 'config', 'runtime-config'));
+            const registryTypes = registry.listMediaTypes().sort();
+            const heartbeatTypes = [...cfg.WORKER_HEARTBEAT_TYPES].sort();
+            expect(heartbeatTypes, 'heartbeat infra constant must list exactly the registered media types').to.deep.equal(registryTypes);
+        });
+
+        it('no other module restates quota/TTL literals as canonical maps', () => {
+            // Stale duplicates found & removed in the completion pass:
+            // prometheus QUOTA_MAX {3,2,1} / LEASE_TTLS {15,20,30},
+            // runtime-metrics quotas {3,2,1}. Guard against reintroduction.
+            const files = [
+                path.join(BACKEND_SRC, 'metrics', 'prometheus.js'),
+                path.join(BACKEND_SRC, 'runtime', 'runtime-metrics.js'),
+            ];
+            for (const file of files) {
+                const code = codeOf(readSource(file));
+                expect(code, `${rel(file)} must not restate quota literals`).to.not.match(/maxAudio:\s*3|maxActive:\s*3\s*,|audio:\s*3\s*,\s*image:\s*2\s*,\s*video:\s*1/);
+                expect(code, `${rel(file)} must not restate lease TTL literals`).to.not.match(/audio:\s*15\s*\*\s*60/);
+            }
+        });
+    });
+
+    // ==================================================
+    // S2-H: Core runtime holds no standalone media maps
+    // ==================================================
+    // Core runtime modules must resolve media-type lists/maps through the
+    // registry — no independent hardcoded audio/image/video capability maps.
+    describe('S2-H: Core runtime has no standalone audio/image/video maps', () => {
+        const MAP_PATTERNS = [
+            // { audio: X, image: Y, video: Z } object literal (code, not comment)
+            /\{\s*['"]?audio['"]?\s*:\s*[^}]+['"]?image['"]?\s*:[^}]+['"]?video['"]?\s*:/,
+            // ['audio', 'image', 'video'] array literal
+            /\[\s*['"]audio['"]\s*,\s*['"]image['"]\s*,\s*['"]video['"]\s*\]/,
+            // new Set(['audio', 'image', 'video'])
+            /new Set\(\s*\[\s*['"]audio['"]\s*,\s*['"]image['"]\s*,\s*['"]video['"]\s*\]/,
+        ];
+
+        // Files allowed to mention media literals (registration point, or
+        // documented media implementation detail — see §22 of the recon doc)
+        const ALLOWED = new Set([
+            'generation/default-registrations.js',
+            'generation/media-registry.js',      // doc comments only
+            'config/runtime-config.js',          // WORKER_HEARTBEAT_TYPES (S2-G consistency-guarded)
+            'orchestration/scene-orchestrator.js', // media executors (implementation)
+            'orchestration/scene-callbacks.js',   // media handlers (implementation)
+            'orchestration/event-journal.js',     // per-type event types (workflow contract)
+            'orchestration/orchestrator.js',     // FAIL_EVENT_TYPES fallback keys per media type in comment + Stage literal handlers
+            'services/generation-progress.js',    // (docs only after completion pass)
+            'services/scene-asset-registry.js',   // ['audio','image','video','storyboard'] — PG asset registry incl. non-media 'storyboard'
+            'services/prompt-dependency-registry.js', // JSON unit keys ('audio'/'image'/'video' are unit field names, not media types)
+            'services/cleanup-service.cjs',       // legacy counters mirror (dead display stats, see §22)
+            'routes/connector-routes.cjs',        // connector profiles (outside generation contour — S2-E)
+            'routes/worker-setup-routes.cjs',     // worker setup profiles (outside contour)
+            'routes/book/generation-routes.cjs',  // 'cover'/'vbook' cancel types + error message text
+            'routes/generation-routes.cjs',       // stale_dispatch acceptance for audio/video + audio/video orchestrator ternary
+            'runtime/runtime-scheduler.js',       // per-type scheduling branches + video→image dependency (documented media logic)
+            'runtime/dispatch-engine.js',         // JSDoc text + image IU markers
+            'state/scene-state.js',               // per-asset default shape (audio/image/video hash fields — FSM data contract)
+            'services/profile-override.js',       // connector profile field names (media implementation: connector/skill layer, not a capability map)
+            'services/prompt-profile-loader.js',  // skill-file grouping by type (media implementation: prompt/skill layer)
+        ].map(p => path.join(BACKEND_SRC, p)));
+
+        it('core runtime/orchestration/metrics/storage files contain no hardcoded media maps', () => {
+            const coreDirs = [
+                path.join(BACKEND_SRC, 'runtime'),
+                path.join(BACKEND_SRC, 'orchestration'),
+                path.join(BACKEND_SRC, 'metrics'),
+                path.join(BACKEND_SRC, 'storage'),
+                path.join(BACKEND_SRC, 'services'),
+                path.join(BACKEND_SRC, 'state'),
+            ];
+            const offenders = [];
+            for (const dir of coreDirs) {
+                for (const file of listSourceFiles(dir)) {
+                    if (ALLOWED.has(file)) continue;
+                    const code = codeOf(readSource(file));
+                    for (const re of MAP_PATTERNS) {
+                        const m = code.match(re);
+                        if (m) { offenders.push(`${rel(file)}: ${m[0].slice(0, 60)}`); break; }
+                    }
+                }
+            }
+            expect(offenders, 'media lists must resolve via media-registry').to.deep.equal([]);
+        });
+    });
+
+    // ==================================================
+    // S2-I: Unknown type flows through existing error paths
+    // ==================================================
+    // After registry-ization, unknown media/task types must produce the SAME
+    // errors as before (no behavior change in HTTP/runtime semantics).
+    describe('S2-I: Unknown media/task type error semantics preserved', () => {
+        it('gpu-dispatcher.sendUnified rejects unknown job_type with "Invalid job type"', async () => {
+            const gpuDispatcher = require(path.join(BACKEND_SRC, 'runtime', 'gpu-dispatcher'));
+            let err;
+            try {
+                await gpuDispatcher.sendUnified({
+                    job_id: 'bk1_ch1_sc1_audio_0001', params: {}, job_type: 'hologram',
+                    dispatch_id: 'd-1',
+                });
+            } catch (e) { err = e; }
+            // Exact message the route/dispatch layer relied on pre-registry
+            expect(err).to.be.an('error');
+            expect(err.message).to.equal('Invalid job type');
+        });
+
+        it('scene-state rejects unknown asset with existing validation error', async () => {
+            const sceneState = require(path.join(BACKEND_SRC, 'state', 'scene-state'));
+            const { createMockRedis } = require(path.join('..', 'mocks', 'redis-mock'));
+            const redis = createMockRedis();
+            const result = await sceneState.unsafeRestoreAssetState(
+                redis, 'b1', 'c1', 's1', 'hologram', 'ready'
+            );
+            // Pre-existing semantics: null + error log, NOT a throw
+            expect(result).to.be.null;
+        });
+
+        it('scene-orchestrator refuses to dispatch an unregistered stage', async () => {
+            const sceneOrch = require(path.join(BACKEND_SRC, 'orchestration', 'scene-orchestrator'));
+            let err;
+            try {
+                await sceneOrch.dispatchSceneStage({}, 'b1', 'c1', 's1', 'hologram', {});
+            } catch (e) { err = e; }
+            expect(err).to.be.an('error');
+        });
+
+        it('media-registry bootstrap cannot register a type that resolves unknown worker type', () => {
+            const registry = require(path.join(BACKEND_SRC, 'generation', 'media-registry'));
+            expect(registry.hasMediaType('unknown')).to.be.false;
+            expect(registry.resolveMaxActive('unknown')).to.be.undefined;
+            expect(registry.resolveLeaseTtl('unknown')).to.be.undefined;
+        });
+    });
+
+    // ==================================================
+    // S2-J: Registry task types match production task types
+    // ==================================================
+    // Task types are the Redis/Job Protocol vocabulary — S-2 must not add,
+    // rename or alias them. 1:1 mapping audio→audio, image→image, video→video.
+    describe('S2-J: Registry task types match production task types (1:1)', () => {
+        it('each registered media type maps to exactly itself as task type', () => {
+            const registry = require(path.join(BACKEND_SRC, 'generation', 'media-registry'));
+            for (const type of registry.listMediaTypes()) {
+                const cap = registry.getMediaType(type);
+                expect(cap.taskTypes, `${type} taskTypes must be 1:1`).to.deep.equal([type]);
+            }
+        });
+
+        it('resolveValidWorkerTypes returns exactly the registered media types', () => {
+            const registry = require(path.join(BACKEND_SRC, 'generation', 'media-registry'));
+            const workerTypes = registry.resolveValidWorkerTypes();
+            expect([...workerTypes].sort()).to.deep.equal(['audio', 'image', 'video']);
+        });
+
+        it('registry does not introduce iu_image or other job-protocol subtypes', () => {
+            const registry = require(path.join(BACKEND_SRC, 'generation', 'media-registry'));
+            const all = new Set();
+            for (const cap of registry.listCapabilities()) cap.taskTypes.forEach(t => all.add(t));
+            expect(all.has('iu_image'), 'iu_image is a Job Protocol contract type (frozen packages/animastor-contracts), not a registry type').to.be.false;
+            expect(all.has('cover'), 'cover is a capability/profile of image flow, not a registry type').to.be.false;
+        });
+    });
 });
 
 /** Strip comments so doc mentions are not treated as code edges. */

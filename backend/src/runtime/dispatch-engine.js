@@ -38,25 +38,45 @@ function error(msg) {
 // CONFIGURATION
 // ======================================================
 
-// Lease TTLs (seconds) — canonical values live in config/runtime-config.js
-// (LEASE_TTL_S, единый реестр таймаутов). Leases are released immediately on
-// completion callback — TTL only matters for failures.
-// These are NOT used for worker toggle (toggle uses heartbeat busy status only).
+// S-2 COMPLETION: Lease TTLs and quotas resolved through media registry.
+// The registry reads from runtime-config (canonical source) at startup.
+// dispatch-engine no longer maintains its own media-type maps.
+// LEASE_TTLS / QUOTAS stay exported for backward compatibility (tests and
+// metrics read them) — they are thin lazy views over the registry, NOT a
+// second source of truth: property access resolves through the registry on
+// every read, so registry/config changes are reflected immediately.
+const mediaRegistry = require('../generation/media-registry');
 const runtimeConfig = require('../config/runtime-config');
-const LEASE_TTLS = {
-    audio: runtimeConfig.LEASE_TTL_S.AUDIO,
-    image: runtimeConfig.LEASE_TTL_S.IMAGE,
-    video: runtimeConfig.LEASE_TTL_S.VIDEO,
-};
 
-// Backpressure limits (active concurrent)
-// EДИНЫЙ источник — runtime-config.js. Изменяй только там.
-const { QUOTAS: QUOTAS_CFG } = require('../config/runtime-config');
-const QUOTAS = {
-    maxActiveAudio: QUOTAS_CFG.MAX_ACTIVE_AUDIO,
-    maxActiveImage: QUOTAS_CFG.MAX_ACTIVE_IMAGE,
-    maxActiveVideo: QUOTAS_CFG.MAX_ACTIVE_VIDEO
-};
+// S-2: resolve all registered stages dynamically
+function _allStages() { return mediaRegistry.listMediaTypes(); }
+function _leaseTtl(stage) { return mediaRegistry.resolveLeaseTtl(stage, 1800); }
+function _maxActive(stage) { return mediaRegistry.resolveMaxActive(stage, 1); }
+
+/** Lazy registry view: LEASE_TTLS.audio → resolveLeaseTtl('audio'). */
+const LEASE_TTLS = new Proxy({}, {
+    get(_, stage) { return mediaRegistry.resolveLeaseTtl(stage); },
+    ownKeys() { return [...mediaRegistry.listMediaTypes()]; },
+    getOwnPropertyDescriptor(_, stage) {
+        const v = mediaRegistry.resolveLeaseTtl(stage);
+        return v === undefined ? undefined : { value: v, enumerable: true, configurable: true };
+    },
+});
+
+/** Lazy registry view: QUOTAS.maxActiveAudio → resolveMaxActive('audio'). */
+const QUOTAS = new Proxy({}, {
+    get(_, key) {
+        if (typeof key !== 'string' || !key.startsWith('maxActive')) return undefined;
+        return mediaRegistry.resolveMaxActive(key.slice('maxActive'.length).toLowerCase());
+    },
+    ownKeys() {
+        return mediaRegistry.listMediaTypes().map(t => `maxActive${t.charAt(0).toUpperCase() + t.slice(1)}`);
+    },
+    getOwnPropertyDescriptor(_, key) {
+        const v = this.get(key);
+        return v === undefined ? undefined : { value: v, enumerable: true, configurable: true };
+    },
+});
 
 // ======================================================
 // KEY PATTERNS
@@ -136,7 +156,7 @@ function generateDispatchToken() {
 async function acquireStageLease(redis, bookId, chapterId, sceneId, stage, force = false) {
     const leaseKey = getLeaseKey(bookId, chapterId, sceneId, stage);
     const token = generateDispatchToken();
-    const ttl = LEASE_TTLS[stage];
+    const ttl = _leaseTtl(stage);
 
     if (force) {
         // Force mode: delete any existing lease, then set new one
@@ -232,7 +252,7 @@ function createDispatchMetadata(dispatchId, stage, worker = 'scheduler', ownersh
  */
 async function setDispatchMetadata(redis, bookId, chapterId, sceneId, stage, metadata) {
     const key = getDispatchMetaKey(bookId, chapterId, sceneId, stage);
-    await redis.set(key, JSON.stringify(metadata), 'EX', LEASE_TTLS[stage]);
+    await redis.set(key, JSON.stringify(metadata), 'EX', _leaseTtl(stage));
 }
 
 /**
@@ -485,7 +505,7 @@ async function repairOrphanGeneratingStates(redis, bookId, opts = {}) {
             seen.add(sceneKey);
 
             const states = await stateModule.getAssetStates(redis, bookId, chapterId, sceneId);
-            for (const stage of ['audio', 'image', 'video']) {
+            for (const stage of _allStages()) {
                 if (states[stage] !== stateModule.AssetState.GENERATING) continue;
                 const evidence = await getDispatchEvidence(redis, bookId, chapterId, sceneId, stage);
                 if (evidence.alive) continue;
@@ -547,7 +567,7 @@ async function getActiveCounter(redis, stage) {
  */
 async function checkQuota(redis, stage) {
     const current = await getActiveCounter(redis, stage);
-    const max = QUOTAS[`maxActive${stage.charAt(0).toUpperCase() + stage.slice(1)}`];
+    const max = _maxActive(stage);
     return { exceeded: current >= max, current, max };
 }
 
@@ -570,7 +590,7 @@ const ATOMIC_ACQUIRE_SCRIPT = `
  */
 async function acquireQuota(redis, stage) {
     const key = getActiveCounterKey(stage);
-    const max = QUOTAS[`maxActive${stage.charAt(0).toUpperCase() + stage.slice(1)}`];
+    const max = _maxActive(stage);
 
     const result = await redis.eval(ATOMIC_ACQUIRE_SCRIPT, 1, key, max);
 
@@ -1081,7 +1101,7 @@ async function finalizeDispatch(redis, bookId, chapterId, sceneId, stage, option
         getActiveCounterKey(stage),
         metadataRaw,
         markerValue,
-        LEASE_TTLS[stage] || 1800,
+        _leaseTtl(stage),
         leaseToken,
         metadata.quota_owned === true
     ));
@@ -1288,7 +1308,7 @@ async function clearLeasesForScenes(redis, bookId, scenes) {
     if (!scenes || scenes.length === 0) {
         return { cancelled: 0, quotaReleased: 0, dispatchIds: [] };
     }
-    const allStages = ['audio', 'image', 'video'];
+    const allStages = _allStages();
     let cancelled = 0;
     let quotaReleased = 0;
     const dispatchIds = [];
@@ -1506,19 +1526,13 @@ async function clearAllLeasesForBook(redis, bookId) {
  * Get current dispatch metrics.
  */
 async function getMetrics(redis) {
-    const [activeAudio, activeImage, activeVideo] = await Promise.all([
-        getActiveCounter(redis, 'audio'),
-        getActiveCounter(redis, 'image'),
-        getActiveCounter(redis, 'video')
-    ]);
+    const stages = _allStages();
+    const activeCounts = await Promise.all(stages.map(s => getActiveCounter(redis, s)));
+    const activeMap = Object.fromEntries(stages.map((s, i) => [s, activeCounts[i]]));
 
     return {
-        quotas: QUOTAS,
-        active: {
-            audio: activeAudio,
-            image: activeImage,
-            video: activeVideo
-        },
+        quotas: Object.fromEntries(_allStages().map(s => [s, { max: _maxActive(s) }])),
+        active: activeMap,
         schedulerTickRunning: await isSchedulerTickRunning(redis)
     };
 }
@@ -1606,17 +1620,16 @@ async function getActiveLeases(redis) {
  * Get current quota status.
  */
 async function getQuotaStatus(redis) {
-    const [audio, image, video] = await Promise.all([
-        getActiveCounter(redis, 'audio'),
-        getActiveCounter(redis, 'image'),
-        getActiveCounter(redis, 'video')
-    ]);
+    const stages = _allStages();
+    const counts = await Promise.all(stages.map(s => getActiveCounter(redis, s)));
+    const countMap = Object.fromEntries(stages.map((s, i) => [s, counts[i]]));
 
-    return {
-        audio: { current: audio, max: QUOTAS.maxActiveAudio, available: QUOTAS.maxActiveAudio - audio },
-        image: { current: image, max: QUOTAS.maxActiveImage, available: QUOTAS.maxActiveImage - image },
-        video: { current: video, max: QUOTAS.maxActiveVideo, available: QUOTAS.maxActiveVideo - video }
-    };
+    const result = {};
+    for (const s of stages) {
+        const max = _maxActive(s);
+        result[s] = { current: countMap[s], max, available: max - countMap[s] };
+    }
+    return result;
 }
 
 // ======================================================
@@ -1725,9 +1738,10 @@ module.exports = {
     getActiveLeases,
     getQuotaStatus,
 
-    // Constants
-    QUOTAS,
+    // Constants — S-2: lazy views over the media registry (single source of
+    // truth); exported for backward compatibility with tests/metrics.
     LEASE_TTLS,
+    QUOTAS,
 
     // PW-2: dispatch identity generation (crypto-hardened)
     generateDispatchToken

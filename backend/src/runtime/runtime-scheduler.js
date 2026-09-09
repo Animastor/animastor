@@ -1,3 +1,4 @@
+const mediaRegistry = require('../generation/media-registry');
 // ======================================================
 // Runtime Scheduler - v1.0.0
 // ======================================================
@@ -37,7 +38,10 @@ async function getLayerConfig(redis, bookId) {
     if (layerRaw) {
         try { return JSON.parse(layerRaw); } catch (_) {}
     }
-    return { audio_enabled: true, image_enabled: true, video_enabled: true };
+    // S-2: default layer config derived from registry
+    const defaults = {};
+    for (const t of mediaRegistry.listMediaTypes()) { defaults[`${t}_enabled`] = true; }
+    return defaults;
 }
 
 /**
@@ -113,17 +117,17 @@ async function removeSceneFromActiveIndex(redis, bookId, chapterId, sceneId) {
 // ======================================================
 
 // Re-export SceneState for convenience
-const STATE_TO_STAGE = {
-    'audio_pending': 'audio',
-    'image_pending': 'image',
-    'video_pending': 'video'
-};
+// S-2: stage mappings derived from registry (lazy getters — resolved on
+// first access so module load order can never observe an empty registry)
+const STATE_TO_STAGE = new Proxy({}, {
+    get(_, key) { return mediaRegistry.getMediaType(String(key).replace(/_pending$/, '')) ? String(key).replace(/_pending$/, '') : undefined; },
+    ownKeys() { return mediaRegistry.listMediaTypes().map(t => `${t}_pending`); },
+});
 
-const STAGE_TO_STATE = {
-    audio: 'audio_pending',
-    image: 'image_pending',
-    video: 'video_pending'
-};
+const STAGE_TO_STATE = new Proxy({}, {
+    get(_, stage) { return mediaRegistry.hasMediaType(String(stage)) ? `${stage}_pending` : undefined; },
+    ownKeys() { return mediaRegistry.listMediaTypes(); },
+});
 
 // ======================================================
 // SCHEDULER API
