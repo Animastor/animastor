@@ -290,6 +290,7 @@ describe('T6: contour routes do not gain new implementation-detail deps', () => 
             // edges (§6.1). S-1: the VBook session-cancel SQL moved behind
             // the AgentSessionControl port; the direct
             // storage/postgres/database edge is GONE from this baseline.
+            // S-2: media registry added for worker-type validation.
             '../../storage/postgres/repositories/scene-assets-repo',
             '../../services/generation-progress',
             '../../runtime/dispatch-engine',
@@ -297,6 +298,7 @@ describe('T6: contour routes do not gain new implementation-detail deps', () => 
             '../../storage/postgres/repositories/book-repo',
             '../../storage/postgres/repositories/generation-cancel-repo',
             '../../services/agent-session-control',
+            '../../generation/media-registry',
         ],
     };
 

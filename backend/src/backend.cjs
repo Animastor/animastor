@@ -17,6 +17,10 @@ const state = require('./state');
 const audio = require('./audio');
 const image = require('./image');
 const video = require('./video');
+
+// S-2: Initialize media registry with default registrations.
+// Must run before any module that consumes the registry (runtime, orchestration, routes).
+require('./generation/default-registrations');
 const { resumeIncompleteSessions } = require('./startup-resume');
 const orchestrator = require('./orchestration');
 const wfManager = require('./services/workflow-manager');

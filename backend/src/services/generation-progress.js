@@ -9,7 +9,18 @@ const { randomUUID } = require('crypto');
 const KEY_PREFIX = 'animastor:generation-progress';
 const TTL_SECONDS = 4 * 60 * 60;
 const TERMINAL_RETENTION_MS = 30 * 1000;
-const WORKER_TYPES = new Set(['audio', 'image', 'video']);
+// S-2: WORKER_TYPES derived from media registry. Fallback to hardcoded set
+// during test isolation or before registry initialization.
+function _resolveWorkerTypes() {
+    try {
+        const { resolveValidWorkerTypes } = require('../generation/media-registry');
+        const types = resolveValidWorkerTypes();
+        return types.size > 0 ? types : new Set(['audio', 'image', 'video']);
+    } catch (_) {
+        return new Set(['audio', 'image', 'video']);
+    }
+}
+const WORKER_TYPES = _resolveWorkerTypes();
 
 function key(bookId) {
     return `${KEY_PREFIX}:${bookId}`;

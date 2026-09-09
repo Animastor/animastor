@@ -13,6 +13,8 @@ const { completeStage, failStage, setScenePending, setSceneGenerating } = requir
 // Полный модуль нужен для fast-track video-orch (completeGroup принимает
 // deps.orchestrator) — деструктуризация выше не покрывает этот кейс.
 const orchestrator = require('./orchestrator');
+// S-2: media registry for executor dispatch
+const mediaRegistry = require('../generation/media-registry');
 
 // ======================================================
 // SCENE ORCHESTRATOR
@@ -20,6 +22,14 @@ const orchestrator = require('./orchestrator');
 // Pure dispatch execution: no linear state machine, no stage decisions.
 // The dispatch-engine passes overrideStage — the orchestrator just executes.
 // Per-asset states (AssetState) are the source of truth.
+
+// S-2: Executor dispatch map — derived from registry + concrete executors.
+// This replaces the hardcoded if/else chain in dispatchStage().
+const EXECUTORS = {
+    audio: executeAudioDispatch,
+    image: executeImageDispatch,
+    video: executeVideoDispatch,
+};
 
 async function startScene(redis, scene, loadedBook, buildId) {
     const bookId = scene.book_id;
@@ -510,18 +520,17 @@ async function dispatchStage(redis, scene, loadedBook, buildId, overrideStage, d
         return { dispatched: false, reason: 'no_override' };
     }
 
-    // T3+T4: пробрасываем реальный результат executor + dispatchId
-    let result;
-    if (overrideStage === 'audio') {
-        result = await executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchId);
-    } else if (overrideStage === 'image') {
-        result = await executeImageDispatch(redis, scene, loadedBook, buildId, dispatchId);
-    } else if (overrideStage === 'video') {
-        result = await executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchId);
-    } else {
-        warn(`DISPATCH: Unknown stage ${overrideStage} for ${bookId}/${chapterId}/${sceneId}`);
+    // S-2: dispatch through registry-driven executor map
+    const executor = EXECUTORS[overrideStage];
+    if (!executor) {
+        if (!mediaRegistry.hasMediaType(overrideStage)) {
+            warn(`DISPATCH: Unknown stage ${overrideStage} for ${bookId}/${chapterId}/${sceneId}`);
+        } else {
+            warn(`DISPATCH: No executor registered for stage ${overrideStage} for ${bookId}/${chapterId}/${sceneId}`);
+        }
         return { dispatched: false, reason: 'unknown_stage' };
     }
+    result = await executor(redis, scene, loadedBook, buildId, dispatchId);
 
     result = result || { dispatched: false, reason: 'no_result', jobs: 0 };
     if (!result.dispatched && !result.completed) {

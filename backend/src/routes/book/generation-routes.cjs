@@ -15,6 +15,8 @@ const generationCancelRepo = require('../../storage/postgres/repositories/genera
 // (VBook-owned — see services/agent-session-control.js). Raw
 // agent_sessions/book_generation_sessions SQL must not live here.
 const { createAgentSessionControl } = require('../../services/agent-session-control');
+// S-2: media registry for worker-type validation
+const mediaRegistry = require('../../generation/media-registry');
 
 module.exports = function(app, redis, deps) {
     const {
@@ -128,7 +130,12 @@ module.exports = function(app, redis, deps) {
             const { bookId } = req.params;
             const { type, task_id: taskId } = req.body || {};
 
-            if (!taskId && (!type || !['audio', 'image', 'video', 'cover', 'vbook'].includes(type))) {
+            // S-2: valid cancel types derived from registry with fallback
+            const registeredTypes = mediaRegistry.listMediaTypes();
+            const cancelValidTypes = registeredTypes.length > 0
+                ? [...registeredTypes, 'cover', 'vbook']
+                : ['audio', 'image', 'video', 'cover', 'vbook'];
+            if (!taskId && (!type || !cancelValidTypes.includes(type))) {
                 return res.status(400).json({
                     error: 'Provide task_id or a worker type: audio, image, video, cover, vbook',
                 });
@@ -141,7 +148,7 @@ module.exports = function(app, redis, deps) {
                 if (!task) return res.status(404).json({ error: 'Generation task not found' });
                 resolvedType = task.type;
                 tasks = task.status === 'active' ? [task] : [];
-            } else if (['audio', 'image', 'video'].includes(type)) {
+            } else if (cancelValidTypes.includes(type) && type !== 'cover' && type !== 'vbook') {
                 tasks = await generationProgress.getActiveTasksByType(redis, bookId, type);
             }
 
@@ -384,7 +391,12 @@ module.exports = function(app, redis, deps) {
 
             const effectiveScope = scope || 'whole_book';
             const persistedLayerCfg = await layerConfig.get(redis, bookId);
-            const validWorkerTypes = new Set(['audio', 'image', 'video']);
+            // S-2: validWorkerTypes derived from media registry (with fallback
+            // for test isolation where registry may not be initialized)
+            const _registryTypes = mediaRegistry.resolveValidWorkerTypes();
+            const validWorkerTypes = _registryTypes.size > 0
+                ? _registryTypes
+                : new Set(['audio', 'image', 'video']);
             let requestedWorkerTypes;
             if (workerTypes !== undefined) {
                 if (!Array.isArray(workerTypes) || workerTypes.length === 0 ||

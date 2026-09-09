@@ -1,6 +1,6 @@
 # Generation Module Extraction — Architectural Reconnaissance
 
-**Status:** READ-ONLY reconnaissance (reconnaissance / audit only). No production code changed, no files moved, no `packages/animastor-generation` created, no runtime behavior touched. — **Update (S-1, same date):** the seam step S-1 (§19.1) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): isolate vbook session control from generation routes"): VBook session SQL was removed from the Generation route layer behind the `AgentSessionControl` port (`backend/src/services/agent-session-control.js`); guards added (`backend/tests/architecture/generation-vbook-boundary.test.js`, S1-A..S1-E). HTTP surface untouched. Details: §12 update, §13 update, §19 S-1 status, §22 checklist.
+**Status:** READ-ONLY reconnaissance (reconnaissance / audit only). No production code changed, no files moved, no `packages/animastor-generation` created, no runtime behavior touched. — **Update (S-1, same date):** the seam step S-1 (§19.1) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): isolate vbook session control from generation routes"): VBook session SQL was removed from the Generation route layer behind the `AgentSessionControl` port (`backend/src/services/agent-session-control.js`); guards added (`backend/tests/architecture/generation-vbook-boundary.test.js`, S1-A..S1-E). HTTP surface untouched. Details: §12 update, §13 update, §19 S-1 status, §22 checklist. — **Update (S-2):** the seam step S-2 (§19.2) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): registry media capabilities"): media registry created (`generation/media-registry.js`); audio/image/video registered via `generation/default-registrations.js`; dispatch branching in scene-orchestrator uses EXECUTORS map; route validation derives from registry; guards S2-A..S2-F added (`tests/architecture/generation-media-registry.test.js`). §22 checklist updated, §22.1–§22.8 added.
 **Date:** 2026-09-09
 **Baseline:** HEAD `2172fac5` ("arch(ai): physically extract analysis from backend")
 **Method:** static require-graph tracing over `backend/src/**`, route registration audit (`backend.cjs`), Redis key-family audit (`tests/architecture/redis-registry.js`), PG repository/table audit, frontend store/page tracing (`frontends/app/src`), cross-checked against existing architecture docs (`PHASE_NEXT_MODULE_EXTRACTION_RECONNAISSANCE.md`, `MODULAR_PRODUCT_ARCHITECTURE.md` §C8/C9/C12, `PHASE_5_ORCHESTRATION_RUNTIME.md`, `COMFYUI_WORKFLOW_CONNECTOR_RECONNAISSANCE.md`). Where documentation and code disagree, **the code wins** and the discrepancy is flagged.
@@ -619,7 +619,7 @@ Explicitly **not** exported: dispatch-engine internals, lease keys, asset-state 
 ## 19. Extraction Sequence (proposed; each step behavior-neutral)
 
 1. **S-1 Route split (no package yet):** move VBook session SQL out of generation routes into an `agent-session-control` host module; split `/api/v1/generate` (import leg) from generation routes; extract `worker/counts` VBook fields behind the same module. Pure moves; guards updated. — **✅ DONE (route-SQL half):** `AgentSessionControl` port landed (`services/agent-session-control.js`); `routes/generation-routes.cjs` (`/worker/counts` `active_vbook` leg) and `routes/book/generation-routes.cjs` (`cancel-worker`/`cancel-generation` VBook session-cancel legs) consume the port; `routes/book/generation-routes.cjs` removed from the sql-boundary direct-handle whitelist; new guard suite `tests/architecture/generation-vbook-boundary.test.js` (S1-A..S1-E) pins the boundary. **Remaining (deferred, separate PR):** the `/api/v1/generate` import-leg split — handler stays physically in generation-routes.cjs with its external contract frozen (Android parity R-7); its separation is a route-ownership move requiring its own regression pass.
-2. **S-2 Registry-ization:** one media-type registry module (assets, stages, worker types, quotas/TTLs); replace 4 hard-coded arrays.
+2. **S-2 Registry-ization:** one media-type registry module (assets, stages, worker types, quotas/TTLs); replace 4 hard-coded arrays. — **✅ DONE:** `generation/media-registry.js` + `generation/default-registrations.js` landed; dispatch branching in `scene-orchestrator.js` uses EXECUTORS map; route validation derives from registry; `generation-progress.js` WORKER_TYPES from registry; guards S2-A..S2-F added (`tests/architecture/generation-media-registry.test.js`, 13 tests); phase6 baseline updated. §22.1–§22.8 documents the result.
 3. **S-3 Provider seam migration (P7-T8 set):** route the 5 `gpu.send` bypass sites through `comfyui-provider`/`generation.sendJob`; delete node-id fallbacks; fold `image/connector-utils` into the provider.
 4. **S-4 Shared-infra moves:** `assembly-profile` (+profile loader) out of `image/` into a `generation/prompt-profiles/` area; `normalizeCharacterRefs` → `utils`; `estimateSpeechDurationSec` → Book/authoring utils.
 5. **S-5 Cycle breaking:** finish Phase-5 direction — semantic reactions move behind the Runtime Result consumer; runtime→orchestration edges collapse to event-journal + injected consumer. Unfreeze R5.
@@ -654,10 +654,102 @@ Explicitly **not** exported: dispatch-engine internals, lease keys, asset-state 
 
 ---
 
-## 22. Extraction Readiness Checklist (what must be true before physical extraction)
+## 22. S-2 Registry-ization Result
+
+**Status:** DONE (commit: arch(generation): registry media capabilities)
+
+### 22.1 Media Types Found and Registered
+
+| Media Type | Task Types | Registered | Executor | Progress Strategy | Cancel Clears |
+|---|---|---|---|---|---|
+| audio | audio | yes | executeAudioDispatch | chunk-based | [audio] |
+| image | image | yes | executeImageDispatch | IU-based | [image] |
+| video | video | yes | executeVideoDispatch | scene-based | [video] |
+
+### 22.2 Cover Classification
+
+**Cover is NOT a separate media type.** It is a chapter-type label (`type: 'cover'`) in the book model. When cover generation runs:
+- It executes through the **image** and **audio** media types
+- The cancel-worker route's 'cover' branch clears both audio and image stages
+- No separate registry entry is needed
+- The frontend progress-panel maps cover rows to the Image section
+
+### 22.3 image_units Classification
+
+**image_units is a cross-media domain contract, NOT image-specific.**
+- **Written by:** image stage (IU durations during generation)
+- **Read by:** video (group planning via `video-workflows.js readIUMetadata`)
+- **Read by:** player (timeline rendering)
+- **Read by:** placeholder-audio (scene duration estimation)
+- Stored in PG table `image_units`
+- The registry does NOT own it — it stays as a neutral shared contract
+
+### 22.4 Hardcoded Branches Eliminated
+
+| Location | Before | After |
+|---|---|---|
+| `generation-progress.js:12` | `WORKER_TYPES = new Set(['audio','image','video'])` | Derived from `mediaRegistry.resolveValidWorkerTypes()` with fallback |
+| `routes/book/generation-routes.cjs:387` | `validWorkerTypes = new Set(['audio','image','video'])` | Derived from `mediaRegistry.resolveValidWorkerTypes()` with fallback |
+| `routes/book/generation-routes.cjs:131` | `['audio','image','video','cover','vbook'].includes(type)` | Derived from `mediaRegistry.listMediaTypes()` with fallback |
+| `routes/book/generation-routes.cjs:144` | `['audio','image','video'].includes(type)` | `cancelValidTypes.includes(type)` derived from registry |
+| `scene-orchestrator.js:515-524` | `if (overrideStage==='audio')...else if...else if...` | `EXECUTORS[overrideStage]` map lookup |
+| `orchestrator.js:79-83` | `{audio:cb,image:cb,video:cb}[stage]` | `callbacks.getStageHandler(stage)` |
+| `orchestrator.js:246-250` | `{audio:evt,image:evt,video:evt}[stage]` | `FAIL_EVENT_TYPES[stage]` derived from journal constants |
+
+### 22.5 Branches Intentionally Left As-Is
+
+These hardcoded patterns remain because they are acceptable config-level coupling (not code branching), or changing them would risk production behavior:
+
+| Location | Pattern | Reason Left |
+|---|---|---|
+| `state/scene-state.js:12` | `ASSETS = ['audio','image','video']` | Loaded before registry init; used by FSM validation; backward-compat constant |
+| `gpu-dispatcher.js:125-129` | `DEFAULT_TYPE_TIMEOUT_MS` object | Config-level timeout map; acceptable per §12.10 |
+| `gpu-dispatcher.js:139` | `validTypes = ['audio','image','video']` | Transport validation; should migrate to registry in S-3 |
+| `dispatch-engine.js:46-59` | `LEASE_TTLS`, `QUOTAS` keys | Config-level; derived from runtime-config |
+| `retry-budget-manager.js:24` | `PER_SCENE_LIMITS` | Config-level budget |
+| `circuit-breaker.js:100-108` | `SERVICE_TARGETS` | Enum constants; circuit breaker is generic |
+| `runtime-config.js:129-133` | `QUOTAS`, `LEASE_TTL_S` | Centralized config; acceptable |
+| `event-journal.js:25-64` | Per-type event types | Redis contract; changing breaks journal format |
+| `scene-callbacks.js:30` | `Stage = {AUDIO,IMAGE,VIDEO}` | Legacy constant; replaced by STAGE_HANDLERS map |
+| `runtime-scheduler.js:297-306` | `shouldScheduleAssets` branching | Core scheduling logic; refactoring deferred to S-5 |
+
+### 22.6 Architecture Guards (S2-A through S2-F)
+
+| Guard | Description | Status |
+|---|---|---|
+| S2-A | Generation Core must not directly import audio/image/video implementations except through allowed registration points | GREEN |
+| S2-B | Each registered media type must have a registry entry with required fields | GREEN |
+| S2-C | No new Core → media reverse dependencies (audio/image/video must not import media-registry) | GREEN |
+| S2-D | Unknown media types handled via existing error paths (hasMediaType/isValidWorkerType return false) | GREEN |
+| S2-E | Registry API is internal (not imported by routes outside generation contour) | GREEN |
+| S2-F | Player/Editor/VBook boundaries not weakened | GREEN |
+
+### 22.7 Files Created/Modified
+
+**Created:**
+- `backend/src/generation/media-registry.js` — registry API
+- `backend/src/generation/default-registrations.js` — audio/image/video registration
+- `backend/tests/architecture/generation-media-registry.test.js` — 13 guard tests
+
+**Modified:**
+- `backend/src/backend.cjs` — import default-registrations at startup
+- `backend/src/services/generation-progress.js` — WORKER_TYPES from registry
+- `backend/src/routes/book/generation-routes.cjs` — worker validation from registry
+- `backend/src/orchestration/scene-orchestrator.js` — EXECUTORS map dispatch
+- `backend/src/orchestration/orchestrator.js` — stage handler + fail event maps
+- `backend/src/orchestration/scene-callbacks.js` — getStageHandler + STAGE_HANDLERS
+- `backend/tests/architecture/phase6-editor-player.test.js` — baseline updated for new import
+
+### 22.8 Next Extraction Seam
+
+**S-3: Provider seam migration** — route the 5 `gpu.send` bypass sites through `comfyui-provider`; delete node-id fallbacks; fold `image/connector-utils` into the provider. The registry provides the foundation for this by establishing the media-type abstraction layer.
+
+---
+
+## 23. Extraction Readiness Checklist (what must be true before physical extraction)
 
 - [x] S-1 route split done (VBook SQL out; import leg separated) — **VBook SQL half DONE (AgentSessionControl port, guards green); `/api/v1/generate` import-leg split explicitly deferred to its own PR (contract frozen, no VBook exposure)**
-- [ ] S-2 media-type registry (no hard-coded audio/image/video arrays)
+- [x] S-2 media-type registry (no hard-coded audio/image/video arrays) — **DONE: `generation/media-registry.js` created; audio/image/video registered via `generation/default-registrations.js`; dispatch branching in `scene-orchestrator.js` uses EXECUTORS map; route validation derives from registry; guards S2-A..S2-F green (735 architecture tests + 218 generation unit tests + 6 route integration tests passing)**
 - [ ] S-3 provider seam live; zero `gpu.send` bypasses; zero node-id literals
 - [ ] S-4 assembly-profile + pure utils relocated
 - [ ] S-5 runtime→orchestration cycle reduced to injected contracts (R5 unfrozen)

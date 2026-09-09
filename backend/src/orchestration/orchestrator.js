@@ -76,12 +76,7 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId, 
     const { log, warn, error } = require('./scene-utils');
     const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
 
-    const handler = {
-        audio: callbacks.handleAudioCompleted,
-        image: callbacks.handleImageCompleted,
-        video: callbacks.handleVideoCompleted,
-    }[stage];
-
+    const handler = callbacks.getStageHandler(stage);
     if (!handler) {
         throw new Error(`orchestrator.completeStage: unknown stage '${stage}'`);
     }
@@ -243,11 +238,14 @@ async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reas
     const journal = require('./event-journal');
     const { log, warn } = require('./scene-utils');
 
-    const eventType = {
+    // S-2: fail event type map — derived from journal event types.
+    // Maps media type → failure event type for the event journal.
+    const FAIL_EVENT_TYPES = {
         audio: journal.EventType.AUDIO_FAILED,
         image: journal.EventType.IMAGE_FAILED,
         video: journal.EventType.VIDEO_FAILED,
-    }[stage];
+    };
+    const eventType = FAIL_EVENT_TYPES[stage];
     if (!eventType) {
         throw new Error(`orchestrator.failStage: unknown stage '${stage}'`);
     }

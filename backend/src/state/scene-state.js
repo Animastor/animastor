@@ -9,6 +9,10 @@
 // ======================================================
 
 const ASSET_STATE_KEY_PREFIX = 'animastor:asset-state';
+// S-2 NOTE: ASSETS is a static array here because state.js loads before
+// the media registry is populated (backend.cjs init order). The registry
+// provides resolveAssets() for new code that needs dynamic resolution.
+// Existing callers of ASSETS remain unchanged.
 const ASSETS = ['audio', 'image', 'video'];
 
 /** @type {{ [name: string]: string }} */

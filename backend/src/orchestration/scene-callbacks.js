@@ -29,6 +29,23 @@ const { log, warn, error, logEvent } = require('./scene-utils');
 // Stage constants (replaces removed scene-state-machine.js)
 const Stage = { AUDIO: 'audio', IMAGE: 'image', VIDEO: 'video' };
 
+// S-2: Stage handler map — derived from concrete handlers.
+// Used by orchestrator.completeStage() to resolve the callback for a stage.
+const STAGE_HANDLERS = {
+    audio: handleAudioCompleted,
+    image: handleImageCompleted,
+    video: handleVideoCompleted,
+};
+
+/**
+ * Get the completion handler for a stage.
+ * @param {string} stage
+ * @returns {Function | undefined}
+ */
+function getStageHandler(stage) {
+    return STAGE_HANDLERS[stage];
+}
+
 async function updateSceneChunks(redis, bookId, chapterId, sceneId, updates) {
     const prefix = `animastor:chunk:${bookId}_${chapterId}_${sceneId}_`;
     let cursor = '0';
@@ -496,4 +513,6 @@ module.exports = {
     handleVideoCompleted,
     completeSceneWithoutVideo,
     completeSceneWithoutImage,
+    getStageHandler,
+    STAGE_HANDLERS,
 };
