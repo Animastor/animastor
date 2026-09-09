@@ -31,11 +31,11 @@ const { REPO_ROOT, readSource, rel, requireSpecifiers } = require('./helpers');
 
 // ── C19 Structure Analyzer module file set ──────────────────────────────────
 const ANALYZER_FILES = [
-    'backend/src/services/structure-analyzer/index.js',
-    'backend/src/services/structure-analyzer/ai-merge.js',
+    'packages/animastor-ai-analysis/src/tasks/structure-analyzer/index.js',
+    'packages/animastor-ai-analysis/src/tasks/structure-analyzer/ai-merge.js',
 ].map(f => path.join(REPO_ROOT, f));
 
-const PARSER_ADAPTER = path.join(REPO_ROOT, 'backend/src/services/structure-detector-deterministic.js');
+const PARSER_ADAPTER = path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src/tasks/structure-detector-deterministic.js');
 const BARREL = path.join(REPO_ROOT, 'backend/src/services/structure-detector.js');
 const COMPOSITION_ROOT = path.join(REPO_ROOT, 'backend/src/backend.cjs');
 
@@ -140,7 +140,7 @@ describe('C19 Structure Analyzer boundary: host ports', () => {
     });
 
     it('analyzeBookStructure requires the port object (fail-closed when ports are missing)', () => {
-        const s = src(path.join(REPO_ROOT, 'backend/src/services/structure-analyzer/index.js'));
+        const s = src(path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src/tasks/structure-analyzer/index.js'));
         // C21.3: port validation is delegated to the shared execute() lifecycle
         // (the task's requiredPorts list is the fail-closed contract)
         expect(s).to.match(/requiredPorts/);
@@ -160,8 +160,8 @@ describe('C19 Structure Analyzer boundary: host ports', () => {
 describe('C19 Structure Analyzer boundary: compatibility barrel', () => {
     it('structure-detector.js re-exports both halves and defines no functions of its own', () => {
         const s = src(BARREL);
-        expect(requireSpecifiers(s)).to.include('./structure-detector-deterministic');
-        expect(requireSpecifiers(s)).to.include('./structure-analyzer');
+        expect(requireSpecifiers(s).some(s => /structure-detector-deterministic/.test(s)), 'barrel must require structure-detector-deterministic').to.equal(true);
+        expect(requireSpecifiers(s).some(s => /ai-analysis.*structure-analyzer/.test(s)), 'barrel must require structure-analyzer from the analysis package').to.equal(true);
         const fnDefs = [...s.matchAll(/\b(?:async\s+)?function\s+(\w+)\s*\(/g)].map((m) => m[1]);
         expect(fnDefs, 'the barrel must contain zero local function implementations').to.deep.equal([]);
     });
@@ -176,7 +176,7 @@ describe('C19 Structure Analyzer boundary: compatibility barrel', () => {
     });
 
     it('the module exports the frozen C19 contract (analyzeBookStructure + AI-merge seam)', () => {
-        const s = src(path.join(REPO_ROOT, 'backend/src/services/structure-analyzer/index.js'));
+        const s = src(path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src/tasks/structure-analyzer/index.js'));
         for (const name of ['analyzeBookStructure', 'analyzeStructure', 'mergeAiDecisions', 'sanitizeStructure', 'extractCandidates', 'buildDeterministicMap', 'mapToStructureChapters']) {
             expect(s, `structure-analyzer must export ${name}`).to.match(new RegExp(`\\b${name}\\b`));
         }
@@ -205,19 +205,19 @@ describe('C19.1 Structure Analyzer boundary: deterministic import direction', ()
         expect(analyzerSpecs, 'bootstrap must NOT import structure-analyzer for deterministic functions').to.have.lengthOf(0);
     });
 
-    it('structure-analyzer has no hidden dependencies beyond structure-detector-deterministic + ai-merge', () => {
+    it('structure-analyzer has no hidden dependencies beyond structure-detector-deterministic + ai-merge + @animastor/ai-agent', () => {
         for (const f of ANALYZER_FILES) {
             const specs = requireSpecifiers(src(f));
-            const externalSpecs = specs.filter(s => s.startsWith('.') && !s.startsWith('./ai-merge'));
+            const externalSpecs = specs.filter(s => !s.startsWith('./ai-merge') && s !== '@animastor/ai-agent');
             const forbidden = externalSpecs.filter(s => !/structure-detector-deterministic/.test(s));
-            expect(forbidden, `${rel(f)} must not require host modules beyond the deterministic adapter`).to.deep.equal([]);
+            expect(forbidden, `${rel(f)} must not require host modules beyond the deterministic adapter and ai-agent`).to.deep.equal([]);
         }
     });
 
     it('structure-analyzer does not import the compatibility barrel (structure-detector.js)', () => {
         for (const f of ANALYZER_FILES) {
             const specs = requireSpecifiers(src(f));
-            const barrelImport = specs.filter(s => /structure-detector\.js$|\.\/structure-detector['"]/.test(s));
+            const barrelImport = specs.filter(s => /structure-detector\.js$|\.\/structure-detector['"]/.test(s) || /ai-analysis.*structure-detector['"]/.test(s));
             expect(barrelImport, `${rel(f)} must not import the barrel — use structure-detector-deterministic directly`).to.deep.equal([]);
         }
     });

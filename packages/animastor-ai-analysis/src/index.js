@@ -9,9 +9,9 @@
 //   host/backend → ai-analysis → ai-agent
 //
 // This module owns:
-//   - Structure analysis (F1/F6) — services/structure-analyzer (C19)
-//   - Character extraction (F2)  — services/character-analyzer (C20)
-//   - Voice authoring (F7)       — services/character-analyzer/voices (C20)
+//   - Structure analysis (F1/F6) — tasks/structure-analyzer/ (C19)
+//   - Character extraction (F2)  — tasks/character-analyzer/ (C20)
+//   - Voice authoring (F7)       — tasks/character-analyzer/voices (C20)
 //   - Location extraction (F3)   — tasks/locations.js
 //   - Scene analysis (F4)        — tasks/scenes.js
 //   - Unit analysis (F5)         — tasks/units.js
@@ -22,9 +22,6 @@
 //   - Orchestration / pipeline / persistence → host
 //   - Generation (TTS/audio/image/video) → host / generation modules
 //   - Prompt assets (ai/rules/*.md) → host filesystem
-//
-// C19/C20 modules remain physically in backend/src/services/ and are
-// re-exported here so the host has one analysis surface.
 
 const { assertHostPorts } = require('@animastor/ai-agent');
 
@@ -34,12 +31,11 @@ const { createScenes, normalizeSceneEnvironment } = require('./tasks/scenes');
 const { createUnits } = require('./tasks/units');
 const { buildLocationsContext } = require('./context');
 
-// C19/C20 analyzer modules — physically in backend/src/services/,
-// re-exported through this analysis seam so the host wires ALL analysis
-// through ONE contour. These modules follow the same port-injection
-// pattern and are compositionally part of the analysis layer.
-const { analyzeBookStructure } = require('../../../backend/src/services/structure-analyzer');
-const { extractCharacters, generateVoices } = require('../../../backend/src/services/character-analyzer');
+// C19/C20 analyzer modules — physical home inside this package.
+// These modules follow the same port-injection pattern and are
+// compositionally part of the analysis layer.
+const { analyzeBookStructure } = require('./tasks/structure-analyzer');
+const { extractCharacters, generateVoices } = require('./tasks/character-analyzer');
 
 module.exports = {
     // shared execution mechanism (re-exported from ai-agent for convenience)

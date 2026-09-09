@@ -10,18 +10,22 @@ const path = require('path');
 // update that drops/recreates it for existing DBs) — BOTH must stay in
 // sync with the step types actually used by the pipeline.
 
+const REPO_ROOT = path.resolve(__dirname, '..', '..');
+
 describe('pipeline step types vs agent_steps.step_type CHECK constraint', () => {
     // Step sources live in the host steps file, the analyzer modules
     // (C19: structure-analyzer, C20: character-analyzer) and the C21 ai-agent
     // contour tasks — scan all of them.
     const stepSources = [
         '../src/services/agent/pipeline-steps.js',
-        '../src/services/character-analyzer/index.js',
-        '../src/services/character-analyzer/voices.js',
         '../src/services/ai-agent/tasks/locations.js',
         '../src/services/ai-agent/tasks/scenes.js',
         '../src/services/ai-agent/tasks/units.js',
-    ].map(f => path.join(__dirname, f));
+    ].map(f => path.join(__dirname, f))
+     .concat([
+        'packages/animastor-ai-analysis/src/tasks/character-analyzer/index.js',
+        'packages/animastor-ai-analysis/src/tasks/character-analyzer/voices.js',
+     ].map(f => path.join(REPO_ROOT, f)));
 
     const usedTypes = new Set(
         stepSources.flatMap(src => {

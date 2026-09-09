@@ -20,8 +20,8 @@
 // duplicate of either half (C19 guard 8).
 // ======================================================
 
-const deterministic = require('./structure-detector-deterministic');
-const analyzer = require('./structure-analyzer');
+const deterministic = require('@animastor/ai-analysis/tasks/structure-detector-deterministic');
+const { analyzeStructure, mergeAiDecisions, sanitizeStructure } = require('@animastor/ai-analysis/tasks/structure-analyzer');
 
 module.exports = {
     // ── Deterministic half (Parser adapter, injected into @animastor/parser) ──
@@ -40,7 +40,7 @@ module.exports = {
     _countSurnameInText: deterministic._countSurnameInText,
 
     // ── AI half (Structure Analyzer merge seam, frozen C17 surface) ──
-    analyzeStructure: analyzer.analyzeStructure,
-    mergeAiDecisions: analyzer.mergeAiDecisions,
-    sanitizeStructure: analyzer.sanitizeStructure,
+    analyzeStructure,
+    mergeAiDecisions,
+    sanitizeStructure,
 };

@@ -29,12 +29,12 @@ const { REPO_ROOT, readSource, rel, requireSpecifiers } = require('./helpers');
 
 // ── AI Analyzer file set (C17 boundary + C19/C20 physical splits + C21 contour) ──
 const AI_ANALYZER_FILES = [
-    'backend/src/services/structure-detector-deterministic.js',
-    'backend/src/services/structure-analyzer/index.js',
-    'backend/src/services/structure-analyzer/ai-merge.js',
+    'packages/animastor-ai-analysis/src/tasks/structure-detector-deterministic.js',
+    'packages/animastor-ai-analysis/src/tasks/structure-analyzer/index.js',
+    'packages/animastor-ai-analysis/src/tasks/structure-analyzer/ai-merge.js',
     'backend/src/services/structure-detector.js',
-    'backend/src/services/character-analyzer/index.js',
-    'backend/src/services/character-analyzer/voices.js',
+    'packages/animastor-ai-analysis/src/tasks/character-analyzer/index.js',
+    'packages/animastor-ai-analysis/src/tasks/character-analyzer/voices.js',
     'backend/src/services/ai-agent/index.js',
     'backend/src/services/ai-agent/ports.js',
     'backend/src/services/ai-agent/context.js',
@@ -54,7 +54,7 @@ const src = (f) => readSource(f);
 // ── Guard 1: deterministic half is pure; the barrel only re-exports ─────────
 describe('C17 AI Analyzer boundary: structure-detector split purity', () => {
     it('structure-detector-deterministic.js has ZERO require/import specifiers', () => {
-        const s = src(path.join(REPO_ROOT, 'backend/src/services/structure-detector-deterministic.js'));
+        const s = src(path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src/tasks/structure-detector-deterministic.js'));
         expect(requireSpecifiers(s), 'the deterministic Parser-adapter half must stay pure — it is the host-injected parser port').to.deep.equal([]);
     });
 
@@ -63,8 +63,8 @@ describe('C17 AI Analyzer boundary: structure-detector split purity', () => {
         for (const fn of ['extractCandidates', 'buildDeterministicMap', 'mergeAiDecisions', 'sanitizeStructure', 'analyzeStructure', 'mapToStructureChapters']) {
             expect(s, `barrel must not re-implement ${fn} — physical home is the split modules`).to.not.match(new RegExp(`function ${fn}\\b`));
         }
-        expect(requireSpecifiers(s)).to.include('./structure-detector-deterministic');
-        expect(requireSpecifiers(s)).to.include('./structure-analyzer');
+        expect(requireSpecifiers(s).some(s => /structure-detector-deterministic/.test(s)), 'barrel must require structure-detector-deterministic').to.equal(true);
+        expect(requireSpecifiers(s).some(s => /ai-analysis.*structure-analyzer/.test(s)), 'barrel must require structure-analyzer from analysis package').to.equal(true);
     });
 
     it('the frozen analyzer seam (analyzeStructure + mergeAiDecisions + sanitizeStructure + buildDeterministicMap + mapToStructureChapters) stays exported', () => {
@@ -72,12 +72,12 @@ describe('C17 AI Analyzer boundary: structure-detector split purity', () => {
         for (const fn of ['analyzeStructure', 'mergeAiDecisions', 'sanitizeStructure', 'buildDeterministicMap', 'extractCandidates', 'mapToStructureChapters']) {
             expect(barrel, `structure-detector barrel must export ${fn}`).to.match(new RegExp(`\\b${fn}\\b`));
         }
-        const analyzer = src(path.join(REPO_ROOT, 'backend/src/services/structure-analyzer/index.js'))
-            + src(path.join(REPO_ROOT, 'backend/src/services/structure-analyzer/ai-merge.js'));
+        const analyzer = src(path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src/tasks/structure-analyzer/index.js'))
+            + src(path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src/tasks/structure-analyzer/ai-merge.js'));
         for (const fn of ['analyzeStructure', 'mergeAiDecisions', 'sanitizeStructure']) {
             expect(analyzer, `structure-analyzer must export ${fn}`).to.match(new RegExp(`\\b${fn}\\b`));
         }
-        expect(src(path.join(REPO_ROOT, 'backend/src/services/structure-analyzer/index.js'))).to.match(/\banalyzeBookStructure\b/);
+        expect(src(path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src/tasks/structure-analyzer/index.js'))).to.match(/\banalyzeBookStructure\b/);
     });
 });
 

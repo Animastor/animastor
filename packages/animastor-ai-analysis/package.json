@@ -5,7 +5,10 @@
     "main": "src/index.js",
     "exports": {
         ".": "./src/index.js",
-        "./context": "./src/context.js"
+        "./context": "./src/context.js",
+        "./tasks/structure-analyzer": "./src/tasks/structure-analyzer/index.js",
+        "./tasks/character-analyzer": "./src/tasks/character-analyzer/index.js",
+        "./tasks/structure-detector-deterministic": "./src/tasks/structure-detector-deterministic.js"
     },
     "files": [
         "src/",

@@ -1,9 +1,9 @@
-# C21.3 — AI Agent Core: Hardened Generic Lifecycle
+# C21.4 — Physical Extraction of Analysis from Backend
 
-**Status:** IMPLEMENTED. The `execute()` lifecycle is a stable architectural contract: one guarded error region, failStep at most once (shielded), task-owned validation, `onError` with input access.
-**Date:** 2026-09-08
-**Baseline:** C21.2 (`c9abbdf8`)
-**Predecessors:** C18 (functional decomposition), C19 (structure-analyzer), C20 (character-analyzer), C21 (contour extraction), C21.1 (package separation), C21.2 (generic execute())
+**Status:** IMPLEMENTED. The transitional seam is removed. All semantic analyzers physically live in `@animastor/ai-analysis`.
+**Date:** 2026-09-09
+**Baseline:** C21.3 (`8118f766`)
+**Predecessors:** C18 (functional decomposition), C19 (structure-analyzer), C20 (character-analyzer), C21 (contour extraction), C21.1 (package separation), C21.2 (generic execute()), C21.3 (hardened lifecycle)
 
 ---
 
@@ -95,28 +95,32 @@ Degradation stays task-specific: locations/scenes/characters throw (runner owns 
 
 **voices** stays manual intentionally: it can decide to skip BEFORE creating a step. This is the documented pre-check pattern for tasks whose step creation is conditional.
 
-## 5. The ai-analysis → backend seam (known debt, next seam)
+## 5. The ai-analysis → backend seam (C21.4: COMPLETED)
 
-`packages/animastor-ai-analysis/src/index.js` still reaches into the host:
+The transitional seam has been **physically removed** in C21.4:
 
-```javascript
-const { analyzeBookStructure } = require('../../../backend/src/services/structure-analyzer');
-const { extractCharacters, generateVoices } = require('../../../backend/src/services/character-analyzer');
+- `backend/src/services/structure-analyzer/` → `packages/animastor-ai-analysis/src/tasks/structure-analyzer/`
+- `backend/src/services/character-analyzer/` → `packages/animastor-ai-analysis/src/tasks/character-analyzer/`
+- `backend/src/services/structure-detector-deterministic.js` → `packages/animastor-ai-analysis/src/tasks/structure-detector-deterministic.js`
+
+The two `../../../backend` cross-requires in `packages/animastor-ai-analysis/src/index.js` are deleted. The analysis package now imports only from its own task directories and from `@animastor/ai-agent`.
+
+The backend compatibility barrel (`backend/src/services/structure-detector.js`) now requires from `@animastor/ai-analysis/tasks/structure-analyzer` instead of the local path.
+
+**Final dependency direction (enforced by guards):**
+```
+@animastor/ai-agent
+        ↑
+@animastor/ai-analysis
+        ↑
+backend (host)
 ```
 
-This is a **known transitional seam** (C21.1) — NOT the target architecture. The dependency direction host → ai-analysis → ai-agent is preserved (only the host imports the analysis package; the analyzers never import packages), but the physical direction of these two requires is inverted.
+No reverse dependency: `@animastor/ai-analysis` does NOT import `backend/src`. `@animastor/ai-agent` does NOT import either.
 
-**The next seam (documented, deliberately NOT executed in C21.3):**
-1. Move `backend/src/services/structure-analyzer/` and `backend/src/services/character-analyzer/` physically into `packages/animastor-ai-analysis/src/analyzer/{structure,character}/` (git mv, no code edits).
-2. Delete the two `../../../backend` requires; replace with relative `./analyzer/...`.
-3. The backend keeps a one-line barrel for compatibility.
-4. Guards: the analysis package must stop matching `/backend\/src/` in its require specifiers.
+## 6. Architecture guards (C21.3/C21.4)
 
-Until that move, the seam is frozen: exactly two cross-requires, exactly these modules, listed in the package index header. A guard pins the seam to those two lines so it cannot silently grow.
-
-## 6. Architecture guards (C21.3 additions — Guard 8)
-
-New assertions on top of the C21/C21.1/C21.2 set:
+### C21.3 guards (lifecycle hardening):
 - `buildMessages` is inside the guarded try region (static order check)
 - `_ports.failStep(` is called exactly once in execute.js, and is shielded (own try/catch, "original error kept" log path)
 - `onError` is invoked with the 4-arg contract `(err, step, _ports, input)`
@@ -125,7 +129,13 @@ New assertions on top of the C21/C21.1/C21.2 set:
 - Core never touches PG/Redis/fs/fetch/ai-service/ai-caller/providers/TTS/audio/image/video (comment-stripped scan)
 - Tasks must not re-declare the default rethrow `onError(err){throw err}`
 - Tasks with input-dependent degradation use the onError contract arg — no `taskWithInput` closure re-wrapping
-- The ai-analysis → backend seam is pinned to exactly the two frozen cross-requires (structure-analyzer, character-analyzer)
+
+### C21.4 guards (physical extraction):
+- `@animastor/ai-analysis` has ZERO cross-requires into `backend/src` (transitional seam removed)
+- `@animastor/ai-agent` does not depend on analysis or backend (core purity)
+- `@animastor/ai-analysis` does not depend on backend (direction enforced)
+- All analysis task files resolve within the closed dependency surface (no backend escapes)
+- The backend barrel (`structure-detector.js`) imports from `@animastor/ai-analysis/tasks/structure-analyzer` — not from a local path
 
 ## 7. Unit tests (C21.3 edge cases)
 
@@ -144,4 +154,4 @@ New assertions on top of the C21/C21.1/C21.2 set:
 
 **Conditional step creation (skip pattern):** keep a manual lifecycle like voices — the core always creates a step.
 
-**Execute the physical move of C19/C20 modules:** see §5 — the seam is pinned and the steps are frozen.
+**The physical extraction (C21.4) is complete.** The analysis package is self-contained: all semantic analyzers live in `packages/animastor-ai-analysis/src/tasks/`. The backend is a thin host/composition layer.

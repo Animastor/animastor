@@ -44,10 +44,10 @@ const CONTOUR_FILES = [
 ].map(f => path.join(REPO_ROOT, f));
 
 const ANALYZER_MODULE_FILES = [
-    'backend/src/services/structure-analyzer/index.js',
-    'backend/src/services/structure-analyzer/ai-merge.js',
-    'backend/src/services/character-analyzer/index.js',
-    'backend/src/services/character-analyzer/voices.js',
+    'packages/animastor-ai-analysis/src/tasks/structure-analyzer/index.js',
+    'packages/animastor-ai-analysis/src/tasks/structure-analyzer/ai-merge.js',
+    'packages/animastor-ai-analysis/src/tasks/character-analyzer/index.js',
+    'packages/animastor-ai-analysis/src/tasks/character-analyzer/voices.js',
 ].map(f => path.join(REPO_ROOT, f));
 
 // C21.1/C21.3: the two-level package files
@@ -63,6 +63,11 @@ const ANALYSIS_PACKAGE_FILES = [
     'packages/animastor-ai-analysis/src/tasks/locations.js',
     'packages/animastor-ai-analysis/src/tasks/scenes.js',
     'packages/animastor-ai-analysis/src/tasks/units.js',
+    'packages/animastor-ai-analysis/src/tasks/structure-analyzer/index.js',
+    'packages/animastor-ai-analysis/src/tasks/structure-analyzer/ai-merge.js',
+    'packages/animastor-ai-analysis/src/tasks/structure-detector-deterministic.js',
+    'packages/animastor-ai-analysis/src/tasks/character-analyzer/index.js',
+    'packages/animastor-ai-analysis/src/tasks/character-analyzer/voices.js',
 ].map(f => path.join(REPO_ROOT, f));
 
 const SEAM = path.join(REPO_ROOT, 'backend/src/services/ai-agent/index.js');
@@ -351,12 +356,24 @@ describe('C21 AI Agent contour: task independence', () => {
 
 // ── Guard 6: no leakage into Audio/Image/Video Generation ────────────────────
 describe('C21 AI Agent contour: generation boundary', () => {
-    forAllPackageTaskFiles(it, 'never writes generation fields (image/video/passport/audio-generation)', (f) => () => {
-        const s = src(f);
-        for (const genWrite of ['.image', 'video:', 'image:', 'passport']) {
-            expect(s, `${rel(f)} must not produce ${genWrite} (generation output)`).to.not.include(genWrite);
-        }
-    });
+    // Task files (pure analysis): never write generation fields
+    const TASK_ONLY_FILES = [
+        'packages/animastor-ai-analysis/src/tasks/locations.js',
+        'packages/animastor-ai-analysis/src/tasks/scenes.js',
+        'packages/animastor-ai-analysis/src/tasks/units.js',
+        'packages/animastor-ai-analysis/src/tasks/structure-analyzer/index.js',
+        'packages/animastor-ai-analysis/src/tasks/structure-analyzer/ai-merge.js',
+        'packages/animastor-ai-analysis/src/tasks/character-analyzer/index.js',
+    ].map(f => path.join(REPO_ROOT, f));
+
+    for (const f of TASK_ONLY_FILES) {
+        it(`${rel(f)} never writes generation fields (image/video/passport/audio-generation)`, () => {
+            const s = src(f);
+            for (const genWrite of ['.image', 'video:', 'image:', 'passport']) {
+                expect(s, `${rel(f)} must not produce ${genWrite} (generation output)`).to.not.include(genWrite);
+            }
+        });
+    }
 
     forAllPackageTaskFiles(it, 'never imports the generation domain (image/video/audio orchestration, workflows, prompt-builder)', (f) => () => {
         const specs = requireSpecifiers(src(f));
@@ -365,7 +382,7 @@ describe('C21 AI Agent contour: generation boundary', () => {
     });
 
     it('voice authoring inside the contour is analysis/authoring only (voice DESCRIPTIONS, never audio rendering)', () => {
-        const voices = src(path.join(REPO_ROOT, 'backend/src/services/character-analyzer/voices.js'));
+        const voices = src(path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src/tasks/character-analyzer/voices.js'));
         expect(voices, 'voices.js writes voice instruction strings').to.match(/ch\.voice = voices\[ch\.id\]\.instruction/);
         // code-only scan (comments legitimately mention the downstream TTS
         // consumer — the forbidden thing is RENDERING, i.e. audio I/O calls)
@@ -486,7 +503,7 @@ describe('C21.3 AI Agent Core: hardened generic lifecycle', () => {
     it('redundant onError(err){throw err} definitions are not re-declared by tasks (default is built-in)', () => {
         for (const f of ['packages/animastor-ai-analysis/src/tasks/locations.js',
             'packages/animastor-ai-analysis/src/tasks/scenes.js',
-            'backend/src/services/character-analyzer/index.js']) {
+            'packages/animastor-ai-analysis/src/tasks/character-analyzer/index.js']) {
             const s = src(path.join(REPO_ROOT, f));
             expect(s, `${rel(f)} must not re-declare the default rethrow`).to.not.match(/onError\s*\(\s*\w+\s*\)\s*\{\s*throw\s+\w+\s*;\s*\}/);
         }
@@ -496,28 +513,41 @@ describe('C21.3 AI Agent Core: hardened generic lifecycle', () => {
         const units = src(path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src/tasks/units.js'));
         expect(units, 'units onError must use the 4th contract arg (input)').to.match(/onError\s*\(\s*\w+\s*,\s*\w+\s*,\s*\w+\s*,\s*input\s*\)/);
         expect(units, 'units must not re-wrap the task in createUnits').to.not.match(/taskWithInput/);
-        const structure = src(path.join(REPO_ROOT, 'backend/src/services/structure-analyzer/index.js'));
+        const structure = src(path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src/tasks/structure-analyzer/index.js'));
         expect(structure, 'structure onError must use the 4th contract arg (input)').to.match(/onError\s*\(\s*\w+\s*,\s*\w+\s*,\s*\w+\s*,\s*input\s*\)/);
         expect(structure, 'structure must not re-wrap the task in analyzeBookStructure').to.not.match(/taskWithInput/);
     });
 
-    it('the ai-analysis → backend seam is frozen: exactly the two C19/C20 cross-requires, pinned to their modules', () => {
-        // C21.3: the transitional seam (packages → backend/src/services) must
-        // not silently grow. Exactly these two requires are allowed, matching
-        // exactly these modules. The physical move (C21.4 seam) replaces them.
+    it('the analysis package has no cross-requires into backend/src (transitional seam removed in C21.4)', () => {
         const s = src(ANALYSIS_INDEX);
         const backendReqs = requireSpecifiers(s).filter((spec) => /backend\//.test(spec));
-        expect(backendReqs, 'seam must stay at exactly two cross-requires').to.have.lengthOf(2);
-        expect(backendReqs).to.include('../../../backend/src/services/structure-analyzer');
-        expect(backendReqs).to.include('../../../backend/src/services/character-analyzer');
-        // the seam is documented in the package header
-        expect(s, 'the transitional seam must stay documented in the index header').to.match(/physically in backend\/src\/services/);
+        expect(backendReqs, 'analysis package must not require backend/src').to.deep.equal([]);
         // no OTHER file in the analysis package reaches into the backend
         const packageDir = path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src');
         for (const f of listSourceFiles(packageDir)) {
-            if (f === ANALYSIS_INDEX) continue;
             const offenders = requireSpecifiers(src(f)).filter((spec) => /backend\//.test(spec));
-            expect(offenders, `${rel(f)} must not reach into the backend (seam is index-only)`).to.deep.equal([]);
+            expect(offenders, `${rel(f)} must not reach into the backend`).to.deep.equal([]);
+        }
+    });
+
+    it('@animastor/ai-agent does not depend on analysis or backend (core purity)', () => {
+        for (const f of AGENT_CORE_FILES) {
+            const specs = requireSpecifiers(src(f));
+            const offenders = specs.filter((spec) => /ai-analysis|backend/.test(spec));
+            expect(offenders, `${rel(f)} must not import analysis or backend`).to.deep.equal([]);
+        }
+    });
+
+    it('@animastor/ai-analysis does not depend on backend (direction enforced)', () => {
+        const pkgJson = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'packages/animastor-ai-analysis/package.json'), 'utf8'));
+        const deps = pkgJson.dependencies || {};
+        expect(deps, 'analysis must NOT depend on backend').to.not.have.property('animastor-backend');
+        // scan all analysis package source files for backend imports
+        const packageDir = path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src');
+        for (const f of listSourceFiles(packageDir)) {
+            const specs = requireSpecifiers(src(f));
+            const offenders = specs.filter((spec) => /backend/.test(spec));
+            expect(offenders, `${rel(f)} must not require backend`).to.deep.equal([]);
         }
     });
 });

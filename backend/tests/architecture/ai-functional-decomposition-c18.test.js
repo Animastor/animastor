@@ -35,12 +35,12 @@ const {
 
 // ── C18 contour file set (functional modules F1–F18; C19/C20 physical splits + C21 contour) ──
 const CONTOUR_FILES = [
-    'backend/src/services/structure-detector-deterministic.js',
-    'backend/src/services/structure-analyzer/index.js',
-    'backend/src/services/structure-analyzer/ai-merge.js',
+    'packages/animastor-ai-analysis/src/tasks/structure-detector-deterministic.js',
+    'packages/animastor-ai-analysis/src/tasks/structure-analyzer/index.js',
+    'packages/animastor-ai-analysis/src/tasks/structure-analyzer/ai-merge.js',
     'backend/src/services/structure-detector.js',
-    'backend/src/services/character-analyzer/index.js',
-    'backend/src/services/character-analyzer/voices.js',
+    'packages/animastor-ai-analysis/src/tasks/character-analyzer/index.js',
+    'packages/animastor-ai-analysis/src/tasks/character-analyzer/voices.js',
     'backend/src/services/ai-agent/index.js',
     'backend/src/services/ai-agent/ports.js',
     'backend/src/services/ai-agent/context.js',
@@ -185,12 +185,12 @@ describe('C18 functional decomposition: single LLM seam per functional module', 
 // ── Guard 4: Book Writer calls are host-only ────────────────────────────────
 describe('C18 functional decomposition: Book Writer boundary', () => {
     const NON_HOST_FILES = [
-        'backend/src/services/structure-detector-deterministic.js',
-        'backend/src/services/structure-analyzer/index.js',
-        'backend/src/services/structure-analyzer/ai-merge.js',
+        'packages/animastor-ai-analysis/src/tasks/structure-detector-deterministic.js',
+        'packages/animastor-ai-analysis/src/tasks/structure-analyzer/index.js',
+        'packages/animastor-ai-analysis/src/tasks/structure-analyzer/ai-merge.js',
         'backend/src/services/structure-detector.js',
-        'backend/src/services/character-analyzer/index.js',
-        'backend/src/services/character-analyzer/voices.js',
+        'packages/animastor-ai-analysis/src/tasks/character-analyzer/index.js',
+        'packages/animastor-ai-analysis/src/tasks/character-analyzer/voices.js',
         'backend/src/services/ai-agent/index.js',
         'backend/src/services/ai-agent/ports.js',
         'backend/src/services/ai-agent/context.js',
@@ -252,7 +252,7 @@ describe('C18 functional decomposition: F9 cross-contour contract (video_tokens)
 // ── Guard 7: structure-detector dual role resolved by the C19 split ─────────
 describe('C18 functional decomposition: structure-detector dual role preserved', () => {
     it('deterministic half stays pure (zero requires) with its surface exported', () => {
-        const s = src(path.join(REPO_ROOT, 'backend/src/services/structure-detector-deterministic.js'));
+        const s = src(path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src/tasks/structure-detector-deterministic.js'));
         expect(requireSpecifiers(s), 'deterministic half must stay pure (parser port impl)').to.deep.equal([]);
         for (const fn of ['extractCandidates', 'buildDeterministicMap', 'mapToStructureChapters']) {
             expect(s, `deterministic half must export ${fn}`).to.match(new RegExp(`\\b${fn}\\b`));
@@ -261,11 +261,11 @@ describe('C18 functional decomposition: structure-detector dual role preserved',
 
     it('AI-merge half exports live in the structure-analyzer module (C19)', () => {
         for (const fn of ['analyzeStructure', 'mergeAiDecisions', 'sanitizeStructure']) {
-            const s = src(path.join(REPO_ROOT, 'backend/src/services/structure-analyzer/ai-merge.js'));
+            const s = src(path.join(REPO_ROOT, 'packages/animastor-ai-analysis/src/tasks/structure-analyzer/ai-merge.js'));
             expect(s, `structure-analyzer/ai-merge must define ${fn}`).to.match(new RegExp(`function ${fn}\\b`));
         }
         const barrel = src(path.join(REPO_ROOT, 'backend/src/services/structure-detector.js'));
-        expect(barrel, 'compatibility barrel re-exports the AI-merge half').to.match(/require\('\.\/structure-analyzer'\)/);
+        expect(barrel, 'compatibility barrel re-exports the AI-merge half').to.match(/require\(['"]@animastor\/ai-analysis\/tasks\/structure-analyzer['"]\)/);
     });
 
     it('composition root still binds the deterministic detector into @animastor/parser', () => {

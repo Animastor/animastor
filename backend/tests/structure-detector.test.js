@@ -10,10 +10,10 @@ const config = require('../src/config/runtime-config');
 const { configureBooksRoot } = require('@animastor/vbook-runtime/books-root');
 config.BOOKS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'vbook-unit-'));
 configureBooksRoot(() => config.BOOKS_DIR);
-const sd = require('../src/services/structure-detector-deterministic');
-// C19: the AI-merge half (mergeAiDecisions/sanitizeStructure/mapToStructureChapters)
-// physically lives in the Structure Analyzer module — the suite pins it there.
-const sa = require('../src/services/structure-analyzer');
+const sd = require('@animastor/ai-analysis/tasks/structure-detector-deterministic');
+// C19/C21.4: the AI-merge half (mergeAiDecisions/sanitizeStructure/mapToStructureChapters)
+// physically lives in @animastor/ai-analysis/tasks/structure-analyzer — the suite pins it there.
+const sa = require('@animastor/ai-analysis/tasks/structure-analyzer');
 const parser = require('@animastor/parser');
 const chapterUtils = require('../src/book/lazy-book/chapter-utils');
 const lazyBook = require('../src/book/lazy-book');

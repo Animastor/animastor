@@ -11,7 +11,7 @@
 // rules (no overwrite, placeholder skip), skill injection.
 
 const { expect } = require('chai');
-const { extractCharacters, generateVoices } = require('../src/services/character-analyzer');
+const { extractCharacters, generateVoices } = require('@animastor/ai-analysis/tasks/character-analyzer');
 
 function makePorts(callAIResult, overrides = {}) {
     const calls = { log: 0, complete: 0, fail: 0, update: 0, create: 0 };
