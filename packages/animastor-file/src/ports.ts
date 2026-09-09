@@ -1,4 +1,4 @@
-// FilePorts — the host contract of the File contour
+// FilePorts — the complete host contract of the @animastor/file package
 // (docs/architecture/file-module-extraction-audit.md, Phase 1 prep).
 //
 // Dependency direction (frozen by arch guards):
@@ -83,9 +83,9 @@ export interface FileSessionPort {
 }
 
 /**
- * FileActionsPort — the File slice operations (import/open/create/close +
- * export bookkeeping). Hosted in generateStore until the slice split (audit
- * blocker B1); the package cannot reach the host store, so these are injected.
+ * FileActionsPort — the File slice operations (import/open/create/close + export
+ * bookkeeping). Hosted in generateStore until the slice split (audit blocker B1);
+ * the package cannot reach the host store, so these are injected.
  */
 export interface FileActionsPort {
   importBookFromFile(file: File): Promise<void>;

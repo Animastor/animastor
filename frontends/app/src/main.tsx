@@ -2,7 +2,7 @@ import { render } from 'preact';
 import { useEffect } from 'preact/hooks';
 import Router from "preact-router";
 import { AppShell } from './app/AppShell';
-import { FilePage } from './pages/FilePage';
+import { FilePage } from '@animastor/file';
 import { GeneratePage } from './pages/GeneratePage';
 import { PlayPage } from './pages/PlayPage';
 import { EditPage } from './pages/EditPage';

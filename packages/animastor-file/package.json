@@ -1,0 +1,68 @@
+{
+  "name": "@animastor/file",
+  "version": "0.1.0",
+  "description": "Preact/Web UI module: Animastor File — book import/open/create/close/export UI for the web frontend. NOT a platform-independent or domain module — it renders through Preact and consumes host capabilities only via the injected FilePorts contract (session, actions, http, i18n, toast, navigation, open-requests, deep-link, icons).",
+  "keywords": [
+    "animastor",
+    "file",
+    "preact",
+    "web-ui",
+    "frontend",
+    "ui-component",
+    "signals",
+    "book-import",
+    "ports-and-adapters"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+  },
+  "peerDependencies": {
+    "@preact/signals": ">=1.0.0",
+    "preact": ">=10.5.0"
+  },
+  "devDependencies": {
+    "@preact/signals": "^1.3.0",
+    "@preact/preset-vite": "^2.9.0",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/preact": "^3.2.4",
+    "happy-dom": "^20.14.0",
+    "preact": "^10.24.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Animastor/animastor.git",
+    "directory": "packages/animastor-file"
+  },
+  "homepage": "https://github.com/Animastor/animastor/tree/main/packages/animastor-file#readme",
+  "bugs": {
+    "url": "https://github.com/Animastor/animastor/issues"
+  }
+}

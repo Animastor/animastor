@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@animastor/file": "file:../../packages/animastor-file",
     "@animastor/navigator": "file:../../packages/animastor-navigator",
     "@preact/signals": "^1.3.0",
     "preact": "^10.24.0",

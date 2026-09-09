@@ -42,7 +42,7 @@ import {
   importBookFromFile, openBookById, closeBook, createBlankBook, setExporting, setExportProgress,
   wireFileStore,
 } from '../state/fileStore';
-import type { FilePorts, FileRoute } from '../modules/file/ports';
+import type { FilePorts, FileRoute } from '@animastor/file';
 
 // ── Bind the File store to the shared seams (host-owned single wiring) ──
 wireFileStore({

@@ -17,10 +17,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import { FilePage } from '../../pages/FilePage';
+import { FilePage } from '../src/FilePage';
 import type {
   FilePhase, FilePorts,
-} from './ports';
+} from '../src/ports';
 
 // ── Fake ports ───────────────────────────────────────────────────────────
 

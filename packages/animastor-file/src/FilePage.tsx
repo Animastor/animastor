@@ -2,7 +2,7 @@ import type { JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type {
   FileExportType, FilePorts,
-} from '../modules/file/ports';
+} from './ports';
 
 // FilePage — 1:1 with FileFragment (fragment_file.xml, stage 3).
 //  - Import .vbook/txt: <input type=file> + drag-drop → POST /book/import
