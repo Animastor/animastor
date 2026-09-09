@@ -1110,8 +1110,76 @@ Residual frozen edges (unchanged by S-4, owned by earlier baselines): the 7-edge
 ### 25.8 S-5 readiness: READY
 
 - [x] S-4 shared core components moved into the intermediate `generation/` area; single grammar owner; cross-media edges gone; guards green (760 + 9 tests passing; Player 17, Editor 75, VBook-runtime 24, File 31 green).
+- [x] S-4 correction pass (§26, audit 8e77d950): Redis persistence split out of the core (`generation-progress` → `services/generation-progress.js` adapter; `scene-state` FSM → `state/asset-state-store.js` adapter); key bytes/FSM/lifecycle behavior unchanged; S4-D strengthened to catch direct Redis commands, passed-in clients, fs/env/config coupling; S4-D2/S4-D3 contour + parity guards added; `estimateSpeechDurationSec` verdict: neutral shared util (stays in `utils/`); artifact-naming re-verified as the single grammar owner.
 - [ ] S-5: runtime→orchestration cycle reduction (R5 unfreeze) — **next step**.
 - [ ] S-6: injected ports (ProfileStore, DispatchTransport, BookDataPort, MediaUtils, EventJournal, PersistencePort).
 - [ ] S-7: physical package creation (shims already in place; moved-file set is the package seed).
 
 *End of S-4 section. No package created; moved files are the future package seed.*
+
+---
+
+## 26. S-4 Correction Pass — Core host-boundary gaps closed (audit 8e77d950)
+
+**Status:** DONE — behavior-neutral correction commit ("fix(generation): close s4 core host-boundary gaps"). Trigger: the S-4 audit found that the two files physically moved INTO the Generation core in §25 (`generation/generation-progress.js`, `generation/scene-state.js`) still implemented Redis persistence directly (HSET/HGET/HGETALL/HDEL/DEL/EXPIRE + concrete key namespaces) — violating S4-D ("Core has no direct host Redis/PG/config dependencies"). No S-5 work started; HTTP API, Redis key bytes, FSM semantics, Job Protocol, GPU Hub/Worker, ComfyUI provider seam, VBook/Player/Editor untouched.
+
+### 26.1 What is Core now vs. what is the host adapter (the split)
+
+Minimal adapter/seam, NOT a full S-6 port architecture: pure domain logic stays in `generation/`, Redis persistence moved to host/infrastructure adapters that import the core (dependency direction host → core, so the core has zero Redis knowledge — no client calls, no key namespaces):
+
+| Concern | Pure Generation Core (`generation/`) | Host Redis adapter |
+|---|---|---|
+| Task registry (`animastor:generation-progress:*`) | `generation/generation-progress.js` — task ids, scope/target normalization, task-record creation, task-map validation + terminal retention (30s), registry queries (`sceneTaskState`/`hasActiveTasks`/`activeTasksByType`); `WORKER_TYPES` via media-registry. **Zero exports of persistence API.** | `services/generation-progress.js` — owns `KEY_PREFIX`, `TTL_SECONDS` (4h), `key(bookId)`, and the HSET/HGET/HGETALL/HDEL/DEL/EXPIRE implementations of the frozen API (`createTasks`, `listTasks`, `getTask`, `updateTask`, `markCompleted`, `markCancelled`, `getSceneTaskState`, `hasActiveTasks`, `getActiveTasksByType`, `reconcileCompletedTasks`, `removeTask`, `clear`). Historical home of the registry; all route/test consumers keep their requires. |
+| Per-asset FSM (`animastor:asset-state:*`) | `generation/scene-state.js` — `AssetState` enum, `AssetTransitions` map, `validateAssetTransition`, registry-backed `ASSETS` view, pure `normalizeAssetStates`/`validateAssetUpdate(s)` helpers. **Zero exports of persistence API.** | `state/asset-state-store.js` (NEW) — owns `ASSET_STATE_KEY_PREFIX`, HGETALL read with stale-string-key recovery, HSET single/bulk writes, `unsafeRestoreAssetState(s)` + deprecated `setAssetState(s)` aliases (unsafe-call whitelist preserved verbatim). |
+| Public surface compatibility | — | `state/scene-state.js` stays a one-line re-export shim, now pointing at `./asset-state-store` (which spreads the pure core exports); `services/generation-progress.js` is no longer a shim — it IS the Redis adapter (was: shim → core). |
+
+Two direct core consumers re-pointed to the adapter: `runtime/runtime-scheduler.js`, `runtime/scene-window.js` (now `require('../services/generation-progress')` — host→host edge, no cycle impact: the runtime→orchestration R5 edge set is untouched).
+
+### 26.2 Verdicts required by the audit
+
+- **`generation-progress`:** confirmed Generation Core domain (task registry semantics) — but Redis persistence is NOT core. Split per §26.1; the recon §25.1 row "takes `redis` as an argument (no client import) → Pure core component" is corrected: the passed-in client was still used directly for HSET/HGET/HGETALL/HDEL/DEL/EXPIRE; that coupling now lives in the host adapter.
+- **`scene-state`:** confirmed Generation Core FSM contract — but the asset-state hash persistence is NOT core. Split per §26.1; the literal `{audio,image,video}` default-shape mapping moved to the adapter (documented FSM data contract), with the pure `normalizeAssetStates` mapping kept in core.
+- **`speech-estimation` (`utils/speech-estimation.js`):** verdict — **generic shared utility, stays in neutral `utils/`, no move.** Consumers (measured): `services/agent/unit-splitter.js`, `services/agent/text-utils.js`, `services/agent/pipeline-steps.js` (VBook/authoring scene sizing + splitting) and `services/placeholder-audio.js` (Generation audio pipeline, re-exports for compat). Both directions are Consumer→`utils/` (correct, symmetric); Generation does not own it, VBook does not depend on Generation for it. Constants are a documented contract with `agent-prompts.js` ("~N words" guideline) — single canonical copy, S4-E-pinned. No shared-utils refactor performed.
+- **`generation/artifact-naming.js`:** re-verified — remains the SINGLE canonical owner of the filename grammar covering audio (`sceneAudioName`, `sceneChunkAudioName` pad(4)), image (`sceneImageName`, `sceneImageBaseName`), IU (`iuAssetId`, `iuScanPrefix`, `iuImagePrefix`), preview (`sceneImagePreviewName`), video (`sceneVideoName`, `sceneVideoGroupName`), book artifacts (`bookVideoName`, `bookAudioName`). Host storage (`storage/filesystem-store.js`) delegates via `artifactNaming.*` and redefines nothing; existing file bytes unchanged; Player contract pin stays byte-identical.
+
+### 26.3 Full `generation/` contour classification (S4-D audit)
+
+| File | Classification | S4-D status |
+|---|---|---|
+| `artifact-naming.js` | pure Generation Core (domain contract) | clean — no host deps |
+| `generation-progress.js` | pure Generation Core (after split) | clean — was the violation, fixed |
+| `scene-state.js` | pure Generation Core domain contract (after split) | clean — was the violation, fixed |
+| `media-registry.js` | Generation domain contract (capability seam) | clean — no host deps (header comment mentions runtime-config historically; no require) |
+| `default-registrations.js` | media-specific registration / host-adapter side | documented, guarded (S2-G): reads `runtime-config` for defaults; becomes injected config in S-6. NOT a Redis/persistence violation — left in place per "менять только то, что реально нарушает S4-D" |
+| `prompt-profiles/assembly-profile.js` | Generation Core + ONE documented host adapter edge (`services/ai-loader` → future ProfileStore port) | documented, guard-pinned (S4-D exception) |
+| `prompt-profiles/character-utils.js`, `prompt-text-utils.js` | pure Generation Core | clean |
+| `comfyui-provider.js` | provider boundary (S-3 seam) | outside S4-D scope; workflow-connector + gpu-dispatcher transport pinned by S3 guards |
+
+### 26.4 Strengthened S4-D guard (`s4-shared-infra-moves.test.js`)
+
+The original guard checked only `require()` literals. The strengthened guard inspects the SOURCE of every Core file for actual host coupling:
+
+- **direct Redis command calls on any receiver:** `.hset/.hsetnx/.hget/.hgetall/.hdel/.hkeys/.hvals/.hlen/.hexists/.hincrby/.del/.unlink/.expire/.pexpire/.expireat/.ttl/.pttl/.persist/.setex/.setnx/.incr/.incrby/.decr/.decrby/.sadd/.srem/.smembers/.sismember/.spop/.scard/.lpush/.rpush/.lpop/.rpop/.lrange/.llen/.lrem/.lindex/.zadd/.zrem/.zrange/.zscore/.zcard/.mget/.mset/.getset/.scan/.publish/.subscribe/.psubscribe/.punsubscribe/.xadd/.xlen/.xrange/.xreadgroup` — the audit's exact complaint ("guard может пропустить прямое использование переданного redis");
+- **any method call on a passed-in redis-like client:** `redis*. *(` (catches `redisClient.*`, `redisConn.*`, …);
+- **host module requires:** `redis`, `ioredis`, `pg`, `fs`/`fs/promises`/`node:fs*`, `runtime-config`, storage/database/postgres;
+- **filesystem access:** `readFile*/writeFile*/existsSync/mkdir*/readdir*/stat*/unlink*/rm*/create*Stream`;
+- **env/config access:** `process.env`, `process.cwd`, `runtimeConfig`;
+- client construction (`new Redis`, `createClient()`).
+
+Applied to the S4 core file list ONLY (not the whole backend). Three new guards: **S4-D2** (whole `generation/**` contour: no Redis persistence/fs access anywhere in the contour + single-owner pins for the two Redis key namespaces — `services/generation-progress.js` and `state/asset-state-store.js`); **S4-D3** (split parity: adapter delegates to core, dependency direction frozen, core exports no persistence API, frozen public APIs pinned).
+
+### 26.5 Behavior parity verification (regression)
+
+Redis keys/TTLs, FSM transitions, lifecycle/progress behavior, reconciliation and artifact filenames are byte-identical: `generation-progress` (35), `generation-routes`/`provider-seam`/`scope-slide`/`cancel-repo` (75), `asset-state`/`scene-state`/`progress-panel`, `happy-path`, `counter-reconciliation`, `dispatch-meta-lease-lifecycle`, `cancel-recovery`/`execute-lifecycle`/`fail-stage`, `book-diff-unit`, `audio-segments`, image orphan/ghost repair, `architecture/*` (772, incl. the strengthened S4 suite — 12 tests), redis-ownership contracts, naming pins (`@animastor/player` 17), Editor 75, VBook-runtime 24. Full backend suite: 3201 passing, 13 pre-existing environment failures (PG/worker/LLM-sharing — identical set on the untouched baseline 8e77d950).
+
+### 26.6 Unrelated changes excluded (S-4 focus)
+
+`frontends/app/vite.config.ts` (preact dedupe) and `packages/animastor-file/test/file.test.tsx` (URL spy fix) belong to commit 5e5f9279 ("fix(app): dedupe preact…", the C21.4 file-extraction fix) — they are NOT part of S-4 commit 8e77d950, are required by that separate workstream (blank-page regression), and are NOT included in the correction commit.
+
+### 26.7 Remaining blockers before S-5 (unchanged by this pass)
+
+- R5 runtime→orchestration cycle reduction (7 frozen edges) — S-5 scope;
+- S-6 ports: ProfileStore (ai-loader), GenerationConfig (default-registrations runtime-config reads), RedisPort formalization (the two adapters of §26.1 are the ready-made seams), PersistencePort, BookDataPort, DispatchTransport;
+- S-7 package creation (`generation/` is the package seed; shims deleted there).
+
+*End of S-4 correction section.*

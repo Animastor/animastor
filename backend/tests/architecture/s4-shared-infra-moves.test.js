@@ -61,9 +61,16 @@ const S4_CORE_FILES = [
 
 const SHIM_FILES = [
     'state/scene-state.js',
-    'services/generation-progress.js',
     'image/assembly-profile.js',
     'image/character-utils.js',
+];
+
+// Host adapters that own the Redis persistence split out of the S-4 core in
+// the correction pass (audit 8e77d950): pure logic stays in generation/,
+// Redis keys + client calls live here. Their public API is unchanged.
+const S4_HOST_REDIS_ADAPTERS = [
+    'services/generation-progress.js',
+    'state/asset-state-store.js',
 ];
 
 describe('S-4: shared infrastructure moves', () => {
@@ -117,25 +124,101 @@ describe('S-4: shared infrastructure moves', () => {
     });
 
     // ─────────────────────────────────────────────────────────────
-    // S4-D — Core has no direct host Redis/PG/config dependencies
+    // S4-D — Core has no direct host Redis/PG/config/filesystem dependencies
     // ─────────────────────────────────────────────────────────────
-    it('S4-D: Generation Core has no direct redis/pg/config/storage dependencies', () => {
-        const forbidden = [/ioredis/, /redis(?!.*helpers)/, /postgres/, /database/, /\.\.\/storage/, /storage\/postgres/,
-            /config\/runtime-config/, /process\.env/];
-        for (const file of S4_CORE_FILES) {
-            const src = read(file);
+    // Strengthened after the S-4 audit: the original guard only checked
+    // require() literals, so a Core file could still receive a redis client
+    // and call `.hset(...) / .hgetall(...) / .del(...) / .expire(...)` on it.
+    // The guard now inspects the SOURCE of every Core file for:
+    //   1. host module requires (redis, ioredis, pg, fs, runtime-config, storage)
+    //   2. direct Redis command calls on ANY receiver (.hset(, .hget(, ...)
+    //   3. any method call on a passed-in redis-like client (redis.h*(), redisClient.*())
+    //   4. env/config/filesystem reads (process.env, readFileSync, ...)
+
+    /** Redis command names — direct `.cmd(` calls are forbidden in Core. */
+    const REDIS_COMMANDS = [
+        'hset', 'hsetnx', 'hget', 'hgetall', 'hdel', 'hkeys', 'hvals', 'hlen', 'hexists', 'hincrby',
+        'del', 'unlink', 'expire', 'pexpire', 'expireat', 'ttl', 'pttl', 'persist', 'setex', 'setnx',
+        'incr', 'incrby', 'decr', 'decrby',
+        'sadd', 'srem', 'smembers', 'sismember', 'spop', 'scard',
+        'lpush', 'rpush', 'lpop', 'rpop', 'lrange', 'llen', 'lrem', 'lindex',
+        'zadd', 'zrem', 'zrange', 'zscore', 'zcard',
+        'mget', 'mset', 'getset', 'scan',
+        'publish', 'subscribe', 'psubscribe', 'punsubscribe',
+        'xadd', 'xlen', 'xrange', 'xreadgroup',
+    ];
+    const REDIS_OPS_RE = new RegExp(`\\.(${REDIS_COMMANDS.join('|')})\\s*\\(`);
+    /** Any method call on a passed-in redis-like client: `redis.*(`, `redisClient.*(`, `redisConn.*(`. */
+    const PASSED_CLIENT_RE = /\bredis[A-Za-z0-9_]*\s*\.\s*[A-Za-z_$][\w$]*\s*\(/;
+    /** Redis client construction. */
+    const CLIENT_CTOR_RE = /\b(?:new\s+Redis\b|createClient\s*\()/;
+    const HOST_REQUIRES_RE = [
+        /ioredis/,
+        /require\(\s*['"](redis|fake-redis|redis-mock)['"]\s*\)/,
+        /require\(\s*['"]pg['"]\s*\)/,
+        /postgres/, /database/, /\.\.\/storage/, /storage\/postgres/,
+        /config\/runtime-config/, /require\(\s*['"][^'"]*runtime-config['"]\s*\)/,        /require\(\s*['"](fs|fs\/promises)['"]\s*\)/,
+        /require\(\s*['"]node:fs(?:\/promises)?['"]\s*\)/,
+    ];
+    const FILESYSTEM_ACCESS_RE = /\b(?:readFile|writeFile|appendFile|readFileSync|writeFileSync|existsSync|mkdirSync|readdirSync|statSync|unlinkSync|rmSync|createReadStream|createWriteStream)\s*\(/;
+    const ENV_CONFIG_ACCESS_RE = [/process\.env/, /\bprocess\.cwd\b/, /\bruntimeConfig\b/];
+
+    function assertCoreIsHostFree(file, src) {
+        for (const re of HOST_REQUIRES_RE) {
             for (const spec of requiresOf(src)) {
-                for (const re of forbidden) {
-                    expect(re.test(spec), `${file} must not require '${spec}' (host clients must be injected — S-6 ports)`).to.equal(false);
-                }
+                expect(re.test(spec), `${file} must not require '${spec}' (host clients must be injected — S-6 ports)`).to.equal(false);
             }
-            expect(/process\.env/.test(src), `${file} must not read process.env`).to.equal(false);
+            // require()-target check only for the generic host-module patterns —
+            // comments may mention them (e.g. the media-registry header).
+            if (re.source !== 'config\\/runtime-config') {
+                expect(re.test(src), `${file} must not reference host modules (${re})`).to.equal(false);
+            }
+        }
+        expect(REDIS_OPS_RE.test(src), `${file} must not issue Redis commands directly (.${REDIS_COMMANDS.join('/.')} — persistence belongs to the host adapter)`).to.equal(false);
+        expect(PASSED_CLIENT_RE.test(src), `${file} must not call methods on a passed-in redis client (S-6 RedisPort owns persistence)`).to.equal(false);
+        expect(CLIENT_CTOR_RE.test(src), `${file} must not construct Redis clients`).to.equal(false);
+        expect(FILESYSTEM_ACCESS_RE.test(src), `${file} must not touch the filesystem directly (S-6 FileSystemPort)`).to.equal(false);
+        for (const re of ENV_CONFIG_ACCESS_RE) {
+            expect(re.test(src), `${file} must not read env/config directly (${re})`).to.equal(false);
+        }
+    }
+
+    it('S4-D: Generation Core has no direct redis/pg/config/storage dependencies', () => {
+        for (const file of S4_CORE_FILES) {
+            assertCoreIsHostFree(file, read(file));
         }
         // Documented host-adapter dependency (S-4 disposition): the assembly
         // profile loader reads ai/profiles via the host ai-loader. Exactly
         // ONE core file may touch it; it becomes the ProfileStore port in S-6.
         const coreWithHostAdapter = S4_CORE_FILES.filter(f => requiresOf(read(f)).some(s => /ai-loader/.test(s)));
         expect(coreWithHostAdapter).to.deep.equal(['generation/prompt-profiles/assembly-profile.js']);
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    // S4-D2 — the whole generation/ contour is Redis-free
+    // ─────────────────────────────────────────────────────────────
+    // Core-adjacent files (S-2/S-3 seams: media registry bootstrap, provider
+    // seam, registrations) are classified in the recon doc; NONE of them may
+    // implement Redis persistence or touch the filesystem directly.
+    it('S4-D2: no file under generation/ implements Redis persistence or fs access', () => {
+        for (const full of walk(path.join(SRC, 'generation'))) {
+            const rel = relativeToSrc(full);
+            const src = fs.readFileSync(full, 'utf8');
+            expect(REDIS_OPS_RE.test(src), `${rel} issues Redis commands directly — move persistence to a host adapter`).to.equal(false);
+            expect(PASSED_CLIENT_RE.test(src), `${rel} calls methods on a passed-in redis client — move persistence to a host adapter`).to.equal(false);
+            expect(CLIENT_CTOR_RE.test(src), `${rel} constructs a Redis client`).to.equal(false);
+            expect(FILESYSTEM_ACCESS_RE.test(src), `${rel} touches the filesystem directly`).to.equal(false);
+            expect(/require\(\s*['"](fs|fs\/promises|node:fs(?:\/promises)?)['"]\s*\)/.test(src), `${rel} requires fs`).to.equal(false);
+        }
+        // The Redis key namespaces previously owned by core files now have a
+        // single host-adapter owner each (core is key-agnostic).
+        const all = walk(SRC).map(f => [relativeToSrc(f), fs.readFileSync(f, 'utf8')]);
+        const singleDef = (pattern, canonical) => {
+            const owners = all.filter(([file, src]) => pattern.test(src)).map(([file]) => file);
+            expect(owners, `${canonical} must be the only owner of this Redis key namespace`).to.deep.equal([canonical]);
+        };
+        singleDef(/const KEY_PREFIX = 'animastor:generation-progress'/, 'services/generation-progress.js');
+        singleDef(/const ASSET_STATE_KEY_PREFIX = 'animastor:asset-state'/, 'state/asset-state-store.js');
     });
 
     // ─────────────────────────────────────────────────────────────
@@ -152,10 +235,71 @@ describe('S-4: shared infrastructure moves', () => {
         singleDef(/function normalizeCharacterRefs/, 'generation/prompt-profiles/character-utils.js');
         singleDef(/function resolveAssembly/, 'generation/prompt-profiles/assembly-profile.js');
         singleDef(/function sceneChunkAudioName/, 'generation/artifact-naming.js');
-        // the old image/ locations are pure re-export shims (no logic migrated back)
+        // the old image/ locations are pure re-export shims (no logic migrated back);
+        // the two Redis adapters split out of the core are real modules (not shims)
         for (const shim of SHIM_FILES) {
             const src = read(shim);
             expect(src, `${shim} must stay a one-line re-export shim`).to.match(/module\.exports\s*=\s*require\(/);
+        }
+        for (const adapter of S4_HOST_REDIS_ADAPTERS) {
+            expect(read(adapter), `${adapter} must exist as the Redis host adapter`).to.be.a('string').that.is.not.empty;
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    // S4-D3 — the split core/adapter pair keeps behavior parity
+    // ─────────────────────────────────────────────────────────────
+    // The Redis adapter owns the key namespace + client calls; the core owns
+    // the domain logic. The adapter must delegate to the core (dependency
+    // direction core ← adapter, never the reverse) and expose the frozen
+    // registry API.
+    it('S4-D3: generation-progress Redis adapter delegates to the pure core (API frozen)', () => {
+        const coreSrc = read('generation/generation-progress.js');
+        const adapterSrc = read('services/generation-progress.js');
+        // dependency direction: adapter → core
+        expect(adapterSrc).to.match(/require\(\s*['"][^'"]*generation\/generation-progress['"]\s*\)/);
+        expect(coreSrc).to.not.match(/require\(\s*['"][^'"]*services\//);
+        // frozen registry API (generation-progress.test.js, happy-path, progress-panel)
+        const progress = require(path.join(SRC, 'services', 'generation-progress.js'));
+        for (const fn of ['createTasks', 'listTasks', 'getTask', 'updateTask', 'markCompleted',
+            'markCancelled', 'getSceneTaskState', 'hasActiveTasks', 'getActiveTasksByType',
+            'reconcileCompletedTasks', 'removeTask', 'clear']) {
+            expect(progress[fn], `services/generation-progress.${fn}`).to.be.a('function');
+        }
+        expect(progress.KEY_PREFIX).to.equal('animastor:generation-progress');
+        expect(progress.TTL_SECONDS).to.equal(4 * 60 * 60);
+        // pure core exposes NO persistence surface
+        const coreExports = require(path.join(SRC, 'generation', 'generation-progress.js'));
+        for (const fn of Object.keys(coreExports)) {
+            expect(['createTaskRecords', 'filterTaskMap', 'sceneTaskState', 'hasActiveTasks',
+                'activeTasksByType', 'taskId', 'normalizeScope', 'targetsForType', 'buildTask',
+                'WORKER_TYPES', 'TERMINAL_RETENTION_MS'].includes(fn),
+            `generation/generation-progress must not export persistence API: ${fn}`).to.equal(true);
+        }
+    });
+
+    it('S4-D3: asset-state Redis adapter delegates to the pure FSM core (API frozen)', () => {
+        const coreSrc = read('generation/scene-state.js');
+        const adapterSrc = read('state/asset-state-store.js');
+        // dependency direction: adapter → core
+        expect(adapterSrc).to.match(/require\(\s*['"][^'"]*generation\/scene-state['"]\s*\)/);
+        expect(coreSrc).to.not.match(/require\(\s*['"][^'"]*state\//);
+        // frozen FSM surface (asset-state.test.js, scene-state.test.js, redis-ownership)
+        const store = require(path.join(SRC, 'state', 'asset-state-store.js'));
+        expect(store.ASSETS.join(',')).to.equal('audio,image,video');
+        expect(store.AssetState.READY).to.equal('ready');
+        expect(store.validateAssetTransition('new', 'dirty').valid).to.equal(true);
+        expect(store.validateAssetTransition('ready', 'pending').valid).to.equal(false);
+        expect(store.ASSET_STATE_KEY_PREFIX).to.equal('animastor:asset-state');
+        for (const fn of ['getAssetStates', 'unsafeRestoreAssetState', 'unsafeRestoreAssetStates', 'setAssetState', 'setAssetStates']) {
+            expect(store[fn], `state/asset-state-store.${fn}`).to.be.a('function');
+        }
+        // pure core exposes NO persistence surface
+        const coreExports = require(path.join(SRC, 'generation', 'scene-state.js'));
+        for (const fn of Object.keys(coreExports)) {
+            expect(['AssetState', 'ASSETS', 'validateAssetTransition', 'normalizeAssetStates',
+                'validateAssetUpdate', 'validateAssetUpdates'].includes(fn),
+            `generation/scene-state must not export persistence API: ${fn}`).to.equal(true);
         }
     });
 

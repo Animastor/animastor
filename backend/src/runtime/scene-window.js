@@ -437,7 +437,7 @@ async function trySlideWindowOnComplete(redis, bookId, loadedBook, buildId) {
         return { started: 0, remaining: 0, reason: 'cancelled' };
     }
 
-    const generationProgress = require('../generation/generation-progress');
+    const generationProgress = require('../services/generation-progress');
     if (await generationProgress.hasActiveTasks(redis, bookId)) {
         return { started: 0, remaining: 0, reason: 'task_managed' };
     }

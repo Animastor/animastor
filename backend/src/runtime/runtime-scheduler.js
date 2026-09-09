@@ -8,7 +8,7 @@ const mediaRegistry = require('../generation/media-registry');
 
 const state = require('../state');
 const dispatchEngine = require('./dispatch-engine');
-const generationProgress = require('../generation/generation-progress');
+const generationProgress = require('../services/generation-progress');
 const taskRepo = require('../storage/postgres/repositories/task-repo');
 
 const logPrefix = '[SCHEDULER]';
