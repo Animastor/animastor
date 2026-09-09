@@ -55,16 +55,18 @@ describe('CB-T1: connector core depends only on node builtins + itself', () => {
         // Baseline = the frozen extraction migration list (§6.2): each of
         // these files consumes the package; new consumers must be
         // registered consciously here.
+        //
+        // S-3 (provider seam migration) narrowed the consumer set: the
+        // media executors and orchestration no longer import the package —
+        // workflow/connector access rides generation/comfyui-provider.js:
+        //   removed: audio/connector-utils.js, audio/generation.js,
+        //            image/connector-utils.js (file deleted),
+        //            image/iu-processor.js, orchestration/scene-orchestrator.js,
+        //            workflows/video/video-workflows.js
         const CONSUMER_BASELINE = [
-            'backend/src/audio/connector-utils.js',
-            'backend/src/audio/generation.js',
             'backend/src/generation/comfyui-provider.js',
-            'backend/src/image/connector-utils.js',
-            'backend/src/image/iu-processor.js',
-            'backend/src/orchestration/scene-orchestrator.js',
             'backend/src/services/profile-override.js',
             'backend/src/services/workflow-manager.js',
-            'backend/src/workflows/video/video-workflows.js',
             'backend/src/backend.cjs',
         ];
 

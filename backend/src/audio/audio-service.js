@@ -6,7 +6,9 @@
 //
 // Sub-modules:
 //   helpers.js        - getOutputPath, log, warn, error, escapeRegExp
-//   connector-utils.js - isFFmpegAvailable, applyAudioValue, getAudioNodeId
+//   connector-utils.js - isFFmpegAvailable (S-3: provider knowledge moved
+//                        to generation/comfyui-provider.js — delegating
+//                        shims below keep the barrel surface stable)
 //   ffmpeg.js         - runFFmpegMerge, runFFmpegTrim, probeDuration, cutFirstHalf, findQuietestPoint
 //   validation.js     - validateCanonicalAudio, isSceneAudioReady, getAudioDuration
 //   chunks.js         - findExistingSceneChunks, allSceneChunksExist, areSceneAudioChunksReady, makeChunkId, getChunkAudioPath
@@ -17,6 +19,7 @@
 
 const helpers = require('./helpers');
 const connectorUtils = require('./connector-utils');
+const provider = require('../generation/comfyui-provider');
 const ffmpeg = require('./ffmpeg');
 const validation = require('./validation');
 const chunks = require('./chunks');
@@ -30,11 +33,14 @@ module.exports = {
     getOutputPath: helpers.getOutputPath,
     escapeRegExp: helpers.escapeRegExp,
 
-    // connector-utils
+    // connector-utils + generation provider seam (S-3)
     isFFmpegAvailable: connectorUtils.isFFmpegAvailable,
-    applyAudioValue: connectorUtils.applyAudioValue,
-    getAudioNodeId: connectorUtils.getAudioNodeId,
-    audioProfileNameFromConnector: connectorUtils.audioProfileNameFromConnector,
+    applyAudioValue: (wf, workflowName, entityKey, value) =>
+        provider.applyValue(wf, workflowName, entityKey, value),
+    getAudioNodeId: (workflowName, entityKey) =>
+        provider.getNodeId(workflowName, entityKey),
+    audioProfileNameFromConnector: (connector) =>
+        provider.profileNameFromConnector(connector, 'audio'),
 
     // ffmpeg
     runFFmpegMerge: ffmpeg.runFFmpegMerge,

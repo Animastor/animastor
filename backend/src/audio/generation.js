@@ -4,12 +4,11 @@
 
 const fs = require('fs');
 const path = require('path');
-const gpu = require('../runtime/gpu-dispatcher');
-const jobSchema = require('../runtime/job-schema');
-const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
+// S-3: the generation provider seam is the ONLY Generation → ComfyUI/GPU
+// boundary. No gpu-dispatcher / workflow-connector imports in executors.
+const provider = require('../generation/comfyui-provider');
 const { resolveAssembly } = require('../image/assembly-profile');
 const profileOverride = require('../services/profile-override');
-const { audioProfileNameFromConnector } = require('./connector-utils');
 const helpers = require('./helpers');
 const validation = require('./validation');
 const chunks = require('./chunks');
@@ -28,8 +27,8 @@ const WORKFLOW_DIALOGUE = 'tts-qwen-dialogue';
  * @returns {object} — normalized assembly { profileName, type, sections, suppress, defaults }
  */
 function resolveAudioAssembly() {
-    const connector = wfLoader.getConnector(WORKFLOW_DIALOGUE) || wfLoader.getConnector(WORKFLOW_NARRATION);
-    return resolveAssembly('audio', profileOverride.getOverride('audio') || audioProfileNameFromConnector(connector));
+    const connector = provider.getConnector(WORKFLOW_DIALOGUE) || provider.getConnector(WORKFLOW_NARRATION);
+    return resolveAssembly('audio', profileOverride.getOverride('audio') || provider.profileNameFromConnector(connector, 'audio'));
 }
 
 // ══════════════════════════════════════════════════════
@@ -51,11 +50,6 @@ function resolveAudioAssembly() {
 function buildMergedDialogueWorkflow(segList, loadedBook) {
     // NOTE: the parameter is named segList (NOT segments) — 'segments' is the
     // module-level require('./segments') used below for narratorVoice().
-    const wfAudio = wfLoader.getWorkflow(WORKFLOW_DIALOGUE);
-    if (!wfAudio) {
-        helpers.error('buildMergedDialogueWorkflow: base workflow not found');
-        return null;
-    }
 
     // ── 1. Collect all speakers and voice instructions ──
     // The speaker label is any text before the first ": " — a character_id
@@ -96,40 +90,22 @@ function buildMergedDialogueWorkflow(segList, loadedBook) {
 
     helpers.log(`🎭 Merged dialogue: ${speakerCount} speaker(s), ${segList.length} segment(s)`);
 
-    // ── 2. Build script node (node 108) ──
-    // default_instruct comes from the active audio assembly profile
-    // (ai/profiles/audio/{profile}.json → assembly.defaults.defaultInstruct).
-    wfAudio["108"].inputs = {
-        script,
-        default_instruct: resolveAudioAssembly().defaults.defaultInstruct || ""
-    };
-
-    // ── 3. Map speaker → static node IDs ──
-    // speaker 0 → 71(VoiceDesign) + 73(ClonePrompt)
-    // speaker 1 → 80(VoiceDesign) + 81(ClonePrompt)
-    // speaker 2 → 82(VoiceDesign) + 83(ClonePrompt)
-    const clonePromptIds = [73, 81, 83];
-
-    // Update VoiceDesign nodes with actual voice instructions.
-    // Если voice пустой — используем narrator voice как fallback.
-    // ComfyUI выдаёт ошибку "Voice instruction cannot be empty."
+    // ── 2. Resolve voices + hand off to the provider seam ──
+    // S-3: ComfyUI node knowledge (script/VoiceDesign/RoleBank/ClonePrompt
+    // nodes) lives ONLY in the provider. The executor passes semantic
+    // speaker data: name + voice instruction.
+    // Empty voice → narrator voice fallback (ComfyUI rejects empty voice
+    // instructions: "Voice instruction cannot be empty.").
     const narratorVi = segments.narratorVoice({}, loadedBook);
-    const vi0 = speakers.get(speakerIds[0]) || narratorVi;
-    if (vi0) wfAudio["71"].inputs.voice_instruction = vi0;
-    if (speakerCount > 1) {
-        const vi1 = speakers.get(speakerIds[1]) || narratorVi;
-        if (vi1) wfAudio["80"].inputs.voice_instruction = vi1;
-    }
-    if (speakerCount > 2) {
-        const vi2 = speakers.get(speakerIds[2]) || narratorVi;
-        if (vi2) wfAudio["82"].inputs.voice_instruction = vi2;
-    }
-
-    // ── 4. Configure RoleBank (node 74) with correct role names ──
-    for (let i = 0; i < speakerCount; i++) {
-        const idx = i + 1;
-        wfAudio["74"].inputs[`role_name_${idx}`] = speakerIds[i];
-        wfAudio["74"].inputs[`prompt_${idx}`] = [String(clonePromptIds[i]), 0];
+    const speakerSpecs = speakerIds.map(id => ({ name: id, voice: speakers.get(id) || narratorVi }));
+    const wfAudio = provider.assembleMergedDialogueWorkflow({
+        script,
+        defaultInstruct: resolveAudioAssembly().defaults.defaultInstruct || "",
+        speakers: speakerSpecs,
+    });
+    if (!wfAudio) {
+        helpers.error('buildMergedDialogueWorkflow: base workflow not found');
+        return null;
     }
 
     helpers.log(`🎭 Merged dialogue: roles=${speakerIds.join(', ')}`);
@@ -348,13 +324,13 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
                 redis, buildId, bookId, chapterId, sceneId, sceneData.scene_type, 'pending'
             );
 
-            const sendResult = await gpu.send(
-                jobSchema.buildJobId(id, 'audio'),
-                mergedWf,
-                "audio",
+            const sendResult = await provider.generate({
+                jobId: provider.buildJobId(id, 'audio'),
+                workflow: mergedWf,
+                jobType: 'audio',
                 buildId,
                 dispatchId
-            );
+            });
 
             if (sendResult.sent) {
                 sentCount = 1;
@@ -478,19 +454,14 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
 
         const isDialogue = segment.segment_type === 'dialogue';
         const workflowName = isDialogue ? WORKFLOW_DIALOGUE : WORKFLOW_NARRATION;
-        const wfAudio = wfLoader.getWorkflow(workflowName);
+        const wfAudio = provider.loadWorkflow(workflowName);
 
         if (isDialogue) {
-            // Dialogue → Qwen3TTSAdvancedDialogue
-            const connector = wfLoader.getConnector(workflowName);
+            // Dialogue → Qwen3TTSAdvancedDialogue — all node patching via the
+            // provider's connector bindings (entity keys, no node ids here).
             const defaultInstruct = resolveAudioAssembly().defaults.defaultInstruct || "";
-            if (connector) {
-                const cl = require('animastor-comfyui-workflow-connector').connectorLoader;
-                cl.setValue(wfAudio, connector, 'dialogueScript', segment.text);
-                cl.setValue(wfAudio, connector, 'defaultInstruct', defaultInstruct);
-            } else {
-                wfAudio["108"].inputs = { script: segment.text, default_instruct: defaultInstruct };
-            }
+            provider.applyValue(wfAudio, workflowName, 'dialogueScript', segment.text);
+            provider.applyValue(wfAudio, workflowName, 'defaultInstruct', defaultInstruct);
 
             // ⚡ Определяем speaker из segment.text (формат: "speaker: текст")
             // speaker = character_id ИЛИ естественное обозначение эпизодического
@@ -511,49 +482,32 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
                 helpers.warn(`⚠️ EMPTY VOICE for ${speakerId || 'unknown'} in ${bookId}/${chapterId}/${sceneId} — using template default`);
             }
 
-            if (connector) {
-                const cl = require('animastor-comfyui-workflow-connector').connectorLoader;
-                if (c1Voice) cl.setValue(wfAudio, connector, 'character1Voice', c1Voice);
-                if (c2Voice) cl.setValue(wfAudio, connector, 'character2Voice', c2Voice);
-                cl.setValue(wfAudio, connector, 'roleName1', speakerId || "speaker");
-                cl.setValue(wfAudio, connector, 'roleName2', "narrator");
-            } else {
-                if (c1Voice) wfAudio["71"].inputs.voice_instruction = c1Voice;
-                if (c2Voice) wfAudio["80"].inputs.voice_instruction = c2Voice;
-                wfAudio["74"].inputs.role_name_1 = speakerId || "speaker";
-                wfAudio["74"].inputs.role_name_2 = "narrator";
-            }
+            if (c1Voice) provider.applyValue(wfAudio, workflowName, 'character1Voice', c1Voice);
+            if (c2Voice) provider.applyValue(wfAudio, workflowName, 'character2Voice', c2Voice);
+            provider.applyValue(wfAudio, workflowName, 'roleName1', speakerId || "speaker");
+            provider.applyValue(wfAudio, workflowName, 'roleName2', "narrator");
 
         } else {
             // Narration segment
-            const connector = wfLoader.getConnector(workflowName);
             const vi = segments.narratorVoice(sceneData.payload, loadedBook);
 
             if (!vi) {
                 helpers.warn(`⚠️ EMPTY narrator voice for ${bookId}/${chapterId}/${sceneId} — using template default`);
             }
 
-            if (connector) {
-                const cl = require('animastor-comfyui-workflow-connector').connectorLoader;
-                cl.setValue(wfAudio, connector, 'narrationText', segment.text);
-                if (vi) {
-                    cl.setValue(wfAudio, connector, 'voiceInstruction', vi);
-                }
-            } else {
-                wfAudio["108"].inputs.text = segment.text;
-                if (vi) {
-                    wfAudio["108"].inputs.voice_instruction = vi;
-                }
+            provider.applyValue(wfAudio, workflowName, 'narrationText', segment.text);
+            if (vi) {
+                provider.applyValue(wfAudio, workflowName, 'voiceInstruction', vi);
             }
         }
 
-        const sendResult = await gpu.send(
-            jobSchema.buildJobId(id, 'audio'),
-            wfAudio,
-            "audio",
+        const sendResult = await provider.generate({
+            jobId: provider.buildJobId(id, 'audio'),
+            workflow: wfAudio,
+            jobType: 'audio',
             buildId,
             dispatchId
-        );
+        });
         if (sendResult.sent) {
             sentCount++;
             helpers.log(`📤 Dispatched chunk ${chunkIndex}/${segList.length}: ${id} (${segment.segment_type}, padded=${!!segment.padded})`);

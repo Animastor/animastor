@@ -8,7 +8,8 @@ const config = require('../config/runtime-config');
 const path = require('path');
 const fs = require('fs');
 const wfBuilder = require('../workflows/video/video-workflows');
-const gpu = require('../runtime/gpu-dispatcher');
+// S-3: video executors never dispatch directly — jobSpecs are sent by the
+// orchestrator through the provider seam (generation/comfyui-provider).
 const jobSchema = require('../runtime/job-schema');
 
 const OUTPUT_DIR = config.OUTPUT_DIR;

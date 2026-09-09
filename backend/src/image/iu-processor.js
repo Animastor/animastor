@@ -7,14 +7,14 @@
 const path = require('path');
 const fs = require('fs');
 const config = require('../config/runtime-config');
-const gpu = require('../runtime/gpu-dispatcher');
-const jobSchema = require('../runtime/job-schema');
-const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
+// S-3: the generation provider seam is the ONLY Generation → ComfyUI/GPU
+// boundary. No gpu-dispatcher / workflow-connector imports in executors.
+const provider = require('../generation/comfyui-provider');
+const profileOverride = require('../services/profile-override');
 const helpers = require('./helpers');
 const promptBuilder = require('./prompt-builder');
 const assemblyProfile = require('./assembly-profile');
 const registry = require('./registry');
-const { applyImageValue, resolveImageProfileName } = require('./connector-utils');
 const { collectSceneUnits } = require('./registry');
 
 // TTL маркера animastor:iu-in-flight:* — ЕДИНЫЙ источник: runtime-config
@@ -241,20 +241,22 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
 
     // Assembly profile for the image workflow — resolved from the connector's
     // profile.imageProfile (e.g. "qwen-image"); falls back to the built-in
-    // assembly when unset (there is no 'default' profile).
-    const imageProfileName = resolveImageProfileName();
+    // assembly when unset (there is no 'default' profile). S-3: profile
+    // resolution rides the provider seam (override → connector profile).
+    const imageProfileName = profileOverride.getOverride('image')
+        || provider.profileNameFromConnector(provider.getConnector(provider.WORKFLOW_NAMES.image), 'image');
     const assemblyCfg = assemblyProfile.resolveAssembly('image', imageProfileName);
 
     const finalPrompt = promptBuilder.buildImagePrompt(unit, sceneData.payload, sceneData.chapter, loadedBook, { profile: imageProfileName });
 
     helpers.log(`GENERATE IMAGE (IU): ${imageIUId}, unit.id: ${canonicalUnitId}, profile: ${imageProfileName}`);
 
-    const wfImg = wfLoader.getWorkflow('img-qwen-image');
+    const wfImg = provider.loadWorkflow(provider.WORKFLOW_NAMES.image);
     const baseNegative = assemblyCfg.defaults.negativeBase || 'blurry, low quality, artifacts';
     const customNegative = promptBuilder.resolveNegativePrompt(unit, sceneData.payload);
 
-    applyImageValue(wfImg, 'positivePrompt', finalPrompt);
-    applyImageValue(wfImg, 'negativePrompt', customNegative ? `${customNegative}, ${baseNegative}` : baseNegative);
+    provider.applyValue(wfImg, provider.WORKFLOW_NAMES.image, 'positivePrompt', finalPrompt);
+    provider.applyValue(wfImg, provider.WORKFLOW_NAMES.image, 'negativePrompt', customNegative ? `${customNegative}, ${baseNegative}` : baseNegative);
 
     try {
         // Маркер = dispatch_id владельца: по нему finalizeDispatch чистит
@@ -275,13 +277,13 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
     }
 
     await registry.saveIURegistry(redis, imageIUId, buildId);
-    const sendResult = await gpu.send(
-        jobSchema.buildJobId(imageIUId, 'iu_image'),
-        wfImg,
-        'image',
+    const sendResult = await provider.generate({
+        jobId: provider.buildJobId(imageIUId, 'iu_image'),
+        workflow: wfImg,
+        jobType: 'image',
         buildId,
         dispatchId
-    );
+    });
     try {
         const dispatchEngine = require('../runtime/dispatch-engine');
         // Маркер снимается с dispatch-индекса в обоих случаях:

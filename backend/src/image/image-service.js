@@ -6,7 +6,10 @@
 //
 // Sub-modules:
 //   helpers.js         - log, warn, error, debug, getOutputPath, cleanJoin, normalization utilities
-//   connector-utils.js - getImageNodeId, applyImageValue, WORKFLOW_NAME
+//   connector-utils.js — REMOVED in S-3: its ComfyUI/provider knowledge
+//                        (getImageNodeId/applyImageValue/WORKFLOW_NAME) is
+//                        consolidated in generation/comfyui-provider.js;
+//                        delegating shims below keep the barrel surface.
 //   registry.js        - saveIURegistry, getIURegistry, probeIUImage, resolveCanonicalSceneImage, collectSceneUnits
 //   character-utils.js - normalizeCharacterRefs, buildCharacterAliases, buildSafeAliasIndex
 //   prompt-builder.js  - buildImagePrompt, buildIUImageWorkflow, generateIUImageWorkflow, resolveVisualStyle, resolveLocationFromPrompt, buildCharacters
@@ -14,7 +17,7 @@
 //   preview.js         - getOrCreatePreview, getImageMetadata
 
 const helpers = require('./helpers');
-const connectorUtils = require('./connector-utils');
+const provider = require('../generation/comfyui-provider');
 const registry = require('./registry');
 const charUtils = require('./character-utils');
 const promptBuilder = require('./prompt-builder');
@@ -29,10 +32,11 @@ module.exports = {
     resolveLocationFromPrompt: promptBuilder.resolveLocationFromPrompt,
     resolveNegativePrompt: promptBuilder.resolveNegativePrompt,
 
-    // connector-utils
-    getImageNodeId: connectorUtils.getImageNodeId,
-    applyImageValue: connectorUtils.applyImageValue,
-    WORKFLOW_NAME: connectorUtils.WORKFLOW_NAME,
+    // connector-utils → provider seam (S-3)
+    getImageNodeId: (entityKey) => provider.getNodeId(provider.WORKFLOW_NAMES.image, entityKey),
+    applyImageValue: (wf, entityKey, value) =>
+        provider.applyValue(wf, provider.WORKFLOW_NAMES.image, entityKey, value),
+    WORKFLOW_NAME: provider.WORKFLOW_NAMES.image,
 
     // registry
     saveIURegistry: registry.saveIURegistry,

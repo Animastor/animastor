@@ -2,7 +2,9 @@ const state = require('../state');
 const audio = require('../audio');
 const image = require('../image');
 const video = require('../video');
-const gpu = require('../runtime/gpu-dispatcher');
+// S-3: Generation → GPU transport rides the provider seam only. The
+// orchestrator never requires gpu-dispatcher or the workflow connector.
+const provider = require('../generation/comfyui-provider');
 const runtimeScheduler = require('../runtime/runtime-scheduler');
 const book = require('../book');
 const layerConfig = require('../services/layer-config');
@@ -351,8 +353,7 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchI
         }
     } catch (_) {}
 
-    const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
-    const videoResult = await video.generateVideoAnimation(sceneData, bookData, buildId, wfLoader.workflows, dispatchId);
+    const videoResult = await video.generateVideoAnimation(sceneData, bookData, buildId, provider.listWorkflows(), dispatchId);
 
     if (!videoResult.success) {
         warn(`VIDEO_GENERATION: ${bookId}/${chapterId}/${sceneId} failed: ${videoResult.reason || 'unknown'}`);
@@ -476,14 +477,14 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchI
     let sentCount = 0;
     for (const jobSpec of jobsToSend) {
         try {
-            const sendResult = await gpu.sendUnified(jobSpec);
+            const sendResult = await provider.generate(jobSpec);
             if (sendResult.sent) {
                 sentCount++;
             } else {
                 warn(`VIDEO_DISPATCH: Hub rejected job ${jobSpec.job_id}: ${sendResult.error || 'unknown'}`);
             }
         } catch (sendErr) {
-            warn(`VIDEO_DISPATCH: sendUnified failed for job ${jobSpec.job_id}: ${sendErr.message}`);
+            warn(`VIDEO_DISPATCH: provider generate failed for job ${jobSpec.job_id}: ${sendErr.message}`);
         }
     }
 
@@ -492,7 +493,7 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchI
         return { dispatched: true, jobs: sentCount, reason: null };
     }
 
-    warn(`VIDEO_DISPATCH: ${bookId}/${chapterId}/${sceneId}: all sendUnified calls failed`);
+    warn(`VIDEO_DISPATCH: ${bookId}/${chapterId}/${sceneId}: all provider.generate calls failed`);
     return { dispatched: false, jobs: 0, reason: 'send_failed' };
 }
 

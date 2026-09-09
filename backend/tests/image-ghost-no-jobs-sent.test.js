@@ -34,8 +34,9 @@ const { expect } = require('chai');
 const state = require('../src/state');
 const orchestrator = require('../src/orchestration/orchestrator');
 const dispatchEngine = require('../src/runtime/dispatch-engine');
-const gpu = require('../src/runtime/gpu-dispatcher');
+const provider = require('../src/generation/comfyui-provider');
 const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
+const path = require('path');
 const config = require('../src/config/runtime-config');
 const iuProcessor = require('../src/image/iu-processor');
 const imageModule = require('../src/image');
@@ -83,14 +84,14 @@ async function journalEvents(redis) {
 // an array of labels (one per call), or fn(call, jobId) → label
 function stubGpuSend(behavior) {
     let call = 0;
-    gpu.send = async (jobId, wf, type, buildId, dispatchId) => {
+    provider.generate = async (request) => {
         call++;
         let action;
-        if (typeof behavior === 'function') action = behavior(call, jobId);
+        if (typeof behavior === 'function') action = behavior(call, request.job_id);
         else if (Array.isArray(behavior)) action = behavior[Math.min(call - 1, behavior.length - 1)];
         else action = behavior;
         if (action === 'throw') throw new Error('hub_unreachable');
-        if (action === 'sent') return { sent: true, jobId, dispatchId };
+        if (action === 'sent') return { sent: true, jobId: request.job_id, dispatchId: request.dispatch_id };
         return { sent: false, error: 'enqueue_failed' };
     };
 }
@@ -99,9 +100,13 @@ describe('image ghost GENERATING — no_jobs_sent lifecycle fix (audit 6929ba5)'
     this.timeout(20000);
 
     let redis;
-    const originalSend = gpu.send;
+    const originalGenerate = provider.generate;
 
     before(() => {
+        wfLoader.configure({
+            workflowsDir: path.join(__dirname, '../ai/workflows'),
+            connectorsDir: path.join(__dirname, '../ai/connectors'),
+        });
         wfLoader.loadWorkflows();
     });
 
@@ -110,7 +115,7 @@ describe('image ghost GENERATING — no_jobs_sent lifecycle fix (audit 6929ba5)'
     });
 
     afterEach(() => {
-        gpu.send = originalSend;
+        provider.generate = originalGenerate;
         // Lease renewal timers are module-level — always stop them so mocha exits
         dispatchEngine.stopDispatchRenewal(B, C, S, 'image');
     });
@@ -159,7 +164,7 @@ describe('image ghost GENERATING — no_jobs_sent lifecycle fix (audit 6929ba5)'
             expect(await imageState(redis)).to.equal(state.AssetState.PENDING);
 
             const sentJobs = [];
-            gpu.send = async (jobId) => { sentJobs.push(jobId); return { sent: true, jobId }; };
+            provider.generate = async (request) => { sentJobs.push(request.job_id); return { sent: true, jobId: request.job_id }; };
             const res2 = await dispatchEngine.dispatchStage(redis, B, C, S, 'image', makeBook(), BUILD, {});
 
             expect(res2.dispatched).to.equal(true);
@@ -178,7 +183,7 @@ describe('image ghost GENERATING — no_jobs_sent lifecycle fix (audit 6929ba5)'
             await state.setAssetState(redis, B, C, S, 'image', state.AssetState.PENDING);
 
             const sentJobs = [];
-            gpu.send = async (jobId) => { sentJobs.push(jobId); return { sent: true, jobId }; };
+            provider.generate = async (request) => { sentJobs.push(request.job_id); return { sent: true, jobId: request.job_id }; };
             const res = await dispatchEngine.dispatchStage(redis, B, C, S, 'image', makeBook(), BUILD, {});
 
             // Stale markers self-healed (owner dead) → all IU sent, no no_jobs_sent
@@ -287,7 +292,7 @@ describe('image ghost GENERATING — no_jobs_sent lifecycle fix (audit 6929ba5)'
             await dispatchEngine.cancelActiveDispatch(redis, B, C, S, 'image', 'partial_failure_cancel');
 
             const sentJobs = [];
-            gpu.send = async (jobId) => { sentJobs.push(jobId); return { sent: true, jobId }; };
+            provider.generate = async (request) => { sentJobs.push(request.job_id); return { sent: true, jobId: request.job_id }; };
             // Force mode: the way resetScenes/regen re-enters dispatch after cancel
             const res = await dispatchEngine.dispatchStage(redis, B, C, S, 'image', makeBook(), BUILD, { force: true });
 
@@ -323,7 +328,7 @@ describe('image ghost GENERATING — no_jobs_sent lifecycle fix (audit 6929ba5)'
 
             // dispatch #2: must NOT see phantom in-flight IUs
             const sentJobs = [];
-            gpu.send = async (jobId) => { sentJobs.push(jobId); return { sent: true, jobId }; };
+            provider.generate = async (request) => { sentJobs.push(request.job_id); return { sent: true, jobId: request.job_id }; };
             const res2 = await dispatchEngine.dispatchStage(redis, B, C, S, 'image', makeBook(), BUILD, {});
 
             expect(res2.dispatched).to.equal(true);
@@ -348,7 +353,7 @@ describe('image ghost GENERATING — no_jobs_sent lifecycle fix (audit 6929ba5)'
 
             // #2 sends everything
             const sentJobs = [];
-            gpu.send = async (jobId) => { sentJobs.push(jobId); return { sent: true, jobId }; };
+            provider.generate = async (request) => { sentJobs.push(request.job_id); return { sent: true, jobId: request.job_id }; };
             const res2 = await dispatchEngine.dispatchStage(redis, B, C, S, 'image', makeBook(), BUILD, {});
             expect(res2.dispatched).to.equal(true);
             expect(sentJobs).to.have.length(IU_COUNT);
@@ -367,9 +372,9 @@ describe('image ghost GENERATING — no_jobs_sent lifecycle fix (audit 6929ba5)'
             // IU 1-2 really sent; IU 3's send triggers a concurrent force_reset
             // cancellation; IU 4-9 fail to send.
             let call = 0;
-            gpu.send = async (jobId) => {
+            provider.generate = async (request) => {
                 call++;
-                if (call <= 2) return { sent: true, jobId };
+                if (call <= 2) return { sent: true, jobId: request.job_id };
                 if (call === 3) {
                     await dispatchEngine.cancelActiveDispatch(redis, B, C, S, 'image', 'force_reset');
                     return { sent: false, error: 'force_reset' };
@@ -403,9 +408,9 @@ describe('image ghost GENERATING — no_jobs_sent lifecycle fix (audit 6929ba5)'
         it('after force reset the scene reaches a dispatchable state (no ghost GENERATING)', async () => {
             await state.setAssetState(redis, B, C, S, 'image', state.AssetState.PENDING);
             let call = 0;
-            gpu.send = async (jobId) => {
+            provider.generate = async (request) => {
                 call++;
-                if (call <= 2) return { sent: true, jobId };
+                if (call <= 2) return { sent: true, jobId: request.job_id };
                 if (call === 3) {
                     await dispatchEngine.cancelActiveDispatch(redis, B, C, S, 'image', 'force_reset');
                     return { sent: false, error: 'force_reset' };
@@ -428,7 +433,7 @@ describe('image ghost GENERATING — no_jobs_sent lifecycle fix (audit 6929ba5)'
 
             // Re-dispatch: no ghost, no orphan markers, all 9 IU sent
             const sentJobs = [];
-            gpu.send = async (jobId) => { sentJobs.push(jobId); return { sent: true, jobId }; };
+            provider.generate = async (request) => { sentJobs.push(request.job_id); return { sent: true, jobId: request.job_id }; };
             const res2 = await dispatchEngine.dispatchStage(redis, B, C, S, 'image', makeBook(), BUILD, {});
             expect(res2.dispatched).to.equal(true);
             expect(res2.result.jobs).to.equal(IU_COUNT);
@@ -462,7 +467,7 @@ describe('image ghost GENERATING — no_jobs_sent lifecycle fix (audit 6929ba5)'
             await state.setAssetState(redis, B, C, S, 'image', state.AssetState.GENERATING);
 
             const sentJobs = [];
-            gpu.send = async (jobId) => { sentJobs.push(jobId); return { sent: true, jobId }; };
+            provider.generate = async (request) => { sentJobs.push(request.job_id); return { sent: true, jobId: request.job_id }; };
             const res = await dispatchEngine.dispatchStage(redis, B, C, S, 'image', makeBook(), BUILD, {});
 
             expect(res.dispatched).to.equal(true);
@@ -484,7 +489,7 @@ describe('image ghost GENERATING — no_jobs_sent lifecycle fix (audit 6929ba5)'
             await state.setAssetState(redis, B, C, S, 'image', state.AssetState.PENDING);
 
             const sentJobs = [];
-            gpu.send = async (jobId) => { sentJobs.push(jobId); return { sent: true, jobId }; };
+            provider.generate = async (request) => { sentJobs.push(request.job_id); return { sent: true, jobId: request.job_id }; };
             const res = await dispatchEngine.dispatchStage(redis, B, C, S, 'image', makeBook(), BUILD, {});
 
             expect(res.dispatched).to.equal(true);
@@ -518,7 +523,7 @@ describe('image ghost GENERATING — no_jobs_sent lifecycle fix (audit 6929ba5)'
             await state.setAssetState(redis, B, C, S, 'image', state.AssetState.GENERATING);
 
             const sentJobs = [];
-            gpu.send = async (jobId) => { sentJobs.push(jobId); return { sent: true, jobId }; };
+            provider.generate = async (request) => { sentJobs.push(request.job_id); return { sent: true, jobId: request.job_id }; };
             const res = await dispatchEngine.dispatchStage(redis, B, C, S, 'image', makeBook(), BUILD, {});
 
             // stale_lease_recovery cancelled the dead dispatch (index cleaned),
@@ -615,9 +620,13 @@ describe('iu-in-flight marker lifecycle after successful gpu.send (follow-up 226
     this.timeout(20000);
 
     let redis;
-    const originalSend = gpu.send;
+    const originalGenerate = provider.generate;
 
     before(() => {
+        wfLoader.configure({
+            workflowsDir: path.join(__dirname, '../ai/workflows'),
+            connectorsDir: path.join(__dirname, '../ai/connectors'),
+        });
         wfLoader.loadWorkflows();
     });
 
@@ -626,7 +635,7 @@ describe('iu-in-flight marker lifecycle after successful gpu.send (follow-up 226
     });
 
     afterEach(() => {
-        gpu.send = originalSend;
+        provider.generate = originalGenerate;
         dispatchEngine.stopDispatchRenewal(B, C, S, 'image');
     });
 
@@ -650,7 +659,7 @@ describe('iu-in-flight marker lifecycle after successful gpu.send (follow-up 226
 
     async function sendSingleIU(dispatchId, sendResult = { sent: true }) {
         let sends = 0;
-        gpu.send = async (jobId) => { sends++; return { ...sendResult, jobId }; };
+        provider.generate = async (request) => { sends++; return { ...sendResult, jobId: request.job_id }; };
         const result = await iuProcessor.processSingleIU(
             redis, unit1, 0, sceneData1, makeBook(1), BUILD,
             B, C, S, 0, 'full text', new Set(), dispatchId
@@ -705,7 +714,7 @@ describe('iu-in-flight marker lifecycle after successful gpu.send (follow-up 226
 
             // 2-3. Marker created with owner dispatch_id, gpu.send returns SUCCESS
             let sends = 0;
-            gpu.send = async (jobId) => { sends++; return { sent: true, jobId }; };
+            provider.generate = async (request) => { sends++; return { sent: true, jobId: request.job_id }; };
             const r1 = await iuProcessor.processSingleIU(
                 redis, unit1, 0, sceneData1, makeBook(1), BUILD,
                 B, C, S, 0, 'full text', new Set(), dispatchIdA
@@ -830,7 +839,7 @@ describe('iu-in-flight marker lifecycle after successful gpu.send (follow-up 226
         it('after cancel the dead dispatch identity is invalid (its results cannot be delivered)', async () => {
             await state.setAssetState(redis, B, C, S, 'image', state.AssetState.PENDING);
             let call = 0;
-            gpu.send = async (jobId) => { call++; return call <= 3 ? { sent: true, jobId } : { sent: false, error: 'down' }; };
+            provider.generate = async (request) => { call++; return call <= 3 ? { sent: true, jobId: request.job_id } : { sent: false, error: 'down' }; };
             const res = await dispatchEngine.dispatchStage(redis, B, C, S, 'image', makeBook(), BUILD, {});
             expect(res.dispatched).to.equal(true);
             const dispatchIdA = res.dispatchId;
@@ -858,7 +867,7 @@ describe('iu-in-flight marker lifecycle after successful gpu.send (follow-up 226
 
             // The 6 never-sent IUs redispatch cleanly (no false no_jobs_sent)
             const sentJobs = [];
-            gpu.send = async (jobId) => { sentJobs.push(jobId); return { sent: true, jobId }; };
+            provider.generate = async (request) => { sentJobs.push(request.job_id); return { sent: true, jobId: request.job_id }; };
             const res2 = await dispatchEngine.dispatchStage(redis, B, C, S, 'image', makeBook(), BUILD, { force: true });
             expect(res2.dispatched).to.equal(true);
             expect(res2.result.reason).to.not.equal('no_jobs_sent');

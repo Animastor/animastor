@@ -7,7 +7,9 @@
 // modifying backend code.
 
 const book = require('../../book');
-const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
+// S-3: workflow/connector access rides the generation provider seam —
+// no direct workflow-connector package imports in generation modules.
+const provider = require('../../generation/comfyui-provider');
 const profileOverride = require('../../services/profile-override');
 const { tokensToString } = require('../../book/lazy-book/appearance');
 const { resolveAssembly, DEFAULT_VIDEO_DEFAULTS } = require('../../image/assembly-profile');
@@ -27,10 +29,10 @@ function log(msg) {
 // ======================================================
 
 /**
- * Get connector for a workflow name.
+ * Get connector for a workflow name (via the provider seam, S-3).
  */
 function getConnector(workflowName) {
-    return wfLoader.getConnector(workflowName);
+    return provider.getConnector(workflowName);
 }
 
 // ======================================================
@@ -343,7 +345,6 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
 
     const wf = JSON.parse(JSON.stringify(baseWorkflow));
     const connector = getConnector(workflowName);
-    const cl = require('../connector-loader');
     // Assembly profile drives final prompt structure + negative base.
     // A user override (global settings choice) wins; otherwise the connector's
     // profile.videoProfile ('ltx-2.3'); when neither is set the built-in
@@ -356,17 +357,18 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
         .sort(([a], [b]) => parseInt(a) - parseInt(b))
         .map(([id]) => id);
 
-    // Resolve node IDs from connector (required at startup)
-    const loadImageNodeIds = cl.getNodeId(connector, 'sourceImages');
-    const totalFramesNodeId = cl.getNodeId(connector, 'totalFrames');
-    const positiveNodeId = cl.getNodeId(connector, 'positivePrompt');
-    const negativeNodeId = cl.getNodeId(connector, 'negativePrompt');
+    // Resolve node IDs from connector (required at startup) — via the
+    // provider seam (S-3)
+    const loadImageNodeIds = provider.getNodeId(workflowName, 'sourceImages');
+    const totalFramesNodeId = provider.getNodeId(workflowName, 'totalFrames');
+    const positiveNodeId = provider.getNodeId(workflowName, 'positivePrompt');
+    const negativeNodeId = provider.getNodeId(workflowName, 'negativePrompt');
 
     // 1. Calculate frames
     const { frameIndices, totalFrames } = calculateFrames(iuDurations);
 
     // 2. Set total frames via connector
-    cl.setValue(wf, connector, 'totalFrames', totalFrames);
+    provider.applyValue(wf, workflowName, 'totalFrames', totalFrames);
 
     // 3. Set image filenames, guide frame indices, and per-guide strengths
     for (let i = 0; i < units.length; i++) {
@@ -382,7 +384,7 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
         if (guideNodeId && wf[guideNodeId]) {
             wf[guideNodeId].inputs.frame_idx = frameIndices[i];
             // Apply per-guide strength from connector (guideStrength_0, guideStrength_1, ...)
-            const gs = cl.getBinding(connector, `guideStrength_${i}`);
+            const gs = provider.getBinding(workflowName, `guideStrength_${i}`);
             if (gs && gs.default !== undefined) {
                 wf[guideNodeId].inputs.strength = gs.default;
             }
@@ -401,14 +403,14 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
 
     // 4. Set video filename prefix via connector
     const prefixValue = `video/${sceneData.book_id}_${sceneData.chapter_id}_${sceneData.scene_id}`;
-    cl.setValue(wf, connector, 'outputFilenamePrefix', prefixValue);
+    provider.applyValue(wf, workflowName, 'outputFilenamePrefix', prefixValue);
 
     // 5. Set positive prompt via connector
     const prompt = buildVideoPrompt(sceneData, loadedBook, units, iuDurations, assembly.profileName);
-    cl.setValue(wf, connector, 'positivePrompt', prompt);
+    provider.applyValue(wf, workflowName, 'positivePrompt', prompt);
 
     // 6. Set negative prompt via connector (base negative from the profile)
-    cl.setValue(wf, connector, 'negativePrompt', buildVideoNegativePrompt(sceneData, units, assembly.defaults.negativeBase));
+    provider.applyValue(wf, workflowName, 'negativePrompt', buildVideoNegativePrompt(sceneData, units, assembly.defaults.negativeBase));
 
     log(`Built ${workflowName} workflow: ${units.length} IU(s), ${totalFrames} total frames`);
 
@@ -471,24 +473,9 @@ async function buildVideoWorkflows(sceneData, loadedBook, buildId, workflows) {
     return { success: true, workflows: results };
 }
 
-// ======================================================
-// LEGACY COMPAT - single image workflow builder
-// ======================================================
-function buildVideoWorkflow(scene, chapter, bookData) {
-    const workflow = {
-        "202": {
-            inputs: {
-                text: "blurry, low quality, still frame, jitter, flicker, artifacts"
-            }
-        },
-        "203": {
-            inputs: {
-                text: buildVideoPromptLegacy(scene, chapter, bookData)
-            }
-        }
-    };
-    return workflow;
-}
+// S-3: the LEGACY single-image `buildVideoWorkflow` (raw node ids 202/203)
+// was removed — dead export, no production/test callers. The pure text
+// helpers below are still used by tests and prompt assembly.
 
 function buildVideoPromptLegacy(scene, chapter, book) {
     const bookTitle = book?.manifest?.title || book?.manifest?.name || '';
@@ -642,7 +629,6 @@ function selectWorkflowGroups(units, iuDurations) {
 // ======================================================
 module.exports = {
     buildVideoWorkflows,
-    buildVideoWorkflow,
     buildVideoPrompt,
     buildVideoNegativePrompt,
     buildVideoPromptLegacy,

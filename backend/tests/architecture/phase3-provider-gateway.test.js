@@ -299,14 +299,15 @@ describe('architecture: Phase 3 ComfyUI isolation from Agent/Chat contracts', ()
         }
     });
 
-    it('the raw ComfyUI knowledge stays pinned inside the generation domain (known-gap location)', () => {
-        // Documented current leak (Phase 3 = boundary, not refactor): the
-        // audio TTS workflows are assembled with raw node ids directly in
-        // audio/generation.js. This test pins WHERE that knowledge lives so
-        // it cannot silently appear in the Agent/Chat contract files above.
+    it('the raw ComfyUI knowledge stays pinned inside the generation domain (S-3: provider seam)', () => {
+        // S-3 migration: the audio TTS workflows are assembled through the
+        // provider seam — the executor passes semantic speaker data and the
+        // node-id knowledge (script/VoiceDesign/RoleBank/ClonePrompt) lives
+        // ONLY in generation/comfyui-provider.js. No dead node-id fallback
+        // remains in the executor (connectors are mandatory at startup).
         const audio = read(audioGenPath);
         expect(audio).to.match(/tts-qwen-narrator|tts-qwen-dialogue/);
-        expect(audio).to.match(/wfAudio\["108"\]/);
+        expect(audio).to.not.match(/wfAudio\[/);
         const loader = read(workflowLoaderPath);
         expect(loader).to.include('getWorkflow');
         const seam = read(comfyuiSeamPath);

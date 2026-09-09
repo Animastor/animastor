@@ -17,7 +17,7 @@ const {
     DEFAULT_AUDIO_DEFAULTS,
 } = require('../src/image/assembly-profile');
 const { buildImagePrompt } = require('../src/image/image-service');
-const { imageProfileNameFromConnector } = require('../src/image/connector-utils');
+const { profileNameFromConnector } = require('../src/generation/comfyui-provider');
 
 describe('Assembly profile resolver', () => {
 
@@ -103,12 +103,12 @@ describe('Assembly profile resolver', () => {
 describe('Image profile name from connector', () => {
 
     it('reads the image profile from the connector profile field', () => {
-        expect(imageProfileNameFromConnector({ profile: { imageProfile: 'qwen-image' } })).to.equal('qwen-image');
+        expect(profileNameFromConnector({ profile: { imageProfile: 'qwen-image' } }, 'image')).to.equal('qwen-image');
     });
 
     it('returns null when the connector has no profile (built-in assembly applies)', () => {
-        expect(imageProfileNameFromConnector({})).to.equal(null);
-        expect(imageProfileNameFromConnector(null)).to.equal(null);
+        expect(profileNameFromConnector({}, 'image')).to.equal(null);
+        expect(profileNameFromConnector(null, 'image')).to.equal(null);
     });
 });
 

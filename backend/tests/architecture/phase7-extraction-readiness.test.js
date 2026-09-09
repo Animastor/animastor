@@ -314,21 +314,30 @@ describe('P7-T7: no new module joins the orchestration↔runtime cycles', () => 
     });
 });
 
-// ── P7-T8 — gpu-dispatcher bypass set freeze ─────────────────────────────
+// ── P7-T8 — gpu-dispatcher bypass set freeze (S-3 migration applied) ─────
 describe('P7-T8: the Provider Gateway generation seam bypass set stays frozen', () => {
     // Phase 3 created generation.sendJob / ComfyUIProvider as the dispatch
     // seam; these modules still call runtime/gpu-dispatcher directly
     // (documented Phase 3 §12 debt, measured Phase 7 §2.5). The set is
     // pinned: migration to the seam removes entries here consciously.
+    //
+    // S-3 (provider seam migration): all 5 generation dispatch call sites
+    // were routed through generation/comfyui-provider.generate — the media
+    // executor / orchestration entries below were REMOVED:
+    //   audio/generation.js, image/iu-processor.js, video/video-service.js,
+    //   orchestration/scene-orchestrator.js.
+    // Remaining entries are NON-generation dispatch-policy consumers:
+    //   - generation/comfyui-provider.js — the seam itself (owns the
+    //     transport edge, S-3 architecture)
+    //   - services/provider-gateway.js — Phase 3 facade delegation
+    //   - runtime/scene-window.js / helpers/redis-helpers.cjs — routing/
+    //     availability reads (resolveWorkspaceForBook), not job dispatch
+    //     (documented residual seam — DispatchTransport port, S-4).
     const BYPASS_BASELINE = [
-        'backend/src/audio/generation.js: ../runtime/gpu-dispatcher',
         'backend/src/generation/comfyui-provider.js: ../runtime/gpu-dispatcher',
         'backend/src/helpers/redis-helpers.cjs: ../runtime/gpu-dispatcher',
-        'backend/src/image/iu-processor.js: ../runtime/gpu-dispatcher',
-        'backend/src/orchestration/scene-orchestrator.js: ../runtime/gpu-dispatcher',
         'backend/src/runtime/scene-window.js: ./gpu-dispatcher',
         'backend/src/services/provider-gateway.js: ../runtime/gpu-dispatcher',
-        'backend/src/video/video-service.js: ../runtime/gpu-dispatcher',
     ];
 
     it('direct gpu-dispatcher require set matches the baseline exactly', () => {

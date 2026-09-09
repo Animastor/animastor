@@ -1,6 +1,6 @@
 # Generation Module Extraction — Architectural Reconnaissance
 
-**Status:** READ-ONLY reconnaissance (reconnaissance / audit only). No production code changed, no files moved, no `packages/animastor-generation` created, no runtime behavior touched. — **Update (S-1, same date):** the seam step S-1 (§19.1) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): isolate vbook session control from generation routes"): VBook session SQL was removed from the Generation route layer behind the `AgentSessionControl` port (`backend/src/services/agent-session-control.js`); guards added (`backend/tests/architecture/generation-vbook-boundary.test.js`, S1-A..S1-E). HTTP surface untouched. Details: §12 update, §13 update, §19 S-1 status, §22 checklist. — **Update (S-2):** the seam step S-2 (§19.2) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): registry media capabilities"): media registry created (`generation/media-registry.js`); audio/image/video registered via `generation/default-registrations.js`; dispatch branching in scene-orchestrator uses EXECUTORS map; route validation derives from registry; guards S2-A..S2-F added (`tests/architecture/generation-media-registry.test.js`). §22 checklist updated, §22.1–§22.8 added. — **Update (S-2 Completion Pass):** full hardcoded-media sweep completed (§22.9): core capability knowledge centralized through the registry across runtime/orchestration/metrics/storage/services; duplicate canonical configuration eliminated (registry reads runtime-config; stale prometheus/runtime-metrics quota/TTL drift removed); registry self-bootstraps; error semantics frozen by new guards S2-G..S2-J; the 5 `completeStage` facade tests broken by the original S-2 commit fixed (backward-compat handler resolution).
+**Status:** READ-ONLY reconnaissance (reconnaissance / audit only). No production code changed, no files moved, no `packages/animastor-generation` created, no runtime behavior touched. — **Update (S-1, same date):** the seam step S-1 (§19.1) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): isolate vbook session control from generation routes"): VBook session SQL was removed from the Generation route layer behind the `AgentSessionControl` port (`backend/src/services/agent-session-control.js`); guards added (`backend/tests/architecture/generation-vbook-boundary.test.js`, S1-A..S1-E). HTTP surface untouched. Details: §12 update, §13 update, §19 S-1 status, §22 checklist. — **Update (S-2):** the seam step S-2 (§19.2) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): registry media capabilities"): media registry created (`generation/media-registry.js`); audio/image/video registered via `generation/default-registrations.js`; dispatch branching in scene-orchestrator uses EXECUTORS map; route validation derives from registry; guards S2-A..S2-F added (`tests/architecture/generation-media-registry.test.js`). §22 checklist updated, §22.1–§22.8 added. — **Update (S-3):** the seam step S-3 (§19.3, §24) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): close provider transport seam"): all 5 direct `gpu.send`/`sendUnified` dispatch sites routed through the single provider seam `generation/comfyui-provider.generate` (payload/timeout/error/retry semantics preserved 1:1); `image/connector-utils.js` folded into the provider (deleted; barrel shims keep the public surface); hardcoded ComfyUI node-id fallbacks deleted (dead — connectors mandatory at startup) and the live merged-dialogue node patching isolated behind `provider.assembleMergedDialogueWorkflow`; the last direct workflow-connector import left the media pipeline (video-workflows → provider bindings); gpu-dispatcher require set frozen at 4 files (S3-F); guards S3-A..S3-H added (`tests/architecture/s3-provider-seam.test.js`) plus 15 provider regression tests (`tests/generation-provider-seam.test.js`). Job Protocol, Redis FSM, HTTP API, GPU Hub/Worker untouched. §24 documents the full S-3 result. — **Update (S-2 Completion Pass):** full hardcoded-media sweep completed (§22.9): core capability knowledge centralized through the registry across runtime/orchestration/metrics/storage/services; duplicate canonical configuration eliminated (registry reads runtime-config; stale prometheus/runtime-metrics quota/TTL drift removed); registry self-bootstraps; error semantics frozen by new guards S2-G..S2-J; the 5 `completeStage` facade tests broken by the original S-2 commit fixed (backward-compat handler resolution).
 **Date:** 2026-09-09
 **Baseline:** HEAD `2172fac5` ("arch(ai): physically extract analysis from backend")
 **Method:** static require-graph tracing over `backend/src/**`, route registration audit (`backend.cjs`), Redis key-family audit (`tests/architecture/redis-registry.js`), PG repository/table audit, frontend store/page tracing (`frontends/app/src`), cross-checked against existing architecture docs (`PHASE_NEXT_MODULE_EXTRACTION_RECONNAISSANCE.md`, `MODULAR_PRODUCT_ARCHITECTURE.md` §C8/C9/C12, `PHASE_5_ORCHESTRATION_RUNTIME.md`, `COMFYUI_WORKFLOW_CONNECTOR_RECONNAISSANCE.md`). Where documentation and code disagree, **the code wins** and the discrepancy is flagged.
@@ -620,7 +620,7 @@ Explicitly **not** exported: dispatch-engine internals, lease keys, asset-state 
 
 1. **S-1 Route split (no package yet):** move VBook session SQL out of generation routes into an `agent-session-control` host module; split `/api/v1/generate` (import leg) from generation routes; extract `worker/counts` VBook fields behind the same module. Pure moves; guards updated. — **✅ DONE (route-SQL half):** `AgentSessionControl` port landed (`services/agent-session-control.js`); `routes/generation-routes.cjs` (`/worker/counts` `active_vbook` leg) and `routes/book/generation-routes.cjs` (`cancel-worker`/`cancel-generation` VBook session-cancel legs) consume the port; `routes/book/generation-routes.cjs` removed from the sql-boundary direct-handle whitelist; new guard suite `tests/architecture/generation-vbook-boundary.test.js` (S1-A..S1-E) pins the boundary. **Remaining (deferred, separate PR):** the `/api/v1/generate` import-leg split — handler stays physically in generation-routes.cjs with its external contract frozen (Android parity R-7); its separation is a route-ownership move requiring its own regression pass.
 2. **S-2 Registry-ization:** one media-type registry module (assets, stages, worker types, quotas/TTLs); replace 4 hard-coded arrays. — **✅ DONE:** `generation/media-registry.js` + `generation/default-registrations.js` landed; dispatch branching in `scene-orchestrator.js` uses EXECUTORS map; route validation derives from registry; `generation-progress.js` WORKER_TYPES from registry; guards S2-A..S2-F added (`tests/architecture/generation-media-registry.test.js`, 13 tests); phase6 baseline updated. §22.1–§22.8 documents the result.
-3. **S-3 Provider seam migration (P7-T8 set):** route the 5 `gpu.send` bypass sites through `comfyui-provider`/`generation.sendJob`; delete node-id fallbacks; fold `image/connector-utils` into the provider.
+3. **S-3 Provider seam migration (P7-T8 set):** route the 5 `gpu.send` bypass sites through `comfyui-provider`/`generation.sendJob`; delete node-id fallbacks; fold `image/connector-utils` into the provider. — **✅ DONE (§24):** all 5 sites dispatch via `provider.generate`; node-id fallbacks deleted (dead — connectors mandatory at startup), merged-dialogue raw-node patching moved behind `assembleMergedDialogueWorkflow`; `image/connector-utils.js` deleted (provider absorbs the ComfyUI knowledge; barrel shims keep the public surface); video-workflows rides provider bindings; guards S3-A..S3-H (`tests/architecture/s3-provider-seam.test.js`) + 15 regression tests (`tests/generation-provider-seam.test.js`) green.
 4. **S-4 Shared-infra moves:** `assembly-profile` (+profile loader) out of `image/` into a `generation/prompt-profiles/` area; `normalizeCharacterRefs` → `utils`; `estimateSpeechDurationSec` → Book/authoring utils.
 5. **S-5 Cycle breaking:** finish Phase-5 direction — semantic reactions move behind the Runtime Result consumer; runtime→orchestration edges collapse to event-journal + injected consumer. Unfreeze R5.
 6. **S-6 Port introduction:** DispatchTransport (with routing resolvers injected), BookDataPort (kills workflows→book), mediaUtils port (music-metadata/ffprobe), SSE publisher injection.
@@ -845,7 +845,7 @@ Real runtime error paths exercised by tests, all semantics unchanged after regis
 
 - [x] S-1 route split done (VBook SQL out; import leg separated) — **VBook SQL half DONE (AgentSessionControl port, guards green); `/api/v1/generate` import-leg split explicitly deferred to its own PR (contract frozen, no VBook exposure)**
 - [x] S-2 media-type registry (no hard-coded audio/image/video arrays) — **DONE incl. Completion Pass (§22.9): all core runtime/orchestration/metrics/storage/services media maps resolve through the registry (dispatch-engine, gpu-dispatcher, retry-budget, circuit-breaker, scheduler, reconciliation, persistence, prometheus, worker-repo, gateway, book services, scene-state); duplicate canonical config eliminated (registry reads runtime-config; stale prometheus/runtime-metrics quota+TTL drift removed; registry is canonical home of job timeouts + per-scene retry limits); registry self-bootstraps (load-order safe); guards S2-A..S2-J green (747 architecture tests + full Generation unit/route/boundary batches passing)**
-- [ ] S-3 provider seam live; zero `gpu.send` bypasses; zero node-id literals
+- [x] S-3 provider seam live; zero `gpu.send` bypasses; zero node-id literals — **DONE (§24): all 5 dispatch call sites routed through `generation/comfyui-provider.generate` (payload/error/retry/cancellation semantics preserved 1:1, regression-tested); `image/connector-utils.js` folded into the provider; hardcoded node-id fallbacks deleted (dead) and merged-dialogue node knowledge isolated in the provider (`assembleMergedDialogueWorkflow`); last direct connector import removed from the media pipeline (video-workflows → provider bindings); gpu-dispatcher require set frozen at 4 files (S3-F); guards S3-A..S3-H green + 15 provider regression tests; GPU Hub/Worker/contracts/Job Protocol/Redis/HTTP untouched**
 - [ ] S-4 assembly-profile + pure utils relocated
 - [ ] S-5 runtime→orchestration cycle reduced to injected contracts (R5 unfrozen)
 - [ ] S-6 ports (dispatch transport, book data, media utils, events) injected; no direct pg/ioredis/config inside the future package dirs
@@ -889,4 +889,95 @@ Real runtime error paths exercised by tests, all semantics unchanged after regis
 - Redis ownership: `backend/tests/architecture/redis-registry.js` (backend families §3.4)
 - Frontend: `frontends/app/src/pages/GeneratePage.tsx:37–43` (polls), `state/generateStore.ts:1012` startGeneration, `:1043` startVBookGeneration, `:1216` cancelGeneration, `:1246` cancelTask, `:16` playback circular note
 
-*End of reconnaissance. No code changed, no files moved, no package created.*
+## 24. S-3 — Provider Seam Migration (LANDED)
+
+**Status:** DONE — behavior-neutral seam commit ("arch(generation): close provider transport seam"). No package created, no Generation files moved, GPU Hub / Worker / `@animastor/contracts` / Job Protocol / Redis keys / FSM / HTTP API / frontend untouched.
+
+### 24.1 Direct GPU dispatch bypasses — found and eliminated
+
+All 5 reconnaissance bypass points (§8.1, P7-T8 set) were routed through the provider seam `generation/comfyui-provider.generate()`:
+
+| Bypass site | Disposition |
+|---|---|
+| `audio/generation.js:351` (merged dialogue `gpu.send`) | → `provider.generate({jobId, workflow, jobType:'audio', buildId, dispatchId})` |
+| `audio/generation.js:550` (per-segment `gpu.send`) | → `provider.generate(...)` (same shape) |
+| `image/iu-processor.js:278` (`gpu.send` iu_image) | → `provider.generate(...)` (same shape; `jobSchema.buildJobId` → `provider.buildJobId`) |
+| `video/video-service.js` via `jobSpecs` | jobSpecs still built in the executor (payload construction, no transport); the dead `gpu-dispatcher` import in `video-service.js` removed; the actual send site: |
+| `orchestration/scene-orchestrator.js:479` (`gpu.sendUnified`) | → `provider.generate(jobSpec)` (v2 task-spec passthrough) |
+
+**Semantics preserved 1:1 (regression-tested):** job payload (all fields incl. `assets`/`workflow_name`/`unit_ids`/`timeout_ms` pass through verbatim), `job_id`, `dispatch_id`, `timeout`, error handling (`{sent:false,error}` returned unchanged; transport throws propagate — marker cleanup in `iu-processor` and chunk cleanup in `audio` behave identically), retry (inside `gpu-dispatcher.sendUnified`, untouched), cancellation (never went through the provider — it is owned by the dispatch engine: markers/leases + Hub queue clear; documented residual, §24.7).
+
+Global searches confirmed no other production `gpu.send`/`gpu.sendUnified` call sites outside the allowlist (provider seam, provider-gateway facade, `resolveWorkspaceForBook` availability reads in `runtime/scene-window.js` + `helpers/redis-helpers.cjs`).
+
+### 24.2 The single provider seam
+
+`generation/comfyui-provider.js` is now the ONLY Generation → ComfyUI/GPU boundary:
+
+```
+Generation media executor (audio/generation, image/iu-processor, video/video-service,
+                           orchestration/scene-orchestrator, workflows/video/video-workflows)
+      ↓  semantic contract only (workflow names, connector entity keys, v2 job spec)
+generation/comfyui-provider
+      ↓
+animastor-comfyui-workflow-connector (workflow JSON + connectors) + runtime/gpu-dispatcher.sendUnified
+      ↓
+GPU Hub / Worker (external packages)
+```
+
+Provider API (narrow, internal): `loadWorkflow`, `getConnector`, `getWorkflowHash`, `listWorkflows`, `applyValue` (entity-key → node/field binding), `getNodeId`, `getBinding`, `profileNameFromConnector`, `assembleMergedDialogueWorkflow` (see §24.4), `generate` (dispatch; camelCase sugar + v2 passthrough, camelCase keys stripped before the wire), `buildJobId`. No `provider.cancel` — deliberate (§24.7).
+
+### 24.3 `image/connector-utils.js` — folded into the provider (S3-E)
+
+The competing seam is GONE: the file was deleted. Disposition of its contents:
+- `applyImageValue` / `getImageNodeId` / `WORKFLOW_NAME` — ComfyUI knowledge → provider (`applyValue`, `getNodeId`, `WORKFLOW_NAMES.image`);
+- `imageProfileNameFromConnector` — connector-shape knowledge → provider (`profileNameFromConnector(connector, type)`, generic for audio/image/video);
+- `resolveImageProfileName` — override-first policy → inlined in `iu-processor` (`profileOverride.getOverride('image') || provider.profileNameFromConnector(provider.getConnector(WORKFLOW_NAMES.image), 'image')`).
+
+`image-service.js` keeps barrel-compat re-exports (`getImageNodeId`/`applyImageValue`/`WORKFLOW_NAME`) as delegating shims over the provider — public surface unchanged, no second seam. The same treatment applied to `audio/connector-utils.js`: ONLY the general media utility `isFFmpegAvailable` remains; `applyAudioValue`/`getAudioNodeId`/`audioProfileNameFromConnector` moved to the provider (barrel re-exports delegate). `services/profile-override.js` and `services/workflow-manager.js` keep their package imports — they are the user-settings/observability services OUTSIDE the generation media contour (S2-E classification), registered consumers.
+
+### 24.4 Hardcoded ComfyUI node IDs — removed from the executor, isolated in the provider (S3-D)
+
+Architectural decision (recorded, not silently deleted): the reconnaissance found the node-id fallbacks dead in practice (connectors are mandatory at startup — `backend.cjs` exits fatally when workflows/connectors fail to load). Disposition:
+- **Dead fallback branches** in `audio/generation.js` `sendPerSegmentAudio` (`wfAudio["108"]`, `["71"]`, `["80"]`, `["74"]` `else`-branches) — DELETED. The connector path is now the only path (`provider.applyValue` with entity keys `dialogueScript`, `defaultInstruct`, `character1Voice/2`, `roleName1/2`, `narrationText`, `voiceInstruction`).
+- **Live raw-node patching** in `buildMergedDialogueWorkflow` (script node 108 wholesale inputs replace, VoiceDesign 71/80/82 voice instructions, RoleBank 74 `role_name_N`/`prompt_N`, ClonePrompt links 73/81/83 — the ~13 reference sites) — MOVED to `provider.assembleMergedDialogueWorkflow({script, defaultInstruct, speakers})`. The topology constants live in `MERGED_DIALOGUE_NODE_IDS` inside the provider; the executor passes semantic speaker data (name + voice) only. Byte-identical node inputs regression-tested.
+- **Dead legacy export** `video-workflows.buildVideoWorkflow` (raw ids `202`/`203`, zero callers) — REMOVED; the pure text helpers (`buildVideoPromptLegacy`/`motionFromState`/`buildCamera`) stay (tested, no node knowledge).
+- Guard S3-D now scans the media/orchestration/runtime layers for numeric node-id literals and raw `wf["NN"].inputs` patching patterns; the phase3 T6 "known-gap" pin was flipped to assert the gap is closed.
+
+### 24.5 `video-workflows.js` — last direct package import removed from the media pipeline
+
+`workflows/video/video-workflows.js` (the video workflow builder) now resolves connectors and applies bindings through the provider (`provider.getConnector`/`getNodeId`/`getBinding`/`applyValue`) — no direct `animastor-comfyui-workflow-connector` import in any generation module anymore. Residual (documented, S-4): the builder still knows the LTX workflow shape (guide nodes by `class_type: 'LTXVAddGuide'`, connector-resolved node patching) — that is workflow-assembly knowledge of the builder tier; folding the builder fully into the provider layer is part of the S-4 utils/builder relocation, not S-3 (no big refactor for beauty).
+
+Connector-package consumer baseline shrank to: `generation/comfyui-provider.js`, `services/workflow-manager.js`, `services/profile-override.js`, `backend.cjs` (composition root) — pinned by the updated `comfyui-connector-core-boundary` baseline and new guard S3-C.
+
+### 24.6 `gpu-dispatcher` — residual coupling documented, DispatchTransport split deferred
+
+Per the task's risk discipline, no routing/policy refactor: `runtime/gpu-dispatcher.js` remains the DispatchTransport (Job Protocol v2 → Hub `POST /task`) and still hosts the PW-2/SH-2 routing policy (book → workspace → private worker / policy lane / system pool) with server-derived workspace resolution. The gpu-dispatcher require set is frozen at exactly 4 files (guard S3-F, updated phase7 P7-T8 baseline):
+- `generation/comfyui-provider.js` — the seam (owns the transport edge);
+- `services/provider-gateway.js` — Phase 3 facade delegation (`generation.sendJob`);
+- `runtime/scene-window.js`, `helpers/redis-helpers.cjs` — availability/routing reads only (`resolveWorkspaceForBook`), never `send`/`sendUnified` (guard asserts).
+Splitting "Generation dispatch policy → DispatchTransport port → actual GPU transport" is recorded as the next seam (S-4+).
+
+### 24.7 Dependency direction & cancellation
+
+Dependency direction after S-3: `executors → provider seam → {workflow-connector, gpu-dispatcher} → Hub/Worker`. No reverse edges; the provider touches no LLM transports (agent/chat/shared-pool) — phase3 T4/T6 still green. Cancellation deliberately does NOT pass through the provider: it is owned by the dispatch engine (iu-in-flight marker lifecycle, leases, Hub `DELETE /queue/clear`). The provider exposes no `cancel` surface (regression-tested), so no duplicate cancellation semantics were created.
+
+### 24.8 Guards (all green — `tests/architecture/s3-provider-seam.test.js`)
+
+- **S3-A** media executors require no gpu-dispatcher / GPU-Hub / Worker implementation (and no `HUB_URL`).
+- **S3-B** media executors require no ComfyUI connector package / connector-loader.
+- **S3-C** connector package imports limited to the provider + registered non-executor consumers; the merged-dialogue node knowledge is provider-owned; executors depend on the seam explicitly.
+- **S3-D** no numeric node-id literals (108/71/73/74/80/81/82/83/202/203) and no raw `wf["NN"].inputs` patching in media/orchestration/runtime layers.
+- **S3-E** `image/connector-utils.js` stays deleted; `audio/connector-utils.js` carries no ComfyUI knowledge.
+- **S3-F** the gpu-dispatcher require set matches the frozen 4-file baseline; availability consumers never dispatch.
+- **S3-G** no backend source imports GPU Hub/Worker packages (physical untouchedness additionally enforced by the pre-existing phase2/phase10 package-boundary suites).
+- **S3-H** the provider rides the frozen Job Protocol facade (`jobSchema.buildJobId`, `gpuDispatcher.sendUnified`) — no private protocol fields, no direct HTTP/Redis protocol knowledge.
+
+Plus 15 regression tests in `tests/generation-provider-seam.test.js`: dispatch mapping (audio/image/iu_image), payload preservation (video jobSpec passthrough incl. `assets`/`timeout_ms`/`workflow_name`/`unit_ids`; camelCase sugar stripped), error propagation (`{sent:false,error}` and throws), unknown/invalid responses (frozen dispatcher validation: `dispatch_id is required`, `Invalid job type`), cancellation surface absence, semantic binding API byte-equivalence.
+
+### 24.9 S-4 readiness: READY (for the next seam step), blockers resolved
+
+- [x] S-3 provider seam live; zero `gpu.send` bypasses; zero node-id literals outside the provider.
+- [x] `image/connector-utils.js` eliminated; no competing Generation → ComfyUI seam.
+- Remaining before physical extraction (unchanged, §23): S-4 assembly-profile + pure utils relocation; S-5 runtime→orchestration cycle (R5); S-6 injected ports; G-1..G-14 package guards; package-owned test suite. Residual seams recorded: DispatchTransport split (§24.6), video builder folding (§24.5), cancellation ownership move into the future package boundary.
+
+*End of reconnaissance. No package created; no Generation files moved.*

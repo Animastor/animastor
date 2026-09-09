@@ -8,7 +8,7 @@
 // ======================================================
 
 const { expect } = require('chai');
-const { audioProfileNameFromConnector } = require('../src/audio/connector-utils');
+const { profileNameFromConnector } = require('../src/generation/comfyui-provider');
 const { resolveAssembly, DEFAULT_AUDIO_SECTIONS } = require('../src/image/assembly-profile');
 
 // Silence audio helpers.log during tests
@@ -32,12 +32,12 @@ before(() => {
 
 describe('audioProfileNameFromConnector', () => {
     it('reads the audio profile from the connector profile field', () => {
-        expect(audioProfileNameFromConnector({ profile: { audioProfile: 'qwen-tts' } })).to.equal('qwen-tts');
+        expect(profileNameFromConnector({ profile: { audioProfile: 'qwen-tts' } }, 'audio')).to.equal('qwen-tts');
     });
 
     it('returns null when the connector has no profile (built-in assembly applies)', () => {
-        expect(audioProfileNameFromConnector({})).to.equal(null);
-        expect(audioProfileNameFromConnector(null)).to.equal(null);
+        expect(profileNameFromConnector({}, 'audio')).to.equal(null);
+        expect(profileNameFromConnector(null, 'audio')).to.equal(null);
     });
 });
 
