@@ -244,6 +244,10 @@ describe('T6: contour routes do not gain new implementation-detail deps', () => 
             '../runtime/dispatch-engine',
             '../services/audio-orchestrator',
             '../services/video-orchestrator',
+            // S-1 (Generation extraction seam): the VBook session leg goes
+            // through the narrow AgentSessionControl port — the
+            // agent_sessions SQL left this route layer with the split.
+            '../services/agent-session-control',
         ],
         'packages/animastor-editor/src/editor-routes.cjs': [
             // Editor package (Phase 4 physical move): host legs arrive behind
@@ -282,15 +286,17 @@ describe('T6: contour routes do not gain new implementation-detail deps', () => 
         'packages/animastor-player/src/playback-queue.cjs': ['./artifact-naming.cjs'],
         'routes/book/generation-routes.cjs': [
             // Generation-control leg (regenerate / cancel / generate-next) —
-            // requires dispatch/runtime + PG repos + raw PG for its VBook
-            // session cancellation, all baselined legacy edges (§6.1).
+            // requires dispatch/runtime + PG repos, all baselined legacy
+            // edges (§6.1). S-1: the VBook session-cancel SQL moved behind
+            // the AgentSessionControl port; the direct
+            // storage/postgres/database edge is GONE from this baseline.
             '../../storage/postgres/repositories/scene-assets-repo',
             '../../services/generation-progress',
             '../../runtime/dispatch-engine',
             '../../storage/postgres/repositories/task-repo',
             '../../storage/postgres/repositories/book-repo',
             '../../storage/postgres/repositories/generation-cancel-repo',
-            '../../storage/postgres/database',
+            '../../services/agent-session-control',
         ],
     };
 

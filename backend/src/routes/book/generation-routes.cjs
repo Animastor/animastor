@@ -10,6 +10,11 @@ const dispatchEngine = require('../../runtime/dispatch-engine');
 const taskRepo = require('../../storage/postgres/repositories/task-repo');
 const bookRepo = require('../../storage/postgres/repositories/book-repo');
 const generationCancelRepo = require('../../storage/postgres/repositories/generation-cancel-repo');
+// S-1 (Generation extraction seam): the ONLY VBook leg allowed in this
+// generation route layer is the narrow AgentSessionControl port
+// (VBook-owned — see services/agent-session-control.js). Raw
+// agent_sessions/book_generation_sessions SQL must not live here.
+const { createAgentSessionControl } = require('../../services/agent-session-control');
 
 module.exports = function(app, redis, deps) {
     const {
@@ -21,8 +26,11 @@ module.exports = function(app, redis, deps) {
         detectAvailableMode, recoverChunksFromDisk, recoverAllBooksFromDisk,
         cleanupService, bookDiff, taskHandler, windowGenerator,
         iuRepo, cleanBookRedisKeys,
+        agentSessionControl,
     } = deps;
     const { log } = utils;
+
+    const sessionControl = agentSessionControl || createAgentSessionControl();
 
     // ======================================================
     // GENERATE NEXT (slide window)
@@ -140,16 +148,13 @@ module.exports = function(app, redis, deps) {
             log(`[CANCEL-WORKER] ${bookId}: cancelling type=${resolvedType} task=${taskId || 'all'}`);
 
             if (resolvedType === 'vbook') {
-                // Cancel VBook/AI agent: update agent session status to 'cancelled'
+                // Cancel VBook/AI agent: VBook session cancellation goes
+                // through the AgentSessionControl port (S-1) — the
+                // agent_sessions status grammar stays VBook-owned.
                 await redis.sadd(`animastor:cancelled-workers:${bookId}`, 'vbook');
                 await redis.expire(`animastor:cancelled-workers:${bookId}`, 3600);
                 try {
-                    const { query } = require('../../storage/postgres/database');
-                    await query(
-                        `UPDATE agent_sessions SET status = 'cancelled', updated_at = $1
-                         WHERE book_id = $2 AND status IN ('running', 'paused')`,
-                        [Math.floor(Date.now() / 1000), bookId]
-                    );
+                    await sessionControl.cancelSessions(bookId);
                     log(`[CANCEL-WORKER] ${bookId}: VBook agent sessions cancelled`);
                 } catch (pgErr) {
                     console.warn(`[CANCEL-WORKER] Failed to cancel VBook session: ${pgErr.message}`);
@@ -293,14 +298,10 @@ module.exports = function(app, redis, deps) {
                 console.warn(`[CANCEL-GENERATION] Failed to cancel generation task rows: ${pgErr.message}`);
             }
 
-            // Cancel VBook/AI agent sessions too.
+            // Cancel VBook/AI agent sessions too — through the
+            // AgentSessionControl port (S-1: no agent_sessions SQL here).
             try {
-                const { query: pgQuery } = require('../../storage/postgres/database');
-                await pgQuery(
-                    `UPDATE agent_sessions SET status = 'cancelled', updated_at = $1
-                     WHERE book_id = $2 AND status IN ('running', 'paused')`,
-                    [Math.floor(Date.now() / 1000), bookId]
-                );
+                await sessionControl.cancelSessions(bookId);
                 log(`[CANCEL-GENERATION] ${bookId}: VBook agent sessions cancelled`);
             } catch (pgErr) {
                 console.warn(`[CANCEL-GENERATION] Failed to cancel VBook session: ${pgErr.message}`);

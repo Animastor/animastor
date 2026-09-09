@@ -25,8 +25,16 @@ module.exports = function(app, redis, deps) {
         utils, saveChunk, getChunk, getAllChunks, getBookWindowStatus,
         detectAvailableMode, recoverChunksFromDisk, recoverAllBooksFromDisk,
         cleanupService, iuRepo, computeWaveform,
+        agentSessionControl,
     } = deps;
     const { log } = utils;
+
+    // S-1 (Generation extraction seam): VBook agent-session state crosses
+    // this boundary ONLY through the narrow AgentSessionControl port
+    // (services/agent-session-control.js — VBook-owned). This route layer
+    // must not know the agent_sessions/book_generation_sessions tables.
+    const { createAgentSessionControl } = require('../services/agent-session-control');
+    const sessionControl = agentSessionControl || createAgentSessionControl();
 
     // ======================================================
     // PW-2: GPU HUB → BACKEND CALLBACK GUARD
@@ -279,6 +287,9 @@ module.exports = function(app, redis, deps) {
             // Health is workspace-aware: an authenticated workspace provider
             // (Experimental Beta) can be alive while the global env key is not
             // (and vice versa) — cache is keyed per provider inside ai-service.
+            // S-1: the "is a VBook session running" leg goes through the
+            // VBook-owned AgentSessionControl port (no agent_sessions SQL
+            // in this generation route layer).
             const aiService = require('../services/ai-service');
             let workspaceProvider = null;
             if (req.workspace && req.workspace.id) {
@@ -290,12 +301,9 @@ module.exports = function(app, redis, deps) {
             const vbookCount = await aiService.checkAIHealth(config, workspaceProvider);
             let activeVBook = 0;
             try {
-                const result = await storage.postgres.query(
-                    `SELECT COUNT(*)::int as cnt FROM agent_sessions WHERE status = 'running'`
-                );
-                activeVBook = (result.rows[0]?.cnt || 0) > 0 ? 1 : 0;
+                activeVBook = await sessionControl.getActiveSessionCount();
             } catch (pgErr) {
-                console.warn('[WORKER-COUNTS] Failed to query agent_sessions:', pgErr.message);
+                console.warn('[WORKER-COUNTS] Failed to query agent sessions:', pgErr.message);
             }
 
             res.json({

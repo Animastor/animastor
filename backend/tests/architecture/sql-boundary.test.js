@@ -17,6 +17,8 @@ const { listSourceFiles, readSource, rel, BACKEND_SRC } = require('./helpers');
 
 // Direct postgres handle (getPool/query) outside storage — frozen baseline.
 // Sorted; do NOT add entries here without an ADR accepted by Phase 3+.
+// (S-1 removed routes/book/generation-routes.cjs — its VBook session SQL
+// moved behind the AgentSessionControl port; no direct handle remains.)
 const DIRECT_SQL_WHITELIST = [
     'backend/src/auth/auth-service.js',
     'backend/src/image/iu-processor.js',
@@ -24,10 +26,10 @@ const DIRECT_SQL_WHITELIST = [
     'backend/src/orchestration/orchestrator.js',
     'backend/src/orchestration/scene-restoration.js',
     'backend/src/routes/ai-endpoint-routes.cjs',
-    'backend/src/routes/book/generation-routes.cjs',
     'backend/src/runtime/runtime-scheduler.js',
     'backend/src/runtime/scene-window.js',
     'backend/src/services/agent-session.js',
+    'backend/src/services/agent-session-control.js',
     'backend/src/services/agent/ai-caller.js',
     'backend/src/services/agent/bootstrap.js',
     'backend/src/services/book-sync.js',
