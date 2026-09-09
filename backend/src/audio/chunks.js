@@ -4,6 +4,8 @@
 
 const fs = require('fs');
 const helpers = require('./helpers');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 
 function findExistingSceneChunks(bookId, chapterId, sceneId, buildId, expectedCount = null) {
     const dir = helpers.getOutputPath(buildId);
@@ -19,7 +21,7 @@ function findExistingSceneChunks(bookId, chapterId, sceneId, buildId, expectedCo
         if (expectedCount !== null && expectedCount > 0) {
             const chunks = [];
             for (let i = 1; i <= expectedCount; i++) {
-                const chunkPath = helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}_${String(i).padStart(4, '0')}.mp3`);
+                const chunkPath = helpers.getOutputPath(buildId, artifactNaming.sceneChunkAudioName(bookId, chapterId, sceneId, i));
                 if (fs.existsSync(chunkPath)) {
                     chunks.push(i);
                 }
@@ -70,11 +72,11 @@ function areSceneAudioChunksReady(bookId, chapterId, sceneId, buildId, expectedC
 }
 
 function makeChunkId(chapterId, sceneId, chunkIndex, bookId) {
-    return `${bookId}_${chapterId}_${sceneId}_${String(chunkIndex).padStart(4, '0')}`;
+    return artifactNaming.iuAssetId(bookId, chapterId, sceneId, String(chunkIndex).padStart(artifactNaming.SCENE_CHUNK_PAD, '0'));
 }
 
 function getChunkAudioPath(buildId, bookId, chapterId, sceneId, chunkIndex) {
-    return helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}_${String(chunkIndex).padStart(4, '0')}.mp3`);
+    return helpers.getOutputPath(buildId, artifactNaming.sceneChunkAudioName(bookId, chapterId, sceneId, chunkIndex));
 }
 
 module.exports = {

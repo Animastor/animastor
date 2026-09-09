@@ -1,6 +1,16 @@
 // ======================================================
-// Image Helpers
+// Image Helpers — image-media-only helpers (S-4)
 // ======================================================
+// S-4: the media-agnostic text/alias normalizers (isSafeCharacterAlias,
+// normalizeForMatch, wordOverlapScore, GENERIC_WORDS, UNSAFE_MENTION_TYPES,
+// replaceAliasWithCharacterId) and the character-reference resolvers
+// (normalizeCharacterRefs, buildCharacterAliases, buildSafeAliasIndex) moved
+// to the Generation prompt-profiles layer:
+//   generation/prompt-profiles/prompt-text-utils.js  (pure normalizers)
+//   generation/prompt-profiles/character-utils.js    (coreference resolvers)
+// This module keeps ONLY image-media helpers (logging, typography, preview
+// constants) and delegates the relocated surface for compatibility.
+//
 // getOutputPath and escapeRegExp imported from shared utils/string-utils.
 
 const { getOutputPath, escapeRegExp } = require('../utils/string-utils');
@@ -10,6 +20,9 @@ const { getOutputPath, escapeRegExp } = require('../utils/string-utils');
 // twin (guarded by editor-package-boundary.test.js PB5), restored at the
 // pre-move host location.
 const { CYR_LATIN_MAP, cyrToLatin } = require('../utils/cyr-latin-map');
+// S-4: canonical implementations live in the generation prompt-profiles layer.
+const textUtils = require('../generation/prompt-profiles/prompt-text-utils');
+const characterUtils = require('../generation/prompt-profiles/character-utils');
 
 const logPrefix = '[IMAGE]';
 
@@ -40,72 +53,6 @@ function isTypographyStyle(style) {
     return TYPOGRAPHY_STYLES.has(style.toLowerCase().replace(/[\s_-]+/g, '_'));
 }
 
-const UNSAFE_CHARACTER_ALIAS_WORDS = new Set([
-    'a', 'an', 'the', 'of', 'in', 'on', 'at', 'to', 'from', 'with', 'and', 'or',
-    'by', 'for', 'near', 'inside', 'left', 'right', 'center',
-    'v', 'vo', 'na', 'u', 'iz', 's', 'so', 'k', 'ko', 'ot', 'pod', 'pri', 'za',
-    'po', 'i',
-    'man', 'woman', 'person', 'people', 'human', 'citizen', 'stranger',
-    'male', 'female', 'boy', 'girl', 'child', 'children', 'crowd',
-    'muzhchina', 'zhenshchina', 'chelovek', 'lyudi', 'grazhdanin',
-    'grazhdanka', 'neznakomets', 'neznakomka', 'malchik', 'devochka',
-    'rebenok', 'tolpa',
-]);
-
-function isSafeCharacterAlias(alias) {
-    const norm = cyrToLatin(String(alias || '').toLowerCase())
-        .replace(/[^a-z0-9]+/g, '');
-    return norm.length >= 3 && !UNSAFE_CHARACTER_ALIAS_WORDS.has(norm);
-}
-
-/**
- * Normalize a string for comparison: lowercase, transliterate Cyrillic to Latin,
- * replace underscores/hyphens with spaces, strip punctuation.
- */
-function normalizeForMatch(text) {
-    if (!text) return '';
-    let result = text.toLowerCase().trim();
-    result = result.split('').map(ch => CYR_LATIN_MAP[ch] || ch).join('');
-    result = result.replace(/[_\-]+/g, ' ');
-    result = result.replace(/[^a-z0-9\s]/g, '');
-    result = result.replace(/\s+/g, ' ').trim();
-    return result;
-}
-
-/**
- * Compute word overlap score between two normalized strings.
- */
-function wordOverlapScore(sourceWords, candidateWords) {
-    if (!candidateWords.length) return 0;
-    let matched = 0;
-    for (const cw of candidateWords) {
-        if (cw.length < 3) continue;
-        if (sourceWords.includes(cw)) {
-            matched++;
-        } else if (cw.length >= 4) {
-            const hasPrefix = sourceWords.some(sw =>
-                sw.length >= 4 &&
-                (sw.startsWith(cw.slice(0, 4)) || cw.startsWith(sw.slice(0, 4)))
-            );
-            if (hasPrefix) matched += 0.5;
-        }
-    }
-    return matched / candidateWords.length;
-}
-
-const GENERIC_WORDS = new Set([
-    'on', 'ona', 'ono', 'oni', 'yego', 'yeyo', 'ikh', 'yemu', 'yey', 'nim',
-    'muzhchina', 'zhenshchina', 'chelovek', 'lyudi', 'tolpa',
-    'gospodin', 'gospozha', 'tovarishch', 'grazhdanin',
-    'kto-to', 'nekto', 'kto-nibud', 'vse',
-    'он', 'она', 'оно', 'они', 'его', 'её', 'их', 'ему', 'ей', 'ним',
-    'мужчина', 'женщина', 'человек', 'люди', 'толпа',
-    'господин', 'госпожа', 'товарищ', 'гражданин',
-    'кто-то', 'некто', 'кто-нибудь', 'все',
-]);
-
-const UNSAFE_MENTION_TYPES = new Set(['pronoun', 'unknown']);
-
 const PREVIEW_WIDTH = 240;
 
 module.exports = {
@@ -117,10 +64,16 @@ module.exports = {
     escapeRegExp,
     CYR_LATIN_MAP,
     cyrToLatin,
-    isSafeCharacterAlias,
-    normalizeForMatch,
-    wordOverlapScore,
-    GENERIC_WORDS,
-    UNSAFE_MENTION_TYPES,
     PREVIEW_WIDTH,
+
+    // S-4 relocated (delegating shims — public surface unchanged)
+    isSafeCharacterAlias: textUtils.isSafeCharacterAlias,
+    normalizeForMatch: textUtils.normalizeForMatch,
+    wordOverlapScore: textUtils.wordOverlapScore,
+    GENERIC_WORDS: textUtils.GENERIC_WORDS,
+    UNSAFE_MENTION_TYPES: textUtils.UNSAFE_MENTION_TYPES,
+    replaceAliasWithCharacterId: characterUtils.replaceAliasWithCharacterId,
+    buildCharacterAliases: characterUtils.buildCharacterAliases,
+    normalizeCharacterRefs: characterUtils.normalizeCharacterRefs,
+    buildSafeAliasIndex: characterUtils.buildSafeAliasIndex,
 };

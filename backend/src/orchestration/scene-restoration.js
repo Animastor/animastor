@@ -1,6 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const state = require('../state');
+// S-4: identifier grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 const runtimeScheduler = require('../runtime/runtime-scheduler');
 const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
 const { query: pgQuery } = require('../storage/postgres/database');
@@ -45,7 +47,7 @@ async function restoreSceneChunkStatus(redis, buildId, bookId, chapterId, sceneI
     // Удаляем stale PNG для этих юнитов, чтобы GPU обязательно перегенерировал их.
     if (unitIds && Array.isArray(unitIds) && unitIds.length > 0) {
         for (const unitId of unitIds) {
-            const imageIUId = `${bookId}_${chapterId}_${sceneId}_${unitId}`;
+            const imageIUId = artifactNaming.iuAssetId(bookId, chapterId, sceneId, unitId);
             const pngPath = path.join(buildDir, `${imageIUId}.png`);
             try {
                 if (fs.existsSync(pngPath)) {

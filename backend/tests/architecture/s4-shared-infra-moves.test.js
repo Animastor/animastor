@@ -1,0 +1,237 @@
+// ======================================================
+// S-4 — Shared Infrastructure Moves (architecture guards)
+// ======================================================
+// Pins the S-4 result: Generation Core shared infrastructure physically
+// relocated into the intermediate generation/ area (no npm package yet —
+// that is S-7). Behavior-neutral; guards freeze the new dependency
+// direction:
+//
+//   Generation Core (generation/*, moved utils)
+//       ↓
+//   Generation media capabilities (audio/image/video/workflows)
+//       ↓
+//   Generation provider / ports (comfyui-provider, media-registry)
+//       ↓
+//   Host adapters (storage, redis, config, routes)
+//
+const { expect } = require('chai');
+const fs = require('fs');
+const path = require('path');
+
+const SRC = path.join(__dirname, '..', '..', 'src');
+
+function read(p) {
+    return fs.readFileSync(path.join(SRC, p), 'utf8');
+}
+
+function walk(dir, out = []) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full, out);
+        else if (/\.(js|cjs)$/.test(entry.name)) out.push(full);
+    }
+    return out;
+}
+
+function relativeToSrc(full) {
+    return path.relative(SRC, full).replace(/\\/g, '/');
+}
+
+/** Extract literal require() targets from a source string. */
+function requiresOf(source) {
+    const specs = [];
+    const re = /require\(\s*['"]([^'"]+)['"]\s*\)/g;
+    let m;
+    while ((m = re.exec(source)) !== null) specs.push(m[1]);
+    return specs;
+}
+
+// The Generation Core tier after S-4 (pure shared components; registry is the
+// media-capability seam; comfyui-provider is the provider seam — S-3 pins it).
+const S4_CORE_FILES = [
+    'generation/artifact-naming.js',
+    'generation/generation-progress.js',
+    'generation/scene-state.js',
+    'generation/media-registry.js',
+    'generation/prompt-profiles/assembly-profile.js',
+    'generation/prompt-profiles/character-utils.js',
+    'generation/prompt-profiles/prompt-text-utils.js',
+    'utils/speech-estimation.js',
+];
+
+const SHIM_FILES = [
+    'state/scene-state.js',
+    'services/generation-progress.js',
+    'image/assembly-profile.js',
+    'image/character-utils.js',
+];
+
+describe('S-4: shared infrastructure moves', () => {
+    // ─────────────────────────────────────────────────────────────
+    // S4-A — Generation Core does not import VBook/Player/Editor
+    // ─────────────────────────────────────────────────────────────
+    it('S4-A: Generation Core requires no VBook/Player/Editor/Book modules', () => {
+        const forbidden = [
+            /@animastor\/player/, /@animastor\/editor/, /@animastor\/vbook-runtime/,
+            /(^|\/|\.\.\/)book(\.js|\.cjs|\/|')/, /services\/agent/,
+            /agent-service/, /window-generator/, /agent-prompts/,
+        ];
+        for (const file of S4_CORE_FILES) {
+            for (const spec of requiresOf(read(file))) {
+                for (const re of forbidden) {
+                    expect(re.test(spec), `${file} must not require '${spec}'`).to.equal(false);
+                }
+            }
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    // S4-B — Generation Core does not import GPU/ComfyUI
+    // ─────────────────────────────────────────────────────────────
+    it('S4-B: Generation Core requires no GPU Hub/Worker/ComfyUI/gpu-dispatcher', () => {
+        const forbidden = [
+            /animastor-gpu-hub/, /animastor-worker/, /animastor-comfyui-workflow-connector/,
+            /gpu-dispatcher/, /HUB_URL/,
+        ];
+        for (const file of S4_CORE_FILES) {
+            for (const spec of requiresOf(read(file))) {
+                for (const re of forbidden) {
+                    expect(re.test(spec), `${file} must not require '${spec}' (provider/gpu seam lives outside the S-4 core tier)`).to.equal(false);
+                }
+            }
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    // S4-C — Core does not depend on HTTP/Express
+    // ─────────────────────────────────────────────────────────────
+    it('S4-C: Generation Core requires no express/http/router modules', () => {
+        const forbidden = [/^express$/, /^http$/, /^https$/, /router/, /middleware\//, /routes\//];
+        for (const file of S4_CORE_FILES) {
+            for (const spec of requiresOf(read(file))) {
+                for (const re of forbidden) {
+                    expect(re.test(spec), `${file} must not require '${spec}'`).to.equal(false);
+                }
+            }
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    // S4-D — Core has no direct host Redis/PG/config dependencies
+    // ─────────────────────────────────────────────────────────────
+    it('S4-D: Generation Core has no direct redis/pg/config/storage dependencies', () => {
+        const forbidden = [/ioredis/, /redis(?!.*helpers)/, /postgres/, /database/, /\.\.\/storage/, /storage\/postgres/,
+            /config\/runtime-config/, /process\.env/];
+        for (const file of S4_CORE_FILES) {
+            const src = read(file);
+            for (const spec of requiresOf(src)) {
+                for (const re of forbidden) {
+                    expect(re.test(spec), `${file} must not require '${spec}' (host clients must be injected — S-6 ports)`).to.equal(false);
+                }
+            }
+            expect(/process\.env/.test(src), `${file} must not read process.env`).to.equal(false);
+        }
+        // Documented host-adapter dependency (S-4 disposition): the assembly
+        // profile loader reads ai/profiles via the host ai-loader. Exactly
+        // ONE core file may touch it; it becomes the ProfileStore port in S-6.
+        const coreWithHostAdapter = S4_CORE_FILES.filter(f => requiresOf(read(f)).some(s => /ai-loader/.test(s)));
+        expect(coreWithHostAdapter).to.deep.equal(['generation/prompt-profiles/assembly-profile.js']);
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    // S4-E — no duplicate Generation Core implementations
+    // ─────────────────────────────────────────────────────────────
+    it('S4-E: each relocated core utility has exactly one implementation', () => {
+        const all = walk(SRC).map(f => [relativeToSrc(f), fs.readFileSync(f, 'utf8')]);
+        const singleDef = (pattern, canonical) => {
+            const owners = all.filter(([file, src]) => pattern.test(src)).map(([file]) => file);
+            expect(owners, `${canonical} must be the only implementation`).to.include(canonical);
+            expect(owners.filter(f => f !== canonical), `duplicate implementations of ${canonical}: ${owners.filter(f => f !== canonical).join(', ')}`).to.deep.equal([]);
+        };
+        singleDef(/function estimateSpeechDurationSec/, 'utils/speech-estimation.js');
+        singleDef(/function normalizeCharacterRefs/, 'generation/prompt-profiles/character-utils.js');
+        singleDef(/function resolveAssembly/, 'generation/prompt-profiles/assembly-profile.js');
+        singleDef(/function sceneChunkAudioName/, 'generation/artifact-naming.js');
+        // the old image/ locations are pure re-export shims (no logic migrated back)
+        for (const shim of SHIM_FILES) {
+            const src = read(shim);
+            expect(src, `${shim} must stay a one-line re-export shim`).to.match(/module\.exports\s*=\s*require\(/);
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    // S4-F — artifact/job-id grammar has a single canonical owner
+    // ─────────────────────────────────────────────────────────────
+    it('S4-F: the scene artifact grammar is owned solely by generation/artifact-naming.js', () => {
+        const grammarRe = /`\$\{\s*bookId\s*\}_\$\{\s*(chapterId|chapter|s\.chapter_id|ds\.chapter_id|scene\.chapter_id|sceneData\.chapter_id|result\.chapter\.chapter|sceneData\.chapter)\s*\}_\$\{\s*(sceneId|s\.scene_id|ds\.scene_id|scene\.scene_id|sceneData\.scene_id)\s*\}/;
+        const all = walk(SRC).map(f => [relativeToSrc(f), fs.readFileSync(f, 'utf8')]);
+        const offenders = all
+            .filter(([file, src]) => grammarRe.test(src))
+            .map(([file]) => file)
+            .filter(file => file !== 'generation/artifact-naming.js');
+        expect(offenders, `raw scene-grammar literals outside the canonical owner: ${offenders.join(', ')}`).to.deep.equal([]);
+        // the writer-side host adapter composes through the owner (no local redefinition)
+        const fsStore = read('storage/filesystem-store.js');
+        for (const fn of ['makeSceneAudioFilename', 'makeChunkAudioFilename', 'makeIUImageFilename', 'makePreviewFilename']) {
+            expect(fsStore, `${fn} must delegate to the canonical grammar`).to.match(new RegExp(`artifactNaming\\.[a-zA-Z]+`));
+        }
+    });
+
+    it('S4-F: the canonical grammar is byte-compatible with the Player naming contract', () => {
+        const naming = require(path.join(SRC, 'generation', 'artifact-naming.js'));
+        const playerNaming = require(path.join(__dirname, '..', '..', '..', 'packages', 'animastor-player', 'src', 'artifact-naming.cjs'));
+        expect(naming.sceneAudioName('b', 'c', 's')).to.equal(playerNaming.sceneAudioName('b', 'c', 's'));
+        expect(naming.sceneVideoName('b', 'c', 's')).to.equal(playerNaming.sceneVideoName('b', 'c', 's'));
+        expect(naming.sceneVideoGroupName('b', 'c', 's', '_g2')).to.equal(playerNaming.sceneVideoGroupName('b', 'c', 's', 2));
+        expect(naming.sceneImageName('b', 'c', 's', 'iu0001')).to.equal(playerNaming.iuImageName('b', 'c', 's', 'iu0001'));
+        expect(naming.sceneImageBaseName('b', 'c', 's')).to.equal(playerNaming.sceneImageName('b', 'c', 's'));
+        expect(naming.iuImagePrefix('b', 'c', 's')).to.equal(playerNaming.iuImagePrefix('b', 'c', 's'));
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    // S4-G — media namespaces do not import each other
+    // ─────────────────────────────────────────────────────────────
+    it('S4-G: audio/image/video/workflows have no cross-media module imports', () => {
+        const mediaDirs = ['audio', 'image', 'video', 'workflows'];
+        const scanned = [];
+        for (const dir of mediaDirs) {
+            for (const full of walk(path.join(SRC, dir))) {
+                scanned.push([dir, full]);
+            }
+        }
+        for (const [dir, full] of scanned) {
+            for (const spec of requiresOf(fs.readFileSync(full, 'utf8'))) {
+                const m = spec.match(/(?:^|\.\.\/|\.\.\/\.\.\/|\.\/)(audio|image|video)(?=\/|')/);
+                if (m) {
+                    const rel = relativeToSrc(full);
+                    expect(m[1], `${rel} must not import the ${m[1]} media namespace ('${spec}'; shared pieces live in generation/ now)`)
+                        .to.not.equal(dir);
+                }
+            }
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    // S4-H — Player/Editor/VBook boundary surfaces stay intact
+    // ─────────────────────────────────────────────────────────────
+    it('S4-H: transition shims keep the boundary suites\u2019 pinned surfaces alive', () => {
+        // scene-state FSM surface (asset-state.test.js, scene-state.test.js, redis-ownership)
+        const sceneState = require(path.join(SRC, 'state', 'scene-state.js'));
+        expect(sceneState.ASSETS.join(',')).to.equal('audio,image,video');
+        // task registry surface (generation-progress.test.js, happy-path, progress-panel)
+        const progress = require(path.join(SRC, 'services', 'generation-progress.js'));
+        expect(progress.createTasks).to.be.a('function');
+        expect(progress.KEY_PREFIX).to.equal('animastor:generation-progress');
+        // image public surface (coreference-image.test.js requires image/character-utils;
+        // agent pipeline consumed normalizeCharacterRefs via image-service)
+        const charUtils = require(path.join(SRC, 'image', 'character-utils.js'));
+        expect(charUtils.normalizeCharacterRefs('x', [])).to.equal('x');
+        // assembly profile surface (assembly-profile.test.js, audio-profile.test.js)
+        const assembly = require(path.join(SRC, 'image', 'assembly-profile.js'));
+        expect(assembly.resolveAssembly('audio').defaults).to.have.property('defaultInstruct');
+        // the shared speech heuristic surface (visuals-duration.test.js, scene-split.test.js)
+        const speech = require(path.join(SRC, 'utils', 'speech-estimation.js'));
+        expect(speech.estimateSpeechDurationSec('')).to.equal(2);
+        expect(speech.estimateSpeechDurationSec('one two three four five six seven')).to.equal(2.1);
+    });
+});

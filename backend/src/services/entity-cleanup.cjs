@@ -40,6 +40,8 @@
 // ======================================================
 
 const path = require('path');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 const fs = require('fs');
 const fsStore = require('../storage/filesystem-store');
 // S-2: stage list resolved from media registry
@@ -162,8 +164,8 @@ module.exports = function (redis, config, deps) {
     // the next char must be `_` (or end of the name).
     function deleteSceneFiles(bookId, chapterId, sceneId) {
         const sceneAudio = fsStore.makeSceneAudioFilename(bookId, chapterId, sceneId);
-        const sceneVideo = `${bookId}_${chapterId}_${sceneId}.mp4`;
-        const chunkPrefix = `${bookId}_${chapterId}_${sceneId}_`;
+        const sceneVideo = artifactNaming.sceneVideoName(bookId, chapterId, sceneId);
+        const chunkPrefix = `${artifactNaming.scenePrefix(bookId, chapterId, sceneId)}_`;
         let deleted = 0;
         for (const buildPath of listBuildDirs()) {
             let files;
@@ -187,7 +189,7 @@ module.exports = function (redis, config, deps) {
 
     // Exact per-unit files: IU image PNG + preview PNG (writer-verified names).
     function deleteUnitFiles(bookId, chapterId, sceneId, unitId) {
-        const imageIUId = `${bookId}_${chapterId}_${sceneId}_${unitId}`;
+        const imageIUId = artifactNaming.iuAssetId(bookId, chapterId, sceneId, unitId);
         const targets = [
             `${imageIUId}.png`,
             fsStore.makePreviewFilename(bookId, chapterId, sceneId, String(unitId).replace(/^iu/, '')),
@@ -255,7 +257,7 @@ module.exports = function (redis, config, deps) {
                 `animastor:scene-video:${bookId}:${chapterId}:${sceneId}`,
                 `animastor:iu-progress:${bookId}:${chapterId}:${sceneId}:image`,
             );
-            const scenePrefix = `${bookId}_${chapterId}_${sceneId}`;
+            const scenePrefix = artifactNaming.scenePrefix(bookId, chapterId, sceneId);
             summary.chunks += await deleteSceneChunks(bookId, chapterId, sceneId);
             await scanAndDel(`animastor:iu-registry:${scenePrefix}_*`);
             await scanAndDel(`animastor:iu-in-flight:${scenePrefix}_*`);
@@ -293,7 +295,7 @@ module.exports = function (redis, config, deps) {
     async function purgeUnit(bookId, chapterId, sceneId, unitId, loadedBook) {
         const steps = [];
         const summary = { pg: {}, files_deleted: 0, dispatch_cancelled: 0 };
-        const imageIUId = `${bookId}_${chapterId}_${sceneId}_${unitId}`;
+        const imageIUId = artifactNaming.iuAssetId(bookId, chapterId, sceneId, unitId);
 
         // 1. PostgreSQL — the unit's image_units row + any dirty marker left on
         //    the parent scene row (the removed unit must simply disappear).

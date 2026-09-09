@@ -5,6 +5,8 @@
 // and recovers them to disk.
 
 const path = require('path');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 const fs = require('fs');
 
 module.exports = function(redis, config, deps) {
@@ -81,7 +83,7 @@ module.exports = function(redis, config, deps) {
                     if (!result_base64) continue;
                     if (!bookId || !chapterId || !sceneId) continue;
 
-                    const baseId = `${bookId}_${chapterId}_${sceneId}`;
+                    const baseId = artifactNaming.scenePrefix(bookId, chapterId, sceneId);
 
                     if (job_id.endsWith(':image')) {
                         // Handle image results
@@ -97,7 +99,7 @@ module.exports = function(redis, config, deps) {
 
                     if (job_id.endsWith(':audio')) {
                         // Handle audio results
-                        const chunkId = `${bookId}_${chapterId}_${sceneId}_0001`;
+                        const chunkId = artifactNaming.sceneChunkAudioName(bookId, chapterId, sceneId, 1).replace(/\.mp3$/, '');
                         const chunk = await getChunk(chunkId);
 
                         // Check if audio already exists
@@ -212,7 +214,7 @@ module.exports = function(redis, config, deps) {
             } else {
                 // Direct data URL format
                 result_base64 = raw;
-                job_id = `${bookId}_${chapterId}_${sceneId}:audio`;
+                job_id = `${artifactNaming.scenePrefix(bookId, chapterId, sceneId)}:audio`;
             }
 
             if (!result_base64) {
@@ -220,7 +222,7 @@ module.exports = function(redis, config, deps) {
             }
 
             // Check if audio already exists on disk
-            const baseId = `${bookId}_${chapterId}_${sceneId}`;
+            const baseId = artifactNaming.scenePrefix(bookId, chapterId, sceneId);
             const buildDir = path.join(config.OUTPUT_DIR, buildId);
             const canonicalAudioPath = path.join(buildDir, `${baseId}.mp3`);
 
@@ -231,7 +233,7 @@ module.exports = function(redis, config, deps) {
             }
 
             // Check if scene audio is already marked ready
-            const chunkId = `${bookId}_${chapterId}_${sceneId}_0001`;
+            const chunkId = artifactNaming.sceneChunkAudioName(bookId, chapterId, sceneId, 1).replace(/\.mp3$/, '');
             const chunk = await getChunk(chunkId);
             if (chunk && chunk.audio && chunk.audio_status === 'ready') {
                 log(`🔁 Audio already marked ready — cleaning up result key`);

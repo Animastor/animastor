@@ -11,6 +11,8 @@ const wfBuilder = require('../workflows/video/video-workflows');
 // S-3: video executors never dispatch directly — jobSpecs are sent by the
 // orchestrator through the provider seam (generation/comfyui-provider).
 const jobSchema = require('../runtime/job-schema');
+// S-4: filename/jobId grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 
 const OUTPUT_DIR = config.OUTPUT_DIR;
 const FPS = 24;
@@ -90,7 +92,7 @@ async function generateVideoAnimation(sceneData, loadedBook, buildId, workflows,
         return { success: false, reason: buildResult.reason };
     }
 
-    const baseJobId = `${sceneData.book_id}_${sceneData.chapter_id}_${sceneData.scene_id}`;
+    const baseJobId = artifactNaming.scenePrefix(sceneData.book_id, sceneData.chapter_id, sceneData.scene_id);
     const jobSpecs = [];
 
     for (let g = 0; g < buildResult.workflows.length; g++) {
@@ -138,7 +140,7 @@ async function generateVideoAnimation(sceneData, loadedBook, buildId, workflows,
 // VIDEO VALIDATION HELPERS
 // ======================================================
 async function isSceneVideoReady(buildId, bookId, chapterId, sceneId, getSceneVideoRegistry) {
-    const videoPath = getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp4`);
+    const videoPath = getOutputPath(buildId, artifactNaming.sceneVideoName(bookId, chapterId, sceneId));
     const fileExists = fs.existsSync(videoPath);
     if (!fileExists) return false;
     const registry = await getSceneVideoRegistry(bookId, chapterId, sceneId);

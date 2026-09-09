@@ -7,6 +7,8 @@
 
 const { log } = require('../helpers/utils.cjs');
 const { isBookCancelled } = require('./agent-session');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 
 module.exports = function({ redis, txtImporter, genSessionRepo, state, activeScenes, placeholderAudio, saveChunk, config }) {
     /**
@@ -61,7 +63,7 @@ module.exports = function({ redis, txtImporter, genSessionRepo, state, activeSce
                     const phScenes = [];
                     bgLog(`📦 Creating ${result.chapter.scenes.length} chunks for chapter ${result.chapter.chapter}...`);
                     for (const scene of result.chapter.scenes) {
-                        const chunkId = `${bookId}_${result.chapter.chapter}_${scene.scene_id}_0001`;
+                        const chunkId = artifactNaming.sceneChunkAudioName(bookId, result.chapter.chapter, scene.scene_id, 1).replace(/\.mp3$/, '');
                         try {
                             await saveChunk(chunkId, {
                                 build_id: buildId,

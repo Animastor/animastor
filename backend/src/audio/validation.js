@@ -5,6 +5,8 @@
 const fs = require('fs');
 const path = require('path');
 const helpers = require('./helpers');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 
 async function validateCanonicalAudio(filePath) {
     if (!filePath || typeof filePath !== 'string') {
@@ -46,7 +48,7 @@ async function validateCanonicalAudio(filePath) {
 }
 
 async function isSceneAudioReady(buildId, bookId, chapterId, sceneId) {
-    const audioPath = helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
+    const audioPath = helpers.getOutputPath(buildId, artifactNaming.sceneAudioName(bookId, chapterId, sceneId));
 
     if (!fs.existsSync(audioPath)) {
         return false;

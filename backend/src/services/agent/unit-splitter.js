@@ -11,7 +11,9 @@
 //   3. Verify durations again
 //   4. Emergency fallback (sentence → comma → char) if AI fails
 
-const { estimateSpeechDurationSec } = require('../placeholder-audio');
+// S-4: the shared heuristic lives in utils/ (host pure utils) — the agent
+// pipeline no longer reaches into the generation placeholder-audio module.
+const { estimateSpeechDurationSec } = require('../../utils/speech-estimation');
 const { SYSTEM_PROMPTS } = require('../agent-prompts');
 const aiCaller = require('./ai-caller');
 const { updateSession } = require('../agent-session');

@@ -49,6 +49,8 @@ async function planScene(redis, bookId, chapterId, sceneId) {
 async function beginStage(redis, scene, loadedBook, buildId, stage) {
     const dispatchEngine = require('../runtime/dispatch-engine');
     const state = require('../state');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
     const bookId = scene.book_id;
     const chapterId = scene.chapter_id;
     const sceneId = scene.scene_id;
@@ -673,10 +675,10 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
                 const sceneKey = `${ds.chapter_id}_${ds.scene_id}`;
                 const unitIds = cleanPngUnitIds[sceneKey] || [];
                 for (const uid of unitIds) {
-                    const pngPath = path.join(buildDir, `${bookId}_${ds.chapter_id}_${ds.scene_id}_${uid}.png`);
+                    const pngPath = path.join(buildDir, artifactNaming.sceneImageName(bookId, ds.chapter_id, ds.scene_id, uid));
                     try { if (fs.existsSync(pngPath)) { fs.unlinkSync(pngPath); deletedCount++; } } catch (_) {}
                     const strippedUid = uid.replace(/^iu/, '');
-                    const previewPath = path.join(buildDir, `${bookId}_${ds.chapter_id}_${ds.scene_id}_pr${strippedUid}.png`);
+                    const previewPath = path.join(buildDir, artifactNaming.sceneImagePreviewName(bookId, ds.chapter_id, ds.scene_id, uid));
                     try { if (fs.existsSync(previewPath)) { fs.unlinkSync(previewPath); } } catch (_) {}
                 }
             }
@@ -694,7 +696,7 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
 
         try {
             let cursor = '0';
-            const scenePrefix = `${bookId}_${ds.chapter_id}_${ds.scene_id}_iu-`;
+            const scenePrefix = artifactNaming.iuScanPrefix(bookId, ds.chapter_id, ds.scene_id);
             do {
                 const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `animastor:iu-in-flight:${scenePrefix}*`, 'COUNT', 50);
                 cursor = nextCursor;

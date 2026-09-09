@@ -32,6 +32,8 @@
 //      default when nothing can be measured).
 
 const path = require('path');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const { toValidLTXFrames } = require('../workflows/video/video-workflows');
@@ -75,7 +77,7 @@ function probeVideoDurationSec(filePath) {
 function listSceneVideoGroups(outDir, buildId, bookId, chapterId, sceneId) {
     const dir = path.join(outDir, buildId);
     if (!fs.existsSync(dir)) return [];
-    const prefix = `${bookId}_${chapterId}_${sceneId}`;
+    const prefix = artifactNaming.scenePrefix(bookId, chapterId, sceneId);
     return fs.readdirSync(dir)
         .filter(f => f.startsWith(prefix) && f.endsWith('.mp4') && /_g\d+\.mp4$/.test(f))
         .sort((a, b) => {
@@ -264,7 +266,7 @@ async function computeVideoStartMs(ius, buildId, bookId, chapterId, sceneId, out
     //    survives wholesale) the frame PTS cannot recover the drift (the
     //    boundary frame is still the previous unit's content), so we fall
     //    through to the group files which can.
-    const mergedPath = path.join(outDir, buildId, `${bookId}_${chapterId}_${sceneId}.mp4`);
+    const mergedPath = path.join(outDir, buildId, artifactNaming.sceneVideoName(bookId, chapterId, sceneId));
     if (fs.existsSync(mergedPath)) {
         const mergedDur = await probeVideoDurationSec(mergedPath);
         const aligned = mergedDur != null && Math.abs(mergedDur - audioTotalSec) <= 0.5;

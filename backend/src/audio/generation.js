@@ -7,9 +7,11 @@ const path = require('path');
 // S-3: the generation provider seam is the ONLY Generation → ComfyUI/GPU
 // boundary. No gpu-dispatcher / workflow-connector imports in executors.
 const provider = require('../generation/comfyui-provider');
-const { resolveAssembly } = require('../image/assembly-profile');
+const { resolveAssembly } = require('../generation/prompt-profiles/assembly-profile');
 const profileOverride = require('../services/profile-override');
 const helpers = require('./helpers');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 const validation = require('./validation');
 const chunks = require('./chunks');
 const segments = require('./segments');
@@ -231,7 +233,7 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
             if (asset && asset.status === 'placeholder') {
                 helpers.log(`Audio is placeholder — will regenerate real audio: ${bookId}/${chapterId}/${sceneId}`);
                 isReady = false;
-                const mergedPath = helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
+                const mergedPath = helpers.getOutputPath(buildId, artifactNaming.sceneAudioName(bookId, chapterId, sceneId));
                 if (fs.existsSync(mergedPath)) {
                     try {
                         fs.unlinkSync(mergedPath);
@@ -525,7 +527,7 @@ async function mergeBookAudio(buildId, bookId, scenes) {
         return null;
     }
 
-    const finalPath = helpers.getOutputPath(buildId, `${bookId}.mp3`);
+    const finalPath = helpers.getOutputPath(buildId, artifactNaming.bookAudioName(bookId));
     helpers.log(`mergeBookAudio: ${bookId} (${scenes.length} scenes) -> ${finalPath}`);
 
     if (fs.existsSync(finalPath)) {
@@ -545,7 +547,7 @@ async function mergeBookAudio(buildId, bookId, scenes) {
 
     const audioPaths = [];
     for (const scene of scenes) {
-        const scenePath = helpers.getOutputPath(buildId, `${bookId}_${scene.chapter_id}_${scene.scene_id}.mp3`);
+        const scenePath = helpers.getOutputPath(buildId, artifactNaming.sceneAudioName(bookId, scene.chapter_id, scene.scene_id));
         if (fs.existsSync(scenePath)) {
             audioPaths.push(scenePath);
         } else {

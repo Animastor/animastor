@@ -6,6 +6,8 @@
 const path = require('path');
 const fs = require('fs');
 const state = require('../state');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 const config = require('../config/runtime-config');
 
 module.exports = function(redis) {
@@ -175,17 +177,17 @@ module.exports = function(redis) {
         for (const scene of scenes) {
             const chapterId = scene.chapter_id;
             const sceneId = scene.scene_id;
-            const audioPath = path.join(dir, `${bookId}_${chapterId}_${sceneId}.mp3`);
+            const audioPath = path.join(dir, artifactNaming.sceneAudioName(bookId, chapterId, sceneId));
             if (!fs.existsSync(audioPath)) continue;
 
-            const scenePrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
+            const scenePrefix = artifactNaming.iuImagePrefix(bookId, chapterId, sceneId);
             let dirFiles = [];
             try { dirFiles = fs.readdirSync(dir); } catch (_) {}
             const hasIuImages = dirFiles.some(f => f.startsWith(scenePrefix) && f.endsWith('.png'));
-            const videoPath = path.join(dir, `${bookId}_${chapterId}_${sceneId}.mp4`);
+            const videoPath = path.join(dir, artifactNaming.sceneVideoName(bookId, chapterId, sceneId));
             const hasVideo = fs.existsSync(videoPath);
 
-            const chunkId = `${bookId}_${chapterId}_${sceneId}_0001`;
+            const chunkId = artifactNaming.sceneChunkAudioName(bookId, chapterId, sceneId, 1).replace(/\.mp3$/, '');
 
             try {
                 // L5: Set per-asset to all READY (files exist on disk)

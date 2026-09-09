@@ -16,6 +16,8 @@ const syncFs = require('fs');
 const syncPath = require('path');
 
 const state = require('../state');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 // S-2: registered stage list resolved from media registry
 const mediaRegistry = require('../generation/media-registry');
 const storage = require('../storage');
@@ -422,7 +424,7 @@ async function checkStalledAudioScenes(redis, deps) {
             const buildDir = syncPath.join(OUTPUT_DIR, buildId);
             let presentCount = 0;
             for (let i = 1; i <= expectedCount; i++) {
-                const chunkPath = syncPath.join(buildDir, `${bookId}_${chapterId}_${sceneId}_${pad(i)}.mp3`);
+                const chunkPath = syncPath.join(buildDir, artifactNaming.sceneChunkAudioName(bookId, chapterId, sceneId, i));
                 if (syncFs.existsSync(chunkPath)) presentCount++;
             }
 
@@ -1852,7 +1854,7 @@ async function recoverAudioOrchStates(redis, deps) {
         const { bookId, chapterId, sceneId, state: orchState } = entry;
         const phase = orchState.phase;
         const buildId = orchState.build_id || 'default';
-        const mergedPath = syncPath.join(OUTPUT_DIR, buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
+        const mergedPath = syncPath.join(OUTPUT_DIR, buildId, artifactNaming.sceneAudioName(bookId, chapterId, sceneId));
 
         switch (phase) {
             case 'GENERATING':
@@ -1949,7 +1951,7 @@ async function recoverVideoOrchStates(redis, deps) {
         const phase = orchState.phase;
         const buildId = orchState.build_id || 'default';
         const suffixes = videoOrch.groupSuffixes(orchState);
-        const mergedPath = syncPath.join(OUTPUT_DIR, buildId, `${bookId}_${chapterId}_${sceneId}.mp4`);
+        const mergedPath = syncPath.join(OUTPUT_DIR, buildId, artifactNaming.sceneVideoName(bookId, chapterId, sceneId));
 
         switch (phase) {
             case 'GENERATING':

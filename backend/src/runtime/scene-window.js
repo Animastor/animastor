@@ -21,6 +21,8 @@ const config = require('../config/runtime-config');
 const { listMediaTypes: _mediaTypes } = require('../generation/media-registry');
 const book = require('../book');
 const state = require('../state');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 const orchestrator = require('../orchestration/orchestrator');
 const activeScenes = require('./active-scenes-index');
 const audio = require('../audio/audio-service');
@@ -128,18 +130,18 @@ async function getSceneFilesStatus(buildDir, bookId, chapterId, sceneId) {
     if (!fs.existsSync(buildDir)) return result;
 
     // Check audio file
-    const audioPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp3`);
+    const audioPath = path.join(buildDir, artifactNaming.sceneAudioName(bookId, chapterId, sceneId));
     result.audio.exists = fs.existsSync(audioPath);
 
     // Check IU image files (.png)
     try {
         const files = fs.readdirSync(buildDir);
-        const imagePrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
+        const imagePrefix = artifactNaming.iuImagePrefix(bookId, chapterId, sceneId);
         result.image.exists = files.some(f => f.startsWith(imagePrefix) && f.endsWith('.png'));
     } catch (_) {}
 
     // Check video file
-    const videoPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp4`);
+    const videoPath = path.join(buildDir, artifactNaming.sceneVideoName(bookId, chapterId, sceneId));
     result.video.exists = fs.existsSync(videoPath);
 
     return result;
@@ -435,7 +437,7 @@ async function trySlideWindowOnComplete(redis, bookId, loadedBook, buildId) {
         return { started: 0, remaining: 0, reason: 'cancelled' };
     }
 
-    const generationProgress = require('../services/generation-progress');
+    const generationProgress = require('../generation/generation-progress');
     if (await generationProgress.hasActiveTasks(redis, bookId)) {
         return { started: 0, remaining: 0, reason: 'task_managed' };
     }

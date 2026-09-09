@@ -7,6 +7,8 @@ const fs = require('fs');
 const crypto = require('crypto');
 const multer = require('multer');
 const { publishProgress } = require('../../services/progress-pubsub.cjs');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../../generation/artifact-naming');
 
 // ======================================================
 // FALLBACK DEDUP: scan books dir for lazy books matching file hash
@@ -271,7 +273,7 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
             if (existingChunksAfterLoad.length === 0) {
                 log(`[UNIFIED-IMPORT] Creating chunks + placeholder audio for ${scenes.length} scenes...`);
                 for (const s of scenes) {
-                    const chunkId = `${bookId}_${s.chapter_id}_${s.scene_id}_0001`;
+                    const chunkId = artifactNaming.sceneChunkAudioName(bookId, s.chapter_id, s.scene_id, 1).replace(/\.mp3$/, '');
                     try {
                         await saveChunk(chunkId, {
                             build_id: buildId, book_id: bookId, scene_order: s.scene_order || 0,
@@ -466,7 +468,7 @@ function detectFileFormat(buf) {
             if (existingChunksAfterLoad.length === 0) {
                 log(`[LOAD-VBOOK] Creating chunks + placeholder audio for ${scenes.length} scenes...`);
                 for (const s of scenes) {
-                    const chunkId = `${bookId}_${s.chapter_id}_${s.scene_id}_0001`;
+                    const chunkId = artifactNaming.sceneChunkAudioName(bookId, s.chapter_id, s.scene_id, 1).replace(/\.mp3$/, '');
                     try {
                         await saveChunk(chunkId, {
                             build_id: buildId, book_id: bookId, scene_order: s.scene_order || 0,
@@ -667,7 +669,7 @@ function detectFileFormat(buf) {
                 log(`[BOOTSTRAP] Creating ${result.chapter.scenes.length} chunks for ${bookId}...`);
                 for (let i = 0; i < result.chapter.scenes.length; i++) {
                     const s = result.chapter.scenes[i];
-                    const chunkId = `${bookId}_${chapterId}_${s.scene_id}_0001`;
+                    const chunkId = artifactNaming.sceneChunkAudioName(bookId, chapterId, s.scene_id, 1).replace(/\.mp3$/, '');
                     try {
                         await saveChunk(chunkId, {
                             build_id: buildId, book_id: bookId, scene_order: i,
@@ -880,7 +882,7 @@ function detectFileFormat(buf) {
                             const buildId = draftTrigger?.manifest?.build_id || 'default';
                             for (let si = 0; si < newScenes.length; si++) {
                                 const s = newScenes[si];
-                                const chunkId = `${bookId}_${chapterId}_${s.scene_id}_0001`;
+                                const chunkId = artifactNaming.sceneChunkAudioName(bookId, chapterId, s.scene_id, 1).replace(/\.mp3$/, '');
                                 try {
                                     await saveChunk(chunkId, {
                                         build_id: buildId, book_id: bookId, scene_order: allScenes.indexOf(s),

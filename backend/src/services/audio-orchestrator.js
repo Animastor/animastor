@@ -28,6 +28,8 @@
 // | FAILED → GENERATING | scheduler re-dispatch | На следующем scheduler tick |
 
 const path = require('path');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 const fs = require('fs');
 const config = require('../config/runtime-config');
 
@@ -232,7 +234,7 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
     if (orchState.phase === PHASES.FAILED) {
         let allPresent = true;
         for (let i = 1; i <= expectedCount; i++) {
-            if (!fs.existsSync(path.join(buildDir, `${bookId}_${chapterId}_${sceneId}_${pad(i)}.mp3`))) {
+            if (!fs.existsSync(path.join(buildDir, artifactNaming.sceneChunkAudioName(bookId, chapterId, sceneId, i)))) {
                 allPresent = false;
                 break;
             }
@@ -259,7 +261,7 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
     const missingIndices = [];
     const emptyIndices = [];
     for (let i = 1; i <= expectedCount; i++) {
-        const chunkPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}_${pad(i)}.mp3`);
+        const chunkPath = path.join(buildDir, artifactNaming.sceneChunkAudioName(bookId, chapterId, sceneId, i));
         chunkPaths.push(chunkPath);
         let size = 0;
         try {
@@ -274,7 +276,7 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
             warn(`completeChunk: chunk ${pad(i)} exists but too small (${size} bytes) — deleting so re-dispatch can resend`);
             try { fs.unlinkSync(chunkPath); } catch (_) {}
             // Also clear Redis dedup keys so the re-sent job isn't rejected as duplicate
-            const staleChunkId = `${bookId}_${chapterId}_${sceneId}_${pad(i)}`;
+            const staleChunkId = artifactNaming.sceneChunkAudioName(bookId, chapterId, sceneId, i).replace(/\.mp3$/, '');
             await redis.del(`animastor:job:${staleChunkId}:audio`).catch(() => {});
             await redis.del(`animastor:result-processed:${staleChunkId}:audio`).catch(() => {});
         } else {
@@ -306,7 +308,7 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
         // Trim padded chunks
         if (audio && typeof audio.trimPaddedSceneAudio === 'function') {
             for (let i = 0; i < chunkPaths.length; i++) {
-                const currentChunkId = `${bookId}_${chapterId}_${sceneId}_${pad(i + 1)}`;
+                const currentChunkId = artifactNaming.sceneChunkAudioName(bookId, chapterId, sceneId, i + 1).replace(/\.mp3$/, '');
                 try {
                     const currentMeta = getChunk ? await getChunk(currentChunkId) : null;
                     if (currentMeta && currentMeta.padded_text) {
@@ -326,7 +328,7 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
                 mergeSuccess = true;
             } else if (chunkPaths.length === 1 && fs.existsSync(chunkPaths[0])) {
                 // Single chunk fallback
-                const outputPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp3`);
+                const outputPath = path.join(buildDir, artifactNaming.sceneAudioName(bookId, chapterId, sceneId));
                 if (!fs.existsSync(outputPath)) {
                     fs.copyFileSync(chunkPaths[0], outputPath);
                     mergeSuccess = true;
@@ -379,7 +381,7 @@ async function failWaitingScene(redis, bookId, chapterId, sceneId, buildId, reas
     const buildDir = path.join(config.OUTPUT_DIR, buildId);
     const missingIndices = [];
     for (let i = 1; i <= expectedCount; i++) {
-        const chunkPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}_${pad(i)}.mp3`);
+        const chunkPath = path.join(buildDir, artifactNaming.sceneChunkAudioName(bookId, chapterId, sceneId, i));
         let exists = false;
         try {
             if (fs.existsSync(chunkPath)) {
@@ -401,7 +403,7 @@ async function failWaitingScene(redis, bookId, chapterId, sceneId, buildId, reas
     // Освобождаем hub-dedup и chunk-metadata недостающих чанков, чтобы
     // передиспатч смог отправить их заново.
     for (const idx of missingIndices) {
-        const chunkId = `${bookId}_${chapterId}_${sceneId}_${pad(idx)}`;
+        const chunkId = artifactNaming.sceneChunkAudioName(bookId, chapterId, sceneId, idx).replace(/\.mp3$/, '');
         await redis.del(`animastor:job:${chunkId}:audio`).catch(() => {});
         await redis.del(`animastor:result-processed:${chunkId}:audio`).catch(() => {});
         const raw = await redis.get(`animastor:chunk:${chunkId}`);

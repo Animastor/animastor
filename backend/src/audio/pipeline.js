@@ -5,6 +5,8 @@
 const fs = require('fs');
 const path = require('path');
 const helpers = require('./helpers');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 const ffmpeg = require('./ffmpeg');
 const validation = require('./validation');
 const chunks = require('./chunks');
@@ -210,7 +212,7 @@ async function mergeSceneAudioChunks(redis, bookId, chapterId, sceneId, buildId,
     }
 
     try {
-        const finalPath = helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
+        const finalPath = helpers.getOutputPath(buildId, artifactNaming.sceneAudioName(bookId, chapterId, sceneId));
         const existingChunks = chunks.findExistingSceneChunks(bookId, chapterId, sceneId, buildId, expectedChunkCount);
 
         if (existingChunks.length === 0) {
@@ -223,7 +225,7 @@ async function mergeSceneAudioChunks(redis, bookId, chapterId, sceneId, buildId,
             return null;
         }
 
-        const chunkPaths = existingChunks.map(ch => helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}_${String(ch).padStart(4, '0')}.mp3`));
+        const chunkPaths = existingChunks.map(ch => helpers.getOutputPath(buildId, artifactNaming.sceneChunkAudioName(bookId, chapterId, sceneId, ch)));
 
         // Warn about empty chunks that would produce incomplete output
         const MIN_CHUNK_BYTES = 100;
@@ -250,7 +252,7 @@ async function mergeSceneAudioChunks(redis, bookId, chapterId, sceneId, buildId,
 }
 
 async function recoverSceneAudioFromChunks(bookId, chapterId, sceneId, buildId, expectedChunkCount = null) {
-    const finalPath = helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
+    const finalPath = helpers.getOutputPath(buildId, artifactNaming.sceneAudioName(bookId, chapterId, sceneId));
 
     if (fs.existsSync(finalPath)) {
         const isValid = await validation.validateCanonicalAudio(finalPath);
@@ -275,7 +277,7 @@ async function recoverSceneAudioFromChunks(bookId, chapterId, sceneId, buildId, 
         return { recovered: false, reason: 'incomplete_chunks' };
     }
 
-    const chunkPaths = existingChunks.map(c => helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}_${String(c).padStart(4, '0')}.mp3`));
+    const chunkPaths = existingChunks.map(c => helpers.getOutputPath(buildId, artifactNaming.sceneChunkAudioName(bookId, chapterId, sceneId, c)));
 
     try {
         const result = await buildSceneAudio(chunkPaths, finalPath, buildId, true);

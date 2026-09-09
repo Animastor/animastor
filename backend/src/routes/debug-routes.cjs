@@ -4,6 +4,8 @@
 // All /api/v1/debug/* endpoints.
 
 const path = require('path');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 const fs = require('fs');
 
 module.exports = function(app, redis, deps) {
@@ -87,9 +89,9 @@ module.exports = function(app, redis, deps) {
 
             const dir = path.join(OUTPUT_DIR, buildId);
             let files = [];
-            try { files = fs.readdirSync(dir).filter(f => f.startsWith(`${bookId}_${chapterId}_${sceneId}`)); } catch (_) {}
+            try { files = fs.readdirSync(dir).filter(f => f.startsWith(artifactNaming.scenePrefix(bookId, chapterId, sceneId))); } catch (_) {}
 
-            const chunkId = `${bookId}_${chapterId}_${sceneId}_0001`;
+            const chunkId = artifactNaming.sceneChunkAudioName(bookId, chapterId, sceneId, 1).replace(/\.mp3$/, '');
             const chunk = await getChunk(chunkId);
 
             const sceneBook = book.loadBook(bookId);

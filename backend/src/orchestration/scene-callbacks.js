@@ -13,6 +13,8 @@
 const path = require('path');
 const fs = require('fs');
 const state = require('../state');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 const audio = require('../audio');
 const image = require('../image');
 const video = require('../video');
@@ -197,7 +199,7 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
                             text_proportion: 0,
                             scene_duration_sec: realDuration,
                             estimated_duration_sec: estSec,
-                            scene_audio_file: u.scene_audio_file || `${bookId}_${chapterId}_${sceneId}.mp3`,
+                            scene_audio_file: u.scene_audio_file || artifactNaming.sceneAudioName(bookId, chapterId, sceneId),
                             start_ms: startMs,
                             end_ms: endMs,
                         });
@@ -225,7 +227,7 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
                             text_proportion: parseFloat(proportion.toFixed(6)),
                             scene_duration_sec: realDuration,
                             estimated_duration_sec: parseFloat((realDuration * proportion).toFixed(3)),
-                            scene_audio_file: u.scene_audio_file || `${bookId}_${chapterId}_${sceneId}.mp3`,
+                            scene_audio_file: u.scene_audio_file || artifactNaming.sceneAudioName(bookId, chapterId, sceneId),
                             start_ms: startMs,
                             end_ms: endMs,
                         });
@@ -309,7 +311,7 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
             const buildDir = path.join(process.env.OUTPUT_DIR || '/data/output', buildId);
             const stillPending = [];
             for (const uid of dirtyIds) {
-                const pngPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}_${uid}.png`);
+                const pngPath = path.join(buildDir, artifactNaming.sceneImageName(bookId, chapterId, sceneId, uid));
                 if (!fs.existsSync(pngPath)) {
                     stillPending.push(uid);
                 }
@@ -318,7 +320,7 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
                 await sceneAssetsRepo.clearDirtyUnitIds(bookId, chapterId, sceneId);
                 log(`[DIRTY-UNITS-CLEARED] ${bookId}/${chapterId}/${sceneId}: all ${dirtyIds.length} dirty unit(s) completed, cleared`);
                 try {
-                    const iuPrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
+                    const iuPrefix = artifactNaming.iuImagePrefix(bookId, chapterId, sceneId);
                     const allFiles = fs.existsSync(buildDir) ? fs.readdirSync(buildDir) : [];
                     const iuFileCount = allFiles.filter(f => f.startsWith(iuPrefix) && f.endsWith('.png')).length;
                     if (iuFileCount > 0) {
@@ -339,7 +341,7 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
     }
 
     try {
-        const scenePrefix = `${bookId}_${chapterId}_${sceneId}_iu-`;
+        const scenePrefix = artifactNaming.iuScanPrefix(bookId, chapterId, sceneId);
         let cursor = '0';
         do {
             const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `animastor:iu-in-flight:${scenePrefix}*`, 'COUNT', 50);

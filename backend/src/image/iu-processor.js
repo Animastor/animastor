@@ -12,8 +12,10 @@ const config = require('../config/runtime-config');
 const provider = require('../generation/comfyui-provider');
 const profileOverride = require('../services/profile-override');
 const helpers = require('./helpers');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 const promptBuilder = require('./prompt-builder');
-const assemblyProfile = require('./assembly-profile');
+const assemblyProfile = require('../generation/prompt-profiles/assembly-profile');
 const registry = require('./registry');
 const { collectSceneUnits } = require('./registry');
 
@@ -107,7 +109,7 @@ async function saveIUMetadata(buildId, bookId, chapterId, sceneId, unit, sceneDu
             text_proportion: parseFloat(proportion.toFixed(6)),
             scene_duration_sec: sceneDuration,
             estimated_duration_sec: parseFloat(iuDuration.toFixed(3)),
-            scene_audio_file: `${bookId}_${chapterId}_${sceneId}.mp3`,
+            scene_audio_file: artifactNaming.sceneAudioName(bookId, chapterId, sceneId),
         });
         helpers.log(`IU metadata saved to PG: ${unit.id} (${iuDuration.toFixed(3)}s)`);
     } catch (err) {
@@ -117,7 +119,7 @@ async function saveIUMetadata(buildId, bookId, chapterId, sceneId, unit, sceneDu
 
 async function getSceneDuration(buildId, bookId, chapterId, sceneId) {
     // Priority 1: Real audio file on disk (GROUND TRUTH)
-    const audioPath = helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
+    const audioPath = helpers.getOutputPath(buildId, artifactNaming.sceneAudioName(bookId, chapterId, sceneId));
     if (fs.existsSync(audioPath)) {
         try {
             const mm = require('music-metadata');
@@ -170,7 +172,7 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
         helpers.error(`IU unit.id missing, skipping: ${chapterId}/${sceneId}`);
         return { sent: false, cached: false };
     }
-    const imageIUId = `${bookId}_${chapterId}_${sceneId}_${canonicalUnitId}`;
+    const imageIUId = artifactNaming.iuAssetId(bookId, chapterId, sceneId, canonicalUnitId);
     const inFlightKey = `animastor:iu-in-flight:${imageIUId}`;
 
     const force = dirtyUnitIds.size > 0 && dirtyUnitIds.has(canonicalUnitId);
@@ -222,7 +224,7 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
 
         const strippedUnitId = canonicalUnitId.replace(/^iu/, '');
         const oldPreview = path.join(config.OUTPUT_DIR, buildId,
-            `${bookId}_${chapterId}_${sceneId}_pr${strippedUnitId}.png`);
+            artifactNaming.sceneImagePreviewName(bookId, chapterId, sceneId, canonicalUnitId));
         try {
             if (fs.existsSync(oldPreview)) {
                 fs.unlinkSync(oldPreview);

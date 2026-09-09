@@ -20,30 +20,35 @@ function log(msg) {
 // ======================================================
 // CANONICAL PATH HELPERS
 // ======================================================
+// S-4: the artifact filename grammar has a single canonical owner —
+// generation/artifact-naming.js. These host-adapter wrappers compose
+// filenames from it (bytes unchanged) and own the fs/write side only.
+const artifactNaming = require('../generation/artifact-naming');
 
 // Form canonical scene audio filename: bookId_chapterId_sceneId.mp3
 function makeSceneAudioFilename(bookId, chapterId, sceneId) {
-    return `${bookId}_${chapterId}_${sceneId}.mp3`;
+    return artifactNaming.sceneAudioName(bookId, chapterId, sceneId);
 }
 
-// Form chunk audio filename: bookId_chapterId_sceneId_chunk.mp3
+// Form chunk audio filename: bookId_chapterId_sceneId_NNNN.mp3 (pad(4) —
+// the live on-disk grammar written/read by the audio chunk pipeline)
 function makeChunkAudioFilename(bookId, chapterId, sceneId, chunkIndex) {
-    return `${bookId}_${chapterId}_${sceneId}_${chunkIndex}.mp3`;
+    return artifactNaming.sceneChunkAudioName(bookId, chapterId, sceneId, chunkIndex);
 }
 
 // Form chunk image filename: bookId_chapterId_sceneId_chunk.png
 function makeChunkImageFilename(bookId, chapterId, sceneId, chunkIndex) {
-    return `${bookId}_${chapterId}_${sceneId}_${chunkIndex}.png`;
+    return artifactNaming.sceneImageName(bookId, chapterId, sceneId, chunkIndex);
 }
 
 // Form IU image filename: bookId_chapterId_sceneId_iu*.png
 function makeIUImageFilename(bookId, chapterId, sceneId, iuId) {
-    return `${bookId}_${chapterId}_${sceneId}_iu${iuId}.png`;
+    return artifactNaming.sceneImageName(bookId, chapterId, sceneId, `iu${iuId}`);
 }
 
 // Form preview thumbnail filename: bookId_chapterId_sceneId_pr*.png
 function makePreviewFilename(bookId, chapterId, sceneId, iuId) {
-    return `${bookId}_${chapterId}_${sceneId}_pr${iuId}.png`;
+    return artifactNaming.sceneImagePreviewName(bookId, chapterId, sceneId, iuId);
 }
 
 // ======================================================
@@ -70,7 +75,7 @@ function getChunkAudioPath(OUTPUT_DIR, buildId, bookId, chapterId, sceneId, chun
  * Get full path to canonical scene video file.
  */
 function getSceneVideoPath(OUTPUT_DIR, buildId, bookId, chapterId, sceneId) {
-    const filename = `${bookId}_${chapterId}_${sceneId}.mp4`;
+    const filename = artifactNaming.sceneVideoName(bookId, chapterId, sceneId);
     return path.join(OUTPUT_DIR, buildId, filename);
 }
 
@@ -205,7 +210,7 @@ function probeIUImage(iuId, buildId, OUTPUT_DIR) {
  * Check if scene image exists for video.
  */
 function probeSceneImage(buildId, bookId, chapterId, sceneId, OUTPUT_DIR) {
-    const filename = `${bookId}_${chapterId}_${sceneId}.png`;
+    const filename = artifactNaming.sceneImageBaseName(bookId, chapterId, sceneId);
     const fullPath = path.join(OUTPUT_DIR, buildId, filename);
     return { exists: fs.existsSync(fullPath), path: fullPath };
 }

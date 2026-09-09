@@ -6,6 +6,8 @@
 
 const fs = require('fs');
 const path = require('path');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 const registry = require('./prompt-dependency-registry');
 // S-2: default dirty layers resolved from media registry
 const { listMediaTypes: _mediaTypes } = require('../generation/media-registry');
@@ -413,7 +415,7 @@ module.exports = function(redis, config, deps) {
             }
         } while (cursor !== '0');
         if (!createdAny) {
-            const chunkId = `${bookId}_${chapterId}_${sceneId}_0001`;
+            const chunkId = artifactNaming.sceneChunkAudioName(bookId, chapterId, sceneId, 1).replace(/\.mp3$/, '');
             const ch = {};
             if (resetAudio) { ch.audio = false; ch.audio_status = 'pending'; }
             if (resetImage) { ch.image = false; ch.image_status = 'pending'; }

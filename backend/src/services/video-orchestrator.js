@@ -39,6 +39,8 @@
 // групповые файлы.
 
 const path = require('path');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 const fs = require('fs');
 const config = require('../config/runtime-config');
 
@@ -222,7 +224,7 @@ function groupSuffixes(state) {
  * Полный путь группового файла.
  */
 function groupFilePath(buildId, bookId, chapterId, sceneId, suffix) {
-    return path.join(config.OUTPUT_DIR, buildId, `${bookId}_${chapterId}_${sceneId}${suffix || ''}.mp4`);
+    return path.join(config.OUTPUT_DIR, buildId, artifactNaming.sceneVideoGroupName(bookId, chapterId, sceneId, suffix));
 }
 
 /**
@@ -442,7 +444,8 @@ async function failWaitingScene(redis, bookId, chapterId, sceneId, buildId, reas
     // Освобождаем hub-dedup недостающих групп, чтобы re-dispatch смог
     // отправить их заново. Ключ вида animastor:job:{dispatch_id}:{job_id}.
     for (const suffix of missing) {
-        const jobId = `${bookId}_${chapterId}_${sceneId}${suffix || ''}:video`;
+        // groupSuffix (`_gN`) is the Job Protocol v2 assetId grammar; `:video` suffix is contracts-owned
+        const jobId = `${artifactNaming.scenePrefix(bookId, chapterId, sceneId)}${suffix || ''}:video`;
         let cursor = '0';
         do {
             const [next, keys] = await redis.scan(cursor, 'MATCH', `animastor:job:*:${jobId}`, 'COUNT', 50);

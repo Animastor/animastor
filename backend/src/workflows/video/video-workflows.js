@@ -12,9 +12,11 @@ const book = require('../../book');
 const provider = require('../../generation/comfyui-provider');
 const profileOverride = require('../../services/profile-override');
 const { tokensToString } = require('../../book/lazy-book/appearance');
-const { resolveAssembly, DEFAULT_VIDEO_DEFAULTS } = require('../../image/assembly-profile');
-const { normalizeCharacterRefs } = require('../../image/character-utils');
-const { escapeRegExp } = require('../../image/helpers');
+// S-4: shared prompt/profile infrastructure lives in the generation
+// prompt-profiles layer — the video→image media edge is gone.
+const { resolveAssembly, DEFAULT_VIDEO_DEFAULTS } = require('../../generation/prompt-profiles/assembly-profile');
+const { normalizeCharacterRefs } = require('../../generation/prompt-profiles/character-utils');
+const { escapeRegExp } = require('../../utils/string-utils');
 
 const logPrefix = '[WF-VIDEO]';
 

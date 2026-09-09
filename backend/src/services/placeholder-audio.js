@@ -34,28 +34,14 @@ function warn(msg) { console.warn(`${logPrefix} ⚠️  ${msg}`); }
 // SPEECH DURATION HEURISTIC
 // ======================================================
 
-// Narration speech-rate heuristic: ~0.3 seconds of spoken audio per word.
-// 65 words ≈ 19.5s ≈ the ~20s scene target used during book splitting.
-// This is the single source of truth for text → estimated narration time;
-// keep the tokenizer identical wherever a "~N words" guideline is compared
-// against it (see agent-prompts.js scene splitting).
-const SPEECH_SEC_PER_WORD = 0.3;
-const SPEECH_MIN_SEC = 2;
-
-/**
- * Estimate narration duration (seconds) for an arbitrary text string.
- * Pure function — no disk/DB access — so it can be called on raw scene
- * text during book splitting, not only on persisted scenes.
- *
- * @param {string} text
- * @returns {number} estimated seconds (>= SPEECH_MIN_SEC), rounded to 0.1s
- */
-function estimateSpeechDurationSec(text) {
-    const wordCount = String(text || '').split(/\s+/).filter(Boolean).length;
-    const estimated = Math.max(wordCount * SPEECH_SEC_PER_WORD, SPEECH_MIN_SEC);
-    const rounded = Math.round(estimated * 10) / 10;
-    return rounded;
-}
+// S-4: the narration speech-rate heuristic (single source of truth for
+// text → estimated narration time) moved to utils/speech-estimation.js —
+// the VBook agent pipeline consumes it directly from there, without
+// importing this placeholder-audio module. The re-export below keeps the
+// public surface byte-compatible.
+const { estimateSpeechDurationSec } = require('../utils/speech-estimation');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 
 // ======================================================
 // SCENE ESTIMATED DURATION
@@ -192,7 +178,7 @@ async function ensurePlaceholderAudio(buildId, bookId, chapterId, sceneId) {
     // 1.b Safety: if the audio file already exists on disk (real generated audio),
     // DO NOT overwrite it — even if the DB record is missing or stale.
     // This prevents data loss when Redis/PG is reset but files survive.
-    const audioPath = path.join(config.OUTPUT_DIR, buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
+    const audioPath = path.join(config.OUTPUT_DIR, buildId, artifactNaming.sceneAudioName(bookId, chapterId, sceneId));
     if (fs.existsSync(audioPath)) {
         // Check if it's a real audio file (larger than max silent placeholder)
         const stats = fs.statSync(audioPath);
@@ -507,7 +493,7 @@ async function recoverMissingPlaceholders(buildId, bookId) {
         const needsRecovery = [];
 
         for (const s of scenes) {
-            const audioPath = path.join(outputDir, `${bookId}_${s.chapter_id}_${s.scene_id}.mp3`);
+            const audioPath = path.join(outputDir, artifactNaming.sceneAudioName(bookId, s.chapter_id, s.scene_id));
 
             // Check if file already exists
             if (fs.existsSync(audioPath)) {

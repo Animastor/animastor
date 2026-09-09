@@ -8,6 +8,8 @@ const path = require('path');
 const fs = require('fs');
 const { publishProgress } = require('./progress-pubsub.cjs');
 const jobSchema = require('../runtime/job-schema');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 
 module.exports = function(redis, config, deps) {
     const { audio, image, video, state, book, orchestrator, activeScenes, placeholderAudio, cleanupService, utils, bookDiff } = deps;
@@ -122,7 +124,7 @@ module.exports = function(redis, config, deps) {
                 try {
                     const pgRows = await deps.iuRepo.getImageUnitsForScene(build_id, bookId, chapterId, sceneId);
                     const totalIUs = pgRows.length;
-                    const iuPrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
+                    const iuPrefix = artifactNaming.iuImagePrefix(bookId, chapterId, sceneId);
                     let iuFiles = [];
                     try {
                         iuFiles = fs.readdirSync(outputDir).filter(f => f.startsWith(iuPrefix) && f.endsWith('.png'));

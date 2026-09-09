@@ -1,6 +1,8 @@
 const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 const os = require('os');
 
 const WAVEFORM_PEAKS = 1000;
@@ -125,7 +127,7 @@ function computePeaks(samples) {
 
 function getSceneAudioPath(buildId, bookId, chapterId, sceneId) {
     const config = require('../config/runtime-config');
-    return path.join(config.OUTPUT_DIR, buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
+    return path.join(config.OUTPUT_DIR, buildId, artifactNaming.sceneAudioName(bookId, chapterId, sceneId));
 }
 
 module.exports = { computeWaveform, extractPeaks, getSceneAudioPath };

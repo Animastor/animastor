@@ -7,6 +7,8 @@ const path = require('path');
 const fs = require('fs');
 const config = require('../config/runtime-config');
 const helpers = require('./helpers');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 
 async function saveIURegistry(redis, iuId, buildId) {
     const key = `${config.REDIS.IU_REGISTRY_PREFIX}:${iuId}`;
@@ -39,7 +41,7 @@ function probeIUImage(iuId, buildId, OUTPUT_DIR) {
 
 function resolveCanonicalSceneImage(OUTPUT_DIR, buildId, bookId, chapterId, sceneId) {
     const dir = path.join(OUTPUT_DIR, buildId);
-    const scenePrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
+    const scenePrefix = artifactNaming.iuImagePrefix(bookId, chapterId, sceneId);
 
     try {
         if (!fs.existsSync(dir)) {

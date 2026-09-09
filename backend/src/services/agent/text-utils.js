@@ -3,7 +3,9 @@
 // ======================================================
 // Text splitting, scene title extraction, fallback scene building.
 
-const { estimateSpeechDurationSec } = require('../placeholder-audio');
+// S-4: the shared heuristic lives in utils/ (host pure utils) — the agent
+// pipeline no longer reaches into the generation placeholder-audio module.
+const { estimateSpeechDurationSec } = require('../../utils/speech-estimation');
 const { extractSceneTitle, isGenericSceneTitle } = require('../../utils/scene-title-utils');
 const {
     MAX_SCENES_PER_CHUNK, SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC,

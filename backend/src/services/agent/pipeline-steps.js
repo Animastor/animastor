@@ -15,13 +15,17 @@ const promptProfileLoader = require('../prompt-profile-loader');
 const {
     createStep, completeStep, failStep, updateSession,
 } = require('../agent-session');
-const { estimateSpeechDurationSec } = require('../placeholder-audio');
+// S-4: the shared heuristic lives in utils/ (host pure utils) — the agent
+// pipeline no longer reaches into the generation placeholder-audio module.
+const { estimateSpeechDurationSec } = require('../../utils/speech-estimation');
 const {
     PROGRESS_STAGES, SYSTEM_PROMPTS,
     IMAGE_PROMPT_MAX_CHARS, UNIT_TEXT_MAX_CHARS, SCENE_TEXT_MAX_CHARS,
     fillLang,
 } = require('../agent-prompts');
-const { normalizeCharacterRefs } = require('../../image/image-service');
+// S-4: canonical owner of the coreference resolver is the Generation
+// prompt-profiles layer — the VBook→image edge (recon finding) is gone.
+const { normalizeCharacterRefs } = require('../../generation/prompt-profiles/character-utils');
 const { sanitizeVideoTokens, tokensToString } = require('../../book/lazy-book/appearance');
 const { findUnverifiedSnakeTokens, canonicalizeText, desnakeifyText, findCrossPromptGaps, participantFieldIds } = require('../../utils/snake-guard');
 // Shared pure prompt-context builder lives in the ai-agent contour (C21):

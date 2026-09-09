@@ -3,7 +3,9 @@ const path = require('path');
 const fs = require('fs');
 const { spawn, spawnSync } = require('child_process');
 const videoTimeline = require('./video-timeline');
-const { resolveAssembly } = require('../image/assembly-profile');
+const { resolveAssembly } = require('../generation/prompt-profiles/assembly-profile');
+// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+const artifactNaming = require('../generation/artifact-naming');
 const profileOverride = require('../services/profile-override');
 
 // Alignment constants — MUST mirror video-workflows.js (calculateFrames):
@@ -352,7 +354,7 @@ async function alignGroupClips(files, buildId, bookId, chapterId, sceneId, profi
 function findSceneVideoGroups(buildId, bookId, chapterId, sceneId, suffixes = null) {
     const dir = getOutputPath(buildId);
     if (!fs.existsSync(dir)) return [];
-    const prefix = `${bookId}_${chapterId}_${sceneId}`;
+    const prefix = artifactNaming.scenePrefix(bookId, chapterId, sceneId);
 
     let files;
     if (Array.isArray(suffixes) && suffixes.length > 0) {
@@ -402,7 +404,7 @@ async function mergeSceneVideoGroups(redis, buildId, bookId, chapterId, sceneId,
             return null;
         }
 
-        const finalPath = path.join(getOutputPath(buildId), `${bookId}_${chapterId}_${sceneId}.mp4`);
+        const finalPath = path.join(getOutputPath(buildId), artifactNaming.sceneVideoName(bookId, chapterId, sceneId));
 
         if (files.length === 1) {
             // The Player streams this file: a plain copy would keep the group
@@ -496,7 +498,7 @@ async function mergeBookVideosFromSources(redis, bookId, buildId, scenes) {
         return null;
     }
     try {
-        const finalPath = getOutputPath(buildId, `${bookId}.mp4`);
+        const finalPath = getOutputPath(buildId, artifactNaming.bookVideoName(bookId));
         const tempPath = finalPath + '.book.mp4';
         const sceneVideos = [];
         const temps = [];
@@ -511,7 +513,7 @@ async function mergeBookVideosFromSources(redis, bookId, buildId, scenes) {
                     // books without _gN.mp4) — use the Player's merged scene
                     // file so the export doesn't 404. Quality is the playback
                     // profile, not master — better than no export at all.
-                    const scenePlayback = getOutputPath(buildId, `${bookId}_${scene.chapter_id}_${scene.scene_id}.mp4`);
+                    const scenePlayback = getOutputPath(buildId, artifactNaming.sceneVideoName(bookId, scene.chapter_id, scene.scene_id));
                     if (fs.existsSync(scenePlayback)) {
                         log(`Export fallback: ${bookId}/${scene.chapter_id}/${scene.scene_id} has no sources — using playback file`);
                         sceneVideos.push(scenePlayback);
@@ -525,7 +527,7 @@ async function mergeBookVideosFromSources(redis, bookId, buildId, scenes) {
                 const aligned = await alignGroupClips(
                     groups, buildId, bookId, scene.chapter_id, scene.scene_id, videoMeta
                 );
-                const sceneTemp = getOutputPath(buildId, `${bookId}_${scene.chapter_id}_${scene.scene_id}.src.mp4`);
+                const sceneTemp = getOutputPath(buildId, `${artifactNaming.sceneVideoName(bookId, scene.chapter_id, scene.scene_id)}.src.mp4`);
                 const merged = await concatVideos(aligned, sceneTemp);
                 if (!merged) continue;
 
@@ -583,7 +585,7 @@ async function mergeBookVideos(redis, bookId, buildId, scenes) {
     try {
         const inputPaths = [];
         for (const scene of scenes) {
-            const scenePath = getOutputPath(buildId, `${bookId}_${scene.chapter_id}_${scene.scene_id}.mp4`);
+            const scenePath = getOutputPath(buildId, artifactNaming.sceneVideoName(bookId, scene.chapter_id, scene.scene_id));
             if (fs.existsSync(scenePath)) {
                 inputPaths.push(scenePath);
             }
@@ -594,7 +596,7 @@ async function mergeBookVideos(redis, bookId, buildId, scenes) {
             return null;
         }
 
-        const finalPath = getOutputPath(buildId, `${bookId}.mp4`);
+        const finalPath = getOutputPath(buildId, artifactNaming.bookVideoName(bookId));
         const tempPath = finalPath + '.book.mp4';
 
         log(`Merging ${inputPaths.length} scene videos for book ${bookId}`);
