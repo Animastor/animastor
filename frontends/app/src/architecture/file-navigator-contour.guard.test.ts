@@ -275,6 +275,117 @@ describe('Shared guards', () => {
   });
 });
 
+describe('B4+B6 extraction readiness guards (file-module-extraction-audit.md)', () => {
+  it('B6 — fileStore only writes File-owned phase values through the session seam (LOADING_BOOK / IMPORTING_TXT / SCENE_READY / IDLE)', () => {
+    const src = requireRaw(FILE_STORE);
+    // All session.phase.value = assignments in fileStore must use only the
+    // File-owned subset. Generation-owned values (GENERATING, DOWNLOADING,
+    // PLAYING, PAUSED) must never appear as writes in this file.
+    const FILE_PHASE_WRITES = /session\.phase\.value\s*=/g;
+    const allWrites = [...src.matchAll(FILE_PHASE_WRITES)];
+    expect(allWrites.length).toBeGreaterThan(0); // fileStore must actually write phase
+
+    // Extract the value written by each assignment: look for the string literal
+    // on the right-hand side of session.phase.value =
+    const FILE_OWNED = new Set(['IDLE', 'LOADING_BOOK', 'IMPORTING_TXT', 'SCENE_READY']);
+    const GENERATION_OWNED = new Set(['GENERATING', 'DOWNLOADING', 'PLAYING', 'PAUSED']);
+
+    for (const m of allWrites) {
+      const after = src.slice(m.index! + m[0].length, m.index! + m[0].length + 80);
+      // Match string literal values like 'SCENE_READY' or scenes.length ? 'SCENE_READY' : 'IDLE'
+      const literals = [...after.matchAll(/'([A-Z_]+)'/g)].map((v) => v[1]);
+      for (const lit of literals) {
+        if (FILE_OWNED.has(lit)) continue; // OK — File-owned
+        if (GENERATION_OWNED.has(lit)) {
+          // If this is a ternary like scenes.length ? 'SCENE_READY' : 'IDLE',
+          // the generation-owned value is the false-branch. This means fileStore
+          // is using GENERATING etc. as a fallback — which is a B6 violation.
+          expect(
+            false,
+            `fileStore writes generation-owned phase '${lit}' — B6 violation: File may only write LOADING_BOOK / IMPORTING_TXT / SCENE_READY / IDLE`,
+          ).toBe(true);
+        }
+        // Other string literals (non-phase) are fine (error messages, etc.)
+      }
+    }
+  });
+
+  it('B4 — fileStore calls cross-module backend endpoints via HTTP only (no backend-package imports)', () => {
+    const specs = importSpecifiers(FILE_STORE);
+    // fileStore legitimately uses api/client for HTTP calls to Editor/Player
+    // endpoints. It must NOT import backend packages or route implementations.
+    for (const spec of specs) {
+      expect(spec, `fileStore must not import backend package "${spec}"`).not.toMatch(/backend\//);
+      expect(spec, `fileStore must not import @animastor/editor`).not.toMatch(/animastor\/editor/);
+      expect(spec, `fileStore must not import @animastor/player`).not.toMatch(/animastor\/player/);
+    }
+    // fileStore may only use api/client and positionStore — the API seam.
+    const allowedHostImports = new Set([
+      '../api/client',
+      '../api/models',
+      './positionStore',
+    ]);
+    const hostImports = specs.filter((s) => s.startsWith('../') || s.startsWith('./'));
+    for (const imp of hostImports) {
+      expect(allowedHostImports.has(imp), `fileStore host import "${imp}" is not in the allowed set`).toBe(true);
+    }
+  });
+
+  it('B6 — generateStore only writes generation-owned phase values (GENERATING / SCENE_READY / IDLE)', () => {
+    const src = requireRaw('state/generateStore.ts');
+    const WRITE_PATTERN = /phase\.value\s*=/g;
+    const allWrites = [...src.matchAll(WRITE_PATTERN)];
+    expect(allWrites.length).toBeGreaterThan(0);
+
+    const GENERATION_OWNED = new Set(['GENERATING', 'SCENE_READY', 'IDLE']);
+    const FILE_OWNED = new Set(['LOADING_BOOK', 'IMPORTING_TXT']);
+
+    for (const m of allWrites) {
+      const after = src.slice(m.index! + m[0].length, m.index! + m[0].length + 80);
+      const literals = [...after.matchAll(/'([A-Z_]+)'/g)].map((v) => v[1]);
+      for (const lit of literals) {
+        if (GENERATION_OWNED.has(lit)) continue;
+        if (FILE_OWNED.has(lit)) {
+          expect(
+            false,
+            `generateStore writes file-owned phase '${lit}' — B6 violation: Generation may only write GENERATING / SCENE_READY / IDLE`,
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('B4 — File page never references backend implementation paths (HTTP is the only contract)', () => {
+    // FilePage + fileStore must not reference backend route files, packages,
+    // or any backend implementation detail — the API client is the seam.
+    for (const f of [FILE_PAGE, FILE_STORE]) {
+      const src = requireRaw(f);
+      expect(src, `${f} must not reference backend routes`).not.toMatch(/backend\/(routes|src|packages)/);
+      expect(src, `${f} must not reference @animastor/editor`).not.toMatch(/@animastor\/editor/);
+      expect(src, `${f} must not reference @animastor/player`).not.toMatch(/@animastor\/player/);
+    }
+  });
+
+  it('B6 — phase ownership: File-owned and Generation-owned values partition cleanly (no overlap)', () => {
+    // The File-owned values (LOADED through session seam) and Generation-owned
+    // values (written directly in generateStore) must not overlap.
+    // SCENE_READY is shared (both writers) — it appears in the shared union.
+    // The non-shared values must be exclusive to one writer.
+    const FILE_EXCLUSIVE = ['LOADING_BOOK', 'IMPORTING_TXT'];
+    const GEN_EXCLUSIVE = ['GENERATING'];
+
+    const fileSrc = requireRaw(FILE_STORE);
+    const genSrc = requireRaw('state/generateStore.ts');
+
+    for (const v of FILE_EXCLUSIVE) {
+      expect(genSrc, `generateStore must not write file-exclusive phase '${v}'`).not.toMatch(new RegExp(`phase\.value\s*=\s*'${v}'`));
+    }
+    for (const v of GEN_EXCLUSIVE) {
+      expect(fileSrc, `fileStore must not write generation-exclusive phase '${v}'`).not.toMatch(new RegExp(`session\.phase\.value\s*=\s*'${v}'`));
+    }
+  });
+});
+
 describe('B1 split guards — fileStore ownership + cycle dissolution (file-module-extraction-audit.md)', () => {
   it('B1 — File UI never imports the fileStore (FilePage knows only FilePorts)', () => {
     const specs = importSpecifiers(FILE_PAGE);

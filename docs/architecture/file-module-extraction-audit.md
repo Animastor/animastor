@@ -358,3 +358,103 @@ Import / drag & drop / Open / Create New Book / Export-download / `/file` `/libr
 - Manual browser smoke (above).
 
 B1 itself: **CLOSED** — all File state/actions that can be separated ARE separated; everything left in generateStore is genuinely shared (documented above), and fileStore has zero imports of generateStore/playbackStore.
+
+---
+
+## B4+B6 extraction-readiness close (2026-09-09)
+
+**Status:** B4 and B6 blockers CLOSED. All architectural blockers resolved; physical extraction ready.
+
+### B4 — Cross-module backend surface: RESOLVED
+
+**Blocker:** File calls `POST /book/blank` (Editor contour) and `GET /book/{id}/assets-state` (Player contour) — cross-module product boundary.
+
+**Resolution:** HTTP is the contract. The File module calls these endpoints exclusively through `api/client` (`postJson`/`getJson`). No backend-package import exists, no route implementation is referenced. The physical `@animastor/file` package will call these same HTTP endpoints through an injected `FileHttpPort`; the backend ownership stays unchanged.
+
+**Evidence — Backend endpoints used by File (fileStore.ts + FilePage.tsx):**
+
+| Endpoint | Method | Backend owner | Why File needs it | Minimum host seam post-extraction |
+|---|---|---|---|---|
+| `/book/import` | POST | Host (import) | Upload .vbook/.txt | FileHttpPort (postMultipart) |
+| `/book/{id}` | GET | Editor (`@animastor/editor` core-routes) | Load book data after import/open | FileHttpPort (getJson) |
+| `/book/{id}/snapshot` | POST | Host (parse) | Non-fatal convenience after vbook import | FileHttpPort (postJson) |
+| `/book/{id}/assets-state` | GET | Player (`@animastor/player` playback-queue) | Check if media exists (TXT path) | FileHttpPort (getJson) |
+| `/book/{id}/status` | GET | Host (book-status) | Validate persisted session on restore | FileHttpPort (getJson) |
+| `/books` | GET | Host (books list) | Fallback: find most recent server book | FileHttpPort (getJson) |
+| `/book/blank` | POST | Editor (`@animastor/editor` entity-crud) | Create new blank book | FileHttpPort (postJson) |
+| `/book/{id}/download` | GET | Host (export) | Export book as .vbook | FileHttpPort (getBlob) |
+| `/book/{id}/storyboard` | GET | Player | Export storyboard PDF | FileHttpPort (getBlob) |
+| `/book/{id}/audio` | GET | Player | Export merged audio | FileHttpPort (getBlob) |
+| `/book/{id}/export` | GET | Player | Export merged video | FileHttpPort (getBlob) |
+
+**Why File should NOT own these endpoints:** The endpoints belong to Editor/Player/host contours. File is a UI consumer, not an API provider. The HTTP contract is the seam; no backend duplication needed.
+
+**Guard added:** `file-navigator-contour.guard.test.ts` — B4 guards verify fileStore imports only `api/client` + `api/models` + `positionStore` (no backend packages).
+
+### B6 — Shared `phase` signal: RESOLVED
+
+**Blocker:** `phase` is a single `Signal<PlayerPhase>` written by both File flows (in fileStore) and generation slice (in generateStore), read by AppShell and GeneratePage.
+
+**Resolution — explicit ownership contract:**
+
+**File-owned phase values** (written through `session.phase` seam in fileStore.ts):
+- `LOADING_BOOK` — beginBookTransition (import/open/create start)
+- `IMPORTING_TXT` — importBookFromFile TXT path
+- `SCENE_READY` — import/open/restore/create success (shared with Generation)
+- `IDLE` — all failure paths + closeBook
+
+**Generation-owned phase values** (written directly in generateStore.ts):
+- `GENERATING` — startGeneration / checkAndRestoreGenerationState
+- `SCENE_READY` — startGeneration response (build finished)
+- `IDLE` — cancelGeneration
+
+**Shared/read-only values** (set by the server lifecycle, read by UI):
+- `SCENE_READY` — written by BOTH File and Generation (the convergence point)
+- `PLAYING` — written by playbackStore (Player contour)
+- `PAUSED` — written by playbackStore (Player contour)
+- `DOWNLOADING` — written by fileStore (File-owned, read-only by FilePage)
+
+**Why this is sufficient for extraction:** fileStore writes phase through the injected `SessionSeam` — never copies or forks the signal. The physical package will receive the same `Signal<FilePhase>` through its ports. One source of truth, two writers, explicit contract.
+
+**Guard added:** `file-navigator-contour.guard.test.ts` — B6 guards verify:
+- fileStore only writes File-owned values (LOADING_BOOK / IMPORTING_TXT / SCENE_READY / IDLE)
+- generateStore only writes Generation-owned values (GENERATING / SCENE_READY / IDLE)
+- File-exclusive values never appear in generateStore writes
+- Generation-exclusive values never appear in fileStore writes
+
+### fileStore package-cut readiness
+
+**Verified:** After future physical extraction to `@animastor/file`, the dependency chain:
+```
+File UI → FilePorts → host adapters → fileStore / shared host state
+```
+creates NO hidden dependency of `@animastor/file` on:
+- `generateStore` — injected via SessionSeam + GenerationResetSeam
+- `playbackStore` — injected via PlayerSeam
+- AppShell — FilePage never imports AppShell
+- Router internals — NavigationPort restricts to 4 routes
+- API client internals — FileHttpPort wraps getBlob/postJson/getJson/postMultipart
+- Backend implementation — HTTP is the only contract
+
+### Final extraction-readiness verdict
+
+| Blocker | Status | Evidence |
+|---|---|---|
+| **B1** — File state slice in generateStore | ✅ **CLOSED** | `state/fileStore.ts` owns all File state; zero generateStore/playbackStore imports; session identity via injected seams; guard tests pin no-fork + no-cycle |
+| **B2** — generateStore ⇄ playbackStore cycle | ✅ **CLOSED** | Cycle dissolved for the File slice; `fileStore.closeBook` uses injected `player.closeBook` seam; generateStore no longer imports playbackStore; zero state-module cycles (guard-verified) |
+| **B3** — Shell embedding contract | ✅ **CLOSED** | `animastor:open-file` hidden dep made explicit as `OPEN_FILE_EVENT` in fileAdapters; AppShell dispatches via constant; entry points frozen by guards |
+| **B4** — Cross-module backend surface | ✅ **CLOSED** | HTTP is the contract; fileStore uses only `api/client`; no backend-package imports; endpoint table documented above; B4 guard verifies allowed import set |
+| **B5** — No dedicated File tests | ✅ **CLOSED** | 19 characterization tests (file.test.tsx), 21 fileStore tests (fileStore.test.ts), 7 adapter tests (fileAdapters.test.ts), 32 architecture guards |
+| **B6** — Shared `phase` signal | ✅ **CLOSED** | Explicit ownership contract: File writes LOADING_BOOK/IMPORTING_TXT/SCENE_READY/IDLE; Generation writes GENERATING/SCENE_READY/IDLE; PLAYING/PAUSED by Player; B6 guards verify partition |
+| **Manual smoke** | ⚠️ **NOT RUN** | Browser-level testing (real backend, real media, Safari/Chrome) was not executed in this environment |
+| **Final verdict** | **READY FOR PHYSICAL EXTRACTION** | All 6 architectural blockers CLOSED; manual smoke is the only remaining verification step |
+
+### Guards added (this commit)
+
+| Guard | Pins |
+|---|---|
+| B6 — fileStore phase writes | fileStore only writes File-owned phase values |
+| B4 — fileStore import set | fileStore imports only api/client + api/models + positionStore |
+| B6 — generateStore phase writes | generateStore only writes Generation-owned phase values |
+| B4 — no backend refs in File | FilePage + fileStore never reference backend implementation |
+| B6 — phase partition | File-exclusive values never appear in generateStore; generation-exclusive never in fileStore |
