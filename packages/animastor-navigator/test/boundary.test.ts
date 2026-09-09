@@ -117,4 +117,33 @@ describe('@animastor/navigator package boundary', () => {
       }
     });
   }
+
+  it('dist/ build output (if present) contains no host paths or host imports', () => {
+    const distDir = resolve(process.cwd(), 'dist');
+    if (!statSync(distDir, { throwIfNoEntry: false })) return; // build not run yet — skip
+    const distFiles: string[] = [];
+    for (const entry of readdirSync(distDir)) {
+      if (entry.endsWith('.js') || entry.endsWith('.d.ts')) distFiles.push(join(distDir, entry));
+    }
+    expect(distFiles.length).toBeGreaterThan(0);
+    for (const file of distFiles) {
+      const content = readFileSync(file, 'utf-8');
+      // No absolute monorepo paths may leak into the artifact
+      expect(content, `${file} leaks an absolute monorepo path`).not.toMatch(/\/home\/|\/Users\/|frontends\/app/);
+      // No host-owned module specifiers may appear in the artifact
+      for (const forbidden of FORBIDDEN_IMPORTS) {
+        if (typeof forbidden === 'string' && forbidden.startsWith('.')) {
+          expect(content, `${file} references host module "${forbidden}"`).not.toContain(forbidden);
+        }
+      }
+      // External imports must be peers only
+      const externals = [...content.matchAll(/from ['"]([^'"]+)['"]/g)].map((m) => m[1]);
+      for (const ext of externals) {
+        expect(
+          ['preact', 'preact/hooks', 'preact/jsx-runtime', '@preact/signals'],
+          `${file} imports unknown external "${ext}"`,
+        ).toContain(ext);
+      }
+    }
+  });
 });

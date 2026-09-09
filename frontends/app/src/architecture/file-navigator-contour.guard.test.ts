@@ -165,6 +165,25 @@ describe('Navigator contour guard (navigator-module-extraction-audit.md, Phase 2
     const hasOldPage = fileKeys.some((k) => k.includes('NavigatePage') && k.startsWith('/src/pages/'));
     expect(hasOldPage).toBe(false);
   });
+
+  it('npm prep — host reaches the package ONLY through the public entry point', () => {
+    for (const f of allSourceFiles()) {
+      const src = requireRaw(f);
+      if (!src.includes('@animastor/navigator')) continue;
+      // Deep-import specifiers into package internals are forbidden
+      expect(src, `${f} deep-imports package internals`).not.toMatch(/@animastor\/navigator\/(?:src|dist|test)\//);
+      expect(src, `${f} imports @animastor/navigator/package.json`).not.toContain('@animastor/navigator/package.json');
+    }
+  });
+
+  it('npm prep — no host file resolves the navigator package by relative path', () => {
+    for (const f of allSourceFiles()) {
+      for (const spec of importSpecifiers(f)) {
+        expect(spec, `${f} bypasses the package entry via "${spec}"`).not.toMatch(/\.\.\/\.\.\/packages\/animastor-navigator/);
+        expect(spec, `${f} imports navigator package internals via "${spec}"`).not.toMatch(/packages\/animastor-navigator\/src\//);
+      }
+    }
+  });
 });
 
 describe('Shared guards', () => {
