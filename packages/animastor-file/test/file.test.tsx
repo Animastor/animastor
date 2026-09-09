@@ -314,12 +314,12 @@ describe('FilePage — navigationEvent one-shot handshake', () => {
 
 describe('FilePage — export/download flow', () => {
   beforeEach(() => {
-    // jsdom/happy-dom: <a download> click — stub navigate & object URL.
-    vi.stubGlobal('URL', {
-      ...URL,
-      createObjectURL: vi.fn(() => 'blob:fake'),
-      revokeObjectURL: vi.fn(),
-    });
+    // happy-dom: the <a download> click goes through window.open → frame
+    // navigation, which calls `new URL(...)` internally. stubGlobal would swap
+    // the URL class for a plain object ("URL is not a constructor"), so spy
+    // on the statics instead — the class itself stays callable.
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:fake');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
   });
 
   it('book export: path grammar + progress callback + Saved status', async () => {
