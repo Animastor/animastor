@@ -187,11 +187,16 @@ describe('S-4: shared infrastructure moves', () => {
         for (const file of S4_CORE_FILES) {
             assertCoreIsHostFree(file, read(file));
         }
-        // Documented host-adapter dependency (S-4 disposition): the assembly
-        // profile loader reads ai/profiles via the host ai-loader. Exactly
-        // ONE core file may touch it; it becomes the ProfileStore port in S-6.
+        // S-6 UPDATE: the documented host-adapter dependency (ai-loader
+        // inside assembly-profile, pinned since S-4 as the future port) is
+        // GONE — profile files load through the Generation-owned ProfileStore
+        // port (generation/ports/profile-store.js). NO S4 core file may
+        // require a host service; assembly-profile must consume the port.
         const coreWithHostAdapter = S4_CORE_FILES.filter(f => requiresOf(read(f)).some(s => /ai-loader/.test(s)));
-        expect(coreWithHostAdapter).to.deep.equal(['generation/prompt-profiles/assembly-profile.js']);
+        expect(coreWithHostAdapter, 'core must not require host services — use the ProfileStore port').to.deep.equal([]);
+        expect(requiresOf(read('generation/prompt-profiles/assembly-profile.js')),
+            'assembly-profile must load profiles through ports/profile-store')
+            .to.include('../ports/profile-store');
     });
 
     // ─────────────────────────────────────────────────────────────

@@ -239,7 +239,7 @@ describe('architecture: Generation media registry (S-2)', () => {
     // LEASE_TTL_S, STUCK_THRESHOLDS). The registry must READ those values
     // (default-registrations) — never restate them as its own literals.
     describe('S2-G: No duplicate canonical media configuration', () => {
-        it('default-registrations reads config values from runtime-config, not literals', () => {
+        it('default-registrations reads config values from the GenerationConfig port, not literals', () => {
             const regFile = readSource(path.join(BACKEND_SRC, 'generation', 'default-registrations.js'));
             // Strip comments — only code statements may reference config
             const code = codeOf(regFile);
@@ -255,8 +255,11 @@ describe('architecture: Generation media registry (S-2)', () => {
             const offenders = forbidden.filter(re => re.test(code)).map(String);
             expect(offenders, 'registry must read canonical values from runtime-config').to.deep.equal([]);
 
-            // And the wiring must actually reference runtime-config
-            expect(code, 'default-registrations must require runtime-config').to.match(/require\([^)]*runtime-config/);
+            // S-6: the wiring goes through the Generation-owned GenerationConfig
+            // port (host adapter binds runtime-config) — generation/ must NOT
+            // require runtime-config directly anymore (S6-A enforces contour-wide)
+            expect(code, 'default-registrations must consume the GenerationConfig port').to.match(/require\([^)]*ports\/generation-config/);
+            expect(code, 'default-registrations must not require runtime-config directly (S-6 port)').to.not.match(/require\([^)]*runtime-config/);
         });
 
         it('registry capability values match runtime-config exactly (no drift)', () => {

@@ -6,12 +6,15 @@
 // hardcoded constants, enabling workflow changes without
 // modifying backend code.
 
-const book = require('../../book');
+// S-6: Book-model reads go through the Generation-owned BookDataPort —
+// the former direct ../../book / ../../book/lazy-book/appearance requires
+// (the frozen R4 violation) are gone; the host binds the two operations
+// (collectSceneUnits / tokensToString) at the composition root.
+const bookData = require('../../generation/ports/book-data');
 // S-3: workflow/connector access rides the generation provider seam —
 // no direct workflow-connector package imports in generation modules.
 const provider = require('../../generation/comfyui-provider');
 const profileOverride = require('../../services/profile-override');
-const { tokensToString } = require('../../book/lazy-book/appearance');
 // S-4: shared prompt/profile infrastructure lives in the generation
 // prompt-profiles layer — the video→image media edge is gone.
 const { resolveAssembly, DEFAULT_VIDEO_DEFAULTS } = require('../../generation/prompt-profiles/assembly-profile');
@@ -83,7 +86,7 @@ function tokenKey(tokens) {
     if (Array.isArray(tokens)) {
         return tokens.map(t => (typeof t === 'string' ? t.trim() : '')).filter(Boolean).sort().join(', ');
     }
-    return tokensToString(tokens);
+    return bookData.tokensToString(tokens);
 }
 
 /**
@@ -102,8 +105,8 @@ function buildCharLines(participants, loadedBook, scene) {
         if (!c) continue;
         const sceneTokens = scene?.passport?.[c.id]?.video_tokens;
         const globalTokens = c.passport?.video_tokens;
-        const sceneStr = tokensToString(sceneTokens);
-        const globalStr = tokensToString(globalTokens);
+        const sceneStr = bookData.tokensToString(sceneTokens);
+        const globalStr = bookData.tokensToString(globalTokens);
         let chosen = sceneStr ? sceneTokens : globalTokens;
         let final = sceneStr || globalStr;
         if (final && used.has(tokenKey(chosen))) {
@@ -424,7 +427,7 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
 // ======================================================
 async function buildVideoWorkflows(sceneData, loadedBook, buildId, workflows) {
     const scene = sceneData.scene || sceneData.payload || {};
-    const units = book.collectSceneUnits(scene) || [];
+    const units = bookData.collectSceneUnits(scene) || [];
 
     if (units.length === 0) {
         log('No units found in scene');

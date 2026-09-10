@@ -12,7 +12,8 @@
 //   this provider contract (semantic: workflow names, entity keys, job spec)
 //       ↓
 //   animastor-comfyui-workflow-connector (workflow JSON + connectors)
-//   runtime/gpu-dispatcher.sendUnified (Job Protocol v2 → GPU Hub POST /task)
+//   generation/ports/dispatch-transport → runtime/gpu-dispatcher.sendUnified
+//                                         (Job Protocol v2 → GPU Hub POST /task)
 //       ↓
 //   GPU Hub / Worker (external packages)
 //
@@ -33,8 +34,15 @@
 
 const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
 const connectorLoader = require('animastor-comfyui-workflow-connector').connectorLoader;
+// Job Protocol v2 rides the frozen runtime/job-schema facade (Phase 9C: the
+// facade is the single choke point into @animastor/contracts — a zero-logic
+// re-export of the package, not a host implementation).
 const jobSchema = require('../runtime/job-schema');
-const gpuDispatcher = require('../runtime/gpu-dispatcher');
+// S-6: dispatch goes through the Generation-owned DispatchTransport port —
+// Core must not know the concrete gpu-dispatcher (the host adapter wires
+// runtime/gpu-dispatcher.sendUnified behind the port at the composition
+// root; routing policy stays host-side, reconnaissance §24.6).
+const { dispatch } = require('./ports/dispatch-transport');
 
 // ── provider identity ───────────────────────────────────────────────────
 const PROVIDER_NAME = 'comfyui';
@@ -216,7 +224,10 @@ async function generate(request) {
         taskSpec.timeout_ms = timeoutMs;
     }
 
-    return gpuDispatcher.sendUnified(taskSpec);
+    // S-6: the v2 task spec flows through the DispatchTransport port —
+    // payload/result/error semantics are 1:1 with the former direct
+    // gpuDispatcher.sendUnified call (the host adapter IS sendUnified).
+    return dispatch(taskSpec);
 }
 
 /**

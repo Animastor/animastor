@@ -180,14 +180,18 @@ describe('architecture: S-3 provider seam (knowledge centralization)', () => {
 // S3-F — single transport seam
 // ======================================================
 describe('architecture: S-3 provider seam (single dispatch path)', () => {
-    // The frozen set of files allowed to require runtime/gpu-dispatcher:
-    //   - comfyui-provider.js        — the seam (owns the transport edge)
+    // The frozen set of files allowed to require runtime/gpu-dispatcher.
+    // S-6 UPDATE: comfyui-provider left the set — the provider consumes the
+    // Generation-owned DispatchTransport port (generation/ports/
+    // dispatch-transport.js) and the composition root wires the adapter
+    // (backend.cjs). Remaining entries are NON-dispatch consumers:
+    //   - backend.cjs — composition root (wires the transport adapter)
     //   - services/provider-gateway.js — Phase 3 facade delegation
     //   - runtime/scene-window.js + helpers/redis-helpers.cjs — routing/
     //     availability reads (resolveWorkspaceForBook), not job dispatch —
-    //     documented residual (DispatchTransport port split = S-4)
+    //     documented residual (routing policy stays host-side, §24.6)
     const DISPATCH_SEAM_BASELINE = [
-        'backend/src/generation/comfyui-provider.js',
+        'backend/src/backend.cjs',
         'backend/src/services/provider-gateway.js',
         'backend/src/runtime/scene-window.js',
         'backend/src/helpers/redis-helpers.cjs',
@@ -237,11 +241,13 @@ describe('architecture: S-3 provider seam (external boundaries)', () => {
 
     it('S3-H: the provider rides the frozen Job Protocol facade (no private protocol fields)', () => {
         const seam = readSrc(PROVIDER_SEAM);
-        // dispatch goes through gpu-dispatcher.sendUnified — no private HTTP
+        // S-6 UPDATE: dispatch goes through the DispatchTransport port (the
+        // host adapter IS gpu-dispatcher.sendUnified) — no private HTTP
         // calls, no re-stamped protocol version, no private Redis keys
-        expect(seam).to.include('gpuDispatcher.sendUnified');
+        expect(seam).to.include("require('./ports/dispatch-transport')");
+        expect(seam).to.match(/dispatch\(taskSpec\)/);
         expect(seam).to.not.match(/fetch\(|HUB_URL|protocol_version|animastor:queue|animastor:job/);
-        // job-id building rides the frozen job-schema facade
+        // job-id building rides the frozen @animastor/contracts facade
         expect(seam).to.include('jobSchema.buildJobId');
     });
 });

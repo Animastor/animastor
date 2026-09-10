@@ -149,11 +149,13 @@ describe('architecture: Book domain dependency boundary', () => {
         expect(offenders, 'backend/src/book/** are shims; the runtime lives in packages/animastor-vbook-runtime (VB-T4 pins the package itself)').to.deep.equal([]);
     });
 
-    it('workflows do not import the book domain (frozen violation, no new edges)', () => {
-        // Known existing violation: workflows/video/video-workflows.js requires
-        // ../../book (+ its appearance helper). Phase 1 pins exactly this set.
-        // After the extraction these edges go through host shims into the
-        // package public API (ADR note, audit §6 "Pinned violation").
+    it('workflows do not import the book domain (R4 violation eliminated by the S-6 BookDataPort)', () => {
+        // S-6 UPDATE: the frozen 2-edge violation (workflows/video/
+        // video-workflows.js → ../../book + ../../book/lazy-book/appearance)
+        // is GONE — video workflow builds read scene data through the
+        // Generation-owned BookDataPort (generation/ports/book-data.js),
+        // with the host binding the two operations at the composition root.
+        // The baseline is now ZERO: no workflows module may import book.
         const wfDir = path.join(BACKEND_SRC, 'workflows');
         const offenders = [];
         for (const file of listSourceFiles(wfDir)) {
@@ -163,10 +165,10 @@ describe('architecture: Book domain dependency boundary', () => {
                 }
             }
         }
-        expect(offenders).to.deep.equal([
-            'backend/src/workflows/video/video-workflows.js: ../../book',
-            'backend/src/workflows/video/video-workflows.js: ../../book/lazy-book/appearance',
-        ]);
+        expect(offenders, 'workflows must read book scene data via generation/ports/book-data').to.deep.equal([]);
+        // the consumer is pinned to the port (S6-B re-pins contour-wide)
+        const wf = readSource(path.join(BACKEND_SRC, 'workflows', 'video', 'video-workflows.js'));
+        expect(requireSpecifiers(wf)).to.include('../../generation/ports/book-data');
     });
 });
 

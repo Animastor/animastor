@@ -125,6 +125,9 @@ describe('P7-T4: VBook internals are not reached by new direct consumers', () =>
         // edge; routes/ai-routes.cjs LEFT this baseline.)
         'backend/src/backend.cjs: ./book/bundle-validator.cjs',
         'backend/src/backend.cjs: ./book/lazy-book',
+        // (S-6: the composition root binds the BookDataPort adapter — the
+        // two operations video-workflows consumes — through the host shims.)
+        'backend/src/backend.cjs: ./book/lazy-book/appearance',
         'backend/src/helpers/redis-helpers.cjs: ../book',
         'backend/src/orchestration/scene-callbacks.js: ../book',
         'backend/src/orchestration/scene-orchestrator.js: ../book',
@@ -148,8 +151,9 @@ describe('P7-T4: VBook internals are not reached by new direct consumers', () =>
         'backend/src/services/placeholder-audio.js: ../book/lazy-book',
         'backend/src/services/source-coverage-audit.js: ../book/lazy-book',
         'backend/src/services/txt-importer.js: ../book/lazy-book',
-        'backend/src/workflows/video/video-workflows.js: ../../book',
-        'backend/src/workflows/video/video-workflows.js: ../../book/lazy-book/appearance',
+        // (S-6: video-workflows.js left this baseline — its two raw-book edges
+        // were the frozen R4 violation; they now go through the Generation-
+        // owned BookDataPort, generation/ports/book-data.js.)
     ];
 
     function bookDomainEdges() {
@@ -354,14 +358,15 @@ describe('P7-T8: the Provider Gateway generation seam bypass set stays frozen', 
     //   audio/generation.js, image/iu-processor.js, video/video-service.js,
     //   orchestration/scene-orchestrator.js.
     // Remaining entries are NON-generation dispatch-policy consumers:
-    //   - generation/comfyui-provider.js — the seam itself (owns the
-    //     transport edge, S-3 architecture)
+    //   - backend.cjs — composition root (S-6: wires the DispatchTransport
+    //     adapter; comfyui-provider itself left the set — it consumes the
+    //     Generation-owned port generation/ports/dispatch-transport.js)
     //   - services/provider-gateway.js — Phase 3 facade delegation
     //   - runtime/scene-window.js / helpers/redis-helpers.cjs — routing/
     //     availability reads (resolveWorkspaceForBook), not job dispatch
-    //     (documented residual seam — DispatchTransport port, S-4).
+    //     (documented residual — routing policy stays host-side, §24.6)
     const BYPASS_BASELINE = [
-        'backend/src/generation/comfyui-provider.js: ../runtime/gpu-dispatcher',
+        'backend/src/backend.cjs: ./runtime/gpu-dispatcher',
         'backend/src/helpers/redis-helpers.cjs: ../runtime/gpu-dispatcher',
         'backend/src/runtime/scene-window.js: ./gpu-dispatcher',
         'backend/src/services/provider-gateway.js: ../runtime/gpu-dispatcher',

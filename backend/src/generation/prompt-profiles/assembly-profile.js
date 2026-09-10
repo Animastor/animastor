@@ -21,7 +21,12 @@
 // exists, assembly behaves exactly like the pre-profile pipeline. There is no
 // 'default' profile file — real profiles only.
 
-const aiLoader = require('../../services/ai-loader');
+// S-6: profile FILES are loaded through the Generation-owned ProfileStore
+// port — Core has no host services/filesystem knowledge. The host adapter
+// binds services/ai-loader.getAssemblyProfile (ai/profiles/**/*.json) at
+// the composition root (documented S-4 → S-6: the former single core host
+// edge is now the ProfileStore port).
+const { getAssemblyProfile } = require('../ports/profile-store');
 
 // Built-in default assembly — the pipeline's baseline "general → specific" order.
 // Mirrors ai/profiles/image/default.json; used when the file is missing/unreadable.
@@ -97,7 +102,7 @@ function normalizeAssembly(profile, type, profileName) {
  */
 function resolveAssembly(type, profileName) {
     const name = (profileName && profileName !== 'default') ? profileName : null;
-    const profile = name ? aiLoader.getAssemblyProfile(`${type}/${name}`) || null : null;
+    const profile = name ? getAssemblyProfile(`${type}/${name}`) || null : null;
     return normalizeAssembly(profile, type, name);
 }
 

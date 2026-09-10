@@ -26,15 +26,30 @@
 //   a shared domain contract, not an image-specific implementation.
 //   The registry does not own it — it stays as a neutral contract.
 
+// S-6: capability values arrive through the Generation-owned
+// GenerationConfig port — Generation Core does not read runtime-config.
+// The host adapter (config/generation-config-adapter.js) binds the
+// canonical slices; this host-side registration module wires it as a
+// fallback so the S-2 lazy self-bootstrap stays order-independent (the
+// composition root binds it first — backend.cjs / test bindings).
 const { registerMediaType } = require('./media-registry');
-const runtimeConfig = require('../config/runtime-config');
+const {
+    setGenerationConfig,
+    generationConfig,
+    isGenerationConfigWired,
+} = require('./ports/generation-config');
+
+if (!isGenerationConfigWired()) {
+    require('../../config/generation-config-adapter').bindGenerationConfig();
+}
+const generationCfg = generationConfig();
 
 // ======================================================
 // AUDIO
 // ======================================================
-// Config values are READ from runtime-config (the canonical source) — the
-// registry does not duplicate them. jobMs defaults are the registry's own
-// canonical home: they were previously hardcoded in gpu-dispatcher's
+// Config values are READ through the GenerationConfig port (canonical
+// source: runtime-config, bound by the host adapter) — the registry does not
+// duplicate them. jobMs defaults are the registry's own canonical home:
 // DEFAULT_TYPE_TIMEOUT_MS and existed nowhere in runtime-config.
 // retry.perSceneLimit likewise (previously retry-budget-manager's
 // PER_SCENE_LIMITS) — also not present in runtime-config.
@@ -43,10 +58,10 @@ registerMediaType({
     taskTypes: ['audio'],
     timeout: {
         jobMs: 30 * 60 * 1000,    // 30 min (was gpu-dispatcher DEFAULT_TYPE_TIMEOUT_MS.audio)
-        leaseTtlS: runtimeConfig.LEASE_TTL_S.AUDIO,
+        leaseTtlS: generationCfg.leaseTtlS.AUDIO,
     },
     quota: {
-        maxActive: runtimeConfig.QUOTAS.MAX_ACTIVE_AUDIO,
+        maxActive: generationCfg.quotas.MAX_ACTIVE_AUDIO,
     },
     retry: {
         perSceneLimit: 10,
@@ -55,8 +70,8 @@ registerMediaType({
         serviceName: 'audio',
     },
     stuck: {
-        generatingMinutes: runtimeConfig.STUCK_THRESHOLDS.AUDIO_GENERATING,
-        pendingMinutes: runtimeConfig.STUCK_THRESHOLDS.AUDIO_PENDING,
+        generatingMinutes: generationCfg.stuckThresholds.AUDIO_GENERATING,
+        pendingMinutes: generationCfg.stuckThresholds.AUDIO_PENDING,
     },
     progress: {
         strategy: 'chunk',
@@ -77,10 +92,10 @@ registerMediaType({
     taskTypes: ['image'],
     timeout: {
         jobMs: 30 * 60 * 1000,    // 30 min (was gpu-dispatcher DEFAULT_TYPE_TIMEOUT_MS.image)
-        leaseTtlS: runtimeConfig.LEASE_TTL_S.IMAGE,
+        leaseTtlS: generationCfg.leaseTtlS.IMAGE,
     },
     quota: {
-        maxActive: runtimeConfig.QUOTAS.MAX_ACTIVE_IMAGE,
+        maxActive: generationCfg.quotas.MAX_ACTIVE_IMAGE,
     },
     retry: {
         perSceneLimit: 10,
@@ -89,8 +104,8 @@ registerMediaType({
         serviceName: 'image',
     },
     stuck: {
-        generatingMinutes: runtimeConfig.STUCK_THRESHOLDS.IMAGE_GENERATING,
-        pendingMinutes: runtimeConfig.STUCK_THRESHOLDS.IMAGE_PENDING,
+        generatingMinutes: generationCfg.stuckThresholds.IMAGE_GENERATING,
+        pendingMinutes: generationCfg.stuckThresholds.IMAGE_PENDING,
     },
     progress: {
         strategy: 'iu',
@@ -111,10 +126,10 @@ registerMediaType({
     taskTypes: ['video'],
     timeout: {
         jobMs: 60 * 60 * 1000,    // 60 min (was gpu-dispatcher DEFAULT_TYPE_TIMEOUT_MS.video)
-        leaseTtlS: runtimeConfig.LEASE_TTL_S.VIDEO,
+        leaseTtlS: generationCfg.leaseTtlS.VIDEO,
     },
     quota: {
-        maxActive: runtimeConfig.QUOTAS.MAX_ACTIVE_VIDEO,
+        maxActive: generationCfg.quotas.MAX_ACTIVE_VIDEO,
     },
     retry: {
         perSceneLimit: 5,
@@ -123,8 +138,8 @@ registerMediaType({
         serviceName: 'video',
     },
     stuck: {
-        generatingMinutes: runtimeConfig.STUCK_THRESHOLDS.VIDEO_GENERATING,
-        pendingMinutes: runtimeConfig.STUCK_THRESHOLDS.VIDEO_PENDING,
+        generatingMinutes: generationCfg.stuckThresholds.VIDEO_GENERATING,
+        pendingMinutes: generationCfg.stuckThresholds.VIDEO_PENDING,
     },
     progress: {
         strategy: 'scene',
