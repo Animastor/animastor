@@ -128,6 +128,10 @@ describe('Option E — WORK_TO_DO rebuild through real reconcileCycle (real PG +
         // (books-root.js itself is not purged — its binding would otherwise
         // still close over the pre-purge config instance.)
         require('@animastor/vbook-runtime/books-root').configureBooksRoot(() => config.BOOKS_DIR);
+        // S-5: re-bind production seams after the purge — rebuildWorkList
+        // resolves the FSM writers through the seam registry, and the previous
+        // suite may have left stub wiring behind.
+        require('./helpers/wire-seams').wireProductionSeams();
         await postgres.initialize();
     });
 

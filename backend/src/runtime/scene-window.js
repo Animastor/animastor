@@ -23,7 +23,9 @@ const book = require('../book');
 const state = require('../state');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
 const artifactNaming = require('../generation/artifact-naming');
-const orchestrator = require('../orchestration/orchestrator');
+// S-5: orchestration-owned behavior (FSM facade writers) reaches runtime only
+// via the composition-root-injected seam registry — never a direct import.
+const orchestrationSeams = require('./orchestration-seams');
 const activeScenes = require('./active-scenes-index');
 const audio = require('../audio/audio-service');
 const genScope = require('../services/gen-scope');
@@ -513,7 +515,7 @@ async function slideWindow(redis, bookId, loadedBook, buildId) {
         const cacheInfo = await checkSceneContentCache(redis, buildId, bookId, scene.chapter_id, scene.scene_id);
         if (cacheInfo.valid) {
             log(`Scene ${scene.chapter_id}/${scene.scene_id} has valid content, promoting`);
-            await orchestrator.setSceneAllReady(redis, bookId, scene.chapter_id, scene.scene_id, buildId);
+            await orchestrationSeams.getOrchestrationSeam('setSceneAllReady')(redis, bookId, scene.chapter_id, scene.scene_id, buildId);
             await restoreChunkStatusForScene(redis, buildId, bookId, scene.chapter_id, scene.scene_id);
             nextIdx++;
             started++;
@@ -640,7 +642,8 @@ async function startScene(redis, s, buildId, bookId) {
     if (cacheInfo.valid) {
         log(`Scene ${bookId}/${chapterId}/${sceneId}: valid content on disk, skipping GPU dispatch`);
         // M5: Facade owns READY + syncLinearState
-        await orchestrator.setSceneAllReady(redis, bookId, chapterId, sceneId, buildId);
+        // S-5: via the injected orchestration seam
+        await orchestrationSeams.getOrchestrationSeam('setSceneAllReady')(redis, bookId, chapterId, sceneId, buildId);
         // Restore chunk metadata that was reset by markDirtyScenes so the progress
         // endpoint (/assets-state) correctly counts this scene as ready.
         await restoreChunkStatusForScene(redis, buildId, bookId, chapterId, sceneId);
@@ -661,15 +664,17 @@ async function startScene(redis, s, buildId, bookId) {
     }
 
     // T8: setScenePending через фасад — always succeeds (per-asset state write)
+    // S-5: via the injected orchestration seam
     if (audioDisabled) {
-        await orchestrator.setScenePending(redis, bookId, chapterId, sceneId, 'image');
+        await orchestrationSeams.getOrchestrationSeam('setScenePending')(redis, bookId, chapterId, sceneId, 'image');
     } else {
-        await orchestrator.setScenePending(redis, bookId, chapterId, sceneId, 'audio');
+        await orchestrationSeams.getOrchestrationSeam('setScenePending')(redis, bookId, chapterId, sceneId, 'audio');
     }
 
     // M5: Facade owns PLACEHOLDER + syncLinearState
+    // S-5: via the injected orchestration seam
     if (audioDisabled) {
-        await orchestrator.setScenePlaceholder(redis, bookId, chapterId, sceneId);
+        await orchestrationSeams.getOrchestrationSeam('setScenePlaceholder')(redis, bookId, chapterId, sceneId);
     }
 
     // T8: scene-state removed — build_id derived from manifest

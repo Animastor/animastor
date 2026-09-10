@@ -17,6 +17,8 @@ require('./vbook-test-bindings.cjs');
 const config = require('../src/config/runtime-config');
 const layerConfig = require('../src/services/layer-config');
 const reconciliation = require('../src/runtime/reconciliation-engine');
+// S-5: production seam wiring (reconcileCycle resolves FSM writers via seams)
+require('./helpers/wire-seams').wireProductionSeams();
 
 describe('Layer-config restore through real reconcileCycle (Кирпич №2, C6)', () => {
     let tmpDir;

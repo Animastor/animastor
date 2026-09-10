@@ -288,6 +288,18 @@ describe('orchestration stabilization: executor acceptance', () => {
             setSceneGenerating: async (...args) => { calls.generating.push(args); return { changed: true }; },
             rollbackStageToPending: async (...args) => { calls.rollback.push(args); return { changed: true }; },
         });
+        // S-5: mirror the composition-root seam wiring with the stub facade —
+        // runtime modules resolve orchestration behavior via seams.
+        const orchestrationSeams = require('../src/runtime/orchestration-seams');
+        const orchStubModule = require('../src/orchestration/orchestrator');
+        orchestrationSeams.registerOrchestrationSeams({
+            dispatchStage: require('../src/orchestration/scene-orchestrator').dispatchStage,
+            rollbackStageToPending: orchStubModule.rollbackStageToPending,
+            markDirtyScene: orchStubModule.markDirtyScene || (async () => {}),
+            setScenePending: orchStubModule.setScenePending,
+            setSceneAllReady: orchStubModule.setSceneAllReady || (async () => {}),
+            setScenePlaceholder: orchStubModule.setScenePlaceholder || (async () => {}),
+        });
         stub('../src/storage/postgres/repositories/scene-assets-repo', {
             getDirtyUnitIds: async () => [],
         });

@@ -14,12 +14,15 @@
 //   reconcile(redis, bookId, chapterId, sceneId)        → reconcileResult        (Д.3: диск как факт)
 //
 // Зависимости подтягиваются lazy-require внутри тел команд — это сознательный
-// компромисс Шага 0, чтобы не углубить существующий цикл orchestration↔runtime
-// (dispatch-engine уже делает require('../orchestration') внутри функции).
+// компромисс Шага 0, чтобы не углублять существующий цикл orchestration и
+// runtime (диспетчер уже делал отложенный импорт orchestration-фасада).
 // Развязка интерфейсом — отдельная задача (после К.4).
 
 // S-2: media-type knowledge (stage lists, fail-event map) resolved via registry
 const mediaRegistry = require('../generation/media-registry');
+// S-5: pure FSM-writer ownership (markDirtyScene/setScene*) — re-exported from
+// the state layer; bodies moved verbatim (see state/scene-state-ops.js header).
+const stateOps = require('../state/scene-state-ops');
 
 // ── markDirty ─────────────────────────────────────────
 // Единственный способ объявить «нужна регенерация». Делегирует в
@@ -331,64 +334,6 @@ async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reas
     }
 }
 
-// ── markDirtyScene ────────────────────────────────────
-// M5: Direct per-scene DIRTY writer — единственный способ выставить
-// per-asset DIRTY напрямую (без bookDiff/regen). Заменяет P4/P5/P6.
-// В отличие от markDirty (который регенерирует сцену через bookDiff),
-// этот метод просто маркирует assets как DIRTY, оставляя активный индекс
-// scheduler'у. Разница: markDirty → for regeneration, markDirtyScene → for recovery.
-//
-// T5: PG side-effect — синхронно пишет scene_assets.status='stale' для каждого ассета.
-// Это зеркалит то, как completeStage пишет status='ready'. Если PG недоступен —
-// только warning в лог, Redis write не откатывается.
-async function markDirtyScene(redis, bookId, chapterId, sceneId, assets = mediaRegistry.listMediaTypes(), buildId = null) {
-    const state = require('../state');
-    for (const asset of assets) {
-        await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.DIRTY);
-    }
-
-    // T8: syncLinearState удалён — per-asset state единственный source of truth
-
-    // T5: PG side-effect — запись stale статуса (graceful failure)
-    try {
-        const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
-        for (const asset of assets) {
-            await sceneAssetsRepo.markStale(bookId, chapterId, sceneId, asset, buildId);
-        }
-    } catch (pgErr) {
-        const { log, warn } = require('./scene-utils');
-        warn(`markDirtyScene: PG stale write failed for ${bookId}/${chapterId}/${sceneId}: ${pgErr.message}`);
-    }
-}
-
-// ── setScenePending ──────────────────────────────────
-// Set an asset to PENDING. R1: validateAssetTransition + journal event.
-// Used by scene-window when starting a scene.
-// T8: syncLinearState удалён — per-asset state единственный source of truth.
-async function setScenePending(redis, bookId, chapterId, sceneId, asset, buildId = null) {
-    const state = require('../state');
-    const journal = require('./event-journal');
-    const { log, warn } = require('./scene-utils');
-
-    const states = await state.getAssetStates(redis, bookId, chapterId, sceneId);
-    const current = states?.[asset];
-    const check = state.validateAssetTransition(current, state.AssetState.PENDING);
-
-    if (!check.valid && current !== state.AssetState.PENDING) {
-        warn(`[SET-PENDING] ${bookId}/${chapterId}/${sceneId} ${asset}: ${current}→pending rejected (${check.reason})`);
-        await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
-            journal.EventType.INVALID_STATE_CALLBACK, current,
-            { asset, attempted: 'pending', ignored: true }).catch(() => {});
-        return { changed: false, reason: check.reason };
-    }
-
-    await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.PENDING);
-    await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
-        journal.EventType.SCENE_PENDING, state.AssetState.PENDING,
-        { asset, buildId }).catch(() => {});
-    return { changed: true };
-}
-
 // ── rollbackStageToPending ───────────────────────────
 // FSM-валидный откат стадии в PENDING после dispatch, который НЕ отправил
 // ни одного GPU job (no_jobs_sent / cancelled / dispatch_error).
@@ -456,98 +401,6 @@ async function rollbackStageToPending(redis, bookId, chapterId, sceneId, asset, 
         } catch (_) {}
         return { changed: false, reason: `rollback_failed:${err.message}` };
     }
-}
-
-// ── setSceneAllReady ─────────────────────────────────
-// Set all three assets to READY. R1: validateAssetTransition + journal event.
-// Used by scene-window when valid content found on disk (cache hit).
-// T8: syncLinearState удалён — per-asset state единственный source of truth.
-async function setSceneAllReady(redis, bookId, chapterId, sceneId, buildId = null) {
-    const state = require('../state');
-    const journal = require('./event-journal');
-    const { log, warn } = require('./scene-utils');
-
-    const states = await state.getAssetStates(redis, bookId, chapterId, sceneId);
-    for (const asset of mediaRegistry.listMediaTypes()) {
-        const current = states?.[asset];
-        const check = state.validateAssetTransition(current, state.AssetState.READY);
-        if (!check.valid && current !== state.AssetState.READY) {
-            warn(`[SET-ALL-READY] ${bookId}/${chapterId}/${sceneId} ${asset}: ${current}→ready rejected (${check.reason}) — skipping`);
-            await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
-                journal.EventType.INVALID_STATE_CALLBACK, current,
-                { asset, attempted: 'ready', ignored: true }).catch(() => {});
-        }
-    }
-
-    await state.unsafeRestoreAssetStates(redis, bookId, chapterId, sceneId, {
-        audio: state.AssetState.READY,
-        image: state.AssetState.READY,
-        video: state.AssetState.READY,
-    });
-    await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
-        journal.EventType.SCENE_ALL_READY, state.AssetState.READY,
-        { assets: mediaRegistry.listMediaTypes(), buildId }).catch(() => {});
-}
-
-// ── setSceneGenerating ──────────────────────────────
-// Set an asset to GENERATING. R1: validateAssetTransition + journal event.
-// T7+T8: syncLinearState удалён — per-asset state единственный source of truth.
-//
-// CONTRACT (fix: video-retry-targeted-investigation-2026-08-26):
-// returns { changed: false, reason } when the transition is invalid —
-// callers MUST abort the dispatch before sending any GPU job.
-// Sending a job from a state that cannot reach GENERATING turns the later
-// successful callback into 'invalid_asset_state' FAILURE (retry budget burn
-// + circuit breaker). See scene-orchestrator.ensureStageDispatchable.
-async function setSceneGenerating(redis, bookId, chapterId, sceneId, asset, buildId = null) {
-    const state = require('../state');
-    const journal = require('./event-journal');
-    const { log, warn } = require('./scene-utils');
-
-    const states = await state.getAssetStates(redis, bookId, chapterId, sceneId);
-    const current = states?.[asset];
-    const check = state.validateAssetTransition(current, state.AssetState.GENERATING);
-
-    if (!check.valid && current !== state.AssetState.GENERATING) {
-        warn(`[SET-GENERATING] ${bookId}/${chapterId}/${sceneId} ${asset}: ${current}→generating rejected (${check.reason})`);
-        await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
-            journal.EventType.INVALID_STATE_CALLBACK, current,
-            { asset, attempted: 'generating', ignored: true }).catch(() => {});
-        return { changed: false, reason: check.reason };
-    }
-
-    await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.GENERATING);
-    await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
-        journal.EventType.SCENE_GENERATING, state.AssetState.GENERATING,
-        { asset, buildId }).catch(() => {});
-    return { changed: true };
-}
-
-// ── setScenePlaceholder ──────────────────────────────
-// Set audio to PLACEHOLDER. R1: validateAssetTransition + journal event.
-// T8: syncLinearState удалён — per-asset state единственный source of truth.
-async function setScenePlaceholder(redis, bookId, chapterId, sceneId, buildId = null) {
-    const state = require('../state');
-    const journal = require('./event-journal');
-    const { log, warn } = require('./scene-utils');
-
-    const states = await state.getAssetStates(redis, bookId, chapterId, sceneId);
-    const current = states?.audio;
-    const check = state.validateAssetTransition(current, state.AssetState.PLACEHOLDER);
-
-    if (!check.valid && current !== state.AssetState.PLACEHOLDER) {
-        warn(`[SET-PLACEHOLDER] ${bookId}/${chapterId}/${sceneId} audio: ${current}→placeholder rejected (${check.reason})`);
-        await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
-            journal.EventType.INVALID_STATE_CALLBACK, current,
-            { asset: 'audio', attempted: 'placeholder', ignored: true }).catch(() => {});
-        return { changed: false, reason: check.reason };
-    }
-
-    await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.PLACEHOLDER);
-    await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
-        journal.EventType.SCENE_PLACEHOLDER, state.AssetState.PLACEHOLDER,
-        { buildId }).catch(() => {});
-    return { changed: true };
 }
 
 // ── completeStageWithoutVideo ────────────────────────
@@ -743,19 +596,28 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
     return { ...marked, reset_scenes: scenes.length };
 }
 
+// ── S-5: pure FSM-writer ownership moved to the state layer ──
+// markDirtyScene / setScenePending / setSceneGenerating / setSceneAllReady /
+// setScenePlaceholder now live in state/scene-state-ops.js (bodies verbatim;
+// canonical owner next to the asset-state store + journal). They are
+// RE-EXPORTED below so the facade command surface and every existing caller
+// (deps.orchestrator.*, orchestration index spread, seam wiring) stay
+// byte-compatible. rollbackStageToPending remains a facade-owned function:
+// it additionally reports the runtime-owned stateRollbackFailures metric.
+
 module.exports = {
     markDirty,
-    markDirtyScene,
+    markDirtyScene: stateOps.markDirtyScene,
     planScene,
     beginStage,
     completeStage,
     failStage,
     completeStageWithoutVideo,
     completeStageWithoutImage,
-    setScenePending,
-    setSceneGenerating,
-    setSceneAllReady,
-    setScenePlaceholder,
+    setScenePending: stateOps.setScenePending,
+    setSceneGenerating: stateOps.setSceneGenerating,
+    setSceneAllReady: stateOps.setSceneAllReady,
+    setScenePlaceholder: stateOps.setScenePlaceholder,
     rollbackStageToPending,
     reconcile,
     resetScenes,

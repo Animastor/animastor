@@ -22,11 +22,18 @@ const artifactNaming = require('../generation/artifact-naming');
 const mediaRegistry = require('../generation/media-registry');
 const storage = require('../storage');
 const config = require('../config/runtime-config');
-const journal = require('../orchestration/event-journal');
+// S-5: the event journal is an append-only observability sink (zero requires,
+// no orchestration policy) — the ONLY runtime→Generation dependency allowed
+// without a seam (s5-runtime-orchestration-cycle.test.js S5-A).
+const journal = require('../state/event-journal');
 const runtimeScheduler = require('./runtime-scheduler');
 const counterReconciliation = require('./counter-reconciliation');
 const dispatchEngine = require('./dispatch-engine');
 const leaseManager = require('./lease-manager');
+// S-5: orchestration-owned behavior (FSM-safe facade writers, rollbacks)
+// reaches runtime ONLY through the composition-root-injected seam registry.
+// No orchestration module is imported from this file (S-5).
+const orchestrationSeams = require('./orchestration-seams');
 
 const logPrefix = '[RECONCILE]';
 
@@ -1085,7 +1092,8 @@ async function applyFix(redis, fix) {
 
         switch (action) {
             case 'MOVE_TO_PENDING': {
-                const orchestrator = require('../orchestration/orchestrator');
+                // S-5: FSM-safe rollback via the injected orchestration seam
+                const rollbackStageToPending = orchestrationSeams.getOrchestrationSeam('rollbackStageToPending');
 
                 // ── Stage-scoped orphan GENERATING repair (audit d9d67a3) ──
                 if (fix.stage) {
@@ -1114,7 +1122,7 @@ async function applyFix(redis, fix) {
                     // GENERATING → PENDING is forbidden). Errors are NOT
                     // swallowed (rollbackStageToPending logs + journals +
                     // counts failures itself).
-                    const rollback = await orchestrator.rollbackStageToPending(
+                    const rollback = await rollbackStageToPending(
                         redis, scene.bookId, scene.chapterId, scene.sceneId,
                         fix.stage, null, 'orphan_generating_repair');
                     if (!rollback.changed) {
@@ -1143,7 +1151,8 @@ async function applyFix(redis, fix) {
                 // ── Legacy stuck_state path: whole-scene DIRTY ──
                 // Mark all per-asset states as DIRTY for redispatch
                 // M5: Route through orchestrator.markDirtyScene instead of direct state.setAssetState
-                await orchestrator.markDirtyScene(redis, scene.bookId, scene.chapterId, scene.sceneId);
+                // S-5: asset-state writer via the injected orchestration seam
+                await orchestrationSeams.getOrchestrationSeam('markDirtyScene')(redis, scene.bookId, scene.chapterId, scene.sceneId);
 
                 // Remove from active index to avoid immediate re-scheduling
                 await runtimeScheduler.removeSceneFromActiveIndex(redis, scene.bookId, scene.chapterId, scene.sceneId);
@@ -1208,8 +1217,9 @@ async function applyFix(redis, fix) {
                 // Mark per-asset states as DIRTY for redispatch
                 // M5: Route through orchestrator.markDirtyScene instead of direct state.setAssetState
                 // M5 Шаг 3: syncLinearState уже внутри markDirtyScene
-                const orchestrator = require('../orchestration/orchestrator');
-                await orchestrator.markDirtyScene(redis, scene.bookId, scene.chapterId, scene.sceneId);
+                // S-5: asset-state writer via the injected orchestration seam
+                const markDirtyScene = orchestrationSeams.getOrchestrationSeam('markDirtyScene');
+                await markDirtyScene(redis, scene.bookId, scene.chapterId, scene.sceneId);
 
                 // Add back to active index
                 await runtimeScheduler.addSceneToActiveIndex(redis, scene.bookId, scene.chapterId, scene.sceneId);
@@ -1234,13 +1244,14 @@ async function applyFix(redis, fix) {
                 }
 
                 // M5 Шаг 4: Route through orchestrator.setScenePending (which includes syncLinearState)
-                const orchestrator = require('../orchestration/orchestrator');
+                // S-5: asset-state writer via the injected orchestration seam
+                const setScenePending = orchestrationSeams.getOrchestrationSeam('setScenePending');
                 const assetType = pendingState === 'audio_pending' ? 'audio'
                     : pendingState === 'image_pending' ? 'image'
                     : pendingState === 'video_pending' ? 'video'
                     : null;
                 if (assetType) {
-                    await orchestrator.setScenePending(redis, scene.bookId, scene.chapterId, scene.sceneId, assetType);
+                    await setScenePending(redis, scene.bookId, scene.chapterId, scene.sceneId, assetType);
                 }
 
                 await runtimeScheduler.addSceneToActiveIndex(
@@ -1255,8 +1266,8 @@ async function applyFix(redis, fix) {
 
             case 'PROGRESS_TO_IMAGE': {
                 // M5 Шаг 4: Route through orchestrator.setScenePending (includes syncLinearState)
-                const orchestrator = require('../orchestration/orchestrator');
-                await orchestrator.setScenePending(redis, scene.bookId, scene.chapterId, scene.sceneId, 'image');
+                // S-5: asset-state writer via the injected orchestration seam
+                await orchestrationSeams.getOrchestrationSeam('setScenePending')(redis, scene.bookId, scene.chapterId, scene.sceneId, 'image');
 
                 await runtimeScheduler.addSceneToActiveIndex(
                     redis,
@@ -1280,8 +1291,8 @@ async function applyFix(redis, fix) {
 
             case 'PROGRESS_TO_VIDEO': {
                 // M5 Шаг 4: Route through orchestrator.setScenePending (includes syncLinearState)
-                const orchestrator = require('../orchestration/orchestrator');
-                await orchestrator.setScenePending(redis, scene.bookId, scene.chapterId, scene.sceneId, 'video');
+                // S-5: asset-state writer via the injected orchestration seam
+                await orchestrationSeams.getOrchestrationSeam('setScenePending')(redis, scene.bookId, scene.chapterId, scene.sceneId, 'video');
 
                 await runtimeScheduler.addSceneToActiveIndex(
                     redis,
@@ -1318,8 +1329,8 @@ async function applyFix(redis, fix) {
                 }
 
                 // M5 Шаг 4: Route through orchestrator.setScenePending (includes syncLinearState)
-                const orchestrator = require('../orchestration/orchestrator');
-                await orchestrator.setScenePending(redis, scene.bookId, scene.chapterId, scene.sceneId, 'audio');
+                // S-5: asset-state writer via the injected orchestration seam
+                await orchestrationSeams.getOrchestrationSeam('setScenePending')(redis, scene.bookId, scene.chapterId, scene.sceneId, 'audio');
 
                 return { success: true, action, scene, details: 'registry marked for recovery' };
             }
@@ -2116,7 +2127,9 @@ async function rebuildWorkList(redis) {
     const placeholderAudio = require('../services/placeholder-audio');
     const sceneWindow = require('./scene-window');
     const runtimeScheduler = require('./runtime-scheduler');
-    const orchestrator = require('../orchestration/orchestrator');
+    // S-5: asset-state writers via the injected orchestration seams
+    const markDirtyScene = orchestrationSeams.getOrchestrationSeam('markDirtyScene');
+    const setScenePending = orchestrationSeams.getOrchestrationSeam('setScenePending');
 
     const AssetState = state.AssetState;
     const STAGES = mediaRegistry.listMediaTypes();
@@ -2259,11 +2272,11 @@ async function rebuildWorkList(redis) {
                                 continue;
                             }
                             log(`[WORKLIST] ${bookId}/${chapterId}/${sceneId} ${stage}: ${current} → DIRTY → PENDING (valid transitions)`);
-                            await orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, [stage]);
-                            await orchestrator.setScenePending(redis, bookId, chapterId, sceneId, stage);
+                            await markDirtyScene(redis, bookId, chapterId, sceneId, [stage]);
+                            await setScenePending(redis, bookId, chapterId, sceneId, stage);
                         } else {
                             // NEW/DIRTY/FAILED → PENDING — валидные переходы.
-                            await orchestrator.setScenePending(redis, bookId, chapterId, sceneId, stage);
+                            await setScenePending(redis, bookId, chapterId, sceneId, stage);
                         }
                     } else {
                         // target === READY — restore-fact (файл валиден на диске):

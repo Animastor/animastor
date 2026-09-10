@@ -190,7 +190,10 @@ describe('Circuit breaker automatic recovery (tryRecover wiring)', () => {
             let count = parseInt(await redis.get('animastor:circuit:video:half-open'), 10);
             expect(count).to.equal(1);
 
-            // Dispatch aborts on retry-budget — BEFORE any job/finalization
+            // Dispatch aborts on retry-budget — BEFORE any job/finalization.
+            // S-5: seam wired so dispatchStage resolves its executor entry.
+            const { wireProductionSeams } = require('./helpers/wire-seams');
+            wireProductionSeams();
             const res = await dispatchEngine.dispatchStage(
                 redis, B, C, S, 'video', null, null
             );

@@ -8,6 +8,8 @@ const mediaRegistry = require('../generation/media-registry');
 
 const state = require('../state');
 const dispatchEngine = require('./dispatch-engine');
+// S-5: orchestration-owned behavior reaches runtime only via the injected seams
+const orchestrationSeams = require('./orchestration-seams');
 const generationProgress = require('../services/generation-progress');
 const taskRepo = require('../storage/postgres/repositories/task-repo');
 
@@ -272,13 +274,14 @@ async function markVersionStaleDirty(redis, bookId, chapterId, sceneId) {
 
     log(`[VERSION-DIRTY] ${bookId}/${chapterId}/${sceneId}: PG version mismatch — resetting per-asset states for dispatch`);
     // T8: через фасад — единый владелец DIRTY
-    const orchestrator = require('../orchestration/orchestrator');
+    // S-5: asset-state writer via the injected orchestration seam
+    const markDirtyScene = orchestrationSeams.getOrchestrationSeam('markDirtyScene');
     const dirtyAssets = [];
     if (audioEnabled && assetStates.audio === state.AssetState.READY) dirtyAssets.push('audio');
     if (imageEnabled && assetStates.image === state.AssetState.READY) dirtyAssets.push('image');
     if (videoEnabled && assetStates.video === state.AssetState.READY) dirtyAssets.push('video');
     if (dirtyAssets.length > 0) {
-        await orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, dirtyAssets);
+        await markDirtyScene(redis, bookId, chapterId, sceneId, dirtyAssets);
     }
     return dirtyAssets.length;
 }

@@ -170,47 +170,54 @@ describe('architecture: Book domain dependency boundary', () => {
     });
 });
 
-describe('architecture: orchestration ↔ runtime cycle freeze', () => {
-    // R5: the current cycle is documented debt (≥5 files). The freeze pins
-    // the EXACT edge set so the cycle cannot GROW while Phases 3/6 land.
-    //
-    // runtime → orchestration edges (top-level + lazy):
-    // Phase 5 removed the dead runtime-persistence.js:../orchestration/
-    // event-journal edge; the remaining set is pinned below.
-    // Docs: docs/architecture/PHASE_5_ORCHESTRATION_RUNTIME.md
-    const RUNTIME_TO_ORCH_BASELINE = [
-        'backend/src/runtime/dispatch-engine.js:../orchestration/event-journal',
-        'backend/src/runtime/reconciliation-engine.js:../orchestration/event-journal',
-        'backend/src/runtime/scene-window.js:../orchestration/orchestrator',
-        'backend/src/runtime/runtime-scheduler.js:../orchestration/orchestrator',
-        'backend/src/runtime/dispatch-engine.js:../orchestration/orchestrator',
-        'backend/src/runtime/dispatch-engine.js:../orchestration',
-        'backend/src/runtime/reconciliation-engine.js:../orchestration/orchestrator',
+describe('architecture: orchestration ↔ runtime cycle freeze (S-5 reduced)', () => {
+    // R5 → S-5: the runtime→orchestration POLICY cycle is broken. All seven
+    // frozen R5 edges (orchestrator/index imports from dispatch-engine,
+    // reconciliation-engine, scene-window, runtime-scheduler) were replaced
+    // by composition-root seams (runtime/orchestration-seams.js). The ONLY
+    // remaining runtime→orchestration-directory requires are the event-journal
+    // sink requires (state/event-journal.js canonical owner, orchestration/
+    // event-journal.js shim) — a zero-dep append-only observability leaf that
+    // cannot form a cycle. The multi-module SCC is dissolved (P7-T7 pins its
+    // absence). Full before/after evidence: recon doc §26.
+    // Docs: docs/architecture/generation-module-extraction-reconnaissance.md §26
+    const RUNTIME_TO_ORCH_ALLOWED = [
+        'backend/src/runtime/dispatch-engine.js:../state/event-journal',
+        'backend/src/runtime/reconciliation-engine.js:../state/event-journal',
     ];
 
-    it('runtime → orchestration edge set stays frozen (no new cycle edges)', () => {
+    it('runtime → orchestration edges stay limited to the classified event-journal sink (no policy imports)', () => {
         const edges = [];
         for (const file of listSourceFiles(path.join(BACKEND_SRC, 'runtime'))) {
             for (const spec of requireSpecifiers(readSource(file))) {
-                if (/^\.\.\/orchestration/.test(spec)) {
-                    // normalize index → orchestrator-less path kept verbatim
+                // policy imports are any orchestration require; the journal
+                // sink (canonical owner ../state/event-journal) is separately
+                // classified by the zero-require check below
+                if (/^\.\.\/orchestration/.test(spec) || /event-journal$/.test(spec)) {
                     edges.push(`${rel(file)}:${spec.replace(/^\.\.\//, '../')}`);
                 }
             }
         }
         const set = [...new Set(edges)].sort();
-        const baseline = [...new Set(RUNTIME_TO_ORCH_BASELINE)].sort();
-        expect(set, 'A NEW runtime→orchestration edge was added — the cycle must not grow (see final review §3.3; Phase 6 breaks it).').to.deep.equal(baseline);
+        const allowed = [...new Set(RUNTIME_TO_ORCH_ALLOWED)].sort();
+        expect(set, 'A runtime→orchestration POLICY edge appeared (orchestrator/index/scene-*) — runtime must reach orchestration behavior ONLY via runtime/orchestration-seams.js (S-5).').to.deep.equal(allowed);
     });
 
-    it('event-journal remains the only unconditionally allowed runtime→orchestration module for NEW top-level imports', () => {
-        // Every runtime file may import event-journal; importing anything else
-        // from orchestration must appear in the frozen baseline above (it does).
-        // This test documents intent and guards the direction of FUTURE edits:
-        const journal = readSource(path.join(BACKEND_SRC, 'orchestration', 'event-journal.js'));
-        expect(journal).to.include('event');
-        const sceneWindow = readSource(path.join(BACKEND_SRC, 'runtime', 'scene-window.js'));
-        expect(sceneWindow).to.include("require('../orchestration/orchestrator')"); // pinned top-level edge
+    it('event-journal is a zero-require sink and runtime consumes it via the canonical owner, not the shim', () => {
+        // The journal is the only runtime→orchestration-directory edge that
+        // may exist: it is an append-only observability ledger with ZERO
+        // requires of its own (a graph sink — it cannot close a cycle).
+        // Relocation of the require path is the S-6 physical-move concern.
+        const journalShim = readSource(path.join(BACKEND_SRC, 'orchestration', 'event-journal.js'));
+        const shimSpecs = requireSpecifiers(journalShim);
+        expect(shimSpecs, 'event-journal shim must stay a one-line re-export of the canonical owner').to.deep.equal(['../state/event-journal']);
+        const journal = readSource(path.join(BACKEND_SRC, 'state', 'event-journal.js'));
+        expect(requireSpecifiers(journal), 'the journal itself must stay a zero-require sink').to.deep.equal([]);
+        // runtime files must consume the canonical owner, never the shim
+        for (const f of ['dispatch-engine.js', 'reconciliation-engine.js']) {
+            const specs = requireSpecifiers(readSource(path.join(BACKEND_SRC, 'runtime', f)));
+            expect(specs.filter((s) => /event-journal$/.test(s)), `${f} journal require`).to.deep.equal(['../state/event-journal']);
+        }
     });
 });
 

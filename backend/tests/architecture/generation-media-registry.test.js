@@ -335,6 +335,7 @@ describe('architecture: Generation media registry (S-2)', () => {
             'runtime/runtime-scheduler.js',       // per-type scheduling branches + video→image dependency (documented media logic)
             'runtime/dispatch-engine.js',         // JSDoc text + image IU markers
             'state/scene-state.js',               // per-asset default shape (audio/image/video hash fields — FSM data contract)
+            'state/scene-state-ops.js',           // S-5: guarded restore writes per-asset READY hash {audio,image,video} — FSM data contract (moved from orchestrator facade)
             'services/profile-override.js',       // connector profile field names (media implementation: connector/skill layer, not a capability map)
             'services/prompt-profile-loader.js',  // skill-file grouping by type (media implementation: prompt/skill layer)
         ].map(p => path.join(BACKEND_SRC, p)));

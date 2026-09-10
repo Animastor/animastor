@@ -1799,6 +1799,9 @@ describe('Happy Path: Д.2 — shouldScheduleAssets is a pure decision', () => {
 
     beforeEach(() => {
         redis = new FakeRedis();
+        // S-5: markVersionStaleDirty writes DIRTY through the injected
+        // orchestration seam — wire the production facade for this suite.
+        require('./helpers/wire-seams').wireProductionSeams();
         scheduler = require('../src/runtime/runtime-scheduler');
     });
 

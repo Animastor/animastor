@@ -6,7 +6,14 @@
 // Supports renewable leases and drift detection.
 
 const state = require('../state');
-const journal = require('../orchestration/event-journal');
+// S-5: the event journal is an append-only observability sink (zero requires,
+// no orchestration policy) — the ONLY runtime→Generation dependency allowed
+// without a seam (s5-runtime-orchestration-cycle.test.js S5-A).
+const journal = require('../state/event-journal');
+// S-5: orchestration-owned behavior (stage executor, FSM-safe rollbacks)
+// reaches runtime ONLY through the composition-root-injected seam registry.
+// No orchestration module is imported from this file (S-5).
+const orchestrationSeams = require('./orchestration-seams');
 const leaseManager = require('./lease-manager');
 const counterReconciliation = require('./counter-reconciliation');
 const runtimeMetrics = require('./runtime-metrics');
@@ -483,7 +490,8 @@ async function getDispatchEvidence(redis, bookId, chapterId, sceneId, stage) {
  */
 async function repairOrphanGeneratingStates(redis, bookId, opts = {}) {
     const stateModule = require('../state');
-    const orchestrator = require('../orchestration/orchestrator');
+    // S-5: FSM-safe rollback via the injected orchestration seam
+    const rollbackStageToPending = orchestrationSeams.getOrchestrationSeam('rollbackStageToPending');
     const reason = opts.reason || 'orphan_generating_repair';
     const repaired = [];
 
@@ -509,7 +517,7 @@ async function repairOrphanGeneratingStates(redis, bookId, opts = {}) {
                 if (states[stage] !== stateModule.AssetState.GENERATING) continue;
                 const evidence = await getDispatchEvidence(redis, bookId, chapterId, sceneId, stage);
                 if (evidence.alive) continue;
-                const rollback = await orchestrator.rollbackStageToPending(
+                const rollback = await rollbackStageToPending(
                     redis, bookId, chapterId, sceneId, stage, null, reason
                 );
                 if (rollback.changed) {
@@ -848,7 +856,10 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
         started_at: metadata.started_at
     });        // Step 6: Get orchestrator to perform dispatch
         try {
-            const orchestrator = require('../orchestration');
+            // S-5: the stage executor entry (scene-orchestrator.dispatchStage) is
+            // injected by the composition root — runtime must not import
+            // orchestration implementation directly.
+            const executeStageDispatch = orchestrationSeams.getOrchestrationSeam('dispatchStage');
 
             // T4: передаём dispatchId — executor включит его в job specs для GPU Hub
             // dispatchId устанавливается в metadata ДО вызова executor, поэтому
@@ -856,7 +867,7 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
             metadata.dispatch_id = dispatchId;
             await setDispatchMetadata(redis, bookId, chapterId, sceneId, stage, metadata);
 
-            const result = await orchestrator.dispatchStage(
+            const result = await executeStageDispatch(
                 redis,
                 { book_id: bookId, chapter_id: chapterId, scene_id: sceneId },
                 loadedBook,
@@ -908,8 +919,7 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
         // глотается — явный error-лог (rollbackStageToPending дополнительно
         // пишет journal + метрику).
         try {
-            const orchestratorFacade = require('../orchestration/orchestrator');
-            const rollback = await orchestratorFacade.rollbackStageToPending(
+            const rollback = await orchestrationSeams.getOrchestrationSeam('rollbackStageToPending')(
                 redis, bookId, chapterId, sceneId, stage, buildId,
                 `dispatch_error:${err.message}`
             );

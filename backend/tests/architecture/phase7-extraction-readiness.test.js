@@ -234,30 +234,34 @@ describe('P7-T6: Provider Gateway delegate and consumer sets stay explicit', () 
 });
 
 // ── P7-T7 — Cycle membership freeze ──────────────────────────────────────
-describe('P7-T7: no new module joins the orchestration↔runtime cycles', () => {
-    // Tarjan SCC over backend/src. Phase 1 R5 freezes runtime→orchestration
-    // EDGES; this freezes cycle MEMBERSHIP — even a new edge through services
-    // or another layer cannot silently pull a new module into the cycle.
-    // Baseline measured at the Phase 7 audit commit (§2.11).
-    const BIG_CYCLE_BASELINE = [
-        'backend/src/image/image-service.js',
-        'backend/src/image/index.js',
-        'backend/src/image/iu-processor.js',
-        'backend/src/orchestration/index.js',
-        'backend/src/orchestration/orchestrator.js',
-        'backend/src/orchestration/scene-callbacks.js',
-        'backend/src/orchestration/scene-orchestrator.js',
-        'backend/src/orchestration/scene-restoration.js',
-        'backend/src/runtime/dispatch-engine.js',
-        'backend/src/runtime/reconciliation-engine.js',
-        'backend/src/runtime/runtime-scheduler.js',
-        'backend/src/runtime/scene-window.js',
-        'backend/src/services/placeholder-audio.js',
-        'backend/src/services/video-orchestrator.js',
-    ];
+describe('P7-T7: no module joins the former orchestration↔runtime cycles', () => {
+    // Tarjan SCC over backend/src.
+    //
+    // S-5 UPDATE: the 14-member orchestration⇄runtime⇄services⇄image cycle is
+    // GONE. Every runtime→orchestration policy edge was replaced by
+    // composition-root seams (runtime/orchestration-seams.js); the event
+    // journal moved to the state adapter (state/event-journal.js); the pure
+    // FSM writers moved to state/scene-state-ops.js (placeholder-audio and
+    // scene-restoration re-pointed). The multi-module generation SCC no
+    // longer exists — the freeze below pins its ABSENCE: no module may
+    // re-create an SCC that spans runtime/, orchestration/ or the media
+    // contours (the only allowed SCCs are the two pre-existing 2-module
+    // pairs: registry bootstrap and the AI resolver cycle).
+    // Docs: docs/architecture/generation-module-extraction-reconnaissance.md §26
+    const BIG_CYCLE_BASELINE = [];
     const RESOLVER_CYCLE_BASELINE = [
         'backend/src/services/system-ai.js',
         'backend/src/services/workspace-ai-provider.js',
+    ];
+    // The registry bootstrap cycle (media-registry ⇄ default-registrations)
+    // is an S-2 ownership pattern, not a generation-lifecycle cycle — it is
+    // explicitly allowed here and pinned by S2 guards.
+    const ALLOWED_SCC_BASELINES = [
+        RESOLVER_CYCLE_BASELINE,
+        [
+            'backend/src/generation/default-registrations.js',
+            'backend/src/generation/media-registry.js',
+        ],
     ];
 
     function buildGraph() {
@@ -295,13 +299,24 @@ describe('P7-T7: no new module joins the orchestration↔runtime cycles', () => 
         return sccs;
     }
 
-    it('the big orchestration↔runtime↔services↔image SCC has exactly the baseline members', () => {
+    it('no SCC may span runtime/orchestration/media contours (the S-5 big cycle must stay dead)', () => {
         const { files, graph } = buildGraph();
         const sccs = tarjanSCC(graph, files);
-        const target = sccs.find((s) => s.some((f) => rel(f).startsWith('backend/src/runtime/')));
-        expect(target, 'the runtime cycle disappeared (baseline update needed)').to.exist;
-        const members = target.map(rel).sort();
-        expect(members, 'a NEW module joined the orchestration↔runtime cycle (Phase 7 audit §2.11)').to.deep.equal([...BIG_CYCLE_BASELINE].sort());
+
+        // The only SCCs allowed in the whole backend are the allowlisted
+        // 2-module pairs (AI resolver cycle, registry bootstrap cycle).
+        // Any SCC containing a runtime/, orchestration/, audio/, image/,
+        // video/ or state/ module is a regression of the S-5 cycle break.
+        const forbiddenDirs = ['runtime/', 'orchestration/', 'audio/', 'image/', 'video/', 'state/'];
+        const offenders = sccs.filter((s) => s.some((f) => {
+            const r = rel(f);
+            return forbiddenDirs.some((d) => r.startsWith(`backend/src/${d}`));
+        }));
+        expect(offenders.map((s) => s.map(rel).sort()), 'the S-5 cycle re-appeared — a new module re-created an SCC spanning the generation contours').to.deep.equal([]);
+        // sanity: the allowlisted SCCs are exactly the two known pairs (order-insensitive)
+        const actual = sccs.map((s) => s.map(rel).sort()).sort((a, b) => a.join(',').localeCompare(b.join(',')));
+        const expected = ALLOWED_SCC_BASELINES.map((b) => [...b].sort()).sort((a, b) => a.join(',').localeCompare(b.join(',')));
+        expect(actual).to.deep.equal(expected);
     });
 
     it('the workspace-ai-provider ⇄ system-ai SCC has exactly the baseline members', () => {

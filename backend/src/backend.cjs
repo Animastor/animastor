@@ -23,6 +23,18 @@ const video = require('./video');
 require('./generation/default-registrations');
 const { resumeIncompleteSessions } = require('./startup-resume');
 const orchestrator = require('./orchestration');
+// S-5: runtime receives orchestration behavior (stage executor + FSM facade
+// writers) ONLY through the seam registry — dependency direction is outward
+// through the composition root, never a runtime→orchestration import.
+// Docs: docs/architecture/generation-module-extraction-reconnaissance.md §26
+require('./runtime/orchestration-seams').registerOrchestrationSeams({
+    dispatchStage: orchestrator.dispatchStage,
+    rollbackStageToPending: orchestrator.rollbackStageToPending,
+    markDirtyScene: orchestrator.markDirtyScene,
+    setScenePending: orchestrator.setScenePending,
+    setSceneAllReady: orchestrator.setSceneAllReady,
+    setScenePlaceholder: orchestrator.setScenePlaceholder,
+});
 const wfManager = require('./services/workflow-manager');
 const journal = require('./orchestration/event-journal');
 const storage = require('./storage');

@@ -269,6 +269,20 @@ function loadSceneWindowWithStubs({ redis, startedStateByScene = new Set(), addA
     };
     require.cache[orchPath] = { exports: orchStub, id: orchPath, loaded: true, filename: orchPath, children: [], paths: [] };
 
+    // S-5: scene-window resolves FSM writers through the seam registry, not the
+    // orchestrator deep-require — wire the stub functions into the seams.
+    // NOTE: never purge the seams module from cache — it is a process-level
+    // singleton that already-loaded runtime modules hold closures over.
+    const seams = require(path.join(cwd, 'src/runtime/orchestration-seams.js'));
+    seams.registerOrchestrationSeams({
+        dispatchStage: async () => ({ dispatched: false, reason: 'test_no_dispatch' }),
+        rollbackStageToPending: async () => ({ changed: false }),
+        markDirtyScene: orchStub.markDirtyScene,
+        setScenePending: orchStub.setScenePending,
+        setSceneAllReady: orchStub.setSceneAllReady,
+        setScenePlaceholder: orchStub.setScenePlaceholder,
+    });
+
     for (const key of startedStateByScene) {
         redis.store.set(`animastor:scene-state:book-1:${key.chapter_id}:${key.scene_id}`, makeStartedState());
     }
@@ -284,6 +298,10 @@ describe('scope-aware slideWindow', () => {
 
     afterEach(() => {
         const cwd = path.resolve(__dirname, '..');
+        // S-5: drop the stub seam wiring so it cannot leak into other suites
+        // (clear the REGISTRY, never purge the seams module from cache —
+        // already-loaded runtime modules hold closures over it).
+        require(path.join(cwd, 'src/runtime/orchestration-seams.js')).clearOrchestrationSeams();
         for (const p of [
             path.join(cwd, 'src/book/index.js'),
             path.join(cwd, 'src/state/index.js'),

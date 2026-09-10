@@ -119,22 +119,20 @@ describe('Phase 5 T2: runtime does not import orchestration through the seam', (
     });
 
     it('residual runtime→orchestration edges stay pinned (cannot grow)', () => {
-        // Same baseline as dependency-guardrails.test.js R5 (post-Phase-5).
-        // Duplicated here so the Phase 5 suite fails independently if a new
-        // edge appears or the baseline is loosened elsewhere.
+        // S-5 UPDATE: the 7-edge R5 baseline collapsed — every orchestration
+        // POLICY edge (orchestrator/index) was replaced by composition-root
+        // seams (runtime/orchestration-seams.js). The only remaining
+        // runtime→orchestration edges are the event-journal sink requires
+        // (zero-dep observability leaf, no orchestration policy).
+        // Docs: docs/architecture/generation-module-extraction-reconnaissance.md §26
         const BASELINE = new Set([
-            'backend/src/runtime/dispatch-engine.js:../orchestration/event-journal',
-            'backend/src/runtime/reconciliation-engine.js:../orchestration/event-journal',
-            'backend/src/runtime/scene-window.js:../orchestration/orchestrator',
-            'backend/src/runtime/runtime-scheduler.js:../orchestration/orchestrator',
-            'backend/src/runtime/dispatch-engine.js:../orchestration/orchestrator',
-            'backend/src/runtime/dispatch-engine.js:../orchestration',
-            'backend/src/runtime/reconciliation-engine.js:../orchestration/orchestrator',
+            'backend/src/runtime/dispatch-engine.js:../state/event-journal',
+            'backend/src/runtime/reconciliation-engine.js:../state/event-journal',
         ]);
         const edges = new Set();
         for (const file of listSourceFiles(RUNTIME_DIR)) {
             for (const spec of requireSpecifiers(readSource(file))) {
-                if (/^\.\.\/orchestration/.test(spec)) {
+                if (/^\.\.\/orchestration/.test(spec) || /event-journal$/.test(spec)) {
                     edges.add(`${rel(file)}:${spec}`);
                 }
             }
@@ -411,26 +409,11 @@ describe('Phase 5 final audit: full runtime/** boundary', () => {
             }
         }
 
-        expect(indirect.sort(), 'services-mediated runtime→orchestration endpoints (must stay inside the pinned direct set)').to.deep.equal([
-            'backend/src/runtime/reconciliation-engine.js → orchestration/orchestrator',
-            'backend/src/runtime/scene-window.js → orchestration/orchestrator',
-        ]);
-
-        // Every indirect endpoint must already be a direct pinned edge of the
-        // same runtime file — the services hop must never open a NEW endpoint.
-        const direct = new Map(); // file → Set(orchestration endpoints)
-        for (const file of listSourceFiles(RUNTIME_DIR)) {
-            for (const spec of requireSpecifiers(readSource(file))) {
-                if (!/^\.\.\/orchestration\//.test(spec)) continue;
-                const key = rel(file);
-                if (!direct.has(key)) direct.set(key, new Set());
-                direct.get(key).add(spec.replace(/^\.\.\//, ''));
-            }
-        }
-        for (const entry of indirect) {
-            const [file, endpoint] = entry.split(' → ');
-            expect(direct.get(file), `${file} must reach ${endpoint} directly before using it via services`).to.include(endpoint);
-        }
+        // S-5 UPDATE: the services bridge (placeholder-audio → orchestrator) was
+        // re-pointed to the state-layer canonical owner — the indirect endpoint
+        // set is EMPTY. Any entry here re-creates a services-mediated
+        // runtime→orchestration policy edge.
+        expect(indirect.sort(), 'services-mediated runtime→orchestration endpoints (must stay empty after S-5)').to.deep.equal([]);
     });
 
     it('T11: runtime-result-emitter is the only module that can produce a runtime result', () => {

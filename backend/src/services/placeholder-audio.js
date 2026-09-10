@@ -430,8 +430,11 @@ async function replacePlaceholderWithRealAudio(bookId, chapterId, sceneId, build
  */
 async function markPlaceholderStale(redis, bookId, chapterId, sceneId, buildId) {
     try {
-        const orchestrator = require('../orchestration/orchestrator');
-        await orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, ['audio'], buildId);
+        // S-5: the FSM writer's canonical owner is the state layer — calling
+        // the orchestrator facade from here would keep a services→orchestration
+        // edge inside the runtime↔orchestration SCC.
+        const stateOps = require('../state/scene-state-ops');
+        await stateOps.markDirtyScene(redis, bookId, chapterId, sceneId, ['audio'], buildId);
         log(`Placeholder marked stale via facade: ${bookId}/${chapterId}/${sceneId}`);
         return true;
     } catch (err) {

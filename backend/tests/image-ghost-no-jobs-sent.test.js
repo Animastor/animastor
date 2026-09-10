@@ -34,6 +34,8 @@ const { expect } = require('chai');
 const state = require('../src/state');
 const orchestrator = require('../src/orchestration/orchestrator');
 const dispatchEngine = require('../src/runtime/dispatch-engine');
+// S-5: production seam wiring (dispatch-engine resolves the executor via seams)
+const { wireProductionSeams } = require('./helpers/wire-seams');
 const provider = require('../src/generation/comfyui-provider');
 const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
 const path = require('path');
@@ -108,6 +110,7 @@ describe('image ghost GENERATING — no_jobs_sent lifecycle fix (audit 6929ba5)'
             connectorsDir: path.join(__dirname, '../ai/connectors'),
         });
         wfLoader.loadWorkflows();
+        wireProductionSeams();
     });
 
     beforeEach(() => {
@@ -222,11 +225,14 @@ describe('image ghost GENERATING — no_jobs_sent lifecycle fix (audit 6929ba5)'
         });
 
         it('executor exception past the executor (dispatch-engine catch) also rolls back state', async () => {
-            // dispatch-engine catch path: orchestrator.dispatchStage throws after
-            // the stage was set GENERATING → rollback + finalize(cancelled).
+            // dispatch-engine catch path: executor seam throws after the stage
+            // was set GENERATING → rollback + finalize(cancelled).
+            // S-5: the executor entry reaches dispatch-engine through the
+            // seam registry (composition-root wiring), not a direct require.
+            const { registerOrchestrationSeams } = require('../src/runtime/orchestration-seams');
             const orchestration = require('../src/orchestration');
             const originalExec = orchestration.dispatchStage;
-            orchestration.dispatchStage = async () => { throw new Error('executor exploded'); };
+            registerOrchestrationSeams({ dispatchStage: async () => { throw new Error('executor exploded'); } });
             try {
                 await state.setAssetState(redis, B, C, S, 'image', state.AssetState.GENERATING);
                 const res = await dispatchEngine.dispatchStage(redis, B, C, S, 'image', makeBook(), BUILD, {});
@@ -237,7 +243,8 @@ describe('image ghost GENERATING — no_jobs_sent lifecycle fix (audit 6929ba5)'
                 expect(await redis.get(`animastor:dispatch-lease:${B}:${C}:${S}:image`)).to.equal(null);
                 expect(await dispatchEngine.getDispatchMetadata(redis, B, C, S, 'image')).to.equal(null);
             } finally {
-                orchestration.dispatchStage = originalExec;
+                // restore the production wiring (same target the old test replaced)
+                registerOrchestrationSeams({ dispatchStage: originalExec });
             }
         });
     });

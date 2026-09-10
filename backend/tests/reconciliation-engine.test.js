@@ -157,6 +157,22 @@ function mockDeps(redis, overrides = {}) {
     };
     require.cache[ORCH_PATH] = { exports: orchMock, loaded: true };
 
+    // S-5: reconciliation-engine resolves orchestration behavior (FSM writers,
+    // rollback) through the seam registry, not the ORCH_PATH deep-require —
+    // wire the same mocks into the seams. The seams module is a process-level
+    // singleton (already-loaded runtime modules hold closures over it): NEVER
+    // purge it from require.cache, only re-register over it.
+    const seamsPath = path.join(CWD, 'src/runtime/orchestration-seams.js');
+    require(seamsPath).registerOrchestrationSeams({
+        dispatchStage: async () => ({ dispatched: false, reason: 'test_no_dispatch' }),
+        rollbackStageToPending: overrides.rollbackStageToPending
+            || (async (r, bookId, chapterId, sceneId, stage) => ({ changed: false, reason: `test_unwired_rollback:${stage}` })),
+        markDirtyScene: orchMock.markDirtyScene,
+        setScenePending: orchMock.setScenePending,
+        setSceneAllReady: async () => {},
+        setScenePlaceholder: async () => {},
+    });
+
     // Mock event-journal
     const journalMock = {
         EventType: { RECOVERY_STARTED: 'RECOVERY_STARTED', RECOVERY_COMPLETED: 'RECOVERY_COMPLETED' },

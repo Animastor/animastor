@@ -41,6 +41,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { createMockRedis } = require('./mocks/redis-mock');
+// S-5: seam wiring (runtime resolves orchestration behavior via seams)
+const { wireProductionSeams } = require('./helpers/wire-seams');
 
 const B = 'orphan_book', C = 'ch-1', S = 'sc-1', S2 = 'sc-2';
 const BUILD = 'build-orphan-test';
@@ -299,6 +301,10 @@ describe('orphan GENERATING repair (audit d9d67a3)', () => {
         sceneWindow = require(P.sceneWindow);
         genProgress = require(P.genProgress);
         reconciler = require(P.reconciler);
+        // S-5: production seam wiring against the freshly loaded (stubbed-dep)
+        // orchestrator instances — dispatch-engine/reconciliation resolve the
+        // FSM writers and executor via seams, not require.cache deep-requires.
+        wireProductionSeams();
         // Route modules are required per test (they capture handlers).
     });
 

@@ -39,6 +39,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { createMockRedis } = require('./mocks/redis-mock');
+// S-5: seam wiring (runtime resolves orchestration behavior via seams)
+const { wireProductionSeams } = require('./helpers/wire-seams');
 
 const B = 'lifecycle_book', C = 'ch-1', S = 'sc-1';
 const STAGES = ['audio', 'image', 'video'];
@@ -193,6 +195,9 @@ describe('dispatch metadata/lease lifecycle — getDispatchEvidence premise (172
         scheduler = require(P.scheduler);
         sceneWindow = require(P.sceneWindow);
         reconciler = require(P.reconciler);
+        // S-5: seam wiring for the freshly loaded orchestrator instances —
+        // reconciliation resolves FSM writers via the seam registry.
+        wireProductionSeams();
     });
 
     after(() => {
