@@ -7,9 +7,15 @@
 
 const fs = require('fs');
 const path = require('path');
-const { validateBundleObject } = require('../book/bundle-validator.cjs');
 
-module.exports = function(config) {
+module.exports = function(config, deps = {}) {
+    // Assistant boundary (extraction preparation): the bundle-contract
+    // validator is injected by the composition root (AssistantPorts binding
+    // shares the same validator instance with the save gate). The direct
+    // book-domain require remains only as the standalone/test fallback.
+    const { validateBundleObject: validateBundleObjectDep } = deps;
+    const validateBundleObject = validateBundleObjectDep
+        || require('../book/bundle-validator.cjs').validateBundleObject;
     // AI assistant profile lives in the AI tree (backend/ai), alongside rules,
     // skills, profiles, workflows and connectors. Env override for exotic setups.
     const AI_PROFILE_PATH = process.env.AI_PROFILE_PATH || path.join(__dirname, '../../ai/ai-assistant-profile.md');

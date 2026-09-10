@@ -231,8 +231,12 @@ describe('T4: Book Model excludes Redis/runtime state', () => {
 // ── T5 — Loader isolation ────────────────────────────────────────────────
 describe('T5: consumers do not pick between independent book loaders', () => {
     it('AI/chat routes use the unified facade instead of the raw loader chain', () => {
+        // Assistant extraction preparation: the facade call moved behind the
+        // AssistantPorts loadBook(bookId) seam (wired to
+        // bookModel.loadBook(bookId, { mode: 'lazy' }) at the composition
+        // root) — the route must not choose loaders itself.
         const ai = readSource(aiRoutesPath);
-        expect(ai).to.match(/bookModel\.loadBook\(bookId,\s*\{\s*mode:\s*'lazy'\s*\}\)/);
+        expect(ai).to.match(/\bloadBook\(bookId\)/);
         expect(ai).to.not.match(/book\.loadBook\([^)]*\)\s*\|\|\s*lazyBook\.loadDraftBook\(/);
     });
 
@@ -309,6 +313,9 @@ describe('T6: route/controller does not implement the book deletion cascade', ()
                 cleanBookRedisKeys: async () => {},
                 log: () => {},
                 setCancelFlag: async () => { order.push('set-cancel-flag'); },
+                // Assistant-data purge seam (extraction preparation) — the
+                // cascade reaches Assistant data only through this port.
+                purgeAssistantForBook: async () => { order.push('purge-assistant'); },
             });
 
             const result = await deleteBook(bookId);

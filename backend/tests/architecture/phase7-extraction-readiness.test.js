@@ -120,15 +120,21 @@ describe('P7-T4: VBook internals are not reached by new direct consumers', () =>
     // remove its baseline entry in the same change.
     const RAW_BOOK_BASELINE = [
         'backend/src/backend.cjs: ./book',
+        // (Assistant prep: the composition root binds the bundle validator
+        // into assistantPorts + chatEngine — a deliberate composition-root
+        // edge; routes/ai-routes.cjs LEFT this baseline.)
+        'backend/src/backend.cjs: ./book/bundle-validator.cjs',
         'backend/src/backend.cjs: ./book/lazy-book',
         'backend/src/helpers/redis-helpers.cjs: ../book',
         'backend/src/orchestration/scene-callbacks.js: ../book',
         'backend/src/orchestration/scene-orchestrator.js: ../book',
-        'backend/src/routes/ai-routes.cjs: ../book/bundle-validator.cjs',
         // (entity-crud-routes.cjs was removed from this baseline at the Phase 4
         // physical move: the Editor package now imports the id grammar as the
         // @animastor/vbook-runtime/lazy-book/paths package export — not a
         // backend/src/book path — so it is no longer a raw-book consumer.)
+        // (routes/ai-routes.cjs was removed from this baseline at the
+        // Assistant extraction preparation: the targeted-save fallback moved
+        // behind the AssistantPorts persistBook seam.)
         'backend/src/runtime/reconciliation-engine.js: ../book',
         'backend/src/runtime/runtime-scheduler.js: ../book',
         'backend/src/runtime/scene-window.js: ../book',
@@ -209,7 +215,13 @@ describe('P7-T6: Provider Gateway delegate and consumer sets stay explicit', () 
         '../runtime/gpu-dispatcher',
         '../storage/postgres/repositories/ai-connector-repo',
     ];
-    const CONSUMER_BASELINE = ['backend/src/routes/ai-routes.cjs'];
+    // (Assistant prep: backend.cjs joined as a composition-root consumer —
+    // it binds the gateway into the AssistantPorts resolveChatAI seam. The
+    // route itself left the direct-consumer set at that preparation.)
+    const CONSUMER_BASELINE = [
+        'backend/src/backend.cjs',
+        'backend/src/routes/ai-routes.cjs',
+    ];
 
     it('the delegate module set matches the baseline', () => {
         const specs = [...new Set(relativeTargets(GATEWAY).map(({ spec }) => spec))].sort();

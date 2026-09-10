@@ -19,10 +19,11 @@ const { listSourceFiles, readSource, rel, BACKEND_SRC } = require('./helpers');
 // Sorted; do NOT add entries here without an ADR accepted by Phase 3+.
 // (S-1 removed routes/book/generation-routes.cjs — its VBook session SQL
 // moved behind the AgentSessionControl port; no direct handle remains.)
+// (Assistant prep removed middleware/ai-book-guard.js — its session→book
+// lookup moved behind the chat-session repository port.)
 const DIRECT_SQL_WHITELIST = [
     'backend/src/auth/auth-service.js',
     'backend/src/image/iu-processor.js',
-    'backend/src/middleware/ai-book-guard.js',
     'backend/src/orchestration/orchestrator.js',
     'backend/src/orchestration/scene-restoration.js',
     'backend/src/routes/ai-endpoint-routes.cjs',

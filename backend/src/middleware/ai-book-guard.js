@@ -18,12 +18,26 @@
 // Pre-auth requests (no identity) pass through unchanged (legacy behaviour);
 // in that mode req.scopedBookId stays unset and handlers fall back to their
 // historical body/session lookup.
+//
+// Assistant boundary: session→book resolution goes through the chat-session
+// repository (the module-level default is swapped by the composition root /
+// tests via `configureAiBookGuard`); the guard itself holds no SQL, no
+// postgres handle (removed from the DIRECT_SQL_WHITELIST baseline).
 
-const { query } = require('../storage/postgres/database');
+const chatSessionRepo = require('../storage/postgres/repositories/chat-session-repo');
 
-const aiSessionRepoQuery = (id) => query(
-    'SELECT book_id FROM ai_chat_sessions WHERE id = $1 LIMIT 1', [id]
-).catch(() => null);
+let sessionRepo = chatSessionRepo;
+
+/**
+ * Swap the session repository used by the guard (composition root / tests).
+ * Must expose getBookIdForSession(id) → Promise<string|null>.
+ */
+function configureAiBookGuard(repo) {
+    if (!repo || typeof repo.getBookIdForSession !== 'function') {
+        throw new Error('configureAiBookGuard: repo.getBookIdForSession is required');
+    }
+    sessionRepo = repo;
+}
 
 const aiBookGuard = async (req, res, next) => {
     const { hasIdentity, checkBookAccess, WorkspaceExpiredError } = require('./auth-context');
@@ -49,8 +63,7 @@ const aiBookGuard = async (req, res, next) => {
         // explicit book id is also present it MUST match the session's book;
         // otherwise the caller scopes book A while writing into session B.
         if (sessionId) {
-            const row = await aiSessionRepoQuery(sessionId);
-            const sessionBookId = (row && row.rows && row.rows[0] && row.rows[0].book_id) || null;
+            const sessionBookId = await sessionRepo.getBookIdForSession(sessionId).catch(() => null);
             if (bookId && sessionBookId && sessionBookId !== bookId) {
                 return res.status(400).json({ error: 'session/book mismatch', code: 'session_book_mismatch' });
             }
@@ -76,4 +89,4 @@ const aiBookGuard = async (req, res, next) => {
     }
 };
 
-module.exports = { aiBookGuard, aiSessionRepoQuery };
+module.exports = { aiBookGuard, configureAiBookGuard };

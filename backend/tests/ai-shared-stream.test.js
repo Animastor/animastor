@@ -242,22 +242,23 @@ function startBackend() {
     createAiConnectorRoutes({ redis, logger })(app);
     createAiEndpointRoutes({ logger })(app);
     require('../src/routes/settings-ai-routes.cjs')(app);
+    // Assistant contour wiring — the narrow seam only (extraction
+    // preparation): chatEngine + assistantPorts + utils.
+    const chatSessionRepo = require('../src/storage/postgres/repositories/chat-session-repo');
+    const providerGateway = require('../src/services/provider-gateway');
     require('../src/routes/ai-routes.cjs')(app, null, {
-        config,
-        state: {}, audio: {}, image: {}, video: {},
-        book: { loadBook: () => null },
-        orchestrator: {}, storage: { postgres: { query } },
-        layerConfig: {}, genScope: {}, activeScenes: {}, placeholderAudio: {},
-        utils: { log: () => {} },
-        saveChunk: async () => {}, getChunk: async () => null, getAllChunks: async () => [],
-        getBookWindowStatus: () => null,
-        detectAvailableMode: async () => 'chat',
-        recoverChunksFromDisk: async () => {}, recoverAllBooksFromDisk: async () => {},
-        cleanupService: {}, bookDiff: {}, taskHandler: {},
         chatEngine,
-        iuRepo: {}, genSessionRepo: null,
-        lazyBook: { loadDraftBook: () => null },
-        txtImporter: {}, bookSourceRepo: {},
+        assistantPorts: {
+            loadBook: () => null,
+            persistBook: () => ({}),
+            resolveChatAI: (bookId) => providerGateway.chat.resolveProvider(bookId, {
+                fallbackBaseUrl: chatEngine.AI_API_BASE_URL,
+            }),
+            sessionRepo: chatSessionRepo,
+            purgeForBook: async () => {},
+            log: () => {},
+        },
+        utils: { log: () => {} },
     });
     const server = http.createServer(app);
     wsHandler.attachUpgrade(server);
@@ -584,22 +585,22 @@ describe('LLM Sharing Phase 3 — production SSE route (stream/cancel/security/c
                 next();
             });
             createAiEndpointRoutes({ logger: logger2 })(app2);
+            // Narrow Assistant seam (extraction preparation).
+            const chatSessionRepo2 = require('../src/storage/postgres/repositories/chat-session-repo');
+            const providerGateway2 = require('../src/services/provider-gateway');
             fakeSseModule(app2, null, {
-                config,
-                state: {}, audio: {}, image: {}, video: {},
-                book: { loadBook: () => null },
-                orchestrator: {}, storage: { postgres: { query } },
-                layerConfig: {}, genScope: {}, activeScenes: {}, placeholderAudio: {},
-                utils: { log: () => {} },
-                saveChunk: async () => {}, getChunk: async () => null, getAllChunks: async () => [],
-                getBookWindowStatus: () => null,
-                detectAvailableMode: async () => 'chat',
-                recoverChunksFromDisk: async () => {}, recoverAllBooksFromDisk: async () => {},
-                cleanupService: {}, bookDiff: {}, taskHandler: {},
                 chatEngine,
-                iuRepo: {}, genSessionRepo: null,
-                lazyBook: { loadDraftBook: () => null },
-                txtImporter: {}, bookSourceRepo: {},
+                assistantPorts: {
+                    loadBook: () => null,
+                    persistBook: () => ({}),
+                    resolveChatAI: (bookId) => providerGateway2.chat.resolveProvider(bookId, {
+                        fallbackBaseUrl: chatEngine.AI_API_BASE_URL,
+                    }),
+                    sessionRepo: chatSessionRepo2,
+                    purgeForBook: async () => {},
+                    log: () => {},
+                },
+                utils: { log: () => {} },
             });
             const server2 = http.createServer(app2);
             wsHandler2.attachUpgrade(server2);

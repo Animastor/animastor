@@ -41,6 +41,9 @@ const path = require('path');
  *   setCancelFlag   - runtime scene-window cancel flag adapter (required;
  *                     injected from backend.cjs, keeps the book layer free
  *                     of direct runtime-module requires)
+ *   purgeAssistantForBook - Assistant-data purge port (required; the
+ *                     cascade must not know the ai_chat_sessions table —
+ *                     the future @animastor/assistant owns that data)
  */
 function createBookDeletion(deps) {
     const {
@@ -48,6 +51,7 @@ function createBookDeletion(deps) {
         getAllChunks, getChunk, cleanBookRedisKeys,
         log = console.log,
         setCancelFlag = null,
+        purgeAssistantForBook = null,
     } = deps;
 
     /**
@@ -140,6 +144,9 @@ function createBookDeletion(deps) {
         // ── 5. Derived PostgreSQL state — clean ALL PG tables, each with an
         //    individual try/catch so one failure (e.g. table doesn't exist in
         //    an older schema) doesn't block cleanup of the remaining tables ──
+        //    Assistant data (ai_chat_sessions) is NOT purged here: it goes
+        //    through the purgeAssistantForBook port (the cascade must not
+        //    know the Assistant's table).
         const pgTables = [
             // Per-layer & asset tables (book_id as plain TEXT, no FK)
             'image_units',
@@ -154,7 +161,6 @@ function createBookDeletion(deps) {
             'agent_sessions',
             'book_generation_sessions',
             'generation_cancellations',
-            'ai_chat_sessions',
             'book_events',
             'scene_assets',
             // Coreference resolution tables
@@ -177,6 +183,16 @@ function createBookDeletion(deps) {
                 // Table may not exist in older schemas — non-fatal
                 console.warn(`[DELETE-BOOK] DB cleanup: ${table}: ${tblErr.message}`);
             }
+        }
+
+        // ── 5b. Assistant data — purged through the Assistant port ──
+        if (typeof purgeAssistantForBook !== 'function') {
+            throw new Error('bookDeletion: purgeAssistantForBook adapter is required');
+        }
+        try {
+            await purgeAssistantForBook(bookId);
+        } catch (assistantErr) {
+            console.warn(`[DELETE-BOOK] Assistant data cleanup failed: ${assistantErr.message}`);
         }
 
         // ── 6. GPU-hub queue clear (best-effort, external runtime) ──

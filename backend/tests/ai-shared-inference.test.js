@@ -217,22 +217,25 @@ function startBackend() {
     createAiConnectorRoutes({ redis, logger })(app);
     createAiEndpointRoutes({ logger })(app);
     require('../src/routes/settings-ai-routes.cjs')(app);
+    // Assistant contour wiring — the narrow seam only (extraction
+    // preparation): chatEngine + assistantPorts + utils. The sessionRepo
+    // port points at the real chat-session repository (live-PG test);
+    // resolveChatAI rides the real Provider Gateway (same as the host).
+    const chatSessionRepo = require('../src/storage/postgres/repositories/chat-session-repo');
+    const providerGateway = require('../src/services/provider-gateway');
     require('../src/routes/ai-routes.cjs')(app, null, {
-        config,
-        state: {}, audio: {}, image: {}, video: {},
-        book: { loadBook: () => null },
-        orchestrator: {}, storage: { postgres: { query } },
-        layerConfig: {}, genScope: {}, activeScenes: {}, placeholderAudio: {},
-        utils: { log: () => {} },
-        saveChunk: async () => {}, getChunk: async () => null, getAllChunks: async () => [],
-        getBookWindowStatus: () => null,
-        detectAvailableMode: async () => 'chat',
-        recoverChunksFromDisk: async () => {}, recoverAllBooksFromDisk: async () => {},
-        cleanupService: {}, bookDiff: {}, taskHandler: {},
         chatEngine,
-        iuRepo: {}, genSessionRepo: null,
-        lazyBook: { loadDraftBook: () => null },
-        txtImporter: {}, bookSourceRepo: {},
+        assistantPorts: {
+            loadBook: () => null,
+            persistBook: () => ({}),
+            resolveChatAI: (bookId) => providerGateway.chat.resolveProvider(bookId, {
+                fallbackBaseUrl: chatEngine.AI_API_BASE_URL,
+            }),
+            sessionRepo: chatSessionRepo,
+            purgeForBook: async () => {},
+            log: () => {},
+        },
+        utils: { log: () => {} },
     });
     const server = http.createServer(app);
     wsHandler.attachUpgrade(server);

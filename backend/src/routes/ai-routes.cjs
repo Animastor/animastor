@@ -2,20 +2,27 @@
 // ANIMASTOR BACKEND — AI CHAT ROUTES
 // ======================================================
 // All /api/v1/ai/* endpoints.
+//
+// Assistant boundary (extraction preparation): the route receives ONLY the
+// narrow AssistantPorts seam + chat engine + provider transport modules.
+// No storage barrel, no SQL, no whole Book/VBook services — book reads/
+// writes, provider resolution and session persistence go through the ports
+// (see services/assistant-ports.cjs and the assistant-contour guard tests).
 
 const fs = require('fs');
 
 module.exports = function(app, redis, deps) {
     const {
-        config, state, audio, image, video, book, orchestrator, storage,
-        layerConfig, genScope, activeScenes, placeholderAudio,
-        utils, saveChunk, getChunk, getAllChunks, getBookWindowStatus,
-        detectAvailableMode, recoverChunksFromDisk, recoverAllBooksFromDisk,
-        cleanupService, bookDiff, taskHandler, chatEngine,
-        iuRepo, genSessionRepo, lazyBook, txtImporter, bookSourceRepo,
-        bookModel,
+        chatEngine,
+        assistantPorts,
+        utils,
     } = deps;
     const { log } = utils;
+    // The ports seam is the single host contract of the Assistant contour.
+    const {
+        loadBook, persistBook, resolveChatAI,
+        sessionRepo,
+    } = assistantPorts;
 
     // ── Session ID counter ───────────────────────────
     let sessionIdCounter = 0;
@@ -23,14 +30,10 @@ module.exports = function(app, redis, deps) {
     // ── Workspace AI provider (Experimental Beta) ──────────────────────
     // Phase 3: chat provider resolution lives on the Provider Gateway
     // (services/provider-gateway.js) — the stable entry point consumers use
-    // instead of the resolver internals. This wrapper is behavior-identical
-    // to the pre-gateway resolveChatAI (moved verbatim into the gateway).
-    const providerGateway = require('../services/provider-gateway');
+    // instead of the resolver internals. resolveChatAI is injected through
+    // the AssistantPorts seam (bound to the gateway at the composition root).
     const { safeFetch } = require('../services/url-safety');
     const sharedPool = require('../services/ai-connector/shared-pool');
-    async function resolveChatAI(bookId) {
-        return providerGateway.chat.resolveProvider(bookId, { fallbackBaseUrl: chatEngine.AI_API_BASE_URL });
-    }
 
     /** 503 guard — no usable AI provider (kill switch OFF / unconfigured). */
     function aiUnavailable(res) {
@@ -181,14 +184,8 @@ module.exports = function(app, redis, deps) {
     app.get('/api/v1/ai/sessions', async (req, res) => {
         try {
             const { book_id } = req.query;
-            const sessions = await storage.postgres.query(
-                `SELECT id, book_id, mode, topic_id, created_at, updated_at,
-                        COALESCE(title, '') AS title,
-                        jsonb_array_length(messages) AS message_count
-                 FROM ai_chat_sessions WHERE book_id = $1 ORDER BY created_at DESC`,
-                [book_id]
-            );
-            res.json({ sessions: sessions.rows });
+            const sessions = await sessionRepo.listSessionsForBook(book_id);
+            res.json({ sessions });
         } catch (err) {
             console.error('[AI SESSIONS LIST] Error:', err.message);
             res.json({ sessions: [] });
@@ -200,12 +197,9 @@ module.exports = function(app, redis, deps) {
     // ======================================================
     app.get('/api/v1/ai/sessions/:id', async (req, res) => {
         try {
-            const session = await storage.postgres.query(
-                'SELECT * FROM ai_chat_sessions WHERE id = $1',
-                [req.params.id]
-            );
-            if (!session.rows.length) return res.status(404).json({ error: 'Session not found' });
-            res.json({ session: session.rows[0] });
+            const session = await sessionRepo.getSession(req.params.id);
+            if (!session) return res.status(404).json({ error: 'Session not found' });
+            res.json({ session });
         } catch (err) {
             res.status(500).json({ error: err.message });
         }
@@ -221,11 +215,10 @@ module.exports = function(app, redis, deps) {
             if (typeof title !== 'string' || !title.trim()) {
                 return res.status(400).json({ error: 'title required' });
             }
-            const result = await storage.postgres.query(
-                'UPDATE ai_chat_sessions SET title = $1, updated_at = $2 WHERE id = $3 RETURNING id',
-                [title.trim().slice(0, 200), Date.now(), req.params.id]
+            const renamedId = await sessionRepo.renameSession(
+                req.params.id, title.trim().slice(0, 200)
             );
-            if (!result.rows.length) return res.status(404).json({ error: 'Session not found' });
+            if (!renamedId) return res.status(404).json({ error: 'Session not found' });
             log('[AI] Session renamed:', req.params.id);
             res.json({ session_id: req.params.id, title: title.trim(), renamed: true });
         } catch (err) {
@@ -241,11 +234,8 @@ module.exports = function(app, redis, deps) {
     // ======================================================
     app.delete('/api/v1/ai/sessions/:id', async (req, res) => {
         try {
-            const result = await storage.postgres.query(
-                'DELETE FROM ai_chat_sessions WHERE id = $1 RETURNING id',
-                [req.params.id]
-            );
-            if (!result.rows.length) return res.status(404).json({ error: 'Session not found' });
+            const deletedId = await sessionRepo.deleteSession(req.params.id);
+            if (!deletedId) return res.status(404).json({ error: 'Session not found' });
             log('[AI] Session deleted:', req.params.id);
             res.json({ session_id: req.params.id, deleted: true });
         } catch (err) {
@@ -259,15 +249,9 @@ module.exports = function(app, redis, deps) {
     // ======================================================
     app.get('/api/v1/ai/sessions/:id/messages', async (req, res) => {
         try {
-            const result = await storage.postgres.query(
-                'SELECT * FROM ai_chat_sessions WHERE id = $1',
-                [req.params.id]
-            );
-            if (!result.rows.length) return res.json({ messages: [] });
-            const session = result.rows[0];
-            const msgs = typeof session.messages === 'string'
-                ? JSON.parse(session.messages)
-                : session.messages || [];
+            const session = await sessionRepo.getSession(req.params.id);
+            if (!session) return res.json({ messages: [] });
+            const msgs = session.messages || [];
             const formatted = msgs.map((m, i) => ({
                 id: i + 1,
                 book_id: session.book_id,
@@ -302,14 +286,7 @@ module.exports = function(app, redis, deps) {
                 context: null, locked: false,
             };
 
-             await storage.postgres.query(
-                `INSERT INTO ai_chat_sessions (id, book_id, title, mode, topic_id, messages, created_at, updated_at, context, locked)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-                [session.id, session.book_id, session.title, session.mode, session.topic_id,
-                 JSON.stringify(session.messages),
-                 session.created_at, session.updated_at,
-                 session.context === null ? null : JSON.stringify(session.context), session.locked]
-            );
+            await sessionRepo.createSession(session);
 
             log('[AI] Created session:', id, 'for book:', book_id, 'mode:', session.mode);
             res.json({ session });
@@ -353,30 +330,25 @@ module.exports = function(app, redis, deps) {
                     return res.status(400).json({ error: 'book_id required when no session_id' });
                 }
                 const id = `ai-session-${Date.now()}-${++sessionIdCounter}`;
-                await storage.postgres.query(
-                    `INSERT INTO ai_chat_sessions (id, book_id, mode, topic_id, messages, created_at, updated_at, context, locked)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                    [id, scopedBookId, mode || 'chat', topic_id || 'book',
-                     JSON.stringify([]), Date.now(), Date.now(), null, false]
-                );
+                await sessionRepo.createSession({
+                    id, book_id: scopedBookId, mode: mode || 'chat',
+                    topic_id: topic_id || 'book',
+                    messages: [], created_at: Date.now(), updated_at: Date.now(),
+                });
                 activeSessionId = id;
                 log('[AI] Auto-created session:', id, 'for book:', scopedBookId);
             }
 
-            const result = await storage.postgres.query(
-                'SELECT * FROM ai_chat_sessions WHERE id = $1', [activeSessionId]
-            );
-            if (!result.rows.length) return res.status(404).json({ error: 'Session not found' });
+            const session = await sessionRepo.getSession(activeSessionId);
+            if (!session) return res.status(404).json({ error: 'Session not found' });
 
-            const session = result.rows[0];
-            const storedMessages = typeof session.messages === 'string'
-                ? JSON.parse(session.messages) : session.messages || [];
+            const storedMessages = session.messages || [];
             const bookId = req.scopedBookId || book_id || session.book_id;
 
-            // Load book data for context
+            // Load book data for context (AssistantPorts seam — canonical ||
+            // draft fallback lives inside the facade)
             let bookData = null;
-            // Phase 4: unified Book Model loader — lazy mode (canonical || draft fallback inside the facade)
-            try { bookData = bookModel.loadBook(bookId, { mode: 'lazy' }); } catch (_) {}
+            try { bookData = loadBook(bookId); } catch (_) {}
 
             const isLocked = bookData?.manifest?.locked === true;
             const sessionMode = mode || session.mode || 'chat';
@@ -618,38 +590,11 @@ module.exports = function(app, redis, deps) {
                         patches = [];
                         toolResults.push({ tool: 'edit_book', error: lastEditError, validation_errors: patchResult.validation_errors, rejected: true });
                     } else if (patchResult.result) {
-                        if (patchResult.result.chapters?.length > 0) {
-                            // Chapters are intact — use saveBookBundle for full multi-file save
-                            // (bible → bible.json, locations → locations.json, etc.)
-                            book.saveBookBundle(patchResult.result);
-                        } else {
-                            // ⚠️ Chapters array is empty — likely a corrupted load.
-                            // Save all files EXCEPT chapters to avoid deleting orphaned
-                            // chapter files via saveBookBundle's cleanup logic.
-                            const bookDir = lazyBook.getBookDir(bookId);
-                            const j = require('path').join;
-                            const validateFile = require('../book/bundle-validator.cjs').validateBundleFile;
-                            const targets = [
-                                ['manifest.json', patchResult.result.manifest],
-                                ['book.json', patchResult.result.book],
-                                ['bible.json', patchResult.result.bible],
-                                ['locations.json', patchResult.result.locations],
-                                ['voices.json', patchResult.result.voices],
-                                ['characters.json', patchResult.result.characters],
-                            ].filter(([, data]) => data != null);
-                            // Validate EVERY file BEFORE the first write — a failing
-                            // file aborts the whole save, previous state stays intact.
-                            for (const [name, data] of targets) {
-                                const fileCheck = validateFile(name, data);
-                                if (!fileCheck.valid) {
-                                    throw new Error(`Bundle validation failed (${fileCheck.errors.join('; ')})`);
-                                }
-                            }
-                            for (const [name, data] of targets) {
-                                fs.writeFileSync(j(bookDir, name), JSON.stringify(data, null, 2));
-                            }
-                            log('[AI] Book updated (targeted save — chapters skipped):', patches.length, 'patches applied to', bookId);
-                        }
+                        // ONE save semantics through the AssistantPorts seam:
+                        // full bundle save when chapters are intact, targeted
+                        // file save (chapters skipped) on a corrupted load.
+                        persistBook(bookId, patchResult.result);
+                        log('[AI] Book updated (via persistBook):', patches.length, 'patches applied to', bookId);
                     }
                 } catch (saveErr) {
                     console.error('[AI] Failed to save updated book:', saveErr.message);
@@ -685,10 +630,7 @@ module.exports = function(app, redis, deps) {
                 { role: 'assistant', content: replyText, tool_calls: toolCalls, timestamp: Date.now() },
             ];
 
-            await storage.postgres.query(
-                'UPDATE ai_chat_sessions SET messages = $1, updated_at = $2 WHERE id = $3',
-                [JSON.stringify(updatedMessages), Date.now(), activeSessionId]
-            );
+            await sessionRepo.setMessages(activeSessionId, updatedMessages);
 
             // Structured validation info for the assistant/API: names the exact
             // file/resource that failed the bundle contract, so a corrective
@@ -717,21 +659,14 @@ module.exports = function(app, redis, deps) {
                 // history. Best-effort: a PG hiccup must not mask the 504.
                 try {
                     if (activeSessionId) {
-                        const stored = await storage.postgres.query(
-                            'SELECT messages FROM ai_chat_sessions WHERE id = $1', [activeSessionId]
-                        );
-                        const msgs = typeof stored.rows[0]?.messages === 'string'
-                            ? JSON.parse(stored.rows[0].messages) : stored.rows[0]?.messages || [];
+                        const msgs = await sessionRepo.getMessages(activeSessionId);
                         msgs.push({ role: 'user', content: userContent, timestamp: Date.now() });
                         msgs.push({
                             role: 'assistant',
                             content: '⚠️ AI не ответил за отведённое время. Попробуйте отправить более короткий запрос или повторить позже.',
                             error: true, timestamp: Date.now(),
                         });
-                        await storage.postgres.query(
-                            'UPDATE ai_chat_sessions SET messages = $1, updated_at = $2 WHERE id = $3',
-                            [JSON.stringify(msgs), Date.now(), activeSessionId]
-                        );
+                        await sessionRepo.setMessages(activeSessionId, msgs);
                     }
                 } catch (persistErr) {
                     console.error('[AI CHAT] Failed to persist timeout turn:', persistErr.message);
@@ -840,9 +775,10 @@ module.exports = function(app, redis, deps) {
 
     // Map a resolved chat provider to the SAFE consumer-facing source token
     // (Phase 2 §6 discipline: 'private-local' | 'shared' | 'cloud' | 'system'
-    // — never endpoint/owner detail). Phase 3: implemented on the Provider
-    // Gateway; this thin wrapper keeps the in-route call sites unchanged.
+    // — never endpoint/owner detail). Phase 3: the token mapping lives on
+    // the Provider Gateway; the route reaches it through the gateway seam.
     function chatAiSourceToken(ai) {
+        const providerGateway = require('../services/provider-gateway');
         return providerGateway.chat.sourceToken(ai);
     }
 
@@ -863,19 +799,12 @@ module.exports = function(app, redis, deps) {
         const persistFailedTurn = async (assistantText) => {
             try {
                 if (!activeSessionId) return;
-                const stored = await storage.postgres.query(
-                    'SELECT messages FROM ai_chat_sessions WHERE id = $1', [activeSessionId]
-                );
-                const msgs = typeof stored.rows[0]?.messages === 'string'
-                    ? JSON.parse(stored.rows[0].messages) : stored.rows[0]?.messages || [];
+                const msgs = await sessionRepo.getMessages(activeSessionId);
                 if (userContent) msgs.push({ role: 'user', content: userContent, timestamp: Date.now() });
                 if (assistantText) {
                     msgs.push({ role: 'assistant', content: assistantText, error: true, timestamp: Date.now() });
                 }
-                await storage.postgres.query(
-                    'UPDATE ai_chat_sessions SET messages = $1, updated_at = $2 WHERE id = $3',
-                    [JSON.stringify(msgs), Date.now(), activeSessionId]
-                );
+                await sessionRepo.setMessages(activeSessionId, msgs);
             } catch (persistErr) {
                 console.error('[AI STREAM] Failed to persist failed turn:', persistErr.message);
             }
@@ -898,29 +827,25 @@ module.exports = function(app, redis, deps) {
                     return res.status(400).json({ error: 'book_id required when no session_id' });
                 }
                 const id = `ai-session-${Date.now()}-${++sessionIdCounter}`;
-                await storage.postgres.query(
-                    `INSERT INTO ai_chat_sessions (id, book_id, mode, topic_id, messages, created_at, updated_at, context, locked)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                    [id, scopedBookId, mode || 'chat', topic_id || 'book',
-                     JSON.stringify([]), Date.now(), Date.now(), null, false]
-                );
+                await sessionRepo.createSession({
+                    id, book_id: scopedBookId, mode: mode || 'chat',
+                    topic_id: topic_id || 'book',
+                    messages: [], created_at: Date.now(), updated_at: Date.now(),
+                });
                 activeSessionId = id;
                 log('[AI STREAM] Auto-created session:', id, 'for book:', scopedBookId);
             }
 
-            const result = await storage.postgres.query(
-                'SELECT * FROM ai_chat_sessions WHERE id = $1', [activeSessionId]
-            );
-            if (!result.rows.length) return res.status(404).json({ error: 'Session not found' });
+            const session = await sessionRepo.getSession(activeSessionId);
+            if (!session) return res.status(404).json({ error: 'Session not found' });
 
-            const session = result.rows[0];
-            storedMessages = typeof session.messages === 'string'
-                ? JSON.parse(session.messages) : session.messages || [];
+            storedMessages = session.messages || [];
             const bookId = req.scopedBookId || book_id || session.book_id;
 
             let bookData = null;
-            // Phase 4: unified Book Model loader — lazy mode (canonical || draft fallback inside the facade)
-            try { bookData = bookModel.loadBook(bookId, { mode: 'lazy' }); } catch (_) {}
+            // AssistantPorts seam — canonical || draft fallback lives inside
+            // the Book Model facade
+            try { bookData = loadBook(bookId); } catch (_) {}
 
             const isLocked = bookData?.manifest?.locked === true;
             const sessionMode = mode || session.mode || 'chat';
@@ -1204,10 +1129,7 @@ module.exports = function(app, redis, deps) {
                     ...(userText ? [{ role: 'user', content: userText, timestamp: Date.now() }] : []),
                     { role: 'assistant', content: replyText, tool_calls: toolCalls || [], timestamp: Date.now() },
                 ];
-                await storage.postgres.query(
-                    'UPDATE ai_chat_sessions SET messages = $1, updated_at = $2 WHERE id = $3',
-                    [JSON.stringify(updatedMessages), Date.now(), activeSessionId]
-                );
+                await sessionRepo.setMessages(activeSessionId, updatedMessages);
             } catch (persistErr) {
                 console.error('[AI STREAM] Failed to persist turn:', persistErr.message);
             }
@@ -1274,34 +1196,11 @@ module.exports = function(app, redis, deps) {
                     patches = [];
                     toolResults.push({ tool: 'edit_book', error: lastEditError, validation_errors: patchResult.validation_errors, rejected: true });
                 } else if (patchResult.result) {
-                    if (patchResult.result.chapters?.length > 0) {
-                        book.saveBookBundle(patchResult.result);
-                    } else {
-                        // Targeted save without chapters (same gate as the
-                        // non-streaming route — a corrupted load never wipes
-                        // chapter files).
-                        const bookDir = lazyBook.getBookDir(bookId);
-                        const j = require('path').join;
-                        const validateFile = require('../book/bundle-validator.cjs').validateBundleFile;
-                        const targets = [
-                            ['manifest.json', patchResult.result.manifest],
-                            ['book.json', patchResult.result.book],
-                            ['bible.json', patchResult.result.bible],
-                            ['locations.json', patchResult.result.locations],
-                            ['voices.json', patchResult.result.voices],
-                            ['characters.json', patchResult.result.characters],
-                        ].filter(([, data]) => data != null);
-                        for (const [name, data] of targets) {
-                            const fileCheck = validateFile(name, data);
-                            if (!fileCheck.valid) {
-                                throw new Error(`Bundle validation failed (${fileCheck.errors.join('; ')})`);
-                            }
-                        }
-                        for (const [name, data] of targets) {
-                            fs.writeFileSync(j(bookDir, name), JSON.stringify(data, null, 2));
-                        }
-                        log('[AI STREAM] Book updated (targeted save):', patches.length, 'patches applied to', bookId);
-                    }
+                    // ONE save semantics through the AssistantPorts seam (the
+                    // same persistBook as the non-streaming route — no
+                    // duplicated targeted-save fallback).
+                    persistBook(bookId, patchResult.result);
+                    log('[AI STREAM] Book updated (via persistBook):', patches.length, 'patches applied to', bookId);
                 }
             } catch (saveErr) {
                 console.error('[AI STREAM] Failed to save updated book:', saveErr.message);

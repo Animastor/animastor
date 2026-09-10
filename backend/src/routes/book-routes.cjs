@@ -107,6 +107,11 @@ module.exports = function(app, redis, deps) {
         getAllChunks: deps.getAllChunks,
         getChunk: deps.getChunk,
         cleanBookRedisKeys: deps.cleanBookRedisKeys,
+        // Assistant-data purge port (extraction preparation — the cache
+        // teardown must not know the Assistant's table).
+        purgeAssistantForBook: deps.assistantPorts
+            ? (bookId) => deps.assistantPorts.purgeForBook(bookId)
+            : undefined,
         log,
     });
 };

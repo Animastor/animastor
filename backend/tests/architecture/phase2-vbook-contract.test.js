@@ -170,10 +170,12 @@ describe('architecture: loadBook semantics (canonical vs lazy)', () => {
     it('AI/chat context loads go through the unified Book Model facade (Phase 4 seam)', () => {
         // The historical inline fallback `book.loadBook(id) || lazyBook.loadDraftBook(id)`
         // (canonical-first, draft as fallback) moved behind
-        // bookModel.loadBook(bookId, { mode: 'lazy' }) in Phase 4. The SEMANTICS
-        // are unchanged; the loader-choosing is no longer consumer-side.
+        // bookModel.loadBook(bookId, { mode: 'lazy' }) in Phase 4, and in the
+        // Assistant extraction preparation behind the AssistantPorts
+        // loadBook(bookId) seam. The SEMANTICS are unchanged; the
+        // loader-choosing is no longer consumer-side.
         const ai = readSource(path.join(REPO_ROOT, 'backend', 'src', 'routes', 'ai-routes.cjs'));
-        expect(ai).to.match(/bookModel\.loadBook\(bookId,\s*\{\s*mode:\s*'lazy'\s*\}\)/);
+        expect(ai).to.match(/\bloadBook\(bookId\)/);
         // The raw loader fallback chain must not reappear in AI/chat consumers.
         expect(ai).to.not.match(/book\.loadBook\(bookId\)\s*\|\|\s*lazyBook\.loadDraftBook\(bookId\)/);
     });

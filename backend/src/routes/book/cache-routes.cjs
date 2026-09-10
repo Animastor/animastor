@@ -3,10 +3,15 @@
 // Split out of book-routes.cjs (Architectural Debt #3, sub-registrar pattern).
 //
 // ctx fields used here:
-//   { redis, config, storage, path, fs, getAllChunks, getChunk, cleanBookRedisKeys, log }
+//   { redis, config, storage, path, fs, getAllChunks, getChunk,
+//     cleanBookRedisKeys, purgeAssistantForBook, log }
+//
+// Assistant boundary: Assistant data (chat sessions) is purged through the
+// purgeAssistantForBook port — this route must not know the Assistant's
+// storage details.
 
 module.exports = function registerCacheRoutes(app, ctx) {
-    const { redis, config, storage, path, fs, getAllChunks, getChunk, cleanBookRedisKeys, log } = ctx;
+    const { redis, config, storage, path, fs, getAllChunks, getChunk, cleanBookRedisKeys, purgeAssistantForBook, log } = ctx;
 
     // GET /api/v1/book/:bookId/cache — report per-scene asset cache status.
     app.get('/api/v1/book/:bookId/cache', async (req, res) => {
@@ -71,10 +76,12 @@ module.exports = function registerCacheRoutes(app, ctx) {
 
             // ── Clean PG tables — each with individual try/catch so one
             //    failure doesn't block the rest. Only generated/cache tables are
-            //    cleared — book identity data (book_source, book_snapshots),
-            //    user chat history (ai_chat_sessions) and event logs
-            //    (book_events) are preserved so the book stays loadable and
-            //    dedup works on re-import.
+            //    cleared — book identity data (book_source, book_snapshots)
+            //    and event logs (book_events) are preserved so the book stays
+            //    loadable and dedup works on re-import. User chat history
+            //    (ai_chat_sessions) is purged separately below through the
+            //    Assistant port (historical behavior kept: cache teardown
+            //    also clears chat sessions).
             const pgTables = [
                 'image_units',
                 'scenes',
@@ -86,7 +93,6 @@ module.exports = function registerCacheRoutes(app, ctx) {
                 'cache_entries',
                 'agent_sessions',
                 'book_generation_sessions',
-                'ai_chat_sessions',
                 'scene_assets',
                 'character_resolution_runs',
                 'character_window_candidates',
@@ -104,6 +110,14 @@ module.exports = function registerCacheRoutes(app, ctx) {
                 } catch (tblErr) {
                     console.warn(`[CACHE] DB cleanup: ${table}: ${tblErr.message}`);
                 }
+            }
+
+            // ── Assistant data (chat sessions) — via the Assistant port,
+            //    not a raw table name (extraction preparation).
+            try {
+                await purgeAssistantForBook(bookId);
+            } catch (assistantErr) {
+                console.warn(`[CACHE] Assistant data cleanup failed: ${assistantErr.message}`);
             }
 
             // Clear gpu-hub queue

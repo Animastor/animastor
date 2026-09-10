@@ -83,6 +83,11 @@ const { computeWaveform } = require('./services/waveform-service');
 const { computeIuReady } = require('./routes/book/iu-progress-utils.cjs');
 const genSessionRepo = require('./storage/postgres/repositories/gen-session-repo');
 const bookSourceRepo = require('./storage/postgres/repositories/book-source-repo');
+// Assistant extraction preparation: the chat-session repository is the ONLY
+// ai_chat_sessions owner; the Assistant contour and the purge flows reach it
+// through ports (assistantPorts below / purgeForBook), never via SQL.
+const chatSessionRepo = require('./storage/postgres/repositories/chat-session-repo');
+const { createAssistantPorts } = require('./services/assistant-ports.cjs');
 const placeholderAudio = require('./services/placeholder-audio');
 const utils = require('./helpers/utils.cjs');
 
@@ -225,7 +230,12 @@ const {
 // SERVICES (factory pattern)
 // ======================================================
 const cleanupService = require('./services/cleanup-service.cjs')(redis, config, { log });
-const chatEngine = require('./services/chat-engine.cjs')(config);
+// Assistant boundary: the chat engine receives the bundle-contract validator
+// through injection (composition-root binding — the engine's own direct
+// book-domain require stays only as the standalone fallback).
+const chatEngine = require('./services/chat-engine.cjs')(config, {
+    validateBundleObject: require('./book/bundle-validator.cjs').validateBundleObject,
+});
 const windowGenerator = require('./services/window-generator.cjs')({
     redis, txtImporter, genSessionRepo, state, activeScenes,
     placeholderAudio, saveChunk, config,
@@ -275,8 +285,33 @@ const routeDeps = {
         getAllChunks, getChunk, cleanBookRedisKeys,
         log: utils.log,
         setCancelFlag: (redisClient, id) => require('./runtime/scene-window').setCancelFlag(redisClient, id),
+        // Assistant-data purge seam: the deletion cascade must not know the
+        // ai_chat_sessions table — it purges Assistant data through the port.
+        purgeAssistantForBook: (bookId) => assistantPorts.purgeForBook(bookId),
     }),
-    // Phase 6: Player/Editor boundaries — book access via the Canonical Book Model.
+    // Assistant contour ports (extraction preparation — the playerPorts
+    // analog): the AI Assistant HTTP contour (routes/ai-routes.cjs) gets its
+    // host legs ONLY through this narrow seam. No storage barrel, no SQL,
+    // no whole Book/VBook services cross into the Assistant object graph:
+    //   loadBook       — canonical||draft read (Book Model facade, lazy mode)
+    //   persistBook    — ONE book-save semantics (full bundle save + the
+    //                    zero-chapter targeted fallback behind a single port)
+    //   validateBundle / validateBundleFile — bundle-contract validation
+    //   resolveChatAI  — chat provider resolution (Provider Gateway seam)
+    //   sessionRepo    — chat-session repository port (list/get/create/
+    //                    append/rename/delete/purge)
+    //   purgeForBook   — Assistant-data purge for book deletion/cache teardown
+    // Guarded by tests/architecture/assistant-contour.test.js.
+    assistantPorts: createAssistantPorts({
+        bookModel, book, lazyBook,
+        bundleValidator: require('./book/bundle-validator.cjs'),
+        providerGateway: require('./services/provider-gateway'),
+        chatEngine,
+        sessionRepo: chatSessionRepo,
+        log: utils.log,
+    }),
+    // Phase 6: Player/Editor boundaries — book access via the Canonical
+    // Book Model.
     // playerModel comes from the extracted @animastor/player package; the
     // composition root binds it to the host Book Model (VBook runtime shim).
     playerModel: createPlayerModel({ bookModel }),
@@ -359,9 +394,14 @@ createPlayerRoutes(app, redis, routeDeps);
 // Generation routes — import/generation leg, worker status/counts, progress
 // SSE, GPU Hub callbacks. No playback handlers remain here.
 require('./routes/generation-routes.cjs')(app, redis, { ...routeDeps, taskHandler });
+// AI Assistant routes — the contour gets ONLY its narrow seams (chatEngine
+// + assistantPorts + utils): no storage barrel, no whole Book/VBook
+// services, no task/generation deps ride into the Assistant object graph
+// (extraction preparation — mirrors the Player route registration).
 require('./routes/ai-routes.cjs')(app, redis, {
-    ...routeDeps, taskHandler, bookDiff, chatEngine,
-    iuRepo, genSessionRepo, lazyBook, txtImporter, bookSourceRepo,
+    chatEngine,
+    assistantPorts: routeDeps.assistantPorts,
+    utils,
 });
 require('./routes/debug-routes.cjs')(app, redis, {
     ...routeDeps, taskHandler, bookDiff, iuRepo, computeWaveform, journal,

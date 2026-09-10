@@ -324,24 +324,23 @@ describe('Workspace AI Provider', () => {
             app.use(express.json());
             app.use(authContext);
             registerSettingsRoutes(app);
-            // Minimal deps for the chat/prompt endpoints under test.
+            // Assistant contour wiring — the narrow seam only (extraction
+            // preparation): chatEngine + assistantPorts + utils.
+            const chatSessionRepo = require('../src/storage/postgres/repositories/chat-session-repo');
+            const providerGateway = require('../src/services/provider-gateway');
             registerAiRoutes(app, null, {
-                config,
-                state: {}, audio: {}, image: {}, video: {},
-                book: { loadBook: () => null },
-                orchestrator: {},
-                storage: { postgres: { query } },
-                layerConfig: {}, genScope: {}, activeScenes: {}, placeholderAudio: {},
-                utils: { log: () => {} },
-                saveChunk: async () => {}, getChunk: async () => null, getAllChunks: async () => [],
-                getBookWindowStatus: () => null,
-                detectAvailableMode: async () => 'chat',
-                recoverChunksFromDisk: async () => {}, recoverAllBooksFromDisk: async () => {},
-                cleanupService: {}, bookDiff: {}, taskHandler: {},
                 chatEngine,
-                iuRepo: {}, genSessionRepo: null,
-                lazyBook: { loadDraftBook: () => null },
-                txtImporter: {}, bookSourceRepo: {},
+                assistantPorts: {
+                    loadBook: () => null,
+                    persistBook: () => ({}),
+                    resolveChatAI: (bookId) => providerGateway.chat.resolveProvider(bookId, {
+                        fallbackBaseUrl: chatEngine.AI_API_BASE_URL,
+                    }),
+                    sessionRepo: chatSessionRepo,
+                    purgeForBook: async () => {},
+                    log: () => {},
+                },
+                utils: { log: () => {} },
             });
 
             await new Promise((resolve) => {
