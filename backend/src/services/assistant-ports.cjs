@@ -1,33 +1,48 @@
 // ======================================================
-// Assistant Ports (Assistant extraction preparation)
+// Assistant Ports — HOST ADAPTER (implementation half)
 // ======================================================
-// The narrow contract the AI Assistant contour (routes/ai-routes.cjs,
-// services/chat-engine.cjs, middleware/ai-book-guard.js) may use to reach
-// the host. The composition root (backend.cjs) builds it from ready-made
-// host services — the Assistant never sees the storage barrel, whole
-// VBook services or SQL. This is the seam a future @animastor/assistant
-// package will be wired through (host adapters only).
-// (docs/architecture/ai-assistant-extraction-preparation.md)
+// The IMPLEMENTATION half of the AssistantPorts seam. The contracts live
+// in the @animastor/assistant package
+// (packages/animastor-assistant/src/assistant-ports-contract.cjs); THIS
+// module is the host adapter that knows the concrete legs: Book Model,
+// saveBookBundle, lazyBook.getBookDir (zero-chapter fallback), the bundle
+// validator, the Provider Gateway, the chat-session repository, the
+// SSRF-guarded fetch (url-safety), the connector shared-pool and the
+// AI-source token mapping. The composition root (backend.cjs) builds it
+// and hands it to createAssistantRoutes — the package never sees the
+// storage barrel, whole VBook services, SQL or host internals.
+// (docs/architecture/ai-assistant-extraction.md)
 //
 //   loadBook(bookId)              — canonical||draft book read (lazy mode)
 //   persistBook(bookId, bundle)   — canonical save: full bundle save when
 //                                   chapters are intact, targeted file save
 //                                   (chapters skipped) on a corrupted load;
 //                                   ONE semantics for both callers/routes
-//   validateBundle(bundle)        — bundle-contract validation (object form)
+//   validateBundle(bundle)         — bundle-contract validation (object form)
 //   validateBundleFile(name,data)— per-file validation (targeted save)
 //   resolveChatAI(bookId)         — chat provider resolution (Provider
 //                                   Gateway seam; fallbackBaseUrl binding)
-//   sessionRepo                   — chat-session repository port (see
+//   sessionRepo                   — chat-session repository port (the PG
+//                                   implementation stays host-side in
 //                                   storage/postgres/repositories/chat-session-repo)
 //   purgeForBook(bookId)          — Assistant-data purge (chat sessions) for
 //                                   book deletion / cache teardown
+//   chatTransport                 — inference transport legs the Assistant
+//                                   HTTP contour needs:
+//                                     safeFetch(url, opts)          — url-safety
+//                                     runSharedInference(...)       — ai-connector/shared-pool
+//                                     describeSharedError(code)     — shared-pool
+//                                     chatAiSourceToken(ai)         — provider-gateway.chat.sourceToken
 //   log                           — host logger
 
 const path = require('path');
 const fs = require('fs');
 
-function createAssistantPorts({ bookModel, book, lazyBook, bundleValidator, providerGateway, chatEngine, sessionRepo, log }) {
+function createAssistantPorts({
+    bookModel, book, lazyBook, bundleValidator,
+    providerGateway, chatEngine, sessionRepo,
+    urlSafety, sharedPool, log,
+}) {
     if (!bookModel?.loadBook) throw new Error('assistantPorts: bookModel.loadBook is required');
     if (typeof book?.saveBookBundle !== 'function') throw new Error('assistantPorts: book.saveBookBundle is required');
     if (typeof lazyBook?.getBookDir !== 'function') throw new Error('assistantPorts: lazyBook.getBookDir is required');
@@ -35,6 +50,10 @@ function createAssistantPorts({ bookModel, book, lazyBook, bundleValidator, prov
     if (typeof bundleValidator?.validateBundleFile !== 'function') throw new Error('assistantPorts: bundleValidator.validateBundleFile is required');
     if (typeof providerGateway?.chat?.resolveProvider !== 'function') throw new Error('assistantPorts: providerGateway.chat.resolveProvider is required');
     if (!sessionRepo) throw new Error('assistantPorts: sessionRepo is required');
+    if (typeof urlSafety?.safeFetch !== 'function') throw new Error('assistantPorts: urlSafety.safeFetch is required (chatTransport)');
+    if (typeof sharedPool?.runSharedInference !== 'function') throw new Error('assistantPorts: sharedPool.runSharedInference is required (chatTransport)');
+    if (typeof sharedPool?.describeSharedError !== 'function') throw new Error('assistantPorts: sharedPool.describeSharedError is required (chatTransport)');
+    if (typeof providerGateway?.chat?.sourceToken !== 'function') throw new Error('assistantPorts: providerGateway.chat.sourceToken is required (chatTransport)');
     if (typeof log !== 'function') throw new Error('assistantPorts: log is required');
 
     // ── Book read ────────────────────────────────────
@@ -115,6 +134,19 @@ function createAssistantPorts({ bookModel, book, lazyBook, bundleValidator, prov
         await sessionRepo.purgeSessionsForBook(bookId);
     }
 
+    // ── Inference transport legs (chatTransport) ──────
+    // The Assistant HTTP contour (package) reaches the host transports
+    // ONLY through this port: the SSRF-guarded fetch for cloud providers,
+    // the connector/shared-pool inference path and the sanitized error/
+    // source-token surfaces. No url-safety / shared-pool / provider-gateway
+    // requires exist inside @animastor/assistant.
+    const chatTransport = {
+        safeFetch: urlSafety.safeFetch,
+        runSharedInference: sharedPool.runSharedInference,
+        describeSharedError: sharedPool.describeSharedError,
+        chatAiSourceToken: (ai) => providerGateway.chat.sourceToken(ai),
+    };
+
     return {
         loadBook,
         persistBook,
@@ -123,6 +155,7 @@ function createAssistantPorts({ bookModel, book, lazyBook, bundleValidator, prov
         resolveChatAI,
         sessionRepo,
         purgeForBook,
+        chatTransport,
         log,
     };
 }

@@ -23,7 +23,7 @@
 // This facade DELEGATES — it does not reimplement. Existing implementation
 // stays in place:
 //   agent      → services/ai-service.js + services/agent/ai-caller.js
-//   chat       → routes/ai-routes.cjs transport + ai-connector/shared-pool.js
+//   chat       → @animastor/assistant contour transport (via chatTransport port)
 //   generation → runtime/gpu-dispatcher.js + generation/comfyui-provider.js
 // Docs: docs/architecture/PHASE_3_PROVIDER_GATEWAY.md
 
@@ -64,15 +64,16 @@ const agent = {
 };
 
 // ── CHAT provider contract ──────────────────────────────────────────────
-// The chat transport itself lives in routes/ai-routes.cjs (SSE + tools +
-// cancellation + session persistence). The gateway owns the pieces a chat
-// consumer must be able to reach WITHOUT importing route internals:
+// The chat transport itself lives in the @animastor/assistant package
+// (SSE + tools + cancellation + session persistence; injected through the
+// AssistantPorts chatTransport seam). The gateway owns the pieces a chat
+// consumer must be able to reach WITHOUT importing contour internals:
 // provider resolution for chat, the connector inference entry, the
 // sanitized error surface and the safe ai_source tokens.
 const chat = {
     /**
      * Resolve the chat provider for a book — the SAME seam the chat routes
-     * use (moved verbatim from routes/ai-routes.cjs resolveChatAI in Phase 3).
+     * use (moved verbatim from the old ai-routes.cjs resolveChatAI in Phase 3).
      * Connector snapshots get the first DISCOVERED model when no model is
      * bound (discovered ≠ loaded); cloud snapshots keep the workspace/env
      * model chain. The route passes its own fallback base URL
@@ -121,8 +122,8 @@ const chat = {
     /**
      * Map a resolved chat provider snapshot to the SAFE consumer-facing
      * ai_source token (Phase 2 §6 discipline): 'private-local' | 'shared' |
-     * 'cloud' | 'system' — never endpoint/owner detail. Moved verbatim from
-     * routes/ai-routes.cjs chatAiSourceToken.
+     * 'cloud' | 'system' — never endpoint/owner detail. The Assistant
+     * contour reaches this through the chatTransport port.
      */
     sourceToken(ai) {
         if (ai.transport === 'connector') return ai.source === 'shared' ? 'shared' : 'private-local';

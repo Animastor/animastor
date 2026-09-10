@@ -1,13 +1,14 @@
 // ======================================================
-// Chat Session Repository (ai_chat_sessions)
+// Chat Session Repository (ai_chat_sessions) — HOST ADAPTER
 // ======================================================
 // The ONLY production module (besides schema.js migrations) that knows the
-// ai_chat_sessions table. The Assistant contour (routes/ai-routes.cjs,
-// services/chat-engine.cjs, middleware/ai-book-guard.js) and the purge
-// flows (services/book-deletion.cjs, routes/book/cache-routes.cjs) reach
-// chat-session storage exclusively through this repository — no SQL, no
-// storage barrel, no postgres knowledge leaks into the Assistant boundary.
-// (docs/architecture/ai-assistant-extraction-preparation.md)
+// ai_chat_sessions table. The Assistant contour (@animastor/assistant
+// package — the contracts live in its session-repo-contract.cjs) and the
+// purge flows (services/book-deletion.cjs, routes/book/cache-routes.cjs)
+// reach chat-session storage exclusively through this repository — no SQL,
+// no storage barrel, no postgres knowledge leaks into the Assistant
+// boundary (the package holds only the interface).
+// (docs/architecture/ai-assistant-extraction.md)
 
 const { query } = require('../database');
 

@@ -171,10 +171,11 @@ describe('architecture: loadBook semantics (canonical vs lazy)', () => {
         // The historical inline fallback `book.loadBook(id) || lazyBook.loadDraftBook(id)`
         // (canonical-first, draft as fallback) moved behind
         // bookModel.loadBook(bookId, { mode: 'lazy' }) in Phase 4, and in the
-        // Assistant extraction preparation behind the AssistantPorts
-        // loadBook(bookId) seam. The SEMANTICS are unchanged; the
-        // loader-choosing is no longer consumer-side.
-        const ai = readSource(path.join(REPO_ROOT, 'backend', 'src', 'routes', 'ai-routes.cjs'));
+        // Assistant extraction behind the AssistantPorts loadBook(bookId)
+        // seam (the contour physically lives in @animastor/assistant). The
+        // SEMANTICS are unchanged; the loader-choosing is no longer
+        // consumer-side.
+        const ai = readSource(path.join(REPO_ROOT, 'packages', 'animastor-assistant', 'src', 'assistant-routes.cjs'));
         expect(ai).to.match(/\bloadBook\(bookId\)/);
         // The raw loader fallback chain must not reappear in AI/chat consumers.
         expect(ai).to.not.match(/book\.loadBook\(bookId\)\s*\|\|\s*lazyBook\.loadDraftBook\(bookId\)/);

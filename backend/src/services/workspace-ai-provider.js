@@ -9,9 +9,9 @@
 //
 // Transport separation: this service knows NOTHING about fetch/HTTP — it
 // resolves { endpoint, apiKey, model, source }. Consumers (ai-service.js,
-// ai-routes.cjs, the agent via ai-caller.js) take the provider as a
-// dependency argument. AI calls keep working with global env config when a
-// workspace has no provider configured (backward compatibility).
+// the Assistant contour via assistantPorts, the agent via ai-caller.js)
+// take the provider as a dependency argument. AI calls keep working with
+// global env config when a workspace has no provider configured (compat).
 // ======================================================
 
 const crypto = require('crypto');

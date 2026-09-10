@@ -204,7 +204,10 @@ function startBackend() {
     };
     const wsHandler = createWsHandler({ redis, logger });
     const config = require('../src/config/runtime-config');
-    const chatEngine = require('../src/services/chat-engine.cjs')(config);
+    const chatEngine = require('@animastor/assistant').createChatEngine(config, {
+        validateBundleObject: require('../src/book/bundle-validator.cjs').validateBundleObject,
+        aiProfilePath: null,
+    });
     const app = express();
     app.use(express.json());
     app.use((req, res, next) => {
@@ -217,13 +220,16 @@ function startBackend() {
     createAiConnectorRoutes({ redis, logger })(app);
     createAiEndpointRoutes({ logger })(app);
     require('../src/routes/settings-ai-routes.cjs')(app);
-    // Assistant contour wiring — the narrow seam only (extraction
-    // preparation): chatEngine + assistantPorts + utils. The sessionRepo
+    // Assistant contour wiring — the narrow seam only (physical
+    // extraction): the registrar comes from @animastor/assistant; the
+    // host legs ride the ports (chatTransport included). The sessionRepo
     // port points at the real chat-session repository (live-PG test);
     // resolveChatAI rides the real Provider Gateway (same as the host).
     const chatSessionRepo = require('../src/storage/postgres/repositories/chat-session-repo');
     const providerGateway = require('../src/services/provider-gateway');
-    require('../src/routes/ai-routes.cjs')(app, null, {
+    const sharedPool = require('../src/services/ai-connector/shared-pool');
+    const { safeFetch } = require('../src/services/url-safety');
+    require('@animastor/assistant').createAssistantRoutes(app, null, {
         chatEngine,
         assistantPorts: {
             loadBook: () => null,
@@ -233,6 +239,12 @@ function startBackend() {
             }),
             sessionRepo: chatSessionRepo,
             purgeForBook: async () => {},
+            chatTransport: {
+                safeFetch,
+                runSharedInference: sharedPool.runSharedInference,
+                describeSharedError: sharedPool.describeSharedError,
+                chatAiSourceToken: (ai) => providerGateway.chat.sourceToken(ai),
+            },
             log: () => {},
         },
         utils: { log: () => {} },

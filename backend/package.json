@@ -19,6 +19,7 @@
   "dependencies": {
     "@animastor/ai-agent": "file:../packages/animastor-ai-agent",
     "@animastor/ai-analysis": "file:../packages/animastor-ai-analysis",
+    "@animastor/assistant": "file:../packages/animastor-assistant",
     "@animastor/editor": "file:../packages/animastor-editor",
     "@animastor/parser": "file:../packages/animastor-parser",
     "@animastor/player": "file:../packages/animastor-player",

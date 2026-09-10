@@ -1,15 +1,17 @@
 // ======================================================
-// ANIMASTOR BACKEND — AI CHAT ROUTES
+// @animastor/assistant — AI CHAT ROUTES
 // ======================================================
 // All /api/v1/ai/* endpoints.
 //
-// Assistant boundary (extraction preparation): the route receives ONLY the
-// narrow AssistantPorts seam + chat engine + provider transport modules.
-// No storage barrel, no SQL, no whole Book/VBook services — book reads/
-// writes, provider resolution and session persistence go through the ports
-// (see services/assistant-ports.cjs and the assistant-contour guard tests).
-
-const fs = require('fs');
+// Physically extracted from backend/src/routes/ai-routes.cjs
+// (docs/architecture/ai-assistant-extraction.md). The contour receives
+// ONLY the narrow AssistantPorts seam + chat engine. No storage barrel,
+// no SQL, no whole Book/VBook services, no host service requires — book
+// reads/writes, provider resolution, session persistence AND the
+// transport legs (SSRF-guarded fetch, connector shared-inference,
+// shared-error description, source-token mapping) all arrive through
+// the injected ports (chatTransport), wired host-side at the composition
+// root.
 
 module.exports = function(app, redis, deps) {
     const {
@@ -22,18 +24,22 @@ module.exports = function(app, redis, deps) {
     const {
         loadBook, persistBook, resolveChatAI,
         sessionRepo,
+        chatTransport,
     } = assistantPorts;
+    const { safeFetch, runSharedInference, describeSharedError, chatAiSourceToken } = chatTransport;
+    const sharedPool = {
+        runSharedInference,
+        describeSharedError,
+    };
 
     // ── Session ID counter ───────────────────────────
     let sessionIdCounter = 0;
 
     // ── Workspace AI provider (Experimental Beta) ──────────────────────
     // Phase 3: chat provider resolution lives on the Provider Gateway
-    // (services/provider-gateway.js) — the stable entry point consumers use
-    // instead of the resolver internals. resolveChatAI is injected through
+    // (host Provider Gateway adapter) — the stable entry point consumers
+    // use instead of the resolver internals. resolveChatAI is injected through
     // the AssistantPorts seam (bound to the gateway at the composition root).
-    const { safeFetch } = require('../services/url-safety');
-    const sharedPool = require('../services/ai-connector/shared-pool');
 
     /** 503 guard — no usable AI provider (kill switch OFF / unconfigured). */
     function aiUnavailable(res) {
@@ -245,7 +251,7 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
-    // GET SESSION MESSAGES (from ai_chat_sessions.messages JSON)
+    // GET SESSION MESSAGES (session.messages JSON via the sessionRepo port)
     // ======================================================
     app.get('/api/v1/ai/sessions/:id/messages', async (req, res) => {
         try {
@@ -303,7 +309,7 @@ module.exports = function(app, redis, deps) {
         // Hoisted so the catch block can persist the failed turn (user
         // message + error explanation) into the session history — without
         // this the 504 explanation never reached the UI after a reload
-        // (messages live in PG: ai_chat_sessions.messages).
+        // (messages live behind the sessionRepo port — PG is host-side).
         let activeSessionId = null;
         let userContent = '';
         // Consumer-side AI source provenance (Phase 2): 'private-local' |
@@ -775,12 +781,9 @@ module.exports = function(app, redis, deps) {
 
     // Map a resolved chat provider to the SAFE consumer-facing source token
     // (Phase 2 §6 discipline: 'private-local' | 'shared' | 'cloud' | 'system'
-    // — never endpoint/owner detail). Phase 3: the token mapping lives on
-    // the Provider Gateway; the route reaches it through the gateway seam.
-    function chatAiSourceToken(ai) {
-        const providerGateway = require('../services/provider-gateway');
-        return providerGateway.chat.sourceToken(ai);
-    }
+    // — never endpoint/owner detail). The token mapping lives on the host
+    // Provider Gateway; the contour reaches it through the injected
+    // chatTransport port (composition-root bound).
 
     app.post('/api/v1/ai/chat/stream', async (req, res) => {
         // Hoisted for the failure-persistence helpers (same rationale as the

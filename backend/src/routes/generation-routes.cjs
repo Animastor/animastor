@@ -357,7 +357,7 @@ module.exports = function(app, redis, deps) {
     // Pushes per-layer increment events as the GPU confirms work, so the
     // frontend advances immediately instead of waiting for the next poll.
     // Polling /assets-state remains the source of truth / reconcile path;
-    // these events are advisory hints. Mirrors the SSE pattern in ai-routes.cjs.
+    // these events are advisory hints. Mirrors the Assistant SSE pattern.
     const { channel: progressChannel } = require('../services/progress-pubsub.cjs');
     app.get('/api/v1/book/:bookId/progress-stream', async (req, res) => {
         const { bookId } = req.params;

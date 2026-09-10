@@ -23,6 +23,12 @@
 // repository (the module-level default is swapped by the composition root /
 // tests via `configureAiBookGuard`); the guard itself holds no SQL, no
 // postgres handle (removed from the DIRECT_SQL_WHITELIST baseline).
+//
+// Extraction note: the guard stays HOST-side (middleware order in the
+// composition root, backend.cjs) — it reaches the session through the
+// repository seam. The repository CONTRACT lives in @animastor/assistant
+// (session-repo-contract.cjs); the concrete PG implementation stays here.
+// (docs/architecture/ai-assistant-extraction.md)
 
 const chatSessionRepo = require('../storage/postgres/repositories/chat-session-repo');
 

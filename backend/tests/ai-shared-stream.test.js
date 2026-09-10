@@ -60,7 +60,6 @@ const { createWsHandler, createAiConnectorRoutes } = require('../src/routes/ai-c
 const { createAiEndpointRoutes } = require('../src/routes/ai-endpoint-routes.cjs');
 const { createMockRedis } = require('./mocks/redis-mock');
 const { createConnectorSession } = require('../../packages/animastor-ai-connector/lib/connector.cjs');
-const proxyquire = require('proxyquire');
 
 const stamp = `shai3${Date.now()}`;
 
@@ -229,7 +228,10 @@ function startBackend() {
     };
     const wsHandler = createWsHandler({ redis, logger });
     const config = require('../src/config/runtime-config');
-    const chatEngine = require('../src/services/chat-engine.cjs')(config);
+    const chatEngine = require('@animastor/assistant').createChatEngine(config, {
+        validateBundleObject: require('../src/book/bundle-validator.cjs').validateBundleObject,
+        aiProfilePath: null,
+    });
     const app = express();
     app.use(express.json());
     app.use((req, res, next) => {
@@ -242,11 +244,14 @@ function startBackend() {
     createAiConnectorRoutes({ redis, logger })(app);
     createAiEndpointRoutes({ logger })(app);
     require('../src/routes/settings-ai-routes.cjs')(app);
-    // Assistant contour wiring — the narrow seam only (extraction
-    // preparation): chatEngine + assistantPorts + utils.
+    // Assistant contour wiring — the narrow seam only (physical
+    // extraction): chatEngine + assistantPorts + utils, registrar from
+    // the @animastor/assistant package.
     const chatSessionRepo = require('../src/storage/postgres/repositories/chat-session-repo');
     const providerGateway = require('../src/services/provider-gateway');
-    require('../src/routes/ai-routes.cjs')(app, null, {
+    const sharedPool = require('../src/services/ai-connector/shared-pool');
+    const { safeFetch } = require('../src/services/url-safety');
+    require('@animastor/assistant').createAssistantRoutes(app, null, {
         chatEngine,
         assistantPorts: {
             loadBook: () => null,
@@ -256,6 +261,12 @@ function startBackend() {
             }),
             sessionRepo: chatSessionRepo,
             purgeForBook: async () => {},
+            chatTransport: {
+                safeFetch,
+                runSharedInference: sharedPool.runSharedInference,
+                describeSharedError: sharedPool.describeSharedError,
+                chatAiSourceToken: (ai) => providerGateway.chat.sourceToken(ai),
+            },
             log: () => {},
         },
         utils: { log: () => {} },
@@ -555,26 +566,26 @@ describe('LLM Sharing Phase 3 — production SSE route (stream/cancel/security/c
 
         it('S3. cloud provider stream: existing non-streaming upstream re-emitted as 1 delta + done', async () => {
             // A public cloud endpoint cannot be reached from the test sandbox
-            // — proxyquire a DETERMINISTIC safeFetch for the route module
-            // (ai-routes.cjs requires it by path). This exercises the exact
+            // — inject a DETERMINISTIC safeFetch into the AssistantPorts
+            // chatTransport seam (the extracted contour receives the fetch
+            // through the port, never by require). This exercises the exact
             // cloud branch of the stream route (fetch → 1 delta + done) with
             // an OpenAI-compatible answer.
-            const fakeSseModule = proxyquire('../src/routes/ai-routes.cjs', {
-                '../services/url-safety': {
-                    safeFetch: async () => ({
-                        ok: true,
-                        json: async () => ({
-                            choices: [{ message: { role: 'assistant', content: 'cloud says hi' }, finish_reason: 'stop' }],
-                            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-                        }),
-                    }),
-                },
+            const fakeSafeFetch = async () => ({
+                ok: true,
+                json: async () => ({
+                    choices: [{ message: { role: 'assistant', content: 'cloud says hi' }, finish_reason: 'stop' }],
+                    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+                }),
             });
             const redis2 = createMockRedis();
             const logger2 = { info: () => {}, warn: () => {}, error: () => {} };
             const wsHandler2 = createWsHandler({ redis: redis2, logger: logger2 });
             const config = require('../src/config/runtime-config');
-            const chatEngine = require('../src/services/chat-engine.cjs')(config);
+            const chatEngine = require('@animastor/assistant').createChatEngine(config, {
+                validateBundleObject: require('../src/book/bundle-validator.cjs').validateBundleObject,
+                aiProfilePath: null,
+            });
             const app2 = express();
             app2.use(express.json());
             app2.use((req, res, next) => {
@@ -585,10 +596,11 @@ describe('LLM Sharing Phase 3 — production SSE route (stream/cancel/security/c
                 next();
             });
             createAiEndpointRoutes({ logger: logger2 })(app2);
-            // Narrow Assistant seam (extraction preparation).
+            // Narrow Assistant seam (physical extraction: package registrar).
             const chatSessionRepo2 = require('../src/storage/postgres/repositories/chat-session-repo');
             const providerGateway2 = require('../src/services/provider-gateway');
-            fakeSseModule(app2, null, {
+            const sharedPool2 = require('../src/services/ai-connector/shared-pool');
+            require('@animastor/assistant').createAssistantRoutes(app2, null, {
                 chatEngine,
                 assistantPorts: {
                     loadBook: () => null,
@@ -598,6 +610,12 @@ describe('LLM Sharing Phase 3 — production SSE route (stream/cancel/security/c
                     }),
                     sessionRepo: chatSessionRepo2,
                     purgeForBook: async () => {},
+                    chatTransport: {
+                        safeFetch: fakeSafeFetch,
+                        runSharedInference: sharedPool2.runSharedInference,
+                        describeSharedError: sharedPool2.describeSharedError,
+                        chatAiSourceToken: (ai) => providerGateway2.chat.sourceToken(ai),
+                    },
                     log: () => {},
                 },
                 utils: { log: () => {} },

@@ -1,8 +1,10 @@
 // ======================================================
-// ASSISTANT CONTOUR GUARD (Assistant extraction preparation)
+// ASSISTANT CONTOUR GUARD (Assistant extraction)
 // ======================================================
-// Proves the architectural boundary of the AI Assistant contour BEFORE the
-// physical @animastor/assistant extraction:
+// Proves the architectural boundary of the AI Assistant contour AFTER the
+// physical @animastor/assistant extraction (the contour moved to
+// packages/animastor-assistant; the host keeps the ai-book-guard
+// middleware, the AssistantPorts adapter and the PG session repo):
 //
 //   A1  Assistant files hold no SQL / no postgres / no storage barrel —
 //       session persistence goes through the chat-session repository port.
@@ -10,26 +12,29 @@
 //       migrations); purge flows and routes must not name the table.
 //   A3  Assistant routes get host dependencies ONLY through the narrow
 //       AssistantPorts seam (no wide routeDeps spread, no whole
-//       Book/VBook service objects).
+//       Book/VBook service objects) — registered through the package.
 //   A4  Book/VBook access inside the Assistant contour goes through ports
 //       (loadBook/persistBook) — no direct bookModel/book/lazyBook/
-//       bundle-validator requires in the route.
+//       bundle-validator requires in the route; transport legs
+//       (fetch/shared-pool/gateway) arrive through chatTransport.
 //   A5  purge flows (book-deletion, cache-routes) purge Assistant data via
 //       the purgeAssistantForBook port — no ai_chat_sessions table name.
 //   A6  the chat transport contract (SSE meta/delta/done/error, tools,
 //       AbortController, shared-pool connector path) stays intact — the
-//       boundary work changed wiring, not the wire protocol.
-//   A7  chat-engine bundle-contract validation is injectable and the
-//       composition root binds it (shared validator with the save gate).
+//       extraction moved wiring, not the wire protocol.
+//   A7  the chat engine's bundle-contract validator is injected (the
+//       package holds NO direct book-domain require) and the composition
+//       root binds it (shared validator with the save gate).
 //
-// Docs: docs/architecture/ai-assistant-extraction-preparation.md
+// Docs: docs/architecture/ai-assistant-extraction.md
 
 const { expect } = require('chai');
 const path = require('path');
 const { listSourceFiles, readSource, rel, REPO_ROOT, BACKEND_SRC } = require('./helpers');
 
-const ASSISTANT_ROUTE = path.join(BACKEND_SRC, 'routes', 'ai-routes.cjs');
-const CHAT_ENGINE = path.join(BACKEND_SRC, 'services', 'chat-engine.cjs');
+const ASSISTANT_PKG_SRC = path.join(REPO_ROOT, 'packages', 'animastor-assistant', 'src');
+const ASSISTANT_ROUTE = path.join(ASSISTANT_PKG_SRC, 'assistant-routes.cjs');
+const CHAT_ENGINE = path.join(ASSISTANT_PKG_SRC, 'chat-engine.cjs');
 const AI_BOOK_GUARD = path.join(BACKEND_SRC, 'middleware', 'ai-book-guard.js');
 const ASSISTANT_PORTS = path.join(BACKEND_SRC, 'services', 'assistant-ports.cjs');
 const CHAT_SESSION_REPO = path.join(BACKEND_SRC, 'storage', 'postgres', 'repositories', 'chat-session-repo.js');
@@ -41,7 +46,7 @@ const COMPOSITION_ROOT = path.join(BACKEND_SRC, 'backend.cjs');
 const ASSISTANT_CONTOUR_FILES = [ASSISTANT_ROUTE, CHAT_ENGINE, AI_BOOK_GUARD, ASSISTANT_PORTS];
 
 // ── A1 — no SQL / postgres / storage barrel in the Assistant contour ────
-describe('architecture: assistant contour (extraction preparation)', () => {
+describe('architecture: assistant contour (physical extraction)', () => {
     it('A1: Assistant files hold no SQL, no postgres handle, no storage barrel', () => {
         for (const file of ASSISTANT_CONTOUR_FILES) {
             const src = readSource(file);
@@ -53,6 +58,20 @@ describe('architecture: assistant contour (extraction preparation)', () => {
                 .to.not.include('storage.postgres');
             expect(src, `${rel(file)} must not contain SQL statements`)
                 .to.not.match(/\b(SELECT|INSERT|UPDATE|DELETE)\b[^;]*\bFROM\b|\bINSERT INTO\b|\bUPDATE\b\s+\w+\s+\bSET\b/i);
+        }
+    });
+
+    it('A1c: the WHOLE @animastor/assistant package holds no SQL, no postgres, no ai_chat_sessions, no fs writes', () => {
+        // The package is physically extracted: every src file (routes,
+        // engine, contracts, entrypoint) must stay clean of host-infrastructure
+        // knowledge. The persona READ in chat-engine (injected path) is the
+        // only fs use in the package — no writeFileSync anywhere.
+        for (const file of listSourceFiles(ASSISTANT_PKG_SRC)) {
+            const src = readSource(file);
+            expect(src, `${rel(file)} must not name the ai_chat_sessions table`).to.not.include('ai_chat_sessions');
+            expect(src, `${rel(file)} must not require postgres/storage`).to.not.match(/require\(\s*['"][^'"]*(postgres|storage)['"]/);
+            expect(src, `${rel(file)} must not contain SQL`).to.not.match(/\b(SELECT|INSERT|UPDATE|DELETE)\b[^;]*\bFROM\b|\bINSERT INTO\b|\bUPDATE\b\s+\w+\s+\bSET\b/i);
+            expect(src, `${rel(file)} must not write the filesystem`).to.not.include('writeFileSync');
         }
     });
 
@@ -86,8 +105,9 @@ describe('architecture: assistant contour (extraction preparation)', () => {
     it('A3: Assistant routes are wired ONLY with the narrow seam (no wide deps spread)', () => {
         const root = readSource(COMPOSITION_ROOT);
         // The registration must not spread the wide routeDeps into the route.
-        const regMatch = root.match(/require\('\.\/routes\/ai-routes\.cjs'\)\(app, redis, \{([\s\S]*?)\}\);/);
-        expect(regMatch, 'ai-routes registration block must exist in the composition root').to.not.equal(null);
+        // (Physical extraction: registration goes through the package API.)
+        const regMatch = root.match(/createAssistantRoutes\(app, redis, \{([\s\S]*?)\}\);/);
+        expect(regMatch, 'createAssistantRoutes registration block must exist in the composition root').to.not.equal(null);
         const regBody = regMatch[1];
         expect(regBody, 'the Assistant route must receive chatEngine through the seam wiring').to.include('chatEngine');
         expect(regBody).to.include('assistantPorts');
@@ -105,13 +125,16 @@ describe('architecture: assistant contour (extraction preparation)', () => {
     it('A3b: AssistantPorts surface is narrow and complete', () => {
         const ports = readSource(ASSISTANT_PORTS);
         expect(ports).to.include('function createAssistantPorts(');
-        for (const port of ['loadBook', 'persistBook', 'validateBundle', 'resolveChatAI', 'purgeForBook', 'sessionRepo']) {
+        for (const port of ['loadBook', 'persistBook', 'validateBundle', 'resolveChatAI', 'purgeForBook', 'sessionRepo', 'chatTransport']) {
             expect(ports, `AssistantPorts must expose the ${port} port`).to.include(port);
         }
         // One persistBook semantics for bundle + zero-chapter fallback.
         expect(ports).to.include('saveBookBundle');
         expect(ports).to.match(/chapters\?\.length > 0/);
         expect(ports).to.include('validateBundleFile');
+        // The transport legs are bound host-side (no package-side requires).
+        expect(ports).to.include('safeFetch: urlSafety.safeFetch');
+        expect(ports).to.include('runSharedInference: sharedPool.runSharedInference');
     });
 
     it('A4: Book/VBook access goes through ports, not direct service objects', () => {
@@ -126,8 +149,13 @@ describe('architecture: assistant contour (extraction preparation)', () => {
         expect(route, 'no direct bundle-validator require in the route').to.not.include("bundle-validator");
         expect(route, 'no direct book dir / filesystem fallback in the route').to.not.include('getBookDir');
         expect(route, 'no writeFileSync in the route').to.not.include('writeFileSync');
-        // Provider resolution is injected through the ports.
+        // Provider resolution + transport legs are injected through the ports.
         expect(route).to.not.include('providerGateway.chat.resolveProvider');
+        expect(route, 'no url-safety require in the route').to.not.include('url-safety');
+        expect(route, 'no shared-pool require in the route').to.not.include('shared-pool');
+        expect(route, 'no provider-gateway require in the route').to.not.include('provider-gateway');
+        // The whole contour holds zero require() calls at all (ports only).
+        expect(route, 'the package route must hold no require() calls').to.not.match(/\brequire\s*\(/);
     });
 
     it('A5: purge flows reach Assistant data via the port, not the table name', () => {
@@ -168,14 +196,19 @@ describe('architecture: assistant contour (extraction preparation)', () => {
         expect(route).to.include("res.on('close', onConnClosed)");
     });
 
-    it('A7: chat-engine bundle validation is injectable (composition-root bound)', () => {
+    it('A7: chat-engine bundle validation is injected (composition-root bound, NO host require)', () => {
         const engine = readSource(CHAT_ENGINE);
         expect(engine).to.match(/module\.exports = function\(config, deps = \{\}\)/);
-        expect(engine).to.include('validateBundleObjectDep');
-        // The fallback direct require stays only for standalone use.
-        expect(engine).to.match(/require\('\.\.\/book\/bundle-validator\.cjs'\)\.validateBundleObject/);
+        // The package engine requires the validator via injection ONLY —
+        // the historical ../book/bundle-validator.cjs fallback is gone
+        // with the physical move (the package has no host imports).
+        expect(engine).to.include('deps.validateBundleObject is required');
+        expect(engine, 'the package engine must not require host book files').to.not.include("require('../book/bundle-validator.cjs')");
+        expect(engine, 'the package engine must not require anything host-side').to.not.match(/require\(\s*['"][^'"]*book/);
+        // The composition root binds the shared validator + persona path.
         const root = readSource(COMPOSITION_ROOT);
-        expect(root).to.match(/chat-engine\.cjs'\)\(config, \{\s*validateBundleObject:/);
+        expect(root).to.match(/createChatEngine\(config, \{\s*validateBundleObject:/);
+        expect(root).to.include('aiProfilePath');
     });
 });
 

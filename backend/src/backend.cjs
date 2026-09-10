@@ -104,11 +104,23 @@ const { computeWaveform } = require('./services/waveform-service');
 const { computeIuReady } = require('./routes/book/iu-progress-utils.cjs');
 const genSessionRepo = require('./storage/postgres/repositories/gen-session-repo');
 const bookSourceRepo = require('./storage/postgres/repositories/book-source-repo');
-// Assistant extraction preparation: the chat-session repository is the ONLY
-// ai_chat_sessions owner; the Assistant contour and the purge flows reach it
-// through ports (assistantPorts below / purgeForBook), never via SQL.
+// Assistant extraction: the chat-session repository is the ONLY
+// ai_chat_sessions owner (its PG implementation stays host-side); the
+// Assistant contour (@animastor/assistant package) and the purge flows
+// reach it through ports (assistantPorts below / purgeForBook), never via
+// SQL.
 const chatSessionRepo = require('./storage/postgres/repositories/chat-session-repo');
+// Assistant ports — the HOST adapter half of the seam (contracts live in
+// the @animastor/assistant package; this module binds the concrete host
+// legs: Book Model, saveBookBundle, lazyBook dir, bundle validator,
+// Provider Gateway, PG chat-session repo, url-safety + shared-pool
+// transports).
 const { createAssistantPorts } = require('./services/assistant-ports.cjs');
+// @animastor/assistant — the physically extracted Assistant contour
+// (chat engine + /api/v1/ai/* HTTP routes + contracts). Consumed ONLY
+// through the package root; every host dependency arrives through the
+// assistantPorts seam below (docs/architecture/ai-assistant-extraction.md).
+const { createChatEngine, createAssistantRoutes } = require('@animastor/assistant');
 const placeholderAudio = require('./services/placeholder-audio');
 const utils = require('./helpers/utils.cjs');
 
@@ -251,11 +263,15 @@ const {
 // SERVICES (factory pattern)
 // ======================================================
 const cleanupService = require('./services/cleanup-service.cjs')(redis, config, { log });
-// Assistant boundary: the chat engine receives the bundle-contract validator
-// through injection (composition-root binding — the engine's own direct
-// book-domain require stays only as the standalone fallback).
-const chatEngine = require('./services/chat-engine.cjs')(config, {
+// Assistant contour: the chat engine lives in the @animastor/assistant
+// package now; the bundle-contract validator and the persona profile path
+// are HOST legs injected here (composition-root binding). The engine
+// holds no host requires.
+const chatEngine = createChatEngine(config, {
     validateBundleObject: require('./book/bundle-validator.cjs').validateBundleObject,
+    // Persona markdown is host-owned content (backend/ai tree); env
+    // override unchanged. The path is a data read, not a code edge.
+    aiProfilePath: process.env.AI_PROFILE_PATH || path.join(__dirname, '../ai/ai-assistant-profile.md'),
 });
 const windowGenerator = require('./services/window-generator.cjs')({
     redis, txtImporter, genSessionRepo, state, activeScenes,
@@ -310,8 +326,8 @@ const routeDeps = {
         // ai_chat_sessions table — it purges Assistant data through the port.
         purgeAssistantForBook: (bookId) => assistantPorts.purgeForBook(bookId),
     }),
-    // Assistant contour ports (extraction preparation — the playerPorts
-    // analog): the AI Assistant HTTP contour (routes/ai-routes.cjs) gets its
+    // Assistant contour ports (the playerPorts analog — extraction COMPLETE):
+    // the AI Assistant HTTP contour (@animastor/assistant package) gets its
     // host legs ONLY through this narrow seam. No storage barrel, no SQL,
     // no whole Book/VBook services cross into the Assistant object graph:
     //   loadBook       — canonical||draft read (Book Model facade, lazy mode)
@@ -320,15 +336,21 @@ const routeDeps = {
     //   validateBundle / validateBundleFile — bundle-contract validation
     //   resolveChatAI  — chat provider resolution (Provider Gateway seam)
     //   sessionRepo    — chat-session repository port (list/get/create/
-    //                    append/rename/delete/purge)
+    //                    append/rename/delete/purge) — PG impl host-side
     //   purgeForBook   — Assistant-data purge for book deletion/cache teardown
-    // Guarded by tests/architecture/assistant-contour.test.js.
+    //   chatTransport  — safeFetch (url-safety) + shared-pool inference +
+    //                    describeSharedError + chat source token (gateway)
+    //   log            — host logger
+    // Guarded by tests/architecture/assistant-contour.test.js (A1–A7) and
+    // assistant-package-boundary.test.js (PB1–PB4).
     assistantPorts: createAssistantPorts({
         bookModel, book, lazyBook,
         bundleValidator: require('./book/bundle-validator.cjs'),
         providerGateway: require('./services/provider-gateway'),
         chatEngine,
         sessionRepo: chatSessionRepo,
+        urlSafety: require('./services/url-safety'),
+        sharedPool: require('./services/ai-connector/shared-pool'),
         log: utils.log,
     }),
     // Phase 6: Player/Editor boundaries — book access via the Canonical
@@ -415,11 +437,14 @@ createPlayerRoutes(app, redis, routeDeps);
 // Generation routes — import/generation leg, worker status/counts, progress
 // SSE, GPU Hub callbacks. No playback handlers remain here.
 require('./routes/generation-routes.cjs')(app, redis, { ...routeDeps, taskHandler });
-// AI Assistant routes — the contour gets ONLY its narrow seams (chatEngine
-// + assistantPorts + utils): no storage barrel, no whole Book/VBook
-// services, no task/generation deps ride into the Assistant object graph
-// (extraction preparation — mirrors the Player route registration).
-require('./routes/ai-routes.cjs')(app, redis, {
+// AI Assistant routes — registered through the @animastor/assistant
+// package API (the Assistant HTTP contour lives in
+// packages/animastor-assistant; the host must not require package
+// internals — docs/architecture/ai-assistant-extraction.md). The contour
+// gets ONLY its narrow seams (chatEngine + assistantPorts + utils): no
+// storage barrel, no whole Book/VBook services, no task/generation deps
+// ride into the Assistant object graph.
+createAssistantRoutes(app, redis, {
     chatEngine,
     assistantPorts: routeDeps.assistantPorts,
     utils,

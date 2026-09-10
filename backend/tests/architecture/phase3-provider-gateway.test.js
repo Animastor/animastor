@@ -28,8 +28,8 @@ const gatewayPath = path.join(REPO_ROOT, 'backend', 'src', 'services', 'provider
 const comfyuiSeamPath = path.join(REPO_ROOT, 'backend', 'src', 'generation', 'comfyui-provider.js');
 const aiServicePath = path.join(REPO_ROOT, 'backend', 'src', 'services', 'ai-service.js');
 const aiCallerPath = path.join(REPO_ROOT, 'backend', 'src', 'services', 'agent', 'ai-caller.js');
-const chatRoutePath = path.join(REPO_ROOT, 'backend', 'src', 'routes', 'ai-routes.cjs');
-const chatEnginePath = path.join(REPO_ROOT, 'backend', 'src', 'services', 'chat-engine.cjs');
+const chatRoutePath = path.join(REPO_ROOT, 'packages', 'animastor-assistant', 'src', 'assistant-routes.cjs');
+const chatEnginePath = path.join(REPO_ROOT, 'packages', 'animastor-assistant', 'src', 'chat-engine.cjs');
 const sharedPoolPath = path.join(REPO_ROOT, 'backend', 'src', 'services', 'ai-connector', 'shared-pool.js');
 const gpuDispatcherPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'gpu-dispatcher.js');
 const audioGenPath = path.join(REPO_ROOT, 'backend', 'src', 'audio', 'generation.js');
@@ -273,8 +273,8 @@ describe('architecture: Phase 3 ComfyUI isolation from Agent/Chat contracts', ()
     const LLM_CONTRACT_FILES = [
         ['ai-service.js', aiServicePath],
         ['agent/ai-caller.js', aiCallerPath],
-        ['routes/ai-routes.cjs', chatRoutePath],
-        ['services/chat-engine.cjs', chatEnginePath],
+        ['assistant-routes.cjs (@animastor/assistant)', chatRoutePath],
+        ['chat-engine.cjs (@animastor/assistant)', chatEnginePath],
         ['services/provider-gateway.js', gatewayPath],
     ];
 

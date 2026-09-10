@@ -1,24 +1,31 @@
 // ======================================================
-// ANIMASTOR BACKEND — CHAT ENGINE
+// @animastor/assistant — CHAT ENGINE
 // ======================================================
 // AI chat engine — system prompts, book context building,
 // mode-specific tool definitions, AI response parsing,
 // and JSON patch application.
+//
+// Physically extracted from backend/src/services/chat-engine.cjs
+// (docs/architecture/ai-assistant-extraction.md). The bundle-contract
+// validator arrives ONLY through injection (deps.validateBundleObject) —
+// the host ../book/bundle-validator.cjs require is gone with the move;
+// the composition root binds the shared validator instance. The AI
+// assistant profile (persona markdown) is host-owned content: its path
+// arrives via deps.aiProfilePath (composition root binds
+// backend/ai/ai-assistant-profile.md; env override unchanged).
+// The package holds no host imports — pure Assistant logic only.
 
 const fs = require('fs');
-const path = require('path');
 
 module.exports = function(config, deps = {}) {
-    // Assistant boundary (extraction preparation): the bundle-contract
-    // validator is injected by the composition root (AssistantPorts binding
-    // shares the same validator instance with the save gate). The direct
-    // book-domain require remains only as the standalone/test fallback.
-    const { validateBundleObject: validateBundleObjectDep } = deps;
-    const validateBundleObject = validateBundleObjectDep
-        || require('../book/bundle-validator.cjs').validateBundleObject;
-    // AI assistant profile lives in the AI tree (backend/ai), alongside rules,
-    // skills, profiles, workflows and connectors. Env override for exotic setups.
-    const AI_PROFILE_PATH = process.env.AI_PROFILE_PATH || path.join(__dirname, '../../ai/ai-assistant-profile.md');
+    const { validateBundleObject } = deps;
+    if (typeof validateBundleObject !== 'function') {
+        throw new Error('chatEngine: deps.validateBundleObject is required (composition-root bound)');
+    }
+    // AI assistant profile lives in the host AI tree (backend/ai) — the
+    // PATH is injected by the composition root; env override unchanged.
+    const AI_PROFILE_PATH = deps.aiProfilePath
+        || process.env.AI_PROFILE_PATH;
     const AI_API_BASE_URL = process.env.AI_API_BASE_URL || 'https://integrate.api.nvidia.com/v1';
 
     // ── Mode-specific system prompts ──────────────────
@@ -196,9 +203,13 @@ module.exports = function(config, deps = {}) {
     }
 
     // ── System prompt (fallback for legacy clients) ────
+    // The persona FILE is host-owned content reached through the injected
+    // path (never a host-relative require): no path → the built-in profile
+    // fallback, same as a missing file historically. fs use is confined to
+    // this read of the injected path — no book-directory knowledge.
     function loadSystemPrompt() {
         try {
-            if (fs.existsSync(AI_PROFILE_PATH)) {
+            if (AI_PROFILE_PATH && fs.existsSync(AI_PROFILE_PATH)) {
                 return fs.readFileSync(AI_PROFILE_PATH, 'utf-8').trim();
             }
         } catch (_) { /* ignore */ }

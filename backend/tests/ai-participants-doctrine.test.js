@@ -23,7 +23,10 @@ const os = require('os');
 
 require('./vbook-test-bindings.cjs');
 const bookModule = require('../src/book/index');
-const chatEngine = require('../src/services/chat-engine.cjs')({});
+const chatEngine = require('@animastor/assistant').createChatEngine({}, {
+    validateBundleObject: require('../src/book/bundle-validator.cjs').validateBundleObject,
+    aiProfilePath: null,
+});
 const { validateBundleObject } = require('../src/book/bundle-validator.cjs');
 const config = require('../src/config/runtime-config');
 

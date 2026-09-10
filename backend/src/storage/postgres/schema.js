@@ -596,7 +596,7 @@ CREATE INDEX IF NOT EXISTS idx_scene_assets_status ON scene_assets(status);
 CREATE INDEX IF NOT EXISTS idx_scene_assets_type ON scene_assets(asset_type);
 CREATE INDEX IF NOT EXISTS idx_scene_assets_hash ON scene_assets(book_id, scene_hash);
 
--- AI chat sessions (flat table used by ai-routes.cjs for backward compatibility)
+-- AI chat sessions (chat-session repository / @animastor/assistant contour)
 CREATE TABLE IF NOT EXISTS ai_chat_sessions (
     id              TEXT PRIMARY KEY,
     book_id         TEXT NOT NULL,

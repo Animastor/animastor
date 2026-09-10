@@ -166,7 +166,10 @@ describe('AI Editor Mode — edit_book tool', () => {
     // ======================================================
     it('invalid patch path returns error', async () => {
         const bookData = bookModule.loadBook(bookId);
-        const chatEngine = require('../src/services/chat-engine.cjs')(config);
+        const chatEngine = require('@animastor/assistant').createChatEngine(config, {
+            validateBundleObject: require('../src/book/bundle-validator.cjs').validateBundleObject,
+            aiProfilePath: null,
+        });
 
         const result = chatEngine.applyPatches(bookData, [
             { op: 'replace', path: '/nonexistent/field', value: 'test' }
@@ -198,7 +201,10 @@ describe('AI Editor Mode — edit_book tool', () => {
     // ======================================================
     it('chatEngine.applyPatches resolves /bible/country correctly', async () => {
         const bookData = bookModule.loadBook(bookId);
-        const chatEngine = require('../src/services/chat-engine.cjs')(config);
+        const chatEngine = require('@animastor/assistant').createChatEngine(config, {
+            validateBundleObject: require('../src/book/bundle-validator.cjs').validateBundleObject,
+            aiProfilePath: null,
+        });
 
         const result = chatEngine.applyPatches(bookData, [
             { op: 'replace', path: '/bible/country', value: 'USSR' }

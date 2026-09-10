@@ -17,7 +17,10 @@ const os = require('os');
 
 const bookModule = require('../src/book/index');
 const config = require('../src/config/runtime-config');
-const chatEngine = require('../src/services/chat-engine.cjs');
+const chatEngineFactory = (cfg) => require('@animastor/assistant').createChatEngine(cfg, {
+    validateBundleObject: require('../src/book/bundle-validator.cjs').validateBundleObject,
+    aiProfilePath: null,
+});
 
 const ORIG_BOOKS_DIR = config.BOOKS_DIR;
 
@@ -107,7 +110,7 @@ describe('Behavior via edit_book — AI-agent contract', () => {
     // ── Test 3: edit_book can CREATE behavior for existing character ──
     it('applyPatches creates behavior via add operation', () => {
         const bookData = bookModule.loadBook(bookId);
-        const engine = chatEngine(config);
+        const engine = chatEngineFactory(config);
 
         const behaviorData = {
             baseline: 'Calm, restrained gestures, speaks slowly.',
@@ -129,7 +132,7 @@ describe('Behavior via edit_book — AI-agent contract', () => {
     // ── Test 4: edit_book can UPDATE behavior fields ──
     it('applyPatches updates existing behavior via replace operation', () => {
         const bookData = bookModule.loadBook(bookId);
-        const engine = chatEngine(config);
+        const engine = chatEngineFactory(config);
 
         // First create the behavior
         bookData.behaviors[CHAR_HERO] = {
@@ -151,7 +154,7 @@ describe('Behavior via edit_book — AI-agent contract', () => {
     // ── Test 5: edit_book can replace quirks array ──
     it('applyPatches replaces quirks array in behavior', () => {
         const bookData = bookModule.loadBook(bookId);
-        const engine = chatEngine(config);
+        const engine = chatEngineFactory(config);
 
         bookData.behaviors[CHAR_HERO] = {
             baseline: 'Calm.',
@@ -169,7 +172,7 @@ describe('Behavior via edit_book — AI-agent contract', () => {
     // ── Test 6: edit_book can replace reactions array ──
     it('applyPatches replaces reactions array in behavior', () => {
         const bookData = bookModule.loadBook(bookId);
-        const engine = chatEngine(config);
+        const engine = chatEngineFactory(config);
 
         bookData.behaviors[CHAR_HERO] = {
             baseline: 'Calm.',
@@ -192,7 +195,7 @@ describe('Behavior via edit_book — AI-agent contract', () => {
     // ── Test 7: full behavior creation + saveBookBundle roundtrip ──
     it('creates behavior and persists through saveBookBundle', () => {
         const bookData = bookModule.loadBook(bookId);
-        const engine = chatEngine(config);
+        const engine = chatEngineFactory(config);
 
         const behaviorData = {
             baseline: 'Restless and expressive.',
@@ -224,7 +227,7 @@ describe('Behavior via edit_book — AI-agent contract', () => {
     // ── Test 8: multiple characters behavior ──
     it('creates behavior for multiple characters via separate patches', () => {
         const bookData = bookModule.loadBook(bookId);
-        const engine = chatEngine(config);
+        const engine = chatEngineFactory(config);
 
         const heroBehavior = {
             baseline: 'Calm and restrained.',
@@ -255,7 +258,7 @@ describe('Behavior via edit_book — AI-agent contract', () => {
     // ── Test 9: behavior creation does not break characters/voices ──
     it('behavior creation preserves characters.json and voices.json', () => {
         const bookData = bookModule.loadBook(bookId);
-        const engine = chatEngine(config);
+        const engine = chatEngineFactory(config);
 
         const result = engine.applyPatches(bookData, [
             { op: 'add', path: `/behaviors/${CHAR_HERO}`, value: { baseline: 'Calm.' } },
@@ -278,7 +281,7 @@ describe('Behavior via edit_book — AI-agent contract', () => {
     // ── Test 10: validated patches also work for behavior ──
     it('applyPatchesValidated creates behavior and passes validation', () => {
         const bookData = bookModule.loadBook(bookId);
-        const engine = chatEngine(config);
+        const engine = chatEngineFactory(config);
 
         const behaviorData = {
             baseline: 'Still and economical.',
@@ -301,7 +304,7 @@ describe('Behavior via edit_book — AI-agent contract', () => {
     // ── Test 11: remove behavior entry ──
     it('applyPatches removes behavior entry via remove operation', () => {
         const bookData = bookModule.loadBook(bookId);
-        const engine = chatEngine(config);
+        const engine = chatEngineFactory(config);
 
         // Create behavior first
         bookData.behaviors[CHAR_HERO] = { baseline: 'To be removed.' };
@@ -317,7 +320,7 @@ describe('Behavior via edit_book — AI-agent contract', () => {
     // ── Test 12: behavior.json survives save/load roundtrip ──
     it('behavior.json survives saveBookBundle + loadBook roundtrip with full data', () => {
         const bookData = bookModule.loadBook(bookId);
-        const engine = chatEngine(config);
+        const engine = chatEngineFactory(config);
 
         const behaviorData = {
             baseline: 'Calm and composed.',

@@ -146,7 +146,10 @@ describe('P7-T4: VBook internals are not reached by new direct consumers', () =>
         'backend/src/services/agent/pipeline-runner.js: ../../book/lazy-book',
         'backend/src/services/agent/pipeline-steps.js: ../../book/lazy-book/appearance',
         'backend/src/services/book-source.js: ../book',
-        'backend/src/services/chat-engine.cjs: ../book/bundle-validator.cjs',
+        // (chat-engine.cjs was removed from this baseline at the Assistant
+        // physical extraction: the engine moved to @animastor/assistant and
+        // receives the bundle validator through composition-root injection —
+        // no backend/src/book path at all.)
         'backend/src/services/placeholder-audio.js: ../book',
         'backend/src/services/placeholder-audio.js: ../book/lazy-book',
         'backend/src/services/source-coverage-audit.js: ../book/lazy-book',
@@ -222,9 +225,12 @@ describe('P7-T6: Provider Gateway delegate and consumer sets stay explicit', () 
     // (Assistant prep: backend.cjs joined as a composition-root consumer —
     // it binds the gateway into the AssistantPorts resolveChatAI seam. The
     // route itself left the direct-consumer set at that preparation.)
+    // (Assistant physical extraction: routes/ai-routes.cjs left the baseline
+    // — the contour moved to @animastor/assistant and reaches the gateway
+    // ONLY through the injected chatTransport port; backend.cjs remains the
+    // single composition-root consumer.)
     const CONSUMER_BASELINE = [
         'backend/src/backend.cjs',
-        'backend/src/routes/ai-routes.cjs',
     ];
 
     it('the delegate module set matches the baseline', () => {

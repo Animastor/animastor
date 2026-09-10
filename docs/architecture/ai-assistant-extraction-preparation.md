@@ -1,6 +1,7 @@
 # AI Assistant Extraction — Preparation (A-1…A-5)
 
-**Status:** LANDED (seams/ports/adapters only — no `@animastor/assistant` package yet, no production files moved between packages).
+**Status:** SUPERSEDED — physical extraction landed. See `docs/architecture/ai-assistant-extraction.md` for the current state.
+**Was:** seams/ports/adapters only — preparation complete.
 **Baseline:** on top of S-5 (`f7e64131` "arch(generation): reduce runtime orchestration cycle") + the in-flight S-6 generation host-ports work in the working tree (see §7 Blockers).
 **Predecessor audit:** `docs/architecture/ai-assistant-and-postgresql-extraction-audit.md` (A-1…A-5 preparation plan, §10 AssistantPorts contract, §16 MOVE/STAY lists).
 **Guard suite:** `backend/tests/architecture/assistant-contour.test.js` (A1…A7).

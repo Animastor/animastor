@@ -1,0 +1,44 @@
+{
+    "name": "@animastor/assistant",
+    "version": "0.1.0",
+    "description": "Animastor Assistant — the AI assistant contour of the Animastor backend, physically extracted from the host: chat engine (persona/system prompts, book context, mode tools, JSON patch pipeline with bundle-contract validation), the /api/v1/ai/* HTTP contour (sessions CRUD, non-streaming chat, SSE streaming with meta/delta/done/error frames, tool-call orchestration) and the chat-session repository contract. The package reaches the host (book read/write, bundle validation, provider resolution, session persistence, shared-inference transport, logging) ONLY through the injected AssistantPorts seam — no PG, no Book internals, no filesystem, no provider gateway inside.",
+    "keywords": [
+        "animastor",
+        "ai-assistant",
+        "chat",
+        "sse",
+        "llm"
+    ],
+    "main": "src/index.cjs",
+    "exports": {
+        ".": "./src/index.cjs"
+    },
+    "files": [
+        "src/",
+        "README.md",
+        "LICENSE"
+    ],
+    "scripts": {
+        "test": "mocha --exit test/*.test.js"
+    },
+    "engines": {
+        "node": ">=18"
+    },
+    "license": "MIT",
+    "publishConfig": {
+        "access": "public"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/Animastor/animastor.git",
+        "directory": "packages/animastor-assistant"
+    },
+    "homepage": "https://github.com/Animastor/animastor/tree/main/packages/animastor-assistant#readme",
+    "bugs": {
+        "url": "https://github.com/Animastor/animastor/issues"
+    },
+    "devDependencies": {
+        "chai": "^6.2.2",
+        "mocha": "^11.7.5"
+    }
+}

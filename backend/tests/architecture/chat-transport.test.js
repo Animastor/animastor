@@ -9,7 +9,7 @@
 //     — non-streaming JSON transport for agent pipelines;
 //     — retry + provider context (AsyncLocalStorage), stream:false.
 //
-//   Chat transport (routes/ai-routes.cjs)
+//   Chat transport (@animastor/assistant — the Assistant contour)
 //     — SSE (text/event-stream);
 //     — tools / tool_choice;
 //     — AbortController (timeouts + shared disconnect);
@@ -25,7 +25,7 @@ const { expect } = require('chai');
 const path = require('path');
 const { readSource, rel, REPO_ROOT } = require('./helpers');
 
-const chatRoutePath = path.join(REPO_ROOT, 'backend', 'src', 'routes', 'ai-routes.cjs');
+const chatRoutePath = path.join(REPO_ROOT, 'packages', 'animastor-assistant', 'src', 'assistant-routes.cjs');
 const aiCallerPath = path.join(REPO_ROOT, 'backend', 'src', 'services', 'agent', 'ai-caller.js');
 const aiServicePath = path.join(REPO_ROOT, 'backend', 'src', 'services', 'ai-service.js');
 const sharedPoolPath = path.join(REPO_ROOT, 'backend', 'src', 'services', 'ai-connector', 'shared-pool.js');
@@ -54,6 +54,9 @@ describe('architecture: chat transport contract', () => {
     });
 
     it('chat transport keeps the connector path via shared-pool (runSharedInference)', () => {
+        // The contour reaches the shared-pool through the chatTransport port
+        // (host adapter binds services/ai-connector/shared-pool); the contract
+        // surface (runSharedInference + describeSharedError) is unchanged.
         const chat = readSource(chatRoutePath);
         expect(chat).to.include("ai.transport === 'connector'");
         expect(chat).to.include('sharedPool.runSharedInference');

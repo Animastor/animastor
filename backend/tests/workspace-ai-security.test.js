@@ -89,9 +89,12 @@ function cookieOf(res) {
 const CREATE_BOOK_SUBPATHS = new Set(['import', 'import-txt', 'import-text', 'load-vbook', 'blank']);
 
 function buildApp() {
-    const chatEngine = require('../src/services/chat-engine.cjs')(config);
+    const chatEngine = require('@animastor/assistant').createChatEngine(config, {
+        validateBundleObject: require('../src/book/bundle-validator.cjs').validateBundleObject,
+        aiProfilePath: null,
+    });
     const registerAuthRoutes = require('../src/routes/auth-routes.cjs');
-    const registerAiRoutes = require('../src/routes/ai-routes.cjs');
+    const registerAiRoutes = require('@animastor/assistant').createAssistantRoutes;
     const registerSettingsRoutes = require('../src/routes/settings-ai-routes.cjs');
 
     const app = express();
@@ -116,10 +119,13 @@ function buildApp() {
     });
 
     registerSettingsRoutes(app);
-    // Assistant contour wiring — the narrow seam only (extraction
-    // preparation): chatEngine + assistantPorts + utils.
+    // Assistant contour wiring — the narrow seam only (physical
+    // extraction): the registrar comes from @animastor/assistant; the
+    // host legs ride the ports (chatTransport included).
     const chatSessionRepo = require('../src/storage/postgres/repositories/chat-session-repo');
     const providerGateway = require('../src/services/provider-gateway');
+    const sharedPool = require('../src/services/ai-connector/shared-pool');
+    const { safeFetch } = require('../src/services/url-safety');
     registerAiRoutes(app, null, {
         chatEngine,
         assistantPorts: {
@@ -130,6 +136,12 @@ function buildApp() {
             }),
             sessionRepo: chatSessionRepo,
             purgeForBook: async () => {},
+            chatTransport: {
+                safeFetch,
+                runSharedInference: sharedPool.runSharedInference,
+                describeSharedError: sharedPool.describeSharedError,
+                chatAiSourceToken: (ai) => providerGateway.chat.sourceToken(ai),
+            },
             log: () => {},
         },
         utils: { log: () => {} },
