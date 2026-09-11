@@ -1611,3 +1611,231 @@ The recon §16 MOVE list also names runtime/orchestration/audio/image/video. Mov
 5. **Guards:** extend G7 with per-tier import bans as each tier lands; keep the full-suite parity discipline (worktree baseline diff) for every step.
 
 *End of S-7 section. The Generation Core is physically a package; the host is composition-only; S-8 owns the remaining tiers.*
+
+---
+
+## 30. S-8 — Package Boundary Closure
+
+**Status:** AUDIT-ONLY (S-8 is a read-only verification step — no production code changed, no files moved, no refactoring performed).
+
+### 30.1 Goal
+
+Prove that the physically extracted `@animastor/generation` package is a genuine standalone unit: the backend no longer depends on the old `backend/src/generation`, and the package has no knowledge of the host.
+
+### 30.2 Package tree
+
+```
+packages/animastor-generation/
+├── package.json          (name: @animastor/generation, v0.1.0)
+├── package-lock.json
+├── LICENSE               (MIT)
+├── README.md
+├── .gitignore
+├── test/
+│   └── generation-package.test.js   (11 tests — standalone load, isolation, exports)
+└── src/
+    ├── index.js                     (entrypoint — lazy getters, zero top-level requires)
+    ├── core/
+    │   ├── artifact-naming.js       (canonical filename grammar)
+    │   ├── default-registrations.js (audio/image/video registration)
+    │   ├── generation-progress.js   (pure task-registry domain)
+    │   ├── media-registry.js        (media capability registry + resolvers)
+    │   └── scene-state.js           (per-asset FSM contract)
+    ├── ports/
+    │   ├── book-data.js             (BookData port — fail-fast unwired)
+    │   ├── dispatch-transport.js    (DispatchTransport port — fail-fast unwired)
+    │   ├── generation-config.js     (GenerationConfig port — fail-fast unwired)
+    │   └── profile-store.js         (ProfileStore port — fail-fast unwired)
+    ├── prompt-profiles/
+    │   ├── assembly-profile.js      (prompt-assembly profile resolver)
+    │   ├── character-utils.js       (character-reference normalizers)
+    │   └── prompt-text-utils.js     (pure text normalizers)
+    ├── providers/
+    │   └── comfyui-provider.js      (Generation → ComfyUI/GPU provider seam)
+    └── utils/
+        ├── cyr-latin-map.js         (Cyrillic → Latin transliteration)
+        └── escape-regexp.js         (regex escaping)
+```
+
+**17 source files + 1 test file + 3 metadata files (package.json, LICENSE, README) = 19 tarball entries.**
+
+### 30.3 Final public API
+
+Frozen by G7-G. The root module exports 8 properties via `require('@animastor/generation')`:
+
+| Export | Type | Purpose | Host dependency |
+|---|---|---|---|
+| `artifactNaming` | lazy getter | Canonical artifact filename grammar | None (pure) |
+| `mediaRegistry` | lazy getter | Media capability registry + resolvers | GenerationConfig port (injected) |
+| `generationProgress` | lazy getter | Pure task-registry domain logic | None (pure) |
+| `sceneState` | lazy getter | Per-asset FSM contract (states, transitions, validation) | None (pure, uses mediaRegistry internally) |
+| `comfyuiProvider` | lazy getter | ComfyUI/GPU provider seam (Job Protocol v2 dispatch) | DispatchTransport port (injected) |
+| `promptProfiles` | lazy getter | `{ assemblyProfile, characterUtils, promptTextUtils }` | ProfileStore port (injected) |
+| `ports` | lazy getter | `{ dispatchTransport, generationConfig, profileStore, bookData }` | None (port registries themselves) |
+| `bootstrap` | value | Eager default media-type registration | GenerationConfig port (must be wired first) |
+
+**Who uses each export (backend consumer count):**
+- `artifactNaming`: ~20 files (storage, audio, image, video, services, orchestration, routes, metrics, helpers)
+- `mediaRegistry`: ~15 files (runtime, orchestration, services, routes, metrics, storage)
+- `comfyuiProvider`: ~7 files (audio, image, video, orchestration, services, workflows)
+- `promptProfiles.characterUtils`: 4 files (image, video, services, agent pipeline)
+- `promptProfiles.assemblyProfile`: 6 files (audio, image, video, workflows, tests)
+- `promptProfiles.promptTextUtils`: 1 file (image/helpers.js)
+- `generationProgress`: 1 file (services/generation-progress.js — adapter)
+- `sceneState`: 1 file (state/asset-state-store.js — adapter)
+- `ports.*`: 4 files (backend.cjs composition root, config adapter, test bindings, video-workflows)
+- `bootstrap`: 1 file (backend.cjs)
+
+**No legacy/temporary exports. All 8 are needed for host integration.**
+
+### 30.4 Dependency graph
+
+#### Package → external dependencies
+
+| Dependency | Type | Purpose |
+|---|---|---|
+| `@animastor/contracts` | `file:../animastor-contracts` | Job Protocol v2 schema (frozen) |
+| `animastor-comfyui-workflow-connector` | `file:../animastor-comfyui-workflow-connector` | ComfyUI workflow/connector loaders (frozen) |
+| `chai` | devDependency | test assertions |
+| `mocha` | devDependency | test runner |
+
+**No production backend-only dependencies. No Redis, PG, Express, runtime-config, VBook, Player, Editor, GPU Hub, ai-loader, book, or agent packages.**
+
+#### Package internal require graph
+
+All requires resolve inside `src/` or to the two declared `file:` dependencies + Node builtins (`crypto`). Zero external host modules. Zero `process.env`. Zero filesystem access. Zero Redis/PG access.
+
+#### Backend → package
+
+All 48+ backend consumer files import via the root specifier only:
+```js
+const foo = require('@animastor/generation').foo;
+```
+
+**Zero deep imports.** The `exports` map exposes only `"."`.
+
+### 30.5 Standalone-load result
+
+`packages/animastor-generation/test/generation-package.test.js` (11 tests) proves:
+
+1. `require('@animastor/generation')` loads successfully from the package's physical path — no backend, no Express, no Redis, no PG, no runtime-config, no VBook, no GPU Hub.
+2. Package source contains zero `backend/src/**` requires (self-guard).
+3. Exports map exposes the root only — deep imports throw.
+4. Ports fail fast when unwired and accept the documented binding shapes.
+5. `bootstrap()` registers the default media capabilities through the config port (no host fallback).
+6. `sceneState` exposes the frozen per-asset FSM contract.
+7. `artifactNaming` produces the frozen filename grammar.
+8. `generationProgress` exposes the pure task-registry domain.
+9. `promptProfiles` resolve through the ProfileStore port and normalize text purely.
+10. `comfyuiProvider` dispatches through the DispatchTransport port (payload preserved).
+11. `_clearRegistry` suppresses re-bootstrap (S-2 test-hook contract).
+
+**Package load ≠ backend load. The package is genuinely standalone.**
+
+### 30.6 npm pack result
+
+```
+@animastor/generation@0.1.0
+Tarball Contents:
+  1.1kB LICENSE
+  4.6kB README.md
+  1.9kB package.json
+  4.8kB src/core/artifact-naming.js
+  5.1kB src/core/default-registrations.js
+  5.3kB src/core/generation-progress.js
+  12.3kB src/core/media-registry.js
+  5.9kB src/core/scene-state.js
+  5.5kB src/index.js
+  3.4kB src/ports/book-data.js
+  3.4kB src/ports/dispatch-transport.js
+  3.3kB src/ports/generation-config.js
+  2.9kB src/ports/profile-store.js
+  5.4kB src/prompt-profiles/assembly-profile.js
+  6.9kB src/prompt-profiles/character-utils.js
+  4.4kB src/prompt-profiles/prompt-text-utils.js
+  11.5kB src/providers/comfyui-provider.js
+  2.2kB src/utils/cyr-latin-map.js
+  967B src/utils/escape-regexp.js
+Total: 19 files, 90.8 kB unpacked, 27.3 kB compressed
+```
+
+**No backend sources, no backend tests, no docs tree, no host adapters, no secrets, no local artifacts included.**
+
+### 30.7 Deep-import / reverse-boundary audit (G8-A…G8-J)
+
+| Guard | Asserts | Result |
+|---|---|---|
+| G8-A | `backend/src/generation/**` absent | ✅ ENOENT — directory does not exist |
+| G8-B | No `backend → @animastor/generation/...` deep imports | ✅ All 48+ consumers use root specifier only |
+| G8-C | No `package → backend/src/**` | ✅ Zero matches in package source |
+| G8-D | No `package → host-only modules` | ✅ Zero Redis/PG/Express/runtime-config/VBook/Player/Editor/GPU-Hub/ai-loader/book/agent requires |
+| G8-E | No `package ↔ backend` cycle | ✅ G7-K guard green (14 tests passing) |
+| G8-F | No duplicate Generation Core in backend | ✅ G7-E guard green |
+| G8-G | Public API matches frozen contract | ✅ G7-G guard green (8 root properties, 14 tests) |
+| G8-H | Package standalone load | ✅ G7-L + package-own test suite (11 tests) |
+| G8-I | Production dependency closure clean | ✅ Only `@animastor/contracts` + `animastor-comfyui-workflow-connector` (both frozen S-6 packages) |
+| G8-J | npm package contents boundary | ✅ 19 files, only `src/` + LICENSE + README |
+
+### 30.8 Old-path scan
+
+Global scan for `backend/src/generation`, `../generation/`, `./generation/`, `generation/comfyui-provider`, `generation/artifact-naming`, `generation/prompt-profiles`, `generation/ports`:
+
+- **All matches are in comments/docs** (historical references to S-4/S-7 extraction history).
+- **No production code** references the old physical location.
+- **No dead require paths** exist.
+- `backend/src/generation/` directory: **ENOENT** (deleted by S-7).
+
+### 30.9 Tests
+
+| Suite | Result |
+|---|---|
+| `packages/animastor-generation` `npm test` | **11 passing / 0 failing** |
+| `tests/architecture/generation-package-boundary` (G7) | **14 passing / 0 failing** |
+| `tests/architecture/s6-generation-host-ports` (S6) | **14 passing / 0 failing** |
+| `tests/architecture/s3-provider-seam` (S3) | **13 passing / 0 failing** |
+| `tests/architecture/s4-shared-infra-moves` (S4) | **12 passing / 0 failing** |
+| `tests/architecture/s5-runtime-orchestration-cycle` (S5) | **7 passing / 0 failing** |
+| `tests/architecture/phase3-provider-gateway` | **19 passing / 0 failing** |
+| `tests/architecture/phase7-extraction-readiness` | **12 passing / 0 failing** |
+| `tests/architecture/dependency-guardrails` | **13 passing / 0 failing** |
+| `tests/architecture/generation-vbook-boundary` (S1) | **5 passing / 0 failing** |
+| `tests/architecture/comfyui-connector-core-boundary` | **4 passing / 0 failing** |
+| `tests/generation-provider-seam` | **15 passing / 0 failing** |
+| `tests/assembly-profile` + `tests/audio-profile` | **22 passing / 0 failing** |
+| `tests/image-ghost-no-jobs-sent` | **28 passing / 0 failing** |
+| **Full backend suite** | **853 passing / 0 failing** |
+
+**No new failures. No regressions. All S-2…S-7 guards green.**
+
+### 30.10 CI
+
+**CI evidence unavailable.** The repository uses a local `git://` remote (`/home/animastor/repos/animastor.git`) — no GitHub Actions or CI service is configured. All verification was performed locally via test suites.
+
+### 30.11 Acceptance criteria checklist
+
+| Criterion | Status |
+|---|---|
+| `@animastor/generation` loads independently of backend | ✅ (§30.5, 11 package tests) |
+| Package production dependency closure clean | ✅ (§30.4, only 2 frozen contract packages) |
+| Package does not know about backend | ✅ (G8-C, G8-D, G8-E — zero host requires) |
+| Backend does not know internal package files | ✅ (G8-B — zero deep imports) |
+| Deep imports absent | ✅ (G8-H — exports map root-only, deep requires throw) |
+| Old `backend/src/generation` absent | ✅ (G8-A — ENOENT) |
+| Duplicate Core absent | ✅ (G8-F) |
+| Public API frozen | ✅ (G8-G — 8 root properties) |
+| npm package boundary verified | ✅ (G8-J — 19 files) |
+| All S-2…S-7 guards pass | ✅ (§30.9 — all suites green) |
+| Full test failure set not worsened | ✅ (853/0, no new failures) |
+| No functional changes made | ✅ (audit-only, zero code diff) |
+
+### 30.12 Blockers
+
+None. The package boundary is closed.
+
+The runtime-tier relocation (§29.13 plan) remains a future step (S-9+), but is NOT a boundary blocker — the current package is clean, standalone, and release-ready as-is.
+
+### 30.13 Verdict
+
+**S-8: READY.**
+
+`@animastor/generation` v0.1.0 is a genuine standalone npm package. The boundary is closed. No code changes were required — the S-7 extraction was complete and the S-8 audit confirms it.
