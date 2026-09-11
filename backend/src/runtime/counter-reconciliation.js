@@ -10,7 +10,7 @@
 const logPrefix = '[DRIFT]';
 
 // S-2: registered stage list resolved from media registry
-const mediaRegistry = require('../generation/media-registry');
+const mediaRegistry = require('@animastor/generation').mediaRegistry;
 
 function log(msg) {
     console.log(`${logPrefix} ${msg}`);

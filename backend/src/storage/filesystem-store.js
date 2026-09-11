@@ -23,7 +23,7 @@ function log(msg) {
 // S-4: the artifact filename grammar has a single canonical owner —
 // generation/artifact-naming.js. These host-adapter wrappers compose
 // filenames from it (bytes unchanged) and own the fs/write side only.
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 
 // Form canonical scene audio filename: bookId_chapterId_sceneId.mp3
 function makeSceneAudioFilename(bookId, chapterId, sceneId) {

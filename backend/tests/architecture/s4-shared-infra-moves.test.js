@@ -2,26 +2,32 @@
 // S-4 — Shared Infrastructure Moves (architecture guards)
 // ======================================================
 // Pins the S-4 result: Generation Core shared infrastructure physically
-// relocated into the intermediate generation/ area (no npm package yet —
-// that is S-7). Behavior-neutral; guards freeze the new dependency
-// direction:
+// relocated into the Generation Core contour — since S-7 that contour IS the
+// @animastor/generation package (packages/animastor-generation/src; the
+// intermediate backend/src/generation/ area is GONE). Behavior-neutral;
+// guards freeze the dependency direction:
 //
-//   Generation Core (generation/*, moved utils)
+//   Generation Core (package core/*, prompt-profiles/*, moved utils)
 //       ↓
-//   Generation media capabilities (audio/image/video/workflows)
+//   Generation media capabilities (audio/image/video/workflows — host tier)
 //       ↓
-//   Generation provider / ports (comfyui-provider, media-registry)
+//   Generation provider / ports (comfyui-provider, media-registry — package)
 //       ↓
-//   Host adapters (storage, redis, config, routes)
+//   Host adapters (storage, redis, config, routes — host)
 //
 const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
 
 const SRC = path.join(__dirname, '..', '..', 'src');
+const PKG_SRC = path.join(__dirname, '..', '..', '..', 'packages', 'animastor-generation', 'src');
 
 function read(p) {
     return fs.readFileSync(path.join(SRC, p), 'utf8');
+}
+
+function readPkg(p) {
+    return fs.readFileSync(path.join(PKG_SRC, p), 'utf8');
 }
 
 function walk(dir, out = []) {
@@ -47,26 +53,39 @@ function requiresOf(source) {
 }
 
 // The Generation Core tier after S-4 (pure shared components; registry is the
-// media-capability seam; comfyui-provider is the provider seam — S-3 pins it).
-const S4_CORE_FILES = [
-    'generation/artifact-naming.js',
-    'generation/generation-progress.js',
-    'generation/scene-state.js',
-    'generation/media-registry.js',
-    'generation/prompt-profiles/assembly-profile.js',
-    'generation/prompt-profiles/character-utils.js',
-    'generation/prompt-profiles/prompt-text-utils.js',
+// media-capability seam). S-7: package-owned files are read from PKG_SRC;
+// the one shared host util (speech-estimation, §26.2 verdict) stays host-side.
+const S4_CORE_PKG_FILES = [
+    'core/artifact-naming.js',
+    'core/generation-progress.js',
+    'core/scene-state.js',
+    'core/media-registry.js',
+    'prompt-profiles/assembly-profile.js',
+    'prompt-profiles/character-utils.js',
+    'prompt-profiles/prompt-text-utils.js',
+];
+const S4_CORE_HOST_FILES = [
     'utils/speech-estimation.js',
 ];
+const S4_CORE_ALL = [
+    ...S4_CORE_PKG_FILES.map(f => ({ file: f, src: readPkg(f) })),
+    ...S4_CORE_HOST_FILES.map(f => ({ file: f, src: read(f) })),
+];
 
-const SHIM_FILES = [
-    'state/scene-state.js',
+// S-7: the S-4 transition shims for the moved core are DELETED (consumers use
+// the package public API). The one host-internal surface shim that remains is
+// state/scene-state.js (state-layer re-export over the Redis host adapter,
+// not a package shim).
+const DELETED_SHIM_FILES = [
     'image/assembly-profile.js',
     'image/character-utils.js',
 ];
+const REMAINING_HOST_SHIM_FILES = [
+    'state/scene-state.js',
+];
 
 // Host adapters that own the Redis persistence split out of the S-4 core in
-// the correction pass (audit 8e77d950): pure logic stays in generation/,
+// the correction pass (audit 8e77d950): pure logic stays in the package,
 // Redis keys + client calls live here. Their public API is unchanged.
 const S4_HOST_REDIS_ADAPTERS = [
     'services/generation-progress.js',
@@ -83,8 +102,8 @@ describe('S-4: shared infrastructure moves', () => {
             /(^|\/|\.\.\/)book(\.js|\.cjs|\/|')/, /services\/agent/,
             /agent-service/, /window-generator/, /agent-prompts/,
         ];
-        for (const file of S4_CORE_FILES) {
-            for (const spec of requiresOf(read(file))) {
+        for (const { file, src } of S4_CORE_ALL) {
+            for (const spec of requiresOf(src)) {
                 for (const re of forbidden) {
                     expect(re.test(spec), `${file} must not require '${spec}'`).to.equal(false);
                 }
@@ -100,8 +119,8 @@ describe('S-4: shared infrastructure moves', () => {
             /animastor-gpu-hub/, /animastor-worker/, /animastor-comfyui-workflow-connector/,
             /gpu-dispatcher/, /HUB_URL/,
         ];
-        for (const file of S4_CORE_FILES) {
-            for (const spec of requiresOf(read(file))) {
+        for (const { file, src } of S4_CORE_ALL) {
+            for (const spec of requiresOf(src)) {
                 for (const re of forbidden) {
                     expect(re.test(spec), `${file} must not require '${spec}' (provider/gpu seam lives outside the S-4 core tier)`).to.equal(false);
                 }
@@ -114,8 +133,8 @@ describe('S-4: shared infrastructure moves', () => {
     // ─────────────────────────────────────────────────────────────
     it('S4-C: Generation Core requires no express/http/router modules', () => {
         const forbidden = [/^express$/, /^http$/, /^https$/, /router/, /middleware\//, /routes\//];
-        for (const file of S4_CORE_FILES) {
-            for (const spec of requiresOf(read(file))) {
+        for (const { file, src } of S4_CORE_ALL) {
+            for (const spec of requiresOf(src)) {
                 for (const re of forbidden) {
                     expect(re.test(spec), `${file} must not require '${spec}'`).to.equal(false);
                 }
@@ -184,30 +203,31 @@ describe('S-4: shared infrastructure moves', () => {
     }
 
     it('S4-D: Generation Core has no direct redis/pg/config/storage dependencies', () => {
-        for (const file of S4_CORE_FILES) {
-            assertCoreIsHostFree(file, read(file));
+        for (const { file, src } of S4_CORE_ALL) {
+            assertCoreIsHostFree(file, src);
         }
         // S-6 UPDATE: the documented host-adapter dependency (ai-loader
         // inside assembly-profile, pinned since S-4 as the future port) is
         // GONE — profile files load through the Generation-owned ProfileStore
-        // port (generation/ports/profile-store.js). NO S4 core file may
+        // port (package ports/profile-store.js). NO S4 core file may
         // require a host service; assembly-profile must consume the port.
-        const coreWithHostAdapter = S4_CORE_FILES.filter(f => requiresOf(read(f)).some(s => /ai-loader/.test(s)));
-        expect(coreWithHostAdapter, 'core must not require host services — use the ProfileStore port').to.deep.equal([]);
-        expect(requiresOf(read('generation/prompt-profiles/assembly-profile.js')),
+        const coreWithHostAdapter = S4_CORE_ALL.filter(({ src }) => requiresOf(src).some(s => /ai-loader/.test(s)));
+        expect(coreWithHostAdapter.map(f => f.file), 'core must not require host services — use the ProfileStore port').to.deep.equal([]);
+        expect(requiresOf(readPkg('prompt-profiles/assembly-profile.js')),
             'assembly-profile must load profiles through ports/profile-store')
             .to.include('../ports/profile-store');
     });
 
     // ─────────────────────────────────────────────────────────────
-    // S4-D2 — the whole generation/ contour is Redis-free
+    // S4-D2 — the whole Generation Core contour is Redis-free
     // ─────────────────────────────────────────────────────────────
     // Core-adjacent files (S-2/S-3 seams: media registry bootstrap, provider
-    // seam, registrations) are classified in the recon doc; NONE of them may
-    // implement Redis persistence or touch the filesystem directly.
-    it('S4-D2: no file under generation/ implements Redis persistence or fs access', () => {
-        for (const full of walk(path.join(SRC, 'generation'))) {
-            const rel = relativeToSrc(full);
+    // seam, registrations — all package-owned since S-7) are classified in
+    // the recon doc; NONE of them may implement Redis persistence or touch
+    // the filesystem directly.
+    it('S4-D2: no file under the package implements Redis persistence or fs access', () => {
+        for (const full of walk(PKG_SRC)) {
+            const rel = path.relative(PKG_SRC, full).replace(/\\/g, '/');
             const src = fs.readFileSync(full, 'utf8');
             expect(REDIS_OPS_RE.test(src), `${rel} issues Redis commands directly — move persistence to a host adapter`).to.equal(false);
             expect(PASSED_CLIENT_RE.test(src), `${rel} calls methods on a passed-in redis client — move persistence to a host adapter`).to.equal(false);
@@ -230,19 +250,26 @@ describe('S-4: shared infrastructure moves', () => {
     // S4-E — no duplicate Generation Core implementations
     // ─────────────────────────────────────────────────────────────
     it('S4-E: each relocated core utility has exactly one implementation', () => {
-        const all = walk(SRC).map(f => [relativeToSrc(f), fs.readFileSync(f, 'utf8')]);
+        const all = [
+            ...walk(SRC).map(f => [relativeToSrc(f), fs.readFileSync(f, 'utf8')]),
+            ...walk(PKG_SRC).map(f => [`@pkg/${path.relative(PKG_SRC, f).replace(/\\/g, '/')}`, fs.readFileSync(f, 'utf8')]),
+        ];
         const singleDef = (pattern, canonical) => {
             const owners = all.filter(([file, src]) => pattern.test(src)).map(([file]) => file);
-            expect(owners, `${canonical} must be the only implementation`).to.include(canonical);
-            expect(owners.filter(f => f !== canonical), `duplicate implementations of ${canonical}: ${owners.filter(f => f !== canonical).join(', ')}`).to.deep.equal([]);
+            const canonicalKey = canonical.startsWith('@pkg/') ? canonical : canonical;
+            expect(owners, `${canonical} must be the only implementation`).to.include(canonicalKey);
+            expect(owners.filter(f => f !== canonicalKey), `duplicate implementations of ${canonical}: ${owners.filter(f => f !== canonicalKey).join(', ')}`).to.deep.equal([]);
         };
         singleDef(/function estimateSpeechDurationSec/, 'utils/speech-estimation.js');
-        singleDef(/function normalizeCharacterRefs/, 'generation/prompt-profiles/character-utils.js');
-        singleDef(/function resolveAssembly/, 'generation/prompt-profiles/assembly-profile.js');
-        singleDef(/function sceneChunkAudioName/, 'generation/artifact-naming.js');
-        // the old image/ locations are pure re-export shims (no logic migrated back);
+        singleDef(/function normalizeCharacterRefs/, '@pkg/prompt-profiles/character-utils.js');
+        singleDef(/function resolveAssembly/, '@pkg/prompt-profiles/assembly-profile.js');
+        singleDef(/function sceneChunkAudioName/, '@pkg/core/artifact-naming.js');
+        // S-7: the old image/ shims are GONE (no logic migrated back);
         // the two Redis adapters split out of the core are real modules (not shims)
-        for (const shim of SHIM_FILES) {
+        for (const shim of DELETED_SHIM_FILES) {
+            expect(fs.existsSync(path.join(SRC, shim)), `${shim} must stay deleted (package public API replaced it in S-7)`).to.equal(false);
+        }
+        for (const shim of REMAINING_HOST_SHIM_FILES) {
             const src = read(shim);
             expect(src, `${shim} must stay a one-line re-export shim`).to.match(/module\.exports\s*=\s*require\(/);
         }
@@ -259,10 +286,10 @@ describe('S-4: shared infrastructure moves', () => {
     // direction core ← adapter, never the reverse) and expose the frozen
     // registry API.
     it('S4-D3: generation-progress Redis adapter delegates to the pure core (API frozen)', () => {
-        const coreSrc = read('generation/generation-progress.js');
+        const coreSrc = readPkg('core/generation-progress.js');
         const adapterSrc = read('services/generation-progress.js');
-        // dependency direction: adapter → core
-        expect(adapterSrc).to.match(/require\(\s*['"][^'"]*generation\/generation-progress['"]\s*\)/);
+        // dependency direction: adapter → package core (S-7: via public API)
+        expect(adapterSrc).to.match(/require\(\s*['"]@animastor\/generation['"]\s*\)\.generationProgress/);
         expect(coreSrc).to.not.match(/require\(\s*['"][^'"]*services\//);
         // frozen registry API (generation-progress.test.js, happy-path, progress-panel)
         const progress = require(path.join(SRC, 'services', 'generation-progress.js'));
@@ -274,20 +301,20 @@ describe('S-4: shared infrastructure moves', () => {
         expect(progress.KEY_PREFIX).to.equal('animastor:generation-progress');
         expect(progress.TTL_SECONDS).to.equal(4 * 60 * 60);
         // pure core exposes NO persistence surface
-        const coreExports = require(path.join(SRC, 'generation', 'generation-progress.js'));
+        const coreExports = require(path.join(PKG_SRC, 'core', 'generation-progress.js'));
         for (const fn of Object.keys(coreExports)) {
             expect(['createTaskRecords', 'filterTaskMap', 'sceneTaskState', 'hasActiveTasks',
                 'activeTasksByType', 'taskId', 'normalizeScope', 'targetsForType', 'buildTask',
                 'WORKER_TYPES', 'TERMINAL_RETENTION_MS'].includes(fn),
-            `generation/generation-progress must not export persistence API: ${fn}`).to.equal(true);
+            `package generation-progress must not export persistence API: ${fn}`).to.equal(true);
         }
     });
 
     it('S4-D3: asset-state Redis adapter delegates to the pure FSM core (API frozen)', () => {
-        const coreSrc = read('generation/scene-state.js');
+        const coreSrc = readPkg('core/scene-state.js');
         const adapterSrc = read('state/asset-state-store.js');
-        // dependency direction: adapter → core
-        expect(adapterSrc).to.match(/require\(\s*['"][^'"]*generation\/scene-state['"]\s*\)/);
+        // dependency direction: adapter → package core (S-7: via public API)
+        expect(adapterSrc).to.match(/require\(\s*['"]@animastor\/generation['"]\s*\)\.sceneState/);
         expect(coreSrc).to.not.match(/require\(\s*['"][^'"]*state\//);
         // frozen FSM surface (asset-state.test.js, scene-state.test.js, redis-ownership)
         const store = require(path.join(SRC, 'state', 'asset-state-store.js'));
@@ -300,25 +327,27 @@ describe('S-4: shared infrastructure moves', () => {
             expect(store[fn], `state/asset-state-store.${fn}`).to.be.a('function');
         }
         // pure core exposes NO persistence surface
-        const coreExports = require(path.join(SRC, 'generation', 'scene-state.js'));
+        const coreExports = require(path.join(PKG_SRC, 'core', 'scene-state.js'));
         for (const fn of Object.keys(coreExports)) {
             expect(['AssetState', 'ASSETS', 'validateAssetTransition', 'normalizeAssetStates',
                 'validateAssetUpdate', 'validateAssetUpdates'].includes(fn),
-            `generation/scene-state must not export persistence API: ${fn}`).to.equal(true);
+            `package scene-state must not export persistence API: ${fn}`).to.equal(true);
         }
     });
 
     // ─────────────────────────────────────────────────────────────
     // S4-F — artifact/job-id grammar has a single canonical owner
     // ─────────────────────────────────────────────────────────────
-    it('S4-F: the scene artifact grammar is owned solely by generation/artifact-naming.js', () => {
+    it('S4-F: the scene artifact grammar is owned solely by the package artifact-naming module', () => {
         const grammarRe = /`\$\{\s*bookId\s*\}_\$\{\s*(chapterId|chapter|s\.chapter_id|ds\.chapter_id|scene\.chapter_id|sceneData\.chapter_id|result\.chapter\.chapter|sceneData\.chapter)\s*\}_\$\{\s*(sceneId|s\.scene_id|ds\.scene_id|scene\.scene_id|sceneData\.scene_id)\s*\}/;
         const all = walk(SRC).map(f => [relativeToSrc(f), fs.readFileSync(f, 'utf8')]);
         const offenders = all
             .filter(([file, src]) => grammarRe.test(src))
-            .map(([file]) => file)
-            .filter(file => file !== 'generation/artifact-naming.js');
-        expect(offenders, `raw scene-grammar literals outside the canonical owner: ${offenders.join(', ')}`).to.deep.equal([]);
+            .map(([file]) => file);
+        expect(offenders, `raw scene-grammar literals outside the canonical owner (package core/artifact-naming.js): ${offenders.join(', ')}`).to.deep.equal([]);
+        // the canonical owner still defines the grammar (now package-owned)
+        expect(grammarRe.test(readPkg('core/artifact-naming.js')),
+            'the package artifact-naming module must remain the grammar owner').to.equal(true);
         // the writer-side host adapter composes through the owner (no local redefinition)
         const fsStore = read('storage/filesystem-store.js');
         for (const fn of ['makeSceneAudioFilename', 'makeChunkAudioFilename', 'makeIUImageFilename', 'makePreviewFilename']) {
@@ -327,7 +356,7 @@ describe('S-4: shared infrastructure moves', () => {
     });
 
     it('S4-F: the canonical grammar is byte-compatible with the Player naming contract', () => {
-        const naming = require(path.join(SRC, 'generation', 'artifact-naming.js'));
+        const naming = require(path.join(PKG_SRC, 'core', 'artifact-naming.js'));
         const playerNaming = require(path.join(__dirname, '..', '..', '..', 'packages', 'animastor-player', 'src', 'artifact-naming.cjs'));
         expect(naming.sceneAudioName('b', 'c', 's')).to.equal(playerNaming.sceneAudioName('b', 'c', 's'));
         expect(naming.sceneVideoName('b', 'c', 's')).to.equal(playerNaming.sceneVideoName('b', 'c', 's'));
@@ -353,7 +382,7 @@ describe('S-4: shared infrastructure moves', () => {
                 const m = spec.match(/(?:^|\.\.\/|\.\.\/\.\.\/|\.\/)(audio|image|video)(?=\/|')/);
                 if (m) {
                     const rel = relativeToSrc(full);
-                    expect(m[1], `${rel} must not import the ${m[1]} media namespace ('${spec}'; shared pieces live in generation/ now)`)
+                    expect(m[1], `${rel} must not import the ${m[1]} media namespace ('${spec}'; shared pieces live in @animastor/generation now)`)
                         .to.not.equal(dir);
                 }
             }
@@ -363,7 +392,7 @@ describe('S-4: shared infrastructure moves', () => {
     // ─────────────────────────────────────────────────────────────
     // S4-H — Player/Editor/VBook boundary surfaces stay intact
     // ─────────────────────────────────────────────────────────────
-    it('S4-H: transition shims keep the boundary suites\u2019 pinned surfaces alive', () => {
+    it('S4-H: boundary suites\u2019 pinned surfaces stay alive through the package public API', () => {
         // scene-state FSM surface (asset-state.test.js, scene-state.test.js, redis-ownership)
         const sceneState = require(path.join(SRC, 'state', 'scene-state.js'));
         expect(sceneState.ASSETS.join(',')).to.equal('audio,image,video');
@@ -371,12 +400,13 @@ describe('S-4: shared infrastructure moves', () => {
         const progress = require(path.join(SRC, 'services', 'generation-progress.js'));
         expect(progress.createTasks).to.be.a('function');
         expect(progress.KEY_PREFIX).to.equal('animastor:generation-progress');
-        // image public surface (coreference-image.test.js requires image/character-utils;
-        // agent pipeline consumed normalizeCharacterRefs via image-service)
-        const charUtils = require(path.join(SRC, 'image', 'character-utils.js'));
+        // image public surface — S-7: consumed through the package root
+        // (coreference-image.test.js consumes image-service, which delegates
+        // to the package character-utils)
+        const charUtils = require(path.join(PKG_SRC, 'prompt-profiles', 'character-utils.js'));
         expect(charUtils.normalizeCharacterRefs('x', [])).to.equal('x');
-        // assembly profile surface (assembly-profile.test.js, audio-profile.test.js)
-        const assembly = require(path.join(SRC, 'image', 'assembly-profile.js'));
+        // assembly profile surface (assembly-profile.test.js, audio-profile.test.js — S-7: package root)
+        const assembly = require('@animastor/generation').promptProfiles.assemblyProfile;
         expect(assembly.resolveAssembly('audio').defaults).to.have.property('defaultInstruct');
         // the shared speech heuristic surface (visuals-duration.test.js, scene-split.test.js)
         const speech = require(path.join(SRC, 'utils', 'speech-estimation.js'));

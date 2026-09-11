@@ -17,9 +17,9 @@ const syncPath = require('path');
 
 const state = require('../state');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 // S-2: registered stage list resolved from media registry
-const mediaRegistry = require('../generation/media-registry');
+const mediaRegistry = require('@animastor/generation').mediaRegistry;
 const storage = require('../storage');
 const config = require('../config/runtime-config');
 // S-5: the event journal is an append-only observability sink (zero requires,

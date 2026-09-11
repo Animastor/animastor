@@ -32,7 +32,7 @@ const TOKEN_DISPLAY_PREFIX_LEN = 8; // chars of the secret shown as mask
 
 // S-2: worker types resolved from the media registry (single source of
 // truth for the media-type list). Validation semantics unchanged.
-const { listMediaTypes } = require('../../../generation/media-registry');
+const { listMediaTypes } = require('@animastor/generation').mediaRegistry;
 const WORKER_TYPES = () => listMediaTypes();
 // FAIL CLOSED identity model (PW-4): every worker is one of three modes —
 //   private — owned by exactly one workspace, serves only that workspace;

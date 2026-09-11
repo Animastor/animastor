@@ -5,7 +5,7 @@
 const fs = require('fs');
 const helpers = require('./helpers');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 
 function findExistingSceneChunks(bookId, chapterId, sceneId, buildId, expectedCount = null) {
     const dir = helpers.getOutputPath(buildId);

@@ -22,7 +22,7 @@
 const bookSource = require('./book-source');
 const { query } = require('../storage/postgres/database');
 // S-2: default/regenerated layer list resolved from media registry
-const { listMediaTypes: _mediaTypes, isValidWorkerType: _isMediaType } = require('../generation/media-registry');
+const { listMediaTypes: _mediaTypes, isValidWorkerType: _isMediaType } = require('@animastor/generation').mediaRegistry;
 const { computeSceneHash } = require('../utils/scene-hash');
 const { getOutdatedByVersions } = require('../storage/postgres/repositories/scene-assets-repo');
 

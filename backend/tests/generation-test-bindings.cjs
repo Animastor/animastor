@@ -32,13 +32,13 @@
 'use strict';
 
 require('../src/config/generation-config-adapter').bindGenerationConfig();
-require('../src/generation/ports/dispatch-transport').setDispatchTransport({
+require('@animastor/generation').ports.dispatchTransport.setDispatchTransport({
     dispatch: (taskSpec) => require('../src/runtime/gpu-dispatcher').sendUnified(taskSpec),
 });
-require('../src/generation/ports/profile-store').setProfileStore({
+require('@animastor/generation').ports.profileStore.setProfileStore({
     getAssemblyProfile: require('../src/services/ai-loader').getAssemblyProfile,
 });
-require('../src/generation/ports/book-data').setBookData({
+require('@animastor/generation').ports.bookData.setBookData({
     collectSceneUnits: require('../src/book').collectSceneUnits,
     tokensToString: require('../src/book/lazy-book/appearance').tokensToString,
 });

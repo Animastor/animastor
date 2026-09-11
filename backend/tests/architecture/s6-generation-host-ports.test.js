@@ -1,32 +1,39 @@
 // ======================================================
 // S-6 — Generation host boundary guards (architecture)
 // ======================================================
-// S-6 introduced the Generation-owned host ports (backend/src/generation/
-// ports/) and migrated every confirmed host edge of the Generation Core
-// contour onto them. The ownership rule:
+// S-6 introduced the Generation-owned host ports (now physically inside the
+// @animastor/generation package, packages/animastor-generation/src/ports/ —
+// S-7 moved them from backend/src/generation/ports/) and migrated every
+// confirmed host edge of the Generation Core contour onto them. The
+// ownership rule:
 //
-//   Port interface/contract (generation/ports/* — Generation-owned)
+//   Port interface/contract (package src/ports/* — Generation-owned)
 //        ↓ consumed by
-//   Generation Core (generation/** + media pipeline consumers)
+//   Generation Core (package src/** + the host media pipeline consumers)
 //        ↑ implemented/wired by
 //   Host adapters (gpu-dispatcher, ai-loader, book facade, runtime-config)
 //
 // …NOT generation → backend service / Redis / pg / runtime-config / VBook /
 // Express / GPU implementation.
 //
+// S-7: the scanned contour is the PACKAGE (packages/animastor-generation/src)
+// — the host-side scan additionally covers backend/src for port-wiring leaks.
+// The package-level boundary guards proper live in
+// tests/architecture/generation-package-boundary.test.js (G7-A…G7-M).
+//
 // Guards:
 //   S6-A  Generation Core imports NO host modules (pg, ioredis, fs backend,
 //         runtime-config, Express, VBook/Book, GPU Hub, storage, services,
 //         orchestration/runtime dirs) — the two adapter-classified seam
 //         files (comfyui-provider, default-registrations) carry only their
-//         pinned contract-package / host-adapter specifiers
+//         pinned contract-package specifiers
 //   S6-B  Core consumes ONLY Generation-owned ports (the four migrations
 //         pinned: provider→dispatch-transport, default-registrations→
 //         generation-config, assembly-profile→profile-store,
 //         video-workflows→book-data); port surfaces frozen at runtime
 //   S6-C  Host adapters implement the ports and are wired ONLY at the
-//         composition roots (backend.cjs + test bindings); Core does not
-//         import adapters
+//         composition roots (backend.cjs + test bindings + config adapter);
+//         Core does not import adapters
 //   S6-D  Ports contain no host implementation details (zero requires,
 //         no host handles, semantic method surface only)
 //   S6-E  No giant HostServices/GenerationContext/universal repository port;
@@ -35,57 +42,55 @@
 //   S6-G  The S-5 result stays GREEN — ports cannot resurrect the runtime ↔
 //         orchestration cycle (zero-require ports, closed consumer set)
 //
-// Docs: docs/architecture/generation-module-extraction-reconnaissance.md §28
+// Docs: docs/architecture/generation-module-extraction-reconnaissance.md §28–29
 
 const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
 const { BACKEND_SRC, listSourceFiles, readSource, requireSpecifiers, rel } = require('./helpers');
 
-const GENERATION_DIR = path.join(BACKEND_SRC, 'generation');
+const PKG_SRC = path.join(BACKEND_SRC, '..', '..', 'packages', 'animastor-generation', 'src');
+const GENERATION_DIR = PKG_SRC; // the Generation Core contour (S-7: the package)
 const RUNTIME_DIR = path.join(BACKEND_SRC, 'runtime');
 const ORCH_DIR = path.join(BACKEND_SRC, 'orchestration');
 
 // The frozen S-6 port set — the surface cannot grow silently (S6-E).
+// Paths are relative to the package src/ (S-7: package-owned ports).
 const PORT_FILES = [
-    'generation/ports/dispatch-transport.js',
-    'generation/ports/generation-config.js',
-    'generation/ports/profile-store.js',
-    'generation/ports/book-data.js',
+    'ports/dispatch-transport.js',
+    'ports/generation-config.js',
+    'ports/profile-store.js',
+    'ports/book-data.js',
 ];
 
-// The two adapter-classified seam files inside generation/ (reconnaissance
-// §25.1/§26.3): comfyui-provider is the S-3 ComfyUI provider adapter (lives
-// in the package seed, consumes the DispatchTransport port), and
-// default-registrations is the host-side registration adapter (S-2
-// bootstrap; falls back to the host config adapter). EVERY other file under
-// generation/ must be completely host-free (S6-A core-proper set).
+// The two adapter-classified seam files inside the package (reconnaissance
+// §25.1/§26.3): comfyui-provider is the S-3 ComfyUI provider adapter (consumes
+// the DispatchTransport port + the frozen contract packages), and
+// default-registrations is the registration adapter (S-2 bootstrap; reads the
+// config port — its former host-adapter fallback require was removed in S-7).
+// EVERY other file in the package must be completely host-free (S6-A
+// core-proper set).
 const ADAPTER_CLASSIFIED = new Set([
-    'backend/src/generation/comfyui-provider.js',
-    'backend/src/generation/default-registrations.js',
+    'packages/animastor-generation/src/providers/comfyui-provider.js',
+    'packages/animastor-generation/src/core/default-registrations.js',
 ]);
 
 // Pinned require specifiers for the adapter-classified files (contract
-// packages + the single host-adapter fallback) — everything else is banned.
+// packages + core-internal/ports requires) — everything else is banned.
 const ADAPTER_ALLOWED_SPECS = {
-    'backend/src/generation/comfyui-provider.js': [
+    'packages/animastor-generation/src/providers/comfyui-provider.js': [
         'animastor-comfyui-workflow-connector',          // extracted zero-dep workflow/connector package (S-3 seam)
-        '../runtime/job-schema',                         // Job Protocol v2 facade (Phase 9C choke point — contracts, not host logic)
-        './ports/dispatch-transport',                    // S-6: Generation-owned port
+        '@animastor/contracts',                          // S-7: Job Protocol v2 canonical package (the backend job-schema facade is its zero-logic re-export)
+        '../ports/dispatch-transport',                   // S-6: Generation-owned port
     ],
-    'backend/src/generation/default-registrations.js': [
+    'packages/animastor-generation/src/core/default-registrations.js': [
         './media-registry',                              // core-internal bootstrap pair (S-2)
-        './ports/generation-config',                     // S-6: Generation-owned port
-        '../../config/generation-config-adapter',        // host adapter (lazy-bootstrap fallback ONLY)
+        '../ports/generation-config',                    // S-6: Generation-owned port (S-7: the host fallback require is GONE — wiring is composition-root-only)
     ],
 };
 
 function generationFiles() {
     return listSourceFiles(GENERATION_DIR);
-}
-
-function rewireAllPorts() {
-    require('../generation-test-bindings.cjs');
 }
 
 // The fixture wires the ports at mocha startup (module-cache no-op on the
@@ -96,7 +101,7 @@ describe('S6: Generation host boundary (ports)', () => {
     // ─────────────────────────────────────────────────────────────
     // S6-A — no host modules in the Generation Core contour
     // ─────────────────────────────────────────────────────────────
-    it('S6-A: generation/** imports no host modules (pg/ioredis/fs/runtime-config/express/vbook/gpu-hub/storage/services/runtime-dir)', () => {
+    it('S6-A: package imports no host modules (pg/ioredis/fs/runtime-config/express/vbook/gpu-hub/storage/services/runtime-dir)', () => {
         const forbidden = [
             /require\(\s*['"]pg['"]\s*\)/, /postgres/, /storage\//, /database/,
             /require\(\s*['"](ioredis|redis)['"]\s*\)/,
@@ -122,18 +127,21 @@ describe('S6: Generation host boundary (ports)', () => {
         expect(offenders, 'Generation Core must not import host implementation modules (S-6 ports own the edges)').to.deep.equal([]);
     });
 
-    it('S6-A: core-proper generation files are COMPLETELY host-free (only core-internal + ports + neutral utils requires)', () => {
+    it('S6-A: core-proper package files are COMPLETELY host-free (only core-internal + ports + neutral utils requires)', () => {
         const allowed = [
             /^\.\/(media-registry|default-registrations)$/,          // core-internal (registry bootstrap pair)
             /^\.\/prompt-text-utils$/, /^\.\/prompt-profiles\//,     // core-internal
+            /^\.\/(core|providers|ports)\//,                         // package entrypoint namespace requires (S-7 index.js)
             /^\.\.\/ports\//, /^\.\/ports\//,                        // Generation-owned ports
-            /^\.\.\/\.\.\/utils\//,                                  // neutral shared pure utils (prompt-text-utils)
+            /^\.\.\/utils\//, /^\.\/utils\//,                        // package-internal pure utils (S-7)
             /^crypto$/,                                              // node builtin
+            /^@animastor\/contracts$/,                               // frozen Job Protocol package (provider only, S6-B pin)
+            /^animastor-comfyui-workflow-connector$/,                // provider contract package (S-3)
         ];
         const offenders = [];
         for (const file of generationFiles()) {
             const r = rel(file);
-            if (ADAPTER_CLASSIFIED.has(r) || r.startsWith('backend/src/generation/ports/')) continue;
+            if (ADAPTER_CLASSIFIED.has(r) || r.startsWith('packages/animastor-generation/src/ports/')) continue;
             for (const spec of requireSpecifiers(readSource(file))) {
                 if (!allowed.some(re => re.test(spec))) offenders.push(`${r}: '${spec}'`);
             }
@@ -145,39 +153,45 @@ describe('S6: Generation host boundary (ports)', () => {
     // S6-B — Core consumes ONLY Generation-owned ports
     // ─────────────────────────────────────────────────────────────
     it('S6-B: every migrated host edge resolves through its Generation-owned port', () => {
-        const provider = readSource(path.join(GENERATION_DIR, 'comfyui-provider.js'));
-        expect(requireSpecifiers(provider)).to.include('./ports/dispatch-transport');
+        const provider = readSource(path.join(GENERATION_DIR, 'providers', 'comfyui-provider.js'));
+        expect(requireSpecifiers(provider)).to.include('../ports/dispatch-transport');
         expect(provider).to.match(/dispatch\(taskSpec\)/);
+        // S-7: the Job Protocol comes from the frozen contracts package (the
+        // backend job-schema facade is its zero-logic re-export)
+        expect(requireSpecifiers(provider)).to.include('@animastor/contracts');
 
         const assembly = readSource(path.join(GENERATION_DIR, 'prompt-profiles', 'assembly-profile.js'));
         expect(requireSpecifiers(assembly)).to.include('../ports/profile-store');
         expect(assembly).to.match(/getAssemblyProfile\(`/);
 
-        const registrations = readSource(path.join(GENERATION_DIR, 'default-registrations.js'));
-        expect(requireSpecifiers(registrations)).to.include('./ports/generation-config');
+        const registrations = readSource(path.join(GENERATION_DIR, 'core', 'default-registrations.js'));
+        expect(requireSpecifiers(registrations)).to.include('../ports/generation-config');
         expect(registrations).to.match(/generationConfig\(\)/);
+        // S-7: no host fallback require left in the registration adapter
+        expect(requireSpecifiers(registrations).some(s => /config-adapter|runtime-config/.test(s)),
+            'default-registrations must not reach the host config adapter').to.equal(false);
 
         const videoWf = readSource(path.join(BACKEND_SRC, 'workflows', 'video', 'video-workflows.js'));
-        expect(requireSpecifiers(videoWf)).to.include('../../generation/ports/book-data');
+        expect(requireSpecifiers(videoWf)).to.include('@animastor/generation');
         expect(videoWf).to.match(/bookData\.collectSceneUnits\(/);
         expect(videoWf).to.match(/bookData\.tokensToString\(/);
     });
 
     it('S6-B: the four port surfaces are frozen (exports + fail-fast unwired semantics)', () => {
-        const dispatchPort = require('../../src/generation/ports/dispatch-transport');
+        const dispatchPort = require('@animastor/generation').ports.dispatchTransport;
         for (const fn of ['setDispatchTransport', 'dispatch', 'isDispatchTransportWired', '_resetDispatchTransport']) {
             expect(dispatchPort[fn], `dispatch-transport.${fn}`).to.be.a('function');
         }
-        const configPort = require('../../src/generation/ports/generation-config');
+        const configPort = require('@animastor/generation').ports.generationConfig;
         for (const fn of ['setGenerationConfig', 'generationConfig', 'isGenerationConfigWired', '_resetGenerationConfig']) {
             expect(configPort[fn], `generation-config.${fn}`).to.be.a('function');
         }
         expect(configPort.CONFIG_KEYS).to.deep.equal(['leaseTtlS', 'quotas', 'stuckThresholds']);
-        const profilePort = require('../../src/generation/ports/profile-store');
+        const profilePort = require('@animastor/generation').ports.profileStore;
         for (const fn of ['setProfileStore', 'getAssemblyProfile', 'isProfileStoreWired', '_resetProfileStore']) {
             expect(profilePort[fn], `profile-store.${fn}`).to.be.a('function');
         }
-        const bookPort = require('../../src/generation/ports/book-data');
+        const bookPort = require('@animastor/generation').ports.bookData;
         for (const fn of ['setBookData', 'collectSceneUnits', 'tokensToString', 'isBookDataWired', '_resetBookData']) {
             expect(bookPort[fn], `book-data.${fn}`).to.be.a('function');
         }
@@ -229,15 +243,16 @@ describe('S6: Generation host boundary (ports)', () => {
         ];
         const allowed = new Set([
             'backend/src/backend.cjs',                          // production composition root
-            'backend/src/generation/default-registrations.js',  // documented lazy-bootstrap fallback (host-side registration adapter)
-            ...PORT_FILES.map(p => `backend/src/${p}`),         // port modules define the surface (zero-require, S6-D)
+            ...PORT_FILES.map(p => `packages/animastor-generation/src/${p}`), // port modules define the surface (zero-require, S6-D)
         ]);
         const offenders = [];
-        for (const file of listSourceFiles(BACKEND_SRC)) {
-            const r = rel(file);
-            if (allowed.has(r)) continue;
-            const src = readSource(file);
-            if (setters.some(re => re.test(src))) offenders.push(r);
+        for (const root of [BACKEND_SRC, PKG_SRC]) {
+            for (const file of listSourceFiles(root)) {
+                const r = rel(file);
+                if (allowed.has(r)) continue;
+                const src = readSource(file);
+                if (setters.some(re => re.test(src))) offenders.push(r);
+            }
         }
         expect(offenders, 'port wiring leaked outside the composition root').to.deep.equal([]);
         // the mocha fixture mirrors the production wiring (vbook-test-bindings pattern)
@@ -282,9 +297,10 @@ describe('S6: Generation host boundary (ports)', () => {
             }
         }
         // After the S6-A pinned allowances (comfyui-provider: contract
-        // packages; default-registrations: the documented lazy-bootstrap
-        // config-adapter fallback, §26.3) NO generation file may reach an
-        // adapter module directly — the ports own those edges.
+        // packages) NO package file may reach an adapter module directly —
+        // the ports own those edges. The former default-registrations
+        // config-adapter fallback is GONE in S-7 (wiring is
+        // composition-root-only).
         expect(offenders, 'Generation Core must not import host adapters — ports own the edges').to.deep.equal([]);
     });
 
@@ -293,7 +309,7 @@ describe('S6: Generation host boundary (ports)', () => {
     // ─────────────────────────────────────────────────────────────
     it('S6-D: port modules are zero-require pure registries (no host handles inside)', () => {
         for (const relPath of PORT_FILES) {
-            const src = readSource(path.join(BACKEND_SRC, relPath));
+            const src = readSource(path.join(PKG_SRC, relPath));
             expect(requireSpecifiers(src), `${relPath} must be a zero-require pure registry`).to.deep.equal([]);
             expect(src, `${relPath} must not reference host handles`).to.not.match(/\bredis\b|pgPool|ioredis|expressRequest|process\.env|fs\.|res\.|req\./);
         }
@@ -304,18 +320,20 @@ describe('S6: Generation host boundary (ports)', () => {
     // ─────────────────────────────────────────────────────────────
     it('S6-E: no giant HostServices/GenerationContext/createGeneration aggregator exists', () => {
         const offenders = [];
-        for (const file of listSourceFiles(BACKEND_SRC)) {
-            const src = readSource(file);
-            if (/setHostServices|GenerationContext|createGeneration\s*\(/.test(src)) {
-                offenders.push(rel(file));
+        for (const root of [BACKEND_SRC, PKG_SRC]) {
+            for (const file of listSourceFiles(root)) {
+                const src = readSource(file);
+                if (/setHostServices|GenerationContext|createGeneration\s*\(/.test(src)) {
+                    offenders.push(rel(file));
+                }
             }
         }
         expect(offenders, 'capability ports only — no DI-swal aggregator').to.deep.equal([]);
     });
 
     it('S6-E: the ports directory holds exactly the frozen four files (surface cannot grow silently)', () => {
-        const present = listSourceFiles(path.join(GENERATION_DIR, 'ports'))
-            .map(f => path.relative(BACKEND_SRC, f).split(path.sep).join('/'))
+        const present = listSourceFiles(path.join(PKG_SRC, 'ports'))
+            .map(f => path.relative(PKG_SRC, f).split(path.sep).join('/'))
             .sort();
         expect(present, 'a new port must consciously update the S-6 baseline (doc §28 + this guard)').to.deep.equal([...PORT_FILES].sort());
     });
@@ -326,32 +344,47 @@ describe('S6: Generation host boundary (ports)', () => {
     it('S6-F: each port has a single pinned owner plus the composition-root wiring sites', () => {
         // port base name → allowed consumers: the ONE domain owner + the
         // composition roots that wire the adapter into the port (S6-C pins
-        // those sites; here we pin that no OTHER module consumes the port)
+        // those sites; here we pin that no OTHER module consumes the port).
+        // S-7 detection: host files consume ports through the package root
+        // (`require('@animastor/generation').ports.<name>`); package-internal
+        // owners require the port modules relatively.
         const OWNERS = {
             'dispatch-transport': [
-                'backend/src/generation/comfyui-provider.js',  // domain owner (S-3 provider seam)
-                'backend/src/backend.cjs',                     // wiring
+                'packages/animastor-generation/src/providers/comfyui-provider.js', // domain owner (S-3 provider seam)
+                'packages/animastor-generation/src/index.js',                      // package entrypoint (materializes the ports namespace)
+                'backend/src/backend.cjs',                                         // wiring
             ],
             'generation-config': [
-                'backend/src/generation/default-registrations.js',             // domain owner (S-2 registration)
-                'backend/src/config/generation-config-adapter.js',             // host adapter (implements the binding)
+                'packages/animastor-generation/src/core/default-registrations.js', // domain owner (S-2 registration)
+                'packages/animastor-generation/src/index.js',                      // package entrypoint (materializes the ports namespace)
+                'backend/src/config/generation-config-adapter.js',                 // host adapter (implements the binding)
             ],
             'profile-store': [
-                'backend/src/generation/prompt-profiles/assembly-profile.js',  // domain owner (S-4 relocation)
-                'backend/src/backend.cjs',                                     // wiring
+                'packages/animastor-generation/src/prompt-profiles/assembly-profile.js', // domain owner (S-4 relocation)
+                'packages/animastor-generation/src/index.js',                      // package entrypoint (materializes the ports namespace)
+                'backend/src/backend.cjs',                                         // wiring
             ],
             'book-data': [
-                'backend/src/workflows/video/video-workflows.js',              // domain owner (video pipeline)
-                'backend/src/backend.cjs',                                     // wiring
+                'backend/src/workflows/video/video-workflows.js',                  // domain owner (video pipeline)
+                'packages/animastor-generation/src/index.js',                      // package entrypoint (materializes the ports namespace)
+                'backend/src/backend.cjs',                                         // wiring
             ],
         };
         const consumers = {};
         for (const port of Object.keys(OWNERS)) consumers[port] = [];
-        for (const file of listSourceFiles(BACKEND_SRC)) {
-            const r = rel(file);
-            for (const spec of requireSpecifiers(readSource(file))) {
+        for (const root of [BACKEND_SRC, PKG_SRC]) {
+            for (const file of listSourceFiles(root)) {
+                const r = rel(file);
+                const src = readSource(file);
+                for (const spec of requireSpecifiers(src)) {
+                    for (const port of Object.keys(OWNERS)) {
+                        if (new RegExp(`ports/${port}['"]`).test(`${spec}'`)) consumers[port].push(r);
+                    }
+                }
                 for (const port of Object.keys(OWNERS)) {
-                    if (new RegExp(`ports/${port}['"]`).test(`${spec}'`)) consumers[port].push(r);
+                    const camel = port.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+                    if (new RegExp(`\\.ports\\.${camel}\\b`).test(src) &&
+                        !consumers[port].includes(r)) consumers[port].push(r);
                 }
             }
         }
@@ -379,8 +412,10 @@ describe('S6: Generation host boundary (ports)', () => {
         const offenders = [];
         for (const dir of [RUNTIME_DIR, ORCH_DIR]) {
             for (const file of listSourceFiles(dir)) {
-                const specs = requireSpecifiers(readSource(file));
-                if (specs.some(s => s.includes('generation/ports/') || /ports\/(dispatch-transport|generation-config|profile-store|book-data)/.test(s))) {
+                const src = readSource(file);
+                const specs = requireSpecifiers(src);
+                if (specs.some(s => s.includes('generation/ports/') || /ports\/(dispatch-transport|generation-config|profile-store|book-data)/.test(s)) ||
+                    /\.ports\.(dispatchTransport|generationConfig|profileStore|bookData)\b/.test(src)) {
                     offenders.push(rel(file));
                 }
             }
@@ -391,14 +426,14 @@ describe('S6: Generation host boundary (ports)', () => {
     it('S6-G: production wiring exists in backend.cjs for all four ports (composition root, S5-C convention)', () => {
         const backend = readSource(path.join(BACKEND_SRC, 'backend.cjs'));
         expect(backend).to.include('bindGenerationConfig()');
-        expect(backend).to.include("require('./generation/ports/dispatch-transport')");
-        expect(backend).to.include("require('./generation/ports/profile-store')");
-        expect(backend).to.include("require('./generation/ports/book-data')");
+        expect(backend).to.include("require('@animastor/generation').ports.dispatchTransport");
+        expect(backend).to.include("require('@animastor/generation').ports.profileStore");
+        expect(backend).to.include("require('@animastor/generation').ports.bookData");
         // wired BEFORE the first generation module load (default-registrations
-        // reads the config port at require time)
+        // reads the config port at load time) and BEFORE the eager bootstrap
         const wiringIdx = backend.indexOf('bindGenerationConfig()');
-        const registrationsIdx = backend.indexOf("require('./generation/default-registrations')");
-        expect(wiringIdx, 'port wiring must precede default-registrations load').to.be.greaterThan(-1);
-        expect(registrationsIdx, 'default-registrations must load after the wiring').to.be.greaterThan(wiringIdx);
+        const bootstrapIdx = backend.indexOf("require('@animastor/generation').bootstrap()");
+        expect(wiringIdx, 'port wiring must precede the package bootstrap').to.be.greaterThan(-1);
+        expect(bootstrapIdx, 'package bootstrap must load after the wiring').to.be.greaterThan(wiringIdx);
     });
 });

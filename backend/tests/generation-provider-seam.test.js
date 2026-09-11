@@ -25,7 +25,7 @@
 const { expect } = require('chai');
 const path = require('path');
 
-const provider = require('../src/generation/comfyui-provider');
+const provider = require('@animastor/generation').comfyuiProvider;
 const gpuDispatcher = require('../src/runtime/gpu-dispatcher');
 const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
 

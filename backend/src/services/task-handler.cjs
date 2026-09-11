@@ -9,7 +9,7 @@ const fs = require('fs');
 const { publishProgress } = require('./progress-pubsub.cjs');
 const jobSchema = require('../runtime/job-schema');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 
 module.exports = function(redis, config, deps) {
     const { audio, image, video, state, book, orchestrator, activeScenes, placeholderAudio, cleanupService, utils, bookDiff } = deps;

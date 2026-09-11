@@ -1,4 +1,4 @@
-const mediaRegistry = require('../generation/media-registry');
+const mediaRegistry = require('@animastor/generation').mediaRegistry;
 // ======================================================
 // Runtime Scheduler - v1.0.0
 // ======================================================

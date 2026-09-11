@@ -211,14 +211,15 @@ describe('P7-T6: Provider Gateway delegate and consumer sets stay explicit', () 
     // consumer must update this baseline consciously (extraction-relevant,
     // Phase 7 audit §2.5).
     const GATEWAY = path.join(BACKEND_SRC, 'services', 'provider-gateway.js');
+    // S-7: comfyui-provider (S-3 seam) + media registry (S-2 JOB_TYPES) are
+    // package-owned — consumed via the package public API root (pinned
+    // separately below; relativeTargets only resolves host-relative specs).
+    const GATEWAY_PKG_SPECS = ['@animastor/generation'];
     const DELEGATE_BASELINE = [
         './ai-service',
         './agent/ai-caller',
         './workspace-ai-provider',
         './ai-connector/shared-pool',
-        '../generation/comfyui-provider',
-        // S-2: media registry — gateway's JOB_TYPES now resolves through it
-        '../generation/media-registry',
         '../runtime/gpu-dispatcher',
         '../storage/postgres/repositories/ai-connector-repo',
     ];
@@ -236,6 +237,13 @@ describe('P7-T6: Provider Gateway delegate and consumer sets stay explicit', () 
     it('the delegate module set matches the baseline', () => {
         const specs = [...new Set(relativeTargets(GATEWAY).map(({ spec }) => spec))].sort();
         expect(specs, 'Provider Gateway delegate set changed — update docs/architecture/PHASE_7_EXTRACTION_READINESS.md §2.5').to.deep.equal([...DELEGATE_BASELINE].sort());
+        // S-7: the generation delegates ride the package public API root
+        const gwSrc = readSource(GATEWAY);
+        for (const spec of GATEWAY_PKG_SPECS) {
+            expect(gwSrc, `gateway must consume the generation package via ${spec}`).to.include(`require('${spec}')`);
+        }
+        expect(gwSrc).to.match(/\.comfyuiProvider\b/);
+        expect(gwSrc).to.match(/\.mediaRegistry\b/);
     });
 
     it('the direct consumer set matches the baseline', () => {
@@ -276,14 +284,13 @@ describe('P7-T7: no module joins the former orchestration↔runtime cycles', () 
         'backend/src/services/workspace-ai-provider.js',
     ];
     // The registry bootstrap cycle (media-registry ⇄ default-registrations)
-    // is an S-2 ownership pattern, not a generation-lifecycle cycle — it is
-    // explicitly allowed here and pinned by S2 guards.
+    // is an S-2 ownership pattern, not a generation-lifecycle cycle — S-7
+    // moved it INTO the package (packages/animastor-generation, package-
+    // internal and guarded there by the G7 suite), so it no longer appears
+    // in this host-tree SCC scan. The only remaining host SCC is the AI
+    // resolver cycle.
     const ALLOWED_SCC_BASELINES = [
         RESOLVER_CYCLE_BASELINE,
-        [
-            'backend/src/generation/default-registrations.js',
-            'backend/src/generation/media-registry.js',
-        ],
     ];
 
     function buildGraph() {

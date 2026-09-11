@@ -4,7 +4,7 @@ const image = require('../image');
 const video = require('../video');
 // S-3: Generation → GPU transport rides the provider seam only. The
 // orchestrator never requires gpu-dispatcher or the workflow connector.
-const provider = require('../generation/comfyui-provider');
+const provider = require('@animastor/generation').comfyuiProvider;
 const runtimeScheduler = require('../runtime/runtime-scheduler');
 const book = require('../book');
 const layerConfig = require('../services/layer-config');
@@ -16,7 +16,7 @@ const { completeStage, failStage, setScenePending, setSceneGenerating } = requir
 // deps.orchestrator) — деструктуризация выше не покрывает этот кейс.
 const orchestrator = require('./orchestrator');
 // S-2: media registry for executor dispatch
-const mediaRegistry = require('../generation/media-registry');
+const mediaRegistry = require('@animastor/generation').mediaRegistry;
 
 // ======================================================
 // SCENE ORCHESTRATOR

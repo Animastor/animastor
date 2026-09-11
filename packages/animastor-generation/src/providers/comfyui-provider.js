@@ -27,22 +27,25 @@
 // cancellation is owned by the dispatch engine (marker/lease lifecycle +
 // Hub queue clear) — documented residual seam (reconnaissance §9).
 //
-// Jobs built/dispatched here follow Job Protocol v2 (runtime/job-schema.js)
-// — the payload semantics (job_id, params, job_type, build_id, dispatch_id,
-// assets, timeout_ms, extra pass-through fields) are preserved 1:1 with the
-// former direct gpu.send / gpu.sendUnified call sites.
+// Jobs built/dispatched here follow Job Protocol v2 (@animastor/contracts,
+// the frozen protocol package — the backend/src/runtime/job-schema.js facade
+// is a zero-logic re-export of it; the package consumes the canonical package
+// directly so it has no host require) — the payload semantics (job_id, params,
+// job_type, build_id, dispatch_id, assets, timeout_ms, extra pass-through
+// fields) are preserved 1:1 with the former direct gpu.send / gpu.sendUnified
+// call sites.
 
 const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
 const connectorLoader = require('animastor-comfyui-workflow-connector').connectorLoader;
-// Job Protocol v2 rides the frozen runtime/job-schema facade (Phase 9C: the
-// facade is the single choke point into @animastor/contracts — a zero-logic
-// re-export of the package, not a host implementation).
-const jobSchema = require('../runtime/job-schema');
+// Job Protocol v2 — canonical frozen protocol package (S-7: the package
+// requires @animastor/contracts directly; the backend job-schema facade is a
+// zero-logic re-export of exactly this object, so behavior is byte-identical).
+const jobSchema = require('@animastor/contracts').jobProtocolV2;
 // S-6: dispatch goes through the Generation-owned DispatchTransport port —
 // Core must not know the concrete gpu-dispatcher (the host adapter wires
 // runtime/gpu-dispatcher.sendUnified behind the port at the composition
 // root; routing policy stays host-side, reconnaissance §24.6).
-const { dispatch } = require('./ports/dispatch-transport');
+const { dispatch } = require('../ports/dispatch-transport');
 
 // ── provider identity ───────────────────────────────────────────────────
 const PROVIDER_NAME = 'comfyui';

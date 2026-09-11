@@ -21,8 +21,8 @@ const { getOutputPath, escapeRegExp } = require('../utils/string-utils');
 // pre-move host location.
 const { CYR_LATIN_MAP, cyrToLatin } = require('../utils/cyr-latin-map');
 // S-4: canonical implementations live in the generation prompt-profiles layer.
-const textUtils = require('../generation/prompt-profiles/prompt-text-utils');
-const characterUtils = require('../generation/prompt-profiles/character-utils');
+const textUtils = require('@animastor/generation').promptProfiles.promptTextUtils;
+const characterUtils = require('@animastor/generation').promptProfiles.characterUtils;
 
 const logPrefix = '[IMAGE]';
 

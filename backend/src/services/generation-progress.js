@@ -11,7 +11,7 @@
 // injected by the callers. Redis keys, TTLs, lifecycle/progress behavior and
 // the public API are unchanged (S-6 will formalize this seam as a port).
 
-const core = require('../generation/generation-progress');
+const core = require('@animastor/generation').generationProgress;
 
 const KEY_PREFIX = 'animastor:generation-progress';
 const TTL_SECONDS = 4 * 60 * 60;

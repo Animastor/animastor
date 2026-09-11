@@ -10,8 +10,15 @@
 // This module must stay host-free (no fs, no config, no redis/pg, no media
 // modules) — guarded by tests/architecture/s4-shared-infra-moves.test.js.
 
-const { CYR_LATIN_MAP, cyrToLatin } = require('../../utils/cyr-latin-map');
-const { escapeRegExp } = require('../../utils/string-utils');
+// Package-internal pure text primitives (S-7): cyr-latin-map and escapeRegExp
+// are pure data/functions with zero host dependencies. They live inside the
+// package (src/utils/) so the package has no backend require; byte parity
+// with the host legs (backend/src/utils/cyr-latin-map.js, escapeRegExp in
+// backend/src/utils/string-utils.js) is guarded by the G7 suite
+// (tests/architecture/generation-package-boundary.test.js).
+
+const { CYR_LATIN_MAP, cyrToLatin } = require('../utils/cyr-latin-map');
+const { escapeRegExp } = require('../utils/escape-regexp');
 
 const UNSAFE_CHARACTER_ALIAS_WORDS = new Set([
     'a', 'an', 'the', 'of', 'in', 'on', 'at', 'to', 'from', 'with', 'and', 'or',

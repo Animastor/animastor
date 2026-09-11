@@ -19,7 +19,7 @@
 // Развязка интерфейсом — отдельная задача (после К.4).
 
 // S-2: media-type knowledge (stage lists, fail-event map) resolved via registry
-const mediaRegistry = require('../generation/media-registry');
+const mediaRegistry = require('@animastor/generation').mediaRegistry;
 // S-5: pure FSM-writer ownership (markDirtyScene/setScene*) — re-exported from
 // the state layer; bodies moved verbatim (see state/scene-state-ops.js header).
 const stateOps = require('../state/scene-state-ops');
@@ -53,7 +53,7 @@ async function beginStage(redis, scene, loadedBook, buildId, stage) {
     const dispatchEngine = require('../runtime/dispatch-engine');
     const state = require('../state');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
     const bookId = scene.book_id;
     const chapterId = scene.chapter_id;
     const sceneId = scene.scene_id;

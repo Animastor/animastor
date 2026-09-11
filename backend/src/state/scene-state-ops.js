@@ -26,7 +26,7 @@
 // S-5: the journal is the append-only observability sink (host adapter)
 const journal = require('./event-journal');
 // S-2: registered stage list resolved from the media registry
-const mediaRegistry = require('../generation/media-registry');
+const mediaRegistry = require('@animastor/generation').mediaRegistry;
 
 // Log prefix preserved from the former orchestrator-facade location —
 // console output stays byte-identical.

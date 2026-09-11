@@ -25,7 +25,7 @@ const path = require('path');
 const { readSource, REPO_ROOT } = require('./helpers');
 
 const gatewayPath = path.join(REPO_ROOT, 'backend', 'src', 'services', 'provider-gateway.js');
-const comfyuiSeamPath = path.join(REPO_ROOT, 'backend', 'src', 'generation', 'comfyui-provider.js');
+const comfyuiSeamPath = path.join(REPO_ROOT, 'packages', 'animastor-generation', 'src', 'providers', 'comfyui-provider.js');
 const aiServicePath = path.join(REPO_ROOT, 'backend', 'src', 'services', 'ai-service.js');
 const aiCallerPath = path.join(REPO_ROOT, 'backend', 'src', 'services', 'agent', 'ai-caller.js');
 const chatRoutePath = path.join(REPO_ROOT, 'packages', 'animastor-assistant', 'src', 'assistant-routes.cjs');
@@ -244,7 +244,7 @@ describe('architecture: Phase 3 gateway surface', () => {
         expect(gw).to.include("require('./agent/ai-caller')");
         expect(gw).to.include("require('./workspace-ai-provider')");
         expect(gw).to.include("require('../runtime/gpu-dispatcher')");
-        expect(gw).to.include("require('../generation/comfyui-provider')");
+        expect(gw).to.include("require('@animastor/generation').comfyuiProvider");
     });
 
     it('the gateway has no universal merged generate() across protocols', () => {

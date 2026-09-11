@@ -20,6 +20,9 @@ const {
     BACKEND_SRC, listSourceFiles, readSource, rel, requireSpecifiers,
 } = require('./helpers');
 
+// S-7: the media registry + default registrations are package-owned.
+const PKG_SRC = path.join(BACKEND_SRC, '..', '..', 'packages', 'animastor-generation', 'src');
+
 // ======================================================
 // S2-A: Generation Core import isolation
 // ======================================================
@@ -52,8 +55,8 @@ const CORE_FILES = [
     path.join(BACKEND_SRC, 'runtime', 'circuit-breaker.js'),
     path.join(BACKEND_SRC, 'runtime', 'retry-budget-manager.js'),
     path.join(BACKEND_SRC, 'runtime', 'lease-manager.js'),
-    path.join(BACKEND_SRC, 'generation', 'media-registry.js'),
-    path.join(BACKEND_SRC, 'generation', 'default-registrations.js'),
+    path.join(PKG_SRC, 'core', 'media-registry.js'),
+    path.join(PKG_SRC, 'core', 'default-registrations.js'),
 ];
 
 describe('architecture: Generation media registry (S-2)', () => {
@@ -74,7 +77,7 @@ describe('architecture: Generation media registry (S-2)', () => {
         });
 
         it('media registry module does not import audio/image/video implementations', () => {
-            const registryFile = path.join(BACKEND_SRC, 'generation', 'media-registry.js');
+            const registryFile = path.join(PKG_SRC, 'core', 'media-registry.js');
             const code = readSource(registryFile);
             const imports = requireSpecifiers(code);
             const mediaImports = imports.filter(s => /\/audio\/|\/image\/|\/video\//.test(s));
@@ -82,7 +85,7 @@ describe('architecture: Generation media registry (S-2)', () => {
         });
 
         it('default-registrations module does not import audio/image/video implementations', () => {
-            const regFile = path.join(BACKEND_SRC, 'generation', 'default-registrations.js');
+            const regFile = path.join(PKG_SRC, 'core', 'default-registrations.js');
             const code = readSource(regFile);
             const imports = requireSpecifiers(code);
             const mediaImports = imports.filter(s => /\/audio\/|\/image\/|\/video\//.test(s));
@@ -92,7 +95,7 @@ describe('architecture: Generation media registry (S-2)', () => {
 
     describe('S2-B: Registry integrity', () => {
         it('media registry exports required API surface', () => {
-            const registry = require(path.join(BACKEND_SRC, 'generation', 'media-registry'));
+            const registry = require(path.join(PKG_SRC, 'core', 'media-registry'));
             const requiredFns = [
                 'registerMediaType', 'getMediaType', 'hasMediaType',
                 'listMediaTypes', 'listCapabilities',
@@ -108,15 +111,15 @@ describe('architecture: Generation media registry (S-2)', () => {
 
         it('default registrations register audio, image, video', () => {
             // Initialize registry
-            require(path.join(BACKEND_SRC, 'generation', 'default-registrations'));
-            const registry = require(path.join(BACKEND_SRC, 'generation', 'media-registry'));
+            require(path.join(PKG_SRC, 'core', 'default-registrations'));
+            const registry = require(path.join(PKG_SRC, 'core', 'media-registry'));
             expect(registry.hasMediaType('audio')).to.be.true;
             expect(registry.hasMediaType('image')).to.be.true;
             expect(registry.hasMediaType('video')).to.be.true;
         });
 
         it('each registered type has required capability fields', () => {
-            const registry = require(path.join(BACKEND_SRC, 'generation', 'media-registry'));
+            const registry = require(path.join(PKG_SRC, 'core', 'media-registry'));
             for (const type of ['audio', 'image', 'video']) {
                 const cap = registry.getMediaType(type);
                 expect(cap, `${type} capability must exist`).to.exist;
@@ -138,7 +141,7 @@ describe('architecture: Generation media registry (S-2)', () => {
             const offenders = [];
             for (const file of files) {
                 const code = readSource(file);
-                if (/require\([^)]*generation\/media-registry/.test(code)) {
+                if (/require\([^)]*generation\/media-registry/.test(code) || /\.mediaRegistry\b/.test(code)) {
                     offenders.push(rel(file));
                 }
             }
@@ -151,7 +154,7 @@ describe('architecture: Generation media registry (S-2)', () => {
             const offenders = [];
             for (const file of files) {
                 const code = readSource(file);
-                if (/require\([^)]*generation\/media-registry/.test(code)) {
+                if (/require\([^)]*generation\/media-registry/.test(code) || /\.mediaRegistry\b/.test(code)) {
                     offenders.push(rel(file));
                 }
             }
@@ -164,7 +167,7 @@ describe('architecture: Generation media registry (S-2)', () => {
             const offenders = [];
             for (const file of files) {
                 const code = readSource(file);
-                if (/require\([^)]*generation\/media-registry/.test(code)) {
+                if (/require\([^)]*generation\/media-registry/.test(code) || /\.mediaRegistry\b/.test(code)) {
                     offenders.push(rel(file));
                 }
             }
@@ -175,7 +178,7 @@ describe('architecture: Generation media registry (S-2)', () => {
     describe('S2-D: Unknown media type handling', () => {
         it('dispatchStage returns unknown_stage for unregistered type', () => {
             // The registry correctly rejects unknown types
-            const registry = require(path.join(BACKEND_SRC, 'generation', 'media-registry'));
+            const registry = require(path.join(PKG_SRC, 'core', 'media-registry'));
             expect(registry.hasMediaType('nonexistent')).to.be.false;
             expect(registry.isValidWorkerType('nonexistent')).to.be.false;
         });
@@ -193,7 +196,7 @@ describe('architecture: Generation media registry (S-2)', () => {
                     // generation-routes.cjs is allowed to use the registry
                     if (file.includes('generation-routes')) continue;
                     const code = readSource(file);
-                    if (/require\([^)]*generation\/media-registry/.test(code)) {
+                    if (/require\([^)]*generation\/media-registry/.test(code) || /\.mediaRegistry\b/.test(code)) {
                         offenders.push(rel(file));
                     }
                 }
@@ -204,7 +207,7 @@ describe('architecture: Generation media registry (S-2)', () => {
 
     describe('S2-F: Player/Editor/VBook boundaries', () => {
         it('generation media registry does not import player/editor/vbook modules', () => {
-            const registryFile = path.join(BACKEND_SRC, 'generation', 'media-registry.js');
+            const registryFile = path.join(PKG_SRC, 'core', 'media-registry.js');
             const code = readSource(registryFile);
             const imports = requireSpecifiers(code);
             const boundaryViolations = imports.filter(s =>
@@ -240,7 +243,7 @@ describe('architecture: Generation media registry (S-2)', () => {
     // (default-registrations) — never restate them as its own literals.
     describe('S2-G: No duplicate canonical media configuration', () => {
         it('default-registrations reads config values from the GenerationConfig port, not literals', () => {
-            const regFile = readSource(path.join(BACKEND_SRC, 'generation', 'default-registrations.js'));
+            const regFile = readSource(path.join(PKG_SRC, 'core', 'default-registrations.js'));
             // Strip comments — only code statements may reference config
             const code = codeOf(regFile);
 
@@ -263,8 +266,8 @@ describe('architecture: Generation media registry (S-2)', () => {
         });
 
         it('registry capability values match runtime-config exactly (no drift)', () => {
-            require(path.join(BACKEND_SRC, 'generation', 'default-registrations'));
-            const registry = require(path.join(BACKEND_SRC, 'generation', 'media-registry'));
+            require(path.join(PKG_SRC, 'core', 'default-registrations'));
+            const registry = require(path.join(PKG_SRC, 'core', 'media-registry'));
             const cfg = require(path.join(BACKEND_SRC, 'config', 'runtime-config'));
 
             expect(registry.resolveLeaseTtl('audio')).to.equal(cfg.LEASE_TTL_S.AUDIO);
@@ -279,7 +282,7 @@ describe('architecture: Generation media registry (S-2)', () => {
         });
 
         it('runtime-config WORKER_HEARTBEAT_TYPES stays consistent with registry types', () => {
-            const registry = require(path.join(BACKEND_SRC, 'generation', 'media-registry'));
+            const registry = require(path.join(PKG_SRC, 'core', 'media-registry'));
             const cfg = require(path.join(BACKEND_SRC, 'config', 'runtime-config'));
             const registryTypes = registry.listMediaTypes().sort();
             const heartbeatTypes = [...cfg.WORKER_HEARTBEAT_TYPES].sort();
@@ -320,8 +323,9 @@ describe('architecture: Generation media registry (S-2)', () => {
         // Files allowed to mention media literals (registration point, or
         // documented media implementation detail — see §22 of the recon doc)
         const ALLOWED = new Set([
-            'generation/default-registrations.js',
-            'generation/media-registry.js',      // doc comments only
+            // S-7: generation/default-registrations + media-registry moved to the
+            // package (packages/animastor-generation/src/core/) — outside this
+            // host-tree scan; the package tier is guarded by the S4/S6 suites.
             'config/runtime-config.js',          // WORKER_HEARTBEAT_TYPES (S2-G consistency-guarded)
             'orchestration/scene-orchestrator.js', // media executors (implementation)
             'orchestration/scene-callbacks.js',   // media handlers (implementation)
@@ -353,6 +357,21 @@ describe('architecture: Generation media registry (S-2)', () => {
                 path.join(BACKEND_SRC, 'state'),
             ];
             const offenders = [];
+            // S-7: the package core tier (media-registry/default-registrations own
+            // the canonical registration literals — S4/S6 suites pin that contour)
+            const pkgAllowed = new Set([
+                path.join(PKG_SRC, 'core', 'default-registrations.js'),
+                path.join(PKG_SRC, 'core', 'media-registry.js'),   // doc comments only
+                path.join(PKG_SRC, 'core', 'scene-state.js'),      // per-asset default shape (audio/image/video hash fields — FSM data contract, mirrors host state/scene-state.js)
+            ]);
+            for (const pkgFile of listSourceFiles(PKG_SRC)) {
+                if (pkgAllowed.has(pkgFile)) continue;
+                const code = codeOf(readSource(pkgFile));
+                for (const re of MAP_PATTERNS) {
+                    const m = code.match(re);
+                    if (m) { offenders.push(`@pkg/${path.relative(PKG_SRC, pkgFile)}: ${m[0].slice(0, 60)}`); break; }
+                }
+            }
             for (const dir of coreDirs) {
                 for (const file of listSourceFiles(dir)) {
                     if (ALLOWED.has(file)) continue;
@@ -408,7 +427,7 @@ describe('architecture: Generation media registry (S-2)', () => {
         });
 
         it('media-registry bootstrap cannot register a type that resolves unknown worker type', () => {
-            const registry = require(path.join(BACKEND_SRC, 'generation', 'media-registry'));
+            const registry = require(path.join(PKG_SRC, 'core', 'media-registry'));
             expect(registry.hasMediaType('unknown')).to.be.false;
             expect(registry.resolveMaxActive('unknown')).to.be.undefined;
             expect(registry.resolveLeaseTtl('unknown')).to.be.undefined;
@@ -422,7 +441,7 @@ describe('architecture: Generation media registry (S-2)', () => {
     // rename or alias them. 1:1 mapping audio→audio, image→image, video→video.
     describe('S2-J: Registry task types match production task types (1:1)', () => {
         it('each registered media type maps to exactly itself as task type', () => {
-            const registry = require(path.join(BACKEND_SRC, 'generation', 'media-registry'));
+            const registry = require(path.join(PKG_SRC, 'core', 'media-registry'));
             for (const type of registry.listMediaTypes()) {
                 const cap = registry.getMediaType(type);
                 expect(cap.taskTypes, `${type} taskTypes must be 1:1`).to.deep.equal([type]);
@@ -430,13 +449,13 @@ describe('architecture: Generation media registry (S-2)', () => {
         });
 
         it('resolveValidWorkerTypes returns exactly the registered media types', () => {
-            const registry = require(path.join(BACKEND_SRC, 'generation', 'media-registry'));
+            const registry = require(path.join(PKG_SRC, 'core', 'media-registry'));
             const workerTypes = registry.resolveValidWorkerTypes();
             expect([...workerTypes].sort()).to.deep.equal(['audio', 'image', 'video']);
         });
 
         it('registry does not introduce iu_image or other job-protocol subtypes', () => {
-            const registry = require(path.join(BACKEND_SRC, 'generation', 'media-registry'));
+            const registry = require(path.join(PKG_SRC, 'core', 'media-registry'));
             const all = new Set();
             for (const cap of registry.listCapabilities()) cap.taskTypes.forEach(t => all.add(t));
             expect(all.has('iu_image'), 'iu_image is a Job Protocol contract type (frozen packages/animastor-contracts), not a registry type').to.be.false;

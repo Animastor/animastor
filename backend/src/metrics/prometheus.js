@@ -99,7 +99,7 @@ const tickDurationHistogram = new client.Histogram({
 // (canonical config flows runtime-config → default-registrations → registry).
 // The former local QUOTA_MAX {3,2,1} / LEASE_TTLS {15,20,30} were stale
 // duplicates that drifted from production values (8/4/2) — removed.
-const mediaRegistry = require('../generation/media-registry');
+const mediaRegistry = require('@animastor/generation').mediaRegistry;
 
 const QUOTA_KEYS = () => mediaRegistry.listMediaTypes().map(t => `animastor:runtime:active-${t}`);
 

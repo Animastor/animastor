@@ -6,7 +6,7 @@
 
 const path = require('path');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 const fs = require('fs');
 
 module.exports = function(redis, config, deps) {

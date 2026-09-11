@@ -41,7 +41,7 @@ function warn(msg) { console.warn(`${logPrefix} ⚠️  ${msg}`); }
 // public surface byte-compatible.
 const { estimateSpeechDurationSec } = require('../utils/speech-estimation');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 
 // ======================================================
 // SCENE ESTIMATED DURATION

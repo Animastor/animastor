@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const state = require('../state');
 // S-4: identifier grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 const runtimeScheduler = require('../runtime/runtime-scheduler');
 const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
 const { query: pgQuery } = require('../storage/postgres/database');

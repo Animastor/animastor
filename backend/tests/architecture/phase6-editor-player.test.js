@@ -298,7 +298,9 @@ describe('T6: contour routes do not gain new implementation-detail deps', () => 
             '../../storage/postgres/repositories/book-repo',
             '../../storage/postgres/repositories/generation-cancel-repo',
             '../../services/agent-session-control',
-            '../../generation/media-registry',
+            // S-7: media-registry moved to @animastor/generation (the root
+            // specifier is not relative, so it cannot appear in this scan;
+            // the stale relative entry is kept out deliberately).
         ],
     };
 

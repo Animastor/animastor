@@ -31,7 +31,7 @@ const aiService = require('./ai-service');
 const aiCaller = require('./agent/ai-caller');
 const workspaceAi = require('./workspace-ai-provider');
 const gpuDispatcher = require('../runtime/gpu-dispatcher');
-const comfyuiProvider = require('../generation/comfyui-provider');
+const comfyuiProvider = require('@animastor/generation').comfyuiProvider;
 
 // ── provider resolution (transport-independent seam) ────────────────────
 //   workspace/provider config → resolve provider → Provider Gateway →
@@ -150,7 +150,7 @@ const chat = {
 // node mapping) stays inside the generation domain — the gateway only
 // exposes the dispatch boundary and the ComfyUIProvider seam.
 // S-2: generation job types resolved from the media registry.
-const GENERATION_JOB_TYPES = () => require('../generation/media-registry').listMediaTypes();
+const GENERATION_JOB_TYPES = () => require('@animastor/generation').mediaRegistry.listMediaTypes();
 
 const generation = {
     // dispatch boundary — backend → GPU Hub POST /task (sendUnified owns

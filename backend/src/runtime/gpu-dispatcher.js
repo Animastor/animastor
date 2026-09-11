@@ -1,4 +1,4 @@
-const mediaRegistry = require('../generation/media-registry');
+const mediaRegistry = require('@animastor/generation').mediaRegistry;
 const config = require('../config/runtime-config');
 const jobSchema = require('./job-schema');
 const { PROTOCOL_VERSION } = jobSchema;

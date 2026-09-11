@@ -14,7 +14,7 @@ const path = require('path');
 const fs = require('fs');
 const state = require('../state');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 const audio = require('../audio');
 const image = require('../image');
 const video = require('../video');

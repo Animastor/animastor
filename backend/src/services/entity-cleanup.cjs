@@ -41,11 +41,11 @@
 
 const path = require('path');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 const fs = require('fs');
 const fsStore = require('../storage/filesystem-store');
 // S-2: stage list resolved from media registry
-const { listMediaTypes: _mediaTypes } = require('../generation/media-registry');
+const { listMediaTypes: _mediaTypes } = require('@animastor/generation').mediaRegistry;
 
 const PENDING_PURGE_SET = 'animastor:pending-purge';
 const PENDING_PURGE_ATTEMPTS_PREFIX = 'animastor:pending-purge-attempts';

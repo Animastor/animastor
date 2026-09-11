@@ -25,7 +25,7 @@ const {
 } = require('../agent-prompts');
 // S-4: canonical owner of the coreference resolver is the Generation
 // prompt-profiles layer — the VBook→image edge (recon finding) is gone.
-const { normalizeCharacterRefs } = require('../../generation/prompt-profiles/character-utils');
+const { normalizeCharacterRefs } = require('@animastor/generation').promptProfiles.characterUtils;
 const { sanitizeVideoTokens, tokensToString } = require('../../book/lazy-book/appearance');
 const { findUnverifiedSnakeTokens, canonicalizeText, desnakeifyText, findCrossPromptGaps, participantFieldIds } = require('../../utils/snake-guard');
 // Shared pure prompt-context builder lives in the ai-agent contour (C21):

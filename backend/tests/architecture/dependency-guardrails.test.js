@@ -166,9 +166,10 @@ describe('architecture: Book domain dependency boundary', () => {
             }
         }
         expect(offenders, 'workflows must read book scene data via generation/ports/book-data').to.deep.equal([]);
-        // the consumer is pinned to the port (S6-B re-pins contour-wide)
+        // the consumer is pinned to the port (S6-B re-pins contour-wide);
+        // S-7: consumed through the package public API
         const wf = readSource(path.join(BACKEND_SRC, 'workflows', 'video', 'video-workflows.js'));
-        expect(requireSpecifiers(wf)).to.include('../../generation/ports/book-data');
+        expect(requireSpecifiers(wf)).to.include('@animastor/generation');
     });
 });
 

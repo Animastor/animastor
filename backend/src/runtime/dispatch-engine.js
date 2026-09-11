@@ -52,7 +52,7 @@ function error(msg) {
 // metrics read them) — they are thin lazy views over the registry, NOT a
 // second source of truth: property access resolves through the registry on
 // every read, so registry/config changes are reflected immediately.
-const mediaRegistry = require('../generation/media-registry');
+const mediaRegistry = require('@animastor/generation').mediaRegistry;
 const runtimeConfig = require('../config/runtime-config');
 
 // S-2: resolve all registered stages dynamically

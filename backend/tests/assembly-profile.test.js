@@ -15,9 +15,9 @@ const {
     DEFAULT_VIDEO_DEFAULTS,
     DEFAULT_AUDIO_SECTIONS,
     DEFAULT_AUDIO_DEFAULTS,
-} = require('../src/image/assembly-profile');
+} = require('@animastor/generation').promptProfiles.assemblyProfile;
 const { buildImagePrompt } = require('../src/image/image-service');
-const { profileNameFromConnector } = require('../src/generation/comfyui-provider');
+const { profileNameFromConnector } = require('@animastor/generation').comfyuiProvider;
 
 describe('Assembly profile resolver', () => {
 

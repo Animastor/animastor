@@ -21,7 +21,7 @@
 // Docs: docs/architecture/generation-module-extraction-reconnaissance.md §28
 
 const runtimeConfig = require('./runtime-config');
-const { setGenerationConfig } = require('../generation/ports/generation-config');
+const { setGenerationConfig } = require('@animastor/generation').ports.generationConfig;
 
 /**
  * Bind the canonical runtime-config slices into the GenerationConfig port.

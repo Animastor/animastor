@@ -18,11 +18,11 @@
 
 const config = require('../config/runtime-config');
 // S-2: per-asset stale shape derived from media registry
-const { listMediaTypes: _mediaTypes } = require('../generation/media-registry');
+const { listMediaTypes: _mediaTypes } = require('@animastor/generation').mediaRegistry;
 const book = require('../book');
 const state = require('../state');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 // S-5: orchestration-owned behavior (FSM facade writers) reaches runtime only
 // via the composition-root-injected seam registry — never a direct import.
 const orchestrationSeams = require('./orchestration-seams');

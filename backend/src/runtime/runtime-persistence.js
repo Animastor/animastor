@@ -7,7 +7,7 @@
 
 const state = require('../state');
 // S-2: registered stage list resolved from media registry
-const mediaRegistry = require('../generation/media-registry');
+const mediaRegistry = require('@animastor/generation').mediaRegistry;
 const runtimeMetrics = require('./runtime-metrics');
 const activeScenesIndex = require('./active-scenes-index');
 const circuitBreaker = require('./circuit-breaker');

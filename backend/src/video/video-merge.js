@@ -3,9 +3,9 @@ const path = require('path');
 const fs = require('fs');
 const { spawn, spawnSync } = require('child_process');
 const videoTimeline = require('./video-timeline');
-const { resolveAssembly } = require('../generation/prompt-profiles/assembly-profile');
+const { resolveAssembly } = require('@animastor/generation').promptProfiles.assemblyProfile;
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 const profileOverride = require('../services/profile-override');
 
 // Alignment constants — MUST mirror video-workflows.js (calculateFrames):

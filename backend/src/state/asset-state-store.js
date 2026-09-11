@@ -10,7 +10,7 @@
 // callers. Redis keys, FSM semantics, unsafe-restore whitelist and the public
 // API are unchanged (S-6 will formalize this seam as a port).
 
-const core = require('../generation/scene-state');
+const core = require('@animastor/generation').sceneState;
 
 const ASSET_STATE_KEY_PREFIX = 'animastor:asset-state';
 

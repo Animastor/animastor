@@ -27,21 +27,19 @@
 //   The registry does not own it — it stays as a neutral contract.
 
 // S-6: capability values arrive through the Generation-owned
-// GenerationConfig port — Generation Core does not read runtime-config.
-// The host adapter (config/generation-config-adapter.js) binds the
-// canonical slices; this host-side registration module wires it as a
-// fallback so the S-2 lazy self-bootstrap stays order-independent (the
-// composition root binds it first — backend.cjs / test bindings).
+// GenerationConfig port — the package does not read runtime-config and has
+// NO host fallback require (S-7: the former lazy
+// `config/generation-config-adapter` fallback was a host-edge and is gone).
+// The host adapter (config/generation-config-adapter.js) binds the canonical
+// slices at the composition root BEFORE this module loads — backend.cjs and
+// the backend test bindings both wire it first (fail-fast otherwise: an
+// unwired port throws instead of silently forking the canonical config).
 const { registerMediaType } = require('./media-registry');
 const {
     setGenerationConfig,
     generationConfig,
-    isGenerationConfigWired,
-} = require('./ports/generation-config');
+} = require('../ports/generation-config');
 
-if (!isGenerationConfigWired()) {
-    require('../../config/generation-config-adapter').bindGenerationConfig();
-}
 const generationCfg = generationConfig();
 
 // ======================================================

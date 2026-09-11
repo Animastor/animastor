@@ -2,7 +2,7 @@ const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 const os = require('os');
 
 const WAVEFORM_PEAKS = 1000;

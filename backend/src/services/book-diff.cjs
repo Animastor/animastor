@@ -7,10 +7,10 @@
 const fs = require('fs');
 const path = require('path');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 const registry = require('./prompt-dependency-registry');
 // S-2: default dirty layers resolved from media registry
-const { listMediaTypes: _mediaTypes } = require('../generation/media-registry');
+const { listMediaTypes: _mediaTypes } = require('@animastor/generation').mediaRegistry;
 
 module.exports = function(redis, config, deps) {
     const { state, book, layerConfig, genScope, activeScenes, getChunk, saveChunk } = deps;

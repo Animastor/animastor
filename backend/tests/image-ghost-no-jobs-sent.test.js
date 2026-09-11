@@ -36,7 +36,7 @@ const orchestrator = require('../src/orchestration/orchestrator');
 const dispatchEngine = require('../src/runtime/dispatch-engine');
 // S-5: production seam wiring (dispatch-engine resolves the executor via seams)
 const { wireProductionSeams } = require('./helpers/wire-seams');
-const provider = require('../src/generation/comfyui-provider');
+const provider = require('@animastor/generation').comfyuiProvider;
 const wfLoader = require('animastor-comfyui-workflow-connector').workflowLoader;
 const path = require('path');
 const config = require('../src/config/runtime-config');

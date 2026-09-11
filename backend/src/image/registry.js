@@ -8,7 +8,7 @@ const fs = require('fs');
 const config = require('../config/runtime-config');
 const helpers = require('./helpers');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 
 async function saveIURegistry(redis, iuId, buildId) {
     const key = `${config.REDIS.IU_REGISTRY_PREFIX}:${iuId}`;

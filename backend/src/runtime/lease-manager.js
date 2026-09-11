@@ -43,7 +43,7 @@ const LEASE_RENEWAL_TTL_ADD = 180;
 // runtime-config — registry reads them at registration time). LEASE_TOTAL_TTLS
 // stays exported as a lazy view for backward compatibility (tests assert the
 // runtime-config unification through it).
-const mediaRegistry = require('../generation/media-registry');
+const mediaRegistry = require('@animastor/generation').mediaRegistry;
 const LEASE_TOTAL_TTLS = new Proxy({}, {
     get(_, stage) { return mediaRegistry.resolveLeaseTtl(stage); },
     ownKeys() { return mediaRegistry.listMediaTypes(); },

@@ -10,15 +10,15 @@
 // the former direct ../../book / ../../book/lazy-book/appearance requires
 // (the frozen R4 violation) are gone; the host binds the two operations
 // (collectSceneUnits / tokensToString) at the composition root.
-const bookData = require('../../generation/ports/book-data');
+const bookData = require('@animastor/generation').ports.bookData;
 // S-3: workflow/connector access rides the generation provider seam —
 // no direct workflow-connector package imports in generation modules.
-const provider = require('../../generation/comfyui-provider');
+const provider = require('@animastor/generation').comfyuiProvider;
 const profileOverride = require('../../services/profile-override');
 // S-4: shared prompt/profile infrastructure lives in the generation
 // prompt-profiles layer — the video→image media edge is gone.
-const { resolveAssembly, DEFAULT_VIDEO_DEFAULTS } = require('../../generation/prompt-profiles/assembly-profile');
-const { normalizeCharacterRefs } = require('../../generation/prompt-profiles/character-utils');
+const { resolveAssembly, DEFAULT_VIDEO_DEFAULTS } = require('@animastor/generation').promptProfiles.assemblyProfile;
+const { normalizeCharacterRefs } = require('@animastor/generation').promptProfiles.characterUtils;
 const { escapeRegExp } = require('../../utils/string-utils');
 
 const logPrefix = '[WF-VIDEO]';

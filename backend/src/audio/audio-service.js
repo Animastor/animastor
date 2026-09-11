@@ -19,7 +19,7 @@
 
 const helpers = require('./helpers');
 const connectorUtils = require('./connector-utils');
-const provider = require('../generation/comfyui-provider');
+const provider = require('@animastor/generation').comfyuiProvider;
 const ffmpeg = require('./ffmpeg');
 const validation = require('./validation');
 const chunks = require('./chunks');

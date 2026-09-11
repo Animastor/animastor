@@ -16,7 +16,7 @@ const generationCancelRepo = require('../../storage/postgres/repositories/genera
 // agent_sessions/book_generation_sessions SQL must not live here.
 const { createAgentSessionControl } = require('../../services/agent-session-control');
 // S-2: media registry for worker-type validation
-const mediaRegistry = require('../../generation/media-registry');
+const mediaRegistry = require('@animastor/generation').mediaRegistry;
 
 module.exports = function(app, redis, deps) {
     const {

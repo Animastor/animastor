@@ -17,9 +17,9 @@
 //   preview.js         - getOrCreatePreview, getImageMetadata
 
 const helpers = require('./helpers');
-const provider = require('../generation/comfyui-provider');
+const provider = require('@animastor/generation').comfyuiProvider;
 const registry = require('./registry');
-const charUtils = require('../generation/prompt-profiles/character-utils');
+const charUtils = require('@animastor/generation').promptProfiles.characterUtils;
 const promptBuilder = require('./prompt-builder');
 const iuProcessor = require('./iu-processor');
 const preview = require('./preview');

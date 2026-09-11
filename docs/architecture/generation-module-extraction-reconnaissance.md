@@ -1,6 +1,6 @@
 # Generation Module Extraction — Architectural Reconnaissance
 
-**Status:** READ-ONLY reconnaissance (reconnaissance / audit only). No production code changed, no files moved, no `packages/animastor-generation` created, no runtime behavior touched. — **Update (S-1, same date):** the seam step S-1 (§19.1) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): isolate vbook session control from generation routes"): VBook session SQL was removed from the Generation route layer behind the `AgentSessionControl` port (`backend/src/services/agent-session-control.js`); guards added (`backend/tests/architecture/generation-vbook-boundary.test.js`, S1-A..S1-E). HTTP surface untouched. Details: §12 update, §13 update, §19 S-1 status, §22 checklist. — **Update (S-2):** the seam step S-2 (§19.2) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): registry media capabilities"): media registry created (`generation/media-registry.js`); audio/image/video registered via `generation/default-registrations.js`; dispatch branching in scene-orchestrator uses EXECUTORS map; route validation derives from registry; guards S2-A..S2-F added (`tests/architecture/generation-media-registry.test.js`). §22 checklist updated, §22.1–§22.8 added. — **Update (S-3):** the seam step S-3 (§19.3, §24) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): close provider transport seam"): all 5 direct `gpu.send`/`sendUnified` dispatch sites routed through the single provider seam `generation/comfyui-provider.generate` (payload/timeout/error/retry semantics preserved 1:1); `image/connector-utils.js` folded into the provider (deleted; barrel shims keep the public surface); hardcoded ComfyUI node-id fallbacks deleted (dead — connectors mandatory at startup) and the live merged-dialogue node patching isolated behind `provider.assembleMergedDialogueWorkflow`; the last direct workflow-connector import left the media pipeline (video-workflows → provider bindings); gpu-dispatcher require set frozen at 4 files (S3-F); guards S3-A..S3-H added (`tests/architecture/s3-provider-seam.test.js`) plus 15 provider regression tests (`tests/generation-provider-seam.test.js`). Job Protocol, Redis FSM, HTTP API, GPU Hub/Worker untouched. §24 documents the full S-3 result. — **Update (S-4):** the seam step S-4 (§19.4, §25) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): move shared core infrastructure"): confirmed Generation Core shared components physically moved into the intermediate `backend/src/generation/` area (assembly-profile + character-utils → `generation/prompt-profiles/`, task registry `services/generation-progress` → `generation/`, asset FSM `state/scene-state` → `generation/`, pure prompt-text helpers extracted from `image/helpers.js`); NEW canonical artifact grammar owner `generation/artifact-naming.js` (all ~30 inline filename-grammar sites converted, bytes unchanged); `estimateSpeechDurationSec` → `utils/speech-estimation.js` (Book/authoring shared util); `audio→image` and `video→image` cross-media import edges are GONE; guards S4-A..S4-H added (`backend/tests/architecture/s4-shared-infra-moves.test.js`). No npm package created, no Redis keys/FSM/HTTP/Job Protocol changes. §25 documents the full S-4 result. — **Update (S-2 Completion Pass):** full hardcoded-media sweep completed (§22.9): core capability knowledge centralized through the registry across runtime/orchestration/metrics/storage/services; duplicate canonical configuration eliminated (registry reads runtime-config; stale prometheus/runtime-metrics quota/TTL drift removed); registry self-bootstraps; error semantics frozen by new guards S2-G..S2-J; the 5 `completeStage` facade tests broken by the original S-2 commit fixed (backward-compat handler resolution). — **Update (S-5):** the seam step S-5 (§19.5, §27) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): reduce runtime orchestration cycle"): all 7 frozen R5 runtime→orchestration edges eliminated — composition-root function seams (`backend/src/runtime/orchestration-seams.js`, six ops wired in backend.cjs); event journal moved to `state/event-journal.js` (orchestration shim kept); the five pure FSM writers moved verbatim to `state/scene-state-ops.js` (facade re-exports, byte-identical keys/FSM/log bytes); services bridge (placeholder-audio, scene-restoration) re-pointed to the state-layer owner — **the 14-module orchestration⇄runtime⇄services⇄image SCC is DISSOLVED** (only the two pre-existing 2-module pairs remain); guards S5-A..S5-G added (`tests/architecture/s5-runtime-orchestration-cycle.test.js`) plus updated R5/Phase-5-T2/T10/Phase-7-P7-T7 baselines. No S-6 ports, no packages, no Redis/FSM/HTTP/Job-Protocol changes. Full-suite regression: 2429 passing / 13 failing — failure set byte-identical to the untouched baseline. §27 documents the full S-5 result; verdict READY. — **Update (S-6):** the seam step S-6 (§19.6, §28) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): introduce host ports"): four Generation-owned port modules introduced (`generation/ports/{dispatch-transport,generation-config,profile-store,book-data}.js`); host config adapter added (`config/generation-config-adapter.js`); five consumers migrated (`comfyui-provider.js`, `default-registrations.js`, `assembly-profile.js`, `workflows/video/video-workflows.js`); composition root wiring added at top of `backend.cjs`; test bindings mirror production wiring; 14 new architecture guards added (`tests/architecture/s6-generation-host-ports.test.js`); 6 pre-existing guard baselines updated (S3-F, S3-H, S4-D, S2-G, R4, P7-T8); R4 frozen violation killed (workflows→book edges eliminated via BookDataPort). Phase 9C facade convention preserved (contracts import through job-schema facade). Full architecture suite: 802 passing, 0 failing. §28 documents the full S-6 result; verdict READY.
+**Status:** READ-ONLY reconnaissance (reconnaissance / audit only). No production code changed, no files moved, no `packages/animastor-generation` created, no runtime behavior touched. — **Update (S-1, same date):** the seam step S-1 (§19.1) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): isolate vbook session control from generation routes"): VBook session SQL was removed from the Generation route layer behind the `AgentSessionControl` port (`backend/src/services/agent-session-control.js`); guards added (`backend/tests/architecture/generation-vbook-boundary.test.js`, S1-A..S1-E). HTTP surface untouched. Details: §12 update, §13 update, §19 S-1 status, §22 checklist. — **Update (S-2):** the seam step S-2 (§19.2) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): registry media capabilities"): media registry created (`generation/media-registry.js`); audio/image/video registered via `generation/default-registrations.js`; dispatch branching in scene-orchestrator uses EXECUTORS map; route validation derives from registry; guards S2-A..S2-F added (`tests/architecture/generation-media-registry.test.js`). §22 checklist updated, §22.1–§22.8 added. — **Update (S-3):** the seam step S-3 (§19.3, §24) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): close provider transport seam"): all 5 direct `gpu.send`/`sendUnified` dispatch sites routed through the single provider seam `generation/comfyui-provider.generate` (payload/timeout/error/retry semantics preserved 1:1); `image/connector-utils.js` folded into the provider (deleted; barrel shims keep the public surface); hardcoded ComfyUI node-id fallbacks deleted (dead — connectors mandatory at startup) and the live merged-dialogue node patching isolated behind `provider.assembleMergedDialogueWorkflow`; the last direct workflow-connector import left the media pipeline (video-workflows → provider bindings); gpu-dispatcher require set frozen at 4 files (S3-F); guards S3-A..S3-H added (`tests/architecture/s3-provider-seam.test.js`) plus 15 provider regression tests (`tests/generation-provider-seam.test.js`). Job Protocol, Redis FSM, HTTP API, GPU Hub/Worker untouched. §24 documents the full S-3 result. — **Update (S-4):** the seam step S-4 (§19.4, §25) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): move shared core infrastructure"): confirmed Generation Core shared components physically moved into the intermediate `backend/src/generation/` area (assembly-profile + character-utils → `generation/prompt-profiles/`, task registry `services/generation-progress` → `generation/`, asset FSM `state/scene-state` → `generation/`, pure prompt-text helpers extracted from `image/helpers.js`); NEW canonical artifact grammar owner `generation/artifact-naming.js` (all ~30 inline filename-grammar sites converted, bytes unchanged); `estimateSpeechDurationSec` → `utils/speech-estimation.js` (Book/authoring shared util); `audio→image` and `video→image` cross-media import edges are GONE; guards S4-A..S4-H added (`backend/tests/architecture/s4-shared-infra-moves.test.js`). No npm package created, no Redis keys/FSM/HTTP/Job Protocol changes. §25 documents the full S-4 result. — **Update (S-2 Completion Pass):** full hardcoded-media sweep completed (§22.9): core capability knowledge centralized through the registry across runtime/orchestration/metrics/storage/services; duplicate canonical configuration eliminated (registry reads runtime-config; stale prometheus/runtime-metrics quota/TTL drift removed); registry self-bootstraps; error semantics frozen by new guards S2-G..S2-J; the 5 `completeStage` facade tests broken by the original S-2 commit fixed (backward-compat handler resolution). — **Update (S-5):** the seam step S-5 (§19.5, §27) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): reduce runtime orchestration cycle"): all 7 frozen R5 runtime→orchestration edges eliminated — composition-root function seams (`backend/src/runtime/orchestration-seams.js`, six ops wired in backend.cjs); event journal moved to `state/event-journal.js` (orchestration shim kept); the five pure FSM writers moved verbatim to `state/scene-state-ops.js` (facade re-exports, byte-identical keys/FSM/log bytes); services bridge (placeholder-audio, scene-restoration) re-pointed to the state-layer owner — **the 14-module orchestration⇄runtime⇄services⇄image SCC is DISSOLVED** (only the two pre-existing 2-module pairs remain); guards S5-A..S5-G added (`tests/architecture/s5-runtime-orchestration-cycle.test.js`) plus updated R5/Phase-5-T2/T10/Phase-7-P7-T7 baselines. No S-6 ports, no packages, no Redis/FSM/HTTP/Job-Protocol changes. Full-suite regression: 2429 passing / 13 failing — failure set byte-identical to the untouched baseline. §27 documents the full S-5 result; verdict READY. — **Update (S-6):** the seam step S-6 (§19.6, §28) has since LANDED as a behavior-neutral follow-up commit ("arch(generation): introduce host ports"): four Generation-owned port modules introduced (`generation/ports/{dispatch-transport,generation-config,profile-store,book-data}.js`); host config adapter added (`config/generation-config-adapter.js`); five consumers migrated (`comfyui-provider.js`, `default-registrations.js`, `assembly-profile.js`, `workflows/video/video-workflows.js`); composition root wiring added at top of `backend.cjs`; test bindings mirror production wiring; 14 new architecture guards added (`tests/architecture/s6-generation-host-ports.test.js`); 6 pre-existing guard baselines updated (S3-F, S3-H, S4-D, S2-G, R4, P7-T8); R4 frozen violation killed (workflows→book edges eliminated via BookDataPort). Phase 9C facade convention preserved (contracts import through job-schema facade). Full architecture suite: 802 passing, 0 failing. §28 documents the full S-6 result; verdict READY. — **Update (S-7):** the physical extraction step S-7 (§19.7) has since LANDED as a behavior-neutral commit ("arch(generation): physically extract generation package"): the prepared Generation Core (all 13 `backend/src/generation/**` files — registry, registrations, task domain, FSM, artifact grammar, provider seam, prompt profiles, four ports) moved to the npm package `@animastor/generation` (`packages/animastor-generation`); `backend/src/generation` deleted with ZERO compatibility shims (all consumers re-pointed to the public API root); Job Protocol now imported from `@animastor/contracts` directly; the dead config-adapter fallback removed; 13 new guards (G7-A..G7-M) + re-pointed S2..S6 suites → 830 arch tests green; full-suite failure set byte-identical to a pristine worktree baseline. §29 documents the full S-7 result; §29.12/13 record the runtime-tier blockers + S-8 plan.
 **Date:** 2026-09-09
 **Baseline:** HEAD `2172fac5` ("arch(ai): physically extract analysis from backend")
 **Method:** static require-graph tracing over `backend/src/**`, route registration audit (`backend.cjs`), Redis key-family audit (`tests/architecture/redis-registry.js`), PG repository/table audit, frontend store/page tracing (`frontends/app/src`), cross-checked against existing architecture docs (`PHASE_NEXT_MODULE_EXTRACTION_RECONNAISSANCE.md`, `MODULAR_PRODUCT_ARCHITECTURE.md` §C8/C9/C12, `PHASE_5_ORCHESTRATION_RUNTIME.md`, `COMFYUI_WORKFLOW_CONNECTOR_RECONNAISSANCE.md`). Where documentation and code disagree, **the code wins** and the discrepancy is flagged.
@@ -623,9 +623,9 @@ Explicitly **not** exported: dispatch-engine internals, lease keys, asset-state 
 3. **S-3 Provider seam migration (P7-T8 set):** route the 5 `gpu.send` bypass sites through `comfyui-provider`/`generation.sendJob`; delete node-id fallbacks; fold `image/connector-utils` into the provider. — **✅ DONE (§24):** all 5 sites dispatch via `provider.generate`; node-id fallbacks deleted (dead — connectors mandatory at startup), merged-dialogue raw-node patching moved behind `assembleMergedDialogueWorkflow`; `image/connector-utils.js` deleted (provider absorbs the ComfyUI knowledge; barrel shims keep the public surface); video-workflows rides provider bindings; guards S3-A..S3-H (`tests/architecture/s3-provider-seam.test.js`) + 15 regression tests (`tests/generation-provider-seam.test.js`) green.
 4. **S-4 Shared-infra moves:** `assembly-profile` (+profile loader) out of `image/` into a `generation/prompt-profiles/` area; `normalizeCharacterRefs` → `utils`; `estimateSpeechDurationSec` → Book/authoring utils. — **✅ DONE (§25):** confirmed core components physically moved into the intermediate `backend/src/generation/` area (`prompt-profiles/assembly-profile.js`, `prompt-profiles/character-utils.js` + extracted `prompt-text-utils.js`, `generation-progress.js`, `scene-state.js`, NEW canonical `artifact-naming.js`); `estimateSpeechDurationSec` → `utils/speech-estimation.js`; `estimateSpeechDurationSec`/`normalizeCharacterRefs` consumers re-pointed to the canonical owners; `image/` shims keep the legacy deep-require surfaces; audio→image and video→image media edges eliminated; artifact-grammar single ownership established across ~30 sites (bytes unchanged); guards S4-A..S4-H green. Host-entangled runtime engine files deliberately NOT moved (S-5/S-6 first).
 5. **S-5 Cycle breaking:** finish Phase-5 direction — semantic reactions move behind the Runtime Result consumer; runtime→orchestration edges collapse to event-journal + injected consumer. Unfreeze R5. — **✅ DONE (§27):** all 7 frozen R5 edges eliminated (composition-root seams `runtime/orchestration-seams.js`; event journal → `state/event-journal.js`; pure FSM writers → `state/scene-state-ops.js`; the 14-module SCC is DISSOLVED). R5 unfrozen, replaced by the S5-R5 guard suite. §27 documents the full S-5 result.
-6. **S-6 Port introduction:** DispatchTransport (with routing resolvers injected), BookDataPort (kills workflows→book), mediaUtils port (music-metadata/ffprobe), SSE publisher injection.
-7. **S-7 Physical move to `packages/animastor-generation/`:** MOVE list above; host shims (`src/generation/…` one-liners) for transition; docker-compose read-only mount; guards G-1..G-14 land with the move.
-8. **S-8 Public API freeze + standalone tests;** then delete shims and the legacy route parts marked DELETE.
+6. **S-6 Port introduction:** DispatchTransport (with routing resolvers injected), BookDataPort (kills workflows→book), mediaUtils port (music-metadata/ffprobe), SSE publisher injection. — **✅ DONE (§28):** four typed ports + host adapters + composition-root wiring; zero runtime behavior change; guards S6-A..S6-N green.
+7. **S-7 Physical move to `packages/animastor-generation/`:** MOVE list above; host shims (`src/generation/…` one-liners) for transition; docker-compose read-only mount; guards G-1..G-14 land with the move. — **✅ DONE (§29):** the prepared Generation Core (the entire `backend/src/generation/**` seed — the S-4/S-5/S-6 canonical owners) moved to `@animastor/generation`; `backend/src/generation` DELETED (no transition shims needed — all consumers re-pointed to the public API root); guards G7-A..G7-M added. The full media/runtime/orchestration tier move was NOT forced: those files carry direct PG/fs/runtime-config/book deps that S-6 explicitly deferred (§28.8) — recorded as S-8 blockers with evidence (§29.12), not hidden behind new universal ports. Docker resolution rides the established `file:` dependency + symlink pattern (same as `@animastor/assistant`).
+8. **S-8 Public API freeze + standalone tests;** then delete shims and the legacy route parts marked DELETE. — **UPDATED (§29.13):** S-8 scope is now the runtime-tier seam completion (Persistence/EventJournal/MediaUtils ports + media-orchestrator relocation) before the remaining contour can follow.
 
 ---
 
@@ -1113,7 +1113,7 @@ Residual frozen edges (unchanged by S-4, owned by earlier baselines): the 7-edge
 - [x] S-4 correction pass (§26, audit 8e77d950): Redis persistence split out of the core (`generation-progress` → `services/generation-progress.js` adapter; `scene-state` FSM → `state/asset-state-store.js` adapter); key bytes/FSM/lifecycle behavior unchanged; S4-D strengthened to catch direct Redis commands, passed-in clients, fs/env/config coupling; S4-D2/S4-D3 contour + parity guards added; `estimateSpeechDurationSec` verdict: neutral shared util (stays in `utils/`); artifact-naming re-verified as the single grammar owner.
 - [ ] S-5: runtime→orchestration cycle reduction (R5 unfreeze) — **next step**.
 - [x] S-6: host ports landed (GenerationConfig, DispatchTransport, ProfileStore, BookDataPort). EventJournal/PersistencePort/MediaUtils deferred to S-7 per §28.8.
-- [ ] S-7: physical package creation (shims already in place; moved-file set is the package seed).
+- [x] S-7: physical package creation (§29) — **DONE: `@animastor/generation` created; seed moved; `backend/src/generation` deleted; consumers re-pointed; G7 guards green; full-suite failure set byte-identical to baseline**
 
 *End of S-4 section. No package created; moved files are the future package seed.*
 
@@ -1410,3 +1410,204 @@ All four ports are bound at the top of `backend/src/backend.cjs`, before any mod
 **READY.** Four confirmed host edges eliminated via typed ports; zero runtime behavior changed; composition root wiring verified (live registry bootstrap + fallback wiring); full architecture suite green (802/0); regression parity confirmed against the untouched baseline; S-7 handoff items documented.
 
 *End of S-6 section.*
+
+---
+
+## 29. S-7 — Physical Package Extraction (LANDED)
+
+**Commit:** "arch(generation): physically extract generation package".
+**Status:** DONE — behavior-neutral physical move on top of S-6 (`6d60037e`). No HTTP API, Redis key, FSM transition, Job Protocol, dispatch/retry/circuit/lease semantics, scheduler, cancellation, reconciliation, progress, artifact naming, `image_units`, or startup/recovery change. The prepared Generation Core (S-4/S-5/S-6 canonical owners) is now a real npm package; the backend is the host/composition layer.
+
+### 29.1 Main criterion
+
+*"Generation действительно физически находится в packages/animastor-generation, backend больше не содержит второй реализации, package не зависит от backend, а host-specific зависимости проходят через adapters/ports."* — **HOLDS** (guarded G7-A..G7-M).
+
+### 29.2 Exact moved-file set (13 files — the prepared Generation Core seed)
+
+Every file that S-2/S-3/S-4/S-5/S-6 established as a Generation Core canonical owner. `git mv` used; bodies byte-identical except the three documented S-7 adjustments (§29.6).
+
+| backend/src/generation/** (DELETED) | packages/animastor-generation/src/** |
+|---|---|
+| `media-registry.js` | `core/media-registry.js` |
+| `default-registrations.js` | `core/default-registrations.js` |
+| `generation-progress.js` (pure task-registry domain) | `core/generation-progress.js` |
+| `scene-state.js` (pure per-asset FSM contract) | `core/scene-state.js` |
+| `artifact-naming.js` (single grammar owner) | `core/artifact-naming.js` |
+| `comfyui-provider.js` (S-3 provider seam) | `providers/comfyui-provider.js` |
+| `prompt-profiles/assembly-profile.js` | `prompt-profiles/assembly-profile.js` |
+| `prompt-profiles/character-utils.js` | `prompt-profiles/character-utils.js` |
+| `prompt-profiles/prompt-text-utils.js` | `prompt-profiles/prompt-text-utils.js` |
+| `ports/dispatch-transport.js` | `ports/dispatch-transport.js` |
+| `ports/generation-config.js` | `ports/generation-config.js` |
+| `ports/profile-store.js` | `ports/profile-store.js` |
+| `ports/book-data.js` | `ports/book-data.js` |
+
+New package-only files: `src/index.js` (public entry), `src/utils/cyr-latin-map.js` + `src/utils/escape-regexp.js` (pure primitive mirrors replacing the two host `utils/` requires inside prompt-text-utils — the ONLY content-level additions; parity-guarded G7-M), `package.json`, `README.md`, `LICENSE`, `.gitignore`, `test/generation-package.test.js`.
+
+Deliberately NOT moved (host-side by S-4/S-5/S-6 classification): `services/generation-progress.js` + `state/asset-state-store.js` (Redis host adapters over the pure core, §26.1), `state/scene-state-ops.js` + `state/event-journal.js` (FSM-writer/journal host adapters, S-5), `utils/speech-estimation.js` (neutral shared util, §26.2 verdict), the entire runtime/orchestration/audio/image/video/services engine tier (§29.12).
+
+### 29.3 Host adapter set (stays in backend, consumes the package)
+
+| Host adapter | Consumes |
+|---|---|
+| `config/generation-config-adapter.js` | binds `ports.generationConfig` from runtime-config slices |
+| `runtime/gpu-dispatcher.sendUnified` | implements `ports.dispatchTransport` |
+| `services/ai-loader.getAssemblyProfile` | implements `ports.profileStore` |
+| `book` facade + `book/lazy-book/appearance` | implement `ports.bookData` |
+| `services/generation-progress.js` | Redis adapter over package `generationProgress` |
+| `state/asset-state-store.js` | Redis adapter over package `sceneState` |
+| `state/scene-state-ops.js` | FSM writers over the store + journal (+ package `mediaRegistry`) |
+| `backend/src/backend.cjs` | composition root: binds 4 ports → `bootstrap()` → DI wiring |
+| `backend/tests/generation-test-bindings.cjs` | mocha fixture mirroring the production wiring |
+| media executors + orchestration + runtime + routes (55 host files) | package public API (artifactNaming, mediaRegistry, comfyuiProvider, promptProfiles, sceneState) |
+
+### 29.4 Compatibility shim set
+
+**EMPTY — by design.** All ~85 backend require sites were re-pointed to `require('@animastor/generation')` (property access on the frozen root), so no old-path shim was needed anywhere. Deleted instead of shimmed: `backend/src/image/assembly-profile.js`, `backend/src/image/character-utils.js` (S-4 transition shims whose consumers moved to the package root; the two remaining test consumers re-pointed). The one host-internal re-export that remains is `state/scene-state.js` → `./asset-state-store` (state-layer surface, not a package shim; pinned one-line by S4-E/G7-F).
+
+### 29.5 Package tree & public API
+
+```
+packages/animastor-generation/          npm: @animastor/generation
+├── package.json     exports { ".": "./src/index.js" } — root-only exports map
+├── README.md  LICENSE  .gitignore
+├── src/
+│   ├── index.js            ← single public entry (LAZY surface: zero top-level
+│   │                          requires, zero side effects at require time)
+│   ├── core/               media-registry, default-registrations,
+│   │                       generation-progress, scene-state, artifact-naming
+│   ├── providers/          comfyui-provider (the S-3 seam)
+│   ├── prompt-profiles/    assembly-profile, character-utils, prompt-text-utils
+│   ├── ports/              dispatch-transport, generation-config,
+│   │                       profile-store, book-data (frozen S-6 set)
+│   └── utils/              cyr-latin-map, escape-regexp (parity-guarded mirrors)
+└── test/generation-package.test.js   (standalone: `npm test` inside the package)
+```
+
+**Public API (frozen, G7-G — computed from the measured consumer set, not invented):** the recon §17 runtime-command surface (`createGeneration`, `generation.request/cancel/…`) was NOT copied blindly — those commands live in the host runtime/orchestration tier, which did not move (§29.12). The frozen surface is exactly what the ~55 consumer files + composition root actually consume:
+
+```
+generation.artifactNaming        — canonical artifact filename grammar (writer side)
+generation.mediaRegistry         — media capability registry + resolvers (S-2)
+generation.bootstrap()           — eager default registration (S-2 startup entry;
+                                   the registry also self-bootstraps lazily)
+generation.generationProgress    — pure task-registry domain
+generation.sceneState            — per-asset FSM contract
+generation.comfyuiProvider       — S-3 provider seam
+generation.promptProfiles        — { assemblyProfile, characterUtils, promptTextUtils }
+generation.ports                 — { dispatchTransport, generationConfig,
+                                     profileStore, bookData }   (S-6, frozen)
+```
+
+`src/index.js` uses lazy `Object.defineProperty` getters: `require('@animastor/generation')` performs NO module loads and NO registry bootstrap (G7-L); unwired ports fail fast only when USED — byte-identical to the pre-move `backend/src/generation/*` load semantics.
+
+### 29.6 The three documented content adjustments in moved files
+
+1. `providers/comfyui-provider.js` — Job Protocol import `require('../runtime/job-schema')` → `require('@animastor/contracts').jobProtocolV2` (the backend facade is a zero-logic re-export of exactly that object; behavior byte-identical; removes the last package→backend require).
+2. `core/default-registrations.js` — the S-6 lazy host fallback `require('../../config/generation-config-adapter')` DELETED (it was a package→backend edge). Wiring is composition-root-only: backend.cjs and the mocha fixture both bind the config port FIRST (verified order-pinned by S6-G); an unwired port now fails fast instead of silently self-binding the host adapter.
+3. `prompt-profiles/prompt-text-utils.js` — `require('../../utils/cyr-latin-map')` and `require('../../utils/string-utils')` → package-internal `../utils/*` mirrors (the host string-utils also carries a runtime-config read that must not enter the package; only the pure `escapeRegExp` was mirrored). Parity pinned by G7-M.
+
+### 29.7 Dependency graph — BEFORE / AFTER
+
+BEFORE (S-6 baseline):
+
+```
+backend host
+└── backend/src/**  (everything in one tree)
+    ├── generation/            ← S-4 "package seed" (core, provider, ports, profiles)
+    │     └── requires → runtime/job-schema (facade), config/generation-config-adapter
+    │                          (lazy fallback), utils/*  ← HOST EDGES
+    ├── runtime/  orchestration/  audio/  image/  video/  workflows/  services/  state/
+    │     └── requires → ../generation/* (deep paths into the seed)
+    └── backend.cjs (composition root) → binds S-6 ports into the seed
+```
+
+AFTER:
+
+```
+backend host
+├── adapters ─────────── infrastructure (Redis/PG/fs/config stay host-side)
+│     services/generation-progress.js ─┐
+│     state/asset-state-store.js       ├─ implement persistence OVER the package core
+│     gpu-dispatcher / ai-loader /     │   (host → package, the sanctioned direction)
+│     book facade / runtime-config     │
+│     routes / runtime / orchestration / media executors ── consume the public API
+│                 │
+│                 ▼  (require('@animastor/generation') — public API root ONLY)
+├── composition root: backend.cjs  (binds 4 ports → bootstrap())
+└────────────────────────────────────────────────────────────
+@animastor/generation
+├── core/      (registry, registrations, task domain, FSM, artifact grammar)
+├── providers/ (comfyui seam → @animastor/contracts + comfyui-workflow-connector)
+├── prompt-profiles/ (assembly-profile, character/text utils)
+└── ports/  ◄── injected by the host (dispatch-transport, generation-config,
+              profile-store, book-data)   — NO reverse edge, NO host require
+```
+
+Package → host forbidden edges (guarded): `backend/src/**`, `runtime-config`, `config/generation-config-adapter`, Redis client, `pg`/`postgres`, `fs`, Express/http, VBook, Player, Editor, GPU Hub, Worker, `services/*`, `book`, ComfyUI connector outside `providers/` — enforced against the TRANSITIVE require closure, not just first level (G7-B/G7-C/G7-K).
+
+### 29.8 Remaining package → external dependencies (complete list, why allowed)
+
+| Dependency | Used by | Why allowed |
+|---|---|---|
+| `@animastor/contracts` (file:) | providers/comfyui-provider (Job Protocol v2) | frozen protocol package — the same object the backend job-schema facade re-exports; zero drift possible |
+| `animastor-comfyui-workflow-connector` (file:) | providers/comfyui-provider only | the extracted zero-dep workflow/connector adapter lib (S-3 boundary; G7-C pins the require site to `providers/`) |
+| node builtins (`crypto`, `path`) | core/generation-progress (uuid), index | runtime platform, not host coupling |
+
+Everything else is injected through the four S-6 ports. Dev dependencies (`mocha`, `chai`) are test-only.
+
+### 29.9 Guards (new suite `backend/tests/architecture/generation-package-boundary.test.js`)
+
+| Guard | Asserts |
+|---|---|
+| G7-A | package exists, npm name `@animastor/generation`, root-only exports map, README present, `backend/src/generation` GONE |
+| G7-B | zero package files require `backend/src/**` (static scan) |
+| G7-C | package require CLOSURE (transitive) imports no Redis/PG/Express/runtime-config/VBook/Player/Editor/GPU-Hub/Worker/ai-loader/book/agent/storage/state/runtime/orchestration; dependency set frozen to the two contract packages; connector require sites = `providers/` only |
+| G7-D | backend consumes the package ONLY via the root specifier (no deep imports), >40 consumer files pinned live |
+| G7-E | no duplicate core implementation in backend/src (7 canonical function owners re-declared nowhere in the host tree) |
+| G7-F | S-4 transition shims deleted (absence pinned); remaining host re-export is a one-line re-export |
+| G7-G | public API surface frozen (root keys, ports keys, promptProfiles keys, registry/FSM/grammar/provider method surfaces) |
+| G7-H | deep package imports THROW (exports map root-only) |
+| G7-I | S-6 port contour intact (four zero-require ports, package-owned) + composition-root wiring pins (S-6 suite re-pointed, all 14 tests green) |
+| G7-J | S-5 invariant stays green (runtime→orchestration policy requires = 0; seams registry hollow) |
+| G7-K | no package↔backend cycle (closure cannot escape; backend edge shape = root specifier only) |
+| G7-L | package loads standalone from its physical path with fresh module registry; fail-fast on use, never on require |
+| G7-M | package util mirrors behavior-identical to host legs (cyr-latin-map, escapeRegExp) |
+
+Updated pre-existing suites (re-pointed to the package, semantics unchanged): `s3-provider-seam` (13), `s4-shared-infra-moves` (12), `s6-generation-host-ports` (14), `generation-media-registry` (25), `phase3-provider-gateway` (19), `phase6-editor-player`, `phase7-extraction-readiness` (12), `comfyui-connector-core-boundary`, `dependency-guardrails` (R4 pin). Architecture suite: **830 passing / 0 failing** (820 baseline + net new guards).
+
+### 29.10 Tests
+
+- Package-own standalone suite: `packages/animastor-generation` `npm test` → **11 passing / 0 failing** (loads, isolation, exports map, ports, registry+bootstrap, FSM, grammar, task domain, prompt profiles, provider dispatch).
+- Focused backend suites re-run: generation-progress, provider-seam, assembly/audio-profile, audio-segments, scene-state/asset-state, iu-progress, cancel-repo, dispatch-meta-lease, reconciliation, counter-reconciliation, scope-slide, cancellation-recovery, layer-config-reconcile, progress-panel, stage-dispatch, happy-path.
+- Full backend suite: **2429 passing / 13 failing** — failure set byte-identical (diffed) to a pristine `git worktree` run at the same HEAD. Every failure = PRE-EXISTING BASELINE (PW-4 worker-sharing routes, LLM-sharing control plane, guest workspace, private-worker identity, 16b snapshot). **No NEW REGRESSION.**
+
+### 29.11 Behavior-parity result
+
+- Redis keys/value formats: unchanged (key owners remain the two host adapters; S4-D2 single-owner pins green).
+- FSM transitions, Job Protocol v2, dispatch/retry/circuit/lease/quotas/scheduler semantics, cancellation, reconciliation, scene lifecycle, progress, artifact naming bytes, `image_units`, startup/recovery: untouched (move-only).
+- The only semantic-adjacent deltas are the two documented ones: (a) Job Protocol import now comes from the canonical package (same object); (b) the dead config-adapter fallback in default-registrations removed (composition root + test bindings wire first — fail-fast replaces silent self-binding; order pinned by guards).
+
+### 29.12 Blockers found during the move (recorded, NOT hidden — per S-7 discipline)
+
+The recon §16 MOVE list also names runtime/orchestration/audio/image/video. Moving those tiers in S-7 would have required exactly the seams S-6 explicitly deferred (§28.8: P-2/P-3/P-4) or new universal objects (forbidden). Measured evidence at move time:
+
+| Tier | Hard host edges found (why the move is blocked) |
+|---|---|
+| `runtime/dispatch-engine.js` | `require('../storage')` (PG pool), `require('../config/runtime-config')`, `../state/*` adapters |
+| `runtime/reconciliation-engine.js` | 20+ lazy host requires: fs, storage (PG repos ×3), config, book, image, audio/video orchestrators, layer-config |
+| `runtime/runtime-scheduler.js` / `scene-window.js` | task-repo (PG), database (PG), `../book` (lazy), placeholder-audio, services |
+| `audio/generation.js`, `image/iu-processor.js`, `video/*`, `workflows/video` | `services/profile-override`, PG repos (scene-assets, iu), `../state`, dispatch-engine markers, fs artifact IO |
+| progress/cancel events (P-2) | observers live in host services; no package-internal consumer |
+
+**Disposition:** recorded as S-8 seams (not S-7 scope). No backend require was smuggled into the package; no HostServices/GenerationContext/universal repository was created (S6-E/G7 enforce).
+
+### 29.13 S-8 plan
+
+1. **Runtime-tier ports (S-8 seam phase):** PersistencePort (task/scene-assets/iu/cancel repos), EventJournalPort (formalize `state/event-journal.js` behind the frozen interface), MediaUtilsPort (fs/ffmpeg artifact IO), GenerationEvents (observer) — each with a host adapter; the DispatchTransport routing-policy split (§24.6 residual).
+2. **Engine relocation:** dispatch-engine, scheduler, reconciliation, scene-window move once 1 is done; registry/FSM/task-domain stay package-side.
+3. **Media-executor relocation:** audio/image/video/workflows move behind the persisted ports + ProfileStore expansion (override service); progress/cancel events ride P-2.
+4. **Then:** the recon §17 runtime-command API (`createGeneration`, `generation.request/cancel/…`) becomes implementable INSIDE the package as a thin facade over the relocated engine; backend routes become one-line delegations; the remaining §16 DELETE list applies.
+5. **Guards:** extend G7 with per-tier import bans as each tier lands; keep the full-suite parity discipline (worktree baseline diff) for every step.
+
+*End of S-7 section. The Generation Core is physically a package; the host is composition-only; S-8 owns the remaining tiers.*

@@ -9,13 +9,13 @@ const fs = require('fs');
 const config = require('../config/runtime-config');
 // S-3: the generation provider seam is the ONLY Generation → ComfyUI/GPU
 // boundary. No gpu-dispatcher / workflow-connector imports in executors.
-const provider = require('../generation/comfyui-provider');
+const provider = require('@animastor/generation').comfyuiProvider;
 const profileOverride = require('../services/profile-override');
 const helpers = require('./helpers');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 const promptBuilder = require('./prompt-builder');
-const assemblyProfile = require('../generation/prompt-profiles/assembly-profile');
+const assemblyProfile = require('@animastor/generation').promptProfiles.assemblyProfile;
 const registry = require('./registry');
 const { collectSceneUnits } = require('./registry');
 

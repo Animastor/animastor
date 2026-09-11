@@ -19,7 +19,7 @@
 
 const counterReconciliation = require('./counter-reconciliation');
 // S-2: media types and quotas resolved from media registry
-const mediaRegistry = require('../generation/media-registry');
+const mediaRegistry = require('@animastor/generation').mediaRegistry;
 
 const logPrefix = '[METRICS]';
 

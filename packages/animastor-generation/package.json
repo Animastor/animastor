@@ -1,0 +1,50 @@
+{
+    "name": "@animastor/generation",
+    "version": "0.1.0",
+    "description": "Animastor Generation — the media-generation domain core of the Animastor backend, physically extracted from the host: the media capability registry (audio/image/video capability seam), the pure generation task registry, the per-asset state FSM contract, the canonical artifact filename grammar, the shared prompt-assembly profile resolver with character-reference normalizers, and the single Generation→ComfyUI/GPU provider seam (Job Protocol v2 dispatch). The package reaches the host (dispatch transport, runtime config slices, assembly profile files, book scene data) ONLY through the four frozen S-6 ports — no Redis, no PG, no filesystem, no Express, no runtime-config, no backend/src require inside.",
+    "keywords": [
+        "animastor",
+        "generation",
+        "audio",
+        "image",
+        "video",
+        "comfyui",
+        "job-protocol"
+    ],
+    "main": "src/index.js",
+    "exports": {
+        ".": "./src/index.js"
+    },
+    "files": [
+        "src/",
+        "README.md",
+        "LICENSE"
+    ],
+    "scripts": {
+        "test": "mocha --exit test/*.test.js"
+    },
+    "engines": {
+        "node": ">=18"
+    },
+    "license": "MIT",
+    "publishConfig": {
+        "access": "public"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/Animastor/animastor.git",
+        "directory": "packages/animastor-generation"
+    },
+    "homepage": "https://github.com/Animastor/animastor/tree/main/packages/animastor-generation#readme",
+    "bugs": {
+        "url": "https://github.com/Animastor/animastor/issues"
+    },
+    "dependencies": {
+        "@animastor/contracts": "file:../animastor-contracts",
+        "animastor-comfyui-workflow-connector": "file:../animastor-comfyui-workflow-connector"
+    },
+    "devDependencies": {
+        "chai": "^6.2.2",
+        "mocha": "^11.7.5"
+    }
+}

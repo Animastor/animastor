@@ -11,22 +11,23 @@
 const path = require('path');
 
 // ======================================================
-// S-6: GENERATION HOST PORTS — composition-root wiring
+// S-6/S-7: GENERATION HOST PORTS — composition-root wiring
 // ======================================================
-// Generation Core (backend/src/generation/**) depends only on Generation-
-// owned ports (generation/ports/*); the host implements them via the
-// adapters below. Wired FIRST — before any generation module loads
-// (default-registrations reads the config port at require time).
-// Ownership: ports belong to Generation Core, adapters to the host.
-// Docs: docs/architecture/generation-module-extraction-reconnaissance.md §28
+// The Generation package (@animastor/generation — packages/animastor-
+// generation, extracted from backend/src/generation/** in S-7) depends only
+// on Generation-owned ports (generation.ports.*); the host implements them
+// via the adapters below. Wired FIRST — before any generation module loads
+// (default-registrations reads the config port at load time).
+// Ownership: ports belong to the package, adapters to the host.
+// Docs: docs/architecture/generation-module-extraction-reconnaissance.md §28–29
 require('./config/generation-config-adapter').bindGenerationConfig();
-require('./generation/ports/dispatch-transport').setDispatchTransport({
+require('@animastor/generation').ports.dispatchTransport.setDispatchTransport({
     dispatch: (taskSpec) => require('./runtime/gpu-dispatcher').sendUnified(taskSpec),
 });
-require('./generation/ports/profile-store').setProfileStore({
+require('@animastor/generation').ports.profileStore.setProfileStore({
     getAssemblyProfile: require('./services/ai-loader').getAssemblyProfile,
 });
-require('./generation/ports/book-data').setBookData({
+require('@animastor/generation').ports.bookData.setBookData({
     collectSceneUnits: require('./book').collectSceneUnits,
     tokensToString: require('./book/lazy-book/appearance').tokensToString,
 });
@@ -41,7 +42,9 @@ const video = require('./video');
 
 // S-2: Initialize media registry with default registrations.
 // Must run before any module that consumes the registry (runtime, orchestration, routes).
-require('./generation/default-registrations');
+// S-7: the default registrations live in the package (bootstrap() is the
+// eager startup entry; the registry also self-bootstraps lazily on first access).
+require('@animastor/generation').bootstrap();
 const { resumeIncompleteSessions } = require('./startup-resume');
 const orchestrator = require('./orchestration');
 // S-5: runtime receives orchestration behavior (stage executor + FSM facade

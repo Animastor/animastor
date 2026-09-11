@@ -50,7 +50,10 @@ const MEDIA_EXECUTORS = [
     'backend/src/orchestration/scene-orchestrator.js',
 ];
 
-const PROVIDER_SEAM = 'backend/src/generation/comfyui-provider.js';
+// S-7: the provider seam is package-owned (packages/animastor-generation).
+const PROVIDER_SEAM = 'packages/animastor-generation/src/providers/comfyui-provider.js';
+
+const GENERATION_PKG_SRC = path.join(REPO_ROOT, 'packages', 'animastor-generation', 'src');
 
 function readSrc(relPath) {
     return readSource(path.join(REPO_ROOT, relPath));
@@ -98,8 +101,9 @@ describe('architecture: S-3 provider seam (executor bans)', () => {
             'backend/src/image/iu-processor.js',
             'backend/src/orchestration/scene-orchestrator.js',
         ]) {
+            // S-7: executors consume the provider through the package root
             expect(readSrc(file), `${file} must require the provider seam`)
-                .to.match(/require\(\s*['"]\.\.\/generation\/comfyui-provider['"]\s*\)/);
+                .to.match(/require\(\s*['"]@animastor\/generation['"]\s*\)\.comfyuiProvider/);
         }
     });
 
@@ -144,12 +148,17 @@ describe('architecture: S-3 provider seam (knowledge centralization)', () => {
             'backend/src/backend.cjs',                  // composition root: startup configure + load
         ]);
         const offenders = [];
-        for (const file of listSourceFiles(BACKEND_SRC)) {
-            const r = rel(file);
-            if (ALLOWED.has(r)) continue;
-            for (const spec of requireSpecifiers(readSource(file))) {
-                if (spec === 'animastor-comfyui-workflow-connector' || spec.includes('connector-loader')) {
-                    offenders.push(`${r}: ${spec}`);
+        // S-7: scan the host tree AND the package tree (the provider lives
+        // in packages/animastor-generation — connector knowledge may appear
+        // only there, inside providers/).
+        for (const root of [BACKEND_SRC, GENERATION_PKG_SRC]) {
+            for (const file of listSourceFiles(root)) {
+                const r = rel(file);
+                if (ALLOWED.has(r)) continue;
+                for (const spec of requireSpecifiers(readSource(file))) {
+                    if (spec === 'animastor-comfyui-workflow-connector' || spec.includes('connector-loader')) {
+                        offenders.push(`${r}: ${spec}`);
+                    }
                 }
             }
         }
@@ -244,7 +253,10 @@ describe('architecture: S-3 provider seam (external boundaries)', () => {
         // S-6 UPDATE: dispatch goes through the DispatchTransport port (the
         // host adapter IS gpu-dispatcher.sendUnified) — no private HTTP
         // calls, no re-stamped protocol version, no private Redis keys
-        expect(seam).to.include("require('./ports/dispatch-transport')");
+        expect(seam).to.include("require('../ports/dispatch-transport')");
+        // S-7: the Job Protocol comes from the frozen contracts package
+        // (the backend job-schema facade is its zero-logic re-export)
+        expect(seam).to.include("require('@animastor/contracts')");
         expect(seam).to.match(/dispatch\(taskSpec\)/);
         expect(seam).to.not.match(/fetch\(|HUB_URL|protocol_version|animastor:queue|animastor:job/);
         // job-id building rides the frozen @animastor/contracts facade

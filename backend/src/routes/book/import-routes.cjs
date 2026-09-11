@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const { publishProgress } = require('../../services/progress-pubsub.cjs');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 
 // ======================================================
 // FALLBACK DEDUP: scan books dir for lazy books matching file hash

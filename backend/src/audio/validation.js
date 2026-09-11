@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const helpers = require('./helpers');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 
 async function validateCanonicalAudio(filePath) {
     if (!filePath || typeof filePath !== 'string') {

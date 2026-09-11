@@ -8,8 +8,8 @@
 // ======================================================
 
 const { expect } = require('chai');
-const { profileNameFromConnector } = require('../src/generation/comfyui-provider');
-const { resolveAssembly, DEFAULT_AUDIO_SECTIONS } = require('../src/image/assembly-profile');
+const { profileNameFromConnector } = require('@animastor/generation').comfyuiProvider;
+const { resolveAssembly, DEFAULT_AUDIO_SECTIONS } = require('@animastor/generation').promptProfiles.assemblyProfile;
 
 // Silence audio helpers.log during tests
 const helpers = require('../src/audio/helpers');

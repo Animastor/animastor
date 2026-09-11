@@ -5,8 +5,8 @@
 // Uses connectors for workflow node resolution.
 
 const helpers = require('./helpers');
-const charUtils = require('../generation/prompt-profiles/character-utils');
-const assembly = require('../generation/prompt-profiles/assembly-profile');
+const charUtils = require('@animastor/generation').promptProfiles.characterUtils;
+const assembly = require('@animastor/generation').promptProfiles.assemblyProfile;
 
 function resolveRenderMode(scene, book) {
     if (scene?.visual?.render) {

@@ -12,7 +12,7 @@ const wfBuilder = require('../workflows/video/video-workflows');
 // orchestrator through the provider seam (generation/comfyui-provider).
 const jobSchema = require('../runtime/job-schema');
 // S-4: filename/jobId grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 
 const OUTPUT_DIR = config.OUTPUT_DIR;
 const FPS = 24;

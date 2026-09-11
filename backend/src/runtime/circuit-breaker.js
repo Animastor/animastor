@@ -18,7 +18,7 @@
 // - external worker callbacks
 
 // S-2: media service targets resolved from the registry
-const mediaRegistry = require('../generation/media-registry');
+const mediaRegistry = require('@animastor/generation').mediaRegistry;
 
 const logPrefix = '[CIRCUIT]';
 

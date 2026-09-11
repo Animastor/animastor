@@ -21,6 +21,7 @@
     "@animastor/ai-analysis": "file:../packages/animastor-ai-analysis",
     "@animastor/assistant": "file:../packages/animastor-assistant",
     "@animastor/editor": "file:../packages/animastor-editor",
+    "@animastor/generation": "file:../packages/animastor-generation",
     "@animastor/parser": "file:../packages/animastor-parser",
     "@animastor/player": "file:../packages/animastor-player",
     "@animastor/vbook-runtime": "file:../packages/animastor-vbook-runtime",

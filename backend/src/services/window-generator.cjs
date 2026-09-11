@@ -8,7 +8,7 @@
 const { log } = require('../helpers/utils.cjs');
 const { isBookCancelled } = require('./agent-session');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
-const artifactNaming = require('../generation/artifact-naming');
+const artifactNaming = require('@animastor/generation').artifactNaming;
 
 module.exports = function({ redis, txtImporter, genSessionRepo, state, activeScenes, placeholderAudio, saveChunk, config }) {
     /**

@@ -1,4 +1,4 @@
-const mediaRegistry = require('../generation/media-registry');
+const mediaRegistry = require('@animastor/generation').mediaRegistry;
 // ======================================================
 // RETRY BUDGET MANAGER (MINIMAL)
 // ======================================================
