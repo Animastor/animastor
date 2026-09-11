@@ -62,7 +62,6 @@ module.exports = function(app, redis, deps) {
 
     // Version introspection routes
     require('./book/versions-routes.cjs')(app, {
-        storage: deps.storage,
         sceneAssetsRepo: deps.sceneAssetsRepo,
         log: deps.utils.log,
     });

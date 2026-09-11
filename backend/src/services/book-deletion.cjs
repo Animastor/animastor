@@ -41,6 +41,10 @@ const path = require('path');
  *   setCancelFlag   - runtime scene-window cancel flag adapter (required;
  *                     injected from backend.cjs, keeps the book layer free
  *                     of direct runtime-module requires)
+ *   agentSessionControl - VBook agent-session cancel port (required; the
+ *                     cascade must not own the agent_sessions SQL — the
+ *                     same frozen port implementation serves cancel-worker
+ *                     and the generation routes)
  *   purgeAssistantForBook - Assistant-data purge port (required; the
  *                     cascade must not know the ai_chat_sessions table —
  *                     the future @animastor/assistant owns that data)
@@ -51,6 +55,7 @@ function createBookDeletion(deps) {
         getAllChunks, getChunk, cleanBookRedisKeys,
         log = console.log,
         setCancelFlag = null,
+        agentSessionControl = null,
         purgeAssistantForBook = null,
     } = deps;
 
@@ -86,10 +91,10 @@ function createBookDeletion(deps) {
             console.warn(`[DELETE-BOOK] Failed to set cancelled-workers: ${redisErr.message}`);
         }
         try {
-            await storage.postgres.query(
-                `UPDATE agent_sessions SET status = 'cancelled', updated_at = $1 WHERE book_id = $2 AND status IN ('running', 'paused')`,
-                [Math.floor(Date.now() / 1000), bookId]
-            );
+            if (!agentSessionControl || typeof agentSessionControl.cancelSessions !== 'function') {
+                throw new Error('bookDeletion: agentSessionControl adapter is required');
+            }
+            await agentSessionControl.cancelSessions(bookId);
         } catch (pgErr) {
             console.warn(`[DELETE-BOOK] Failed to cancel agent sessions: ${pgErr.message}`);
         }

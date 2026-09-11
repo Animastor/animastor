@@ -292,10 +292,15 @@ describe('T6: route/controller does not implement the book deletion cascade', ()
         };
         const fakeStorage = {
             postgres: {
-                query: async (sql) => {
-                    order.push(/UPDATE agent_sessions/.test(sql) ? 'cancel-agent-sessions' : 'pg-cleanup');
+                query: async () => {
+                    order.push('pg-cleanup');
                 },
             },
+        };
+        // Agent-session cancel port (the same frozen seam production wires
+        // from agent-session-control): records the cancellation signal order.
+        const fakeAgentSessionControl = {
+            cancelSessions: async () => { order.push('cancel-agent-sessions'); return { cancelled: true }; },
         };
         const fakeBook = {
             resetBook: async (id) => { order.push(`resetBook:${id}`); },
@@ -313,6 +318,7 @@ describe('T6: route/controller does not implement the book deletion cascade', ()
                 cleanBookRedisKeys: async () => {},
                 log: () => {},
                 setCancelFlag: async () => { order.push('set-cancel-flag'); },
+                agentSessionControl: fakeAgentSessionControl,
                 // Assistant-data purge seam (extraction preparation) — the
                 // cascade reaches Assistant data only through this port.
                 purgeAssistantForBook: async () => { order.push('purge-assistant'); },

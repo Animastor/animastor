@@ -17,8 +17,10 @@ function createResponse() {
 }
 
 /**
- * Build the /agent-status route with a stubbed postgres storage layer.
- * @param {{ agentRow?: object|null, agentSteps?: object[], genRows?: object[] }} state
+ * Build the /agent-status route with the agent-session store and the
+ * generation-session repository stubbed at their narrow ops (the route no
+ * longer issues raw SQL — Phase 2 boundary cleanup).
+ * @param {{ agentRow?: object|null, runningStepType?: string|null, genRow?: object|null }} state
  */
 function createHarness(state) {
     let handler = null;
@@ -27,27 +29,19 @@ function createHarness(state) {
             if (path.endsWith('/agent-status')) handler = callback;
         },
     };
-    const storage = {
-        postgres: {
-            query: async (sql, params) => {
-                if (sql.includes('FROM agent_steps')) {
-                    return { rows: state.agentSteps || [] };
-                }
-                if (sql.includes('FROM book_generation_sessions')) {
-                    return { rows: state.genRows || [] };
-                }
-                if (sql.includes('FROM agent_sessions')) {
-                    return { rows: state.agentRow ? [state.agentRow] : [] };
-                }
-                return { rows: [] };
-            },
-        },
-    };
     const deps = {
         config: { WINDOW_SIZE: 3 },
-        storage,
         layerConfig: { getChunkSize: async () => 3 },
         utils: { log: () => {} },
+        // agent_sessions / agent_steps read surface (services/agent-session)
+        agentSession: {
+            getLatestSessionForBook: async () => (state.agentRow ? state.agentRow : null),
+            getRunningStepType: async () => (state.runningStepType != null ? state.runningStepType : null),
+        },
+        // book_generation_sessions read surface (gen-session-repo)
+        genSessionRepo: {
+            getLatestActiveSession: async () => (state.genRow ? state.genRow : null),
+        },
     };
     require('../src/routes/book/agent-routes.cjs')(app, createMockRedis(), deps);
     return async bookId => {
@@ -60,10 +54,9 @@ function createHarness(state) {
 function makeAgentRow(status, windowData) {
     return {
         session_id: 'sess-1',
-        session_status: status,
+        status,
         progress_msg: status === 'paused' ? '⟳ Окно 1: 3 сцен. Обрабатываю следующие окна...' : 'done',
         window_data: JSON.stringify(windowData),
-        knowledge_base: null,
         source_type: 'txt_import',
     };
 }

@@ -54,6 +54,22 @@ async function getActiveSessions() {
     return result.rows;
 }
 
+/**
+ * Latest active session for one book (agent-status surface).
+ * @returns {Promise<object|null>}
+ */
+async function getLatestActiveSession(bookId) {
+    const result = await query(
+        `SELECT id, status, progress_msg, window_index, error
+         FROM book_generation_sessions
+         WHERE book_id = $1 AND status IN ('generating', 'pending', 'queued')
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [bookId]
+    );
+    return result.rows[0] || null;
+}
+
 async function getHighestCompletedWindow(bookId) {
     const result = await query(
         `SELECT COALESCE(MAX(window_index), -1) as max_window FROM book_generation_sessions WHERE book_id = $1 AND status = 'completed'`,
@@ -178,6 +194,7 @@ module.exports = {
     getLastSession,
     getSessionsByStatus,
     getActiveSessions,
+    getLatestActiveSession,
     getHighestCompletedWindow,
     markFirstWindowCompleted,
     getNextWindowIndex,

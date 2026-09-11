@@ -18,9 +18,10 @@
 //   PG-3  process.env.PG_* is read ONLY by storage/postgres/database.js
 //         (no DB configuration leaks into modules or frontends)
 //   PG-4  the storage-barrel raw-SQL channel is FROZEN: outside
-//         backend/src/storage only the current 8 barrel-query users may
-//         keep raw SQL; the list may only shrink (same discipline as
-//         DIRECT_SQL_WHITELIST in sql-boundary.test.js)
+//         backend/src/storage only the remaining barrel-query users may
+//         keep raw SQL (Phase 2 shrank the baseline 8 → 3); the list may
+//         only shrink (same discipline as DIRECT_SQL_WHITELIST in
+//         sql-boundary.test.js)
 //   PG-5  all DDL (CREATE/ALTER/DROP TABLE|INDEX, ADD COLUMN) lives in
 //         storage/postgres/schema.js — nowhere else in backend or
 //         packages
@@ -35,20 +36,18 @@ const { listSourceFiles, readSource, rel, REPO_ROOT, requireSpecifiers } = requi
 const BACKEND_SRC = path.join(REPO_ROOT, 'backend', 'src');
 const PACKAGES_DIR = path.join(REPO_ROOT, 'packages');
 
-// ── PG-4 — frozen barrel raw-SQL baseline (audit §9 L1–L8) ───────────
+// ── PG-4 — frozen barrel raw-SQL baseline (audit §9 L1–L8; Phase 2 shrunk
+// it 8 → 4: agent-routes/import-routes → agent-session + gen-session-repo;
+// generation-routes/versions-routes → scene-assets-repo) ─────────────────
 // Files outside backend/src/storage that issue raw SQL through the
 // storage barrel (`storage.postgres.query(...)` / destructure). Do NOT
 // add entries without an ADR; REMOVE entries when the file migrates to
 // a repository (mirror of DIRECT_SQL_WHITELIST discipline).
 const BARREL_SQL_WHITELIST = [
-    'backend/src/routes/book/agent-routes.cjs',
-    'backend/src/routes/book/cache-routes.cjs',
-    'backend/src/routes/book/generation-routes.cjs',
-    'backend/src/routes/book/import-routes.cjs',
-    'backend/src/routes/book/versions-routes.cjs',
-    'backend/src/runtime/reconciliation-engine.js',
-    'backend/src/services/book-deletion.cjs',
-    'backend/src/services/entity-cleanup.cjs',
+    'backend/src/routes/book/cache-routes.cjs',      // purge loop only — host purge composition (audit L5)
+    'backend/src/services/book-deletion.cjs',        // purge loop only — host deletion cascade (audit L5)
+    'backend/src/services/entity-cleanup.cjs',       // editor purge port impl; PG seam is the contract the editor seam test verifies (audit L5)
+    'backend/src/runtime/reconciliation-engine.js',  // startup recovery, fail-closed PG seams (audit L6)
 ].sort();
 // NOTE: backend.cjs wires storage.postgres (initialize/closePool/deps) but
 // issues no barrel SQL — deliberately NOT whitelisted here.

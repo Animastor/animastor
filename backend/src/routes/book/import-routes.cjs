@@ -9,6 +9,9 @@ const multer = require('multer');
 const { publishProgress } = require('../../services/progress-pubsub.cjs');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
 const artifactNaming = require('@animastor/generation').artifactNaming;
+// VBook agent-session store (host-side domain module): import/bootstrap flows
+// read session state through it, not through the raw storage barrel.
+const agentSessionDefault = require('../../services/agent-session');
 
 // ======================================================
 // FALLBACK DEDUP: scan books dir for lazy books matching file hash
@@ -59,6 +62,7 @@ module.exports = function(app, redis, deps) {
         iuRepo, cleanBookRedisKeys,
     } = deps;
     const { log } = utils;
+    const agentSession = deps.agentSession || agentSessionDefault;
 
     // Workspace ownership (Account System foundation): every imported/loaded
     // book gets a books row with a workspace. Non-fatal: PG down must not
@@ -537,16 +541,9 @@ function detectFileFormat(buf) {
                 });
             }
 
-            const { postgres } = storage;
-            const activeSessions = await postgres.query(`
-                SELECT session_id, status, progress_msg, window_data
-                FROM agent_sessions
-                WHERE book_id = $1 AND status IN ('running', 'pending')
-                ORDER BY created_at DESC LIMIT 1
-            `, [bookId]);
+            const session = await agentSession.getActiveSessionForBook(bookId);
 
-            if (activeSessions.rows.length > 0) {
-                const session = activeSessions.rows[0];
+            if (session) {
                 log(`[RESUME-BOOTSTRAP] ${bookId}: active session ${session.session_id} (${session.status})`);
                 return res.json({
                     book_id: bookId, state: 'resuming', ready: false,
@@ -826,23 +823,17 @@ function detectFileFormat(buf) {
                 }
             }
 
-            const agentResult = await storage.postgres.query(`
-                SELECT session_id, status, window_data
-                FROM agent_sessions
-                WHERE book_id = $1
-                ORDER BY created_at DESC LIMIT 1
-            `, [bookId]);
+            const agentSessionRow = await agentSession.getLatestSessionForBook(bookId);
 
-            if (agentResult.rows.length > 0) {
-                const agentSession = agentResult.rows[0];
-                const windowData = agentSession.window_data
-                    ? (typeof agentSession.window_data === 'string' ? JSON.parse(agentSession.window_data) : agentSession.window_data)
+            if (agentSessionRow) {
+                const windowData = agentSessionRow.window_data
+                    ? (typeof agentSessionRow.window_data === 'string' ? JSON.parse(agentSessionRow.window_data) : agentSessionRow.window_data)
                     : null;
 
-                if (agentSession.status === 'completed' ||
-                    agentSession.status === 'cancelled' ||
+                if (agentSessionRow.status === 'completed' ||
+                    agentSessionRow.status === 'cancelled' ||
                     (windowData && windowData.remaining_scenes && windowData.remaining_scenes.length === 0 && !windowData.remaining_text)) {
-                    log(`[TRIGGER] all done for TXT book ${bookId} (status=${agentSession.status})`);
+                    log(`[TRIGGER] all done for TXT book ${bookId} (status=${agentSessionRow.status})`);
                     return res.json({ triggered: false, all_done: true, message: 'All windows processed' });
                 }
 
@@ -924,7 +915,7 @@ function detectFileFormat(buf) {
                 }
                 await redis.set(`trigger_cooldown:${bookId}`, Date.now().toString());
 
-                return res.json({ triggered: true, source: 'txt_import', session_id: agentSession.session_id });
+                return res.json({ triggered: true, source: 'txt_import', session_id: agentSessionRow.session_id });
             }
 
             // VBook / windowGenerator path — also check cancellation

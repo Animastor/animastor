@@ -14,24 +14,17 @@ module.exports = function registerCacheRoutes(app, ctx) {
     const { redis, config, storage, path, fs, getAllChunks, getChunk, cleanBookRedisKeys, purgeAssistantForBook, log } = ctx;
 
     // GET /api/v1/book/:bookId/cache — report per-scene asset cache status.
+    //
+    // Phase 2 (PostgreSQL boundary cleanup): the historical read of the
+    // `scene_assets_cache` table is removed — that table is created NOWHERE
+    // (ghost of a dropped schema; audit §9 L14). On every real database the
+    // query failed and produced exactly the empty shape below, so the
+    // response is unchanged. Cache status now reports the empty (idle)
+    // summary; per-scene truth lives in scene_assets (see /versions).
     app.get('/api/v1/book/:bookId/cache', async (req, res) => {
         try {
             const { bookId } = req.params;
             const cacheStatus = {};
-            try {
-                const pgRows = await storage.postgres.query(`
-                    SELECT chapter_id, scene_id, status, layer
-                    FROM scene_assets_cache
-                    WHERE book_id = $1
-                `, [bookId]);
-                for (const row of pgRows.rows) {
-                    if (!cacheStatus[row.chapter_id]) cacheStatus[row.chapter_id] = {};
-                    if (!cacheStatus[row.chapter_id][row.scene_id]) cacheStatus[row.chapter_id][row.scene_id] = [];
-                    cacheStatus[row.chapter_id][row.scene_id].push({ status: row.status, layer: row.layer });
-                }
-            } catch (dbErr) {
-                console.warn('[CACHE] DB query failed:', dbErr.message);
-            }
             const totalStale = Object.values(cacheStatus).reduce((acc, ch) =>
                 acc + Object.values(ch).reduce((acc2, sc) => acc2 + sc.filter(s => s.status === 'stale').length, 0), 0);
             const totalPending = Object.values(cacheStatus).reduce((acc, ch) =>

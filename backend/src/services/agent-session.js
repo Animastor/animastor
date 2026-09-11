@@ -57,6 +57,48 @@ async function getSession(sessionId) {
     return result.rows[0] || null;
 }
 
+/**
+ * Latest agent session for a book regardless of status (agent-status /
+ * trigger-next-window surface). @returns {Promise<object|null>}
+ */
+async function getLatestSessionForBook(bookId) {
+    const result = await query(
+        `SELECT * FROM agent_sessions WHERE book_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        [bookId]
+    );
+    return result.rows[0] || null;
+}
+
+/**
+ * Latest agent session for a book that is still active (running/pending) —
+ * the resume-bootstrap surface. @returns {Promise<object|null>}
+ */
+async function getActiveSessionForBook(bookId) {
+    const result = await query(
+        `SELECT session_id, status, progress_msg, window_data
+         FROM agent_sessions
+         WHERE book_id = $1 AND status IN ('running', 'pending')
+         ORDER BY created_at DESC LIMIT 1`,
+        [bookId]
+    );
+    return result.rows[0] || null;
+}
+
+/**
+ * step_type of the currently running step of a session, or null.
+ * @returns {Promise<string|null>}
+ */
+async function getRunningStepType(sessionId) {
+    const result = await query(
+        `SELECT step_type FROM agent_steps
+         WHERE session_id = $1 AND status = 'running'
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [sessionId]
+    );
+    return result.rows[0]?.step_type || null;
+}
+
 async function createStep(sessionId, stepType, stepIndex, sceneIndex) {
     const result = await query(
         `INSERT INTO agent_steps (session_id, step_type, step_index, scene_index, status)
@@ -82,5 +124,6 @@ async function failStep(stepId, error) {
 
 module.exports = {
     createSession, isSessionCancelled, isBookCancelled, updateSession, getSession,
+    getLatestSessionForBook, getActiveSessionForBook, getRunningStepType,
     createStep, completeStep, failStep,
 };

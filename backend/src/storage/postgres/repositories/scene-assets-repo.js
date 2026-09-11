@@ -461,6 +461,50 @@ async function clearDirtyUnitIds(bookId, chapterId, sceneId) {
     `, [bookId, chapterId, sceneId]);
 }
 
+/**
+ * Per-scene version rows for the version-introspection surface
+ * (GET /book/:bookId/versions). Raw rows — the caller builds the view.
+ */
+async function getSceneVersions(bookId) {
+    const result = await query(`
+        SELECT chapter_id, scene_id, content_version, audio_config_version, scene_hash, updated_at
+        FROM scenes
+        WHERE book_id = $1
+        ORDER BY chapter_id, scene_id
+    `, [bookId]);
+    return result.rows;
+}
+
+/**
+ * Per-asset version rows for the version-introspection surface
+ * (GET /book/:bookId/versions). Raw rows — the caller builds the view.
+ */
+async function getSceneAssetVersions(bookId) {
+    const result = await query(`
+        SELECT chapter_id, scene_id, asset_type, scene_content_version, scene_audio_config_version, status, build_id
+        FROM scene_assets
+        WHERE book_id = $1
+        ORDER BY chapter_id, scene_id, asset_type
+    `, [bookId]);
+    return result.rows;
+}
+
+/**
+ * Scenes flagged dirty through the persistent PG markers:
+ * is_dirty = TRUE or a non-empty dirty_unit_ids array.
+ * Fallback dirty source for /regenerate when the diff path is empty.
+ */
+async function getFlaggedDirtyScenes(bookId) {
+    const result = await query(`
+        SELECT chapter_id, scene_id, is_dirty, dirty_unit_ids
+        FROM scenes
+        WHERE book_id = $1
+          AND (is_dirty = TRUE OR (dirty_unit_ids IS NOT NULL AND array_length(dirty_unit_ids, 1) > 0))
+        ORDER BY chapter_id, scene_id
+    `, [bookId]);
+    return result.rows;
+}
+
 module.exports = {
     upsertAsset,
     markReady,
@@ -480,6 +524,9 @@ module.exports = {
     clearDirtyUnitIds,
     clearDirtyFlag,
     getDirtyScenesByVersion,
+    getSceneVersions,
+    getSceneAssetVersions,
+    getFlaggedDirtyScenes,
     isSceneReady,
     deleteSceneAssets,
     deleteBookAssets,

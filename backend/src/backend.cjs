@@ -328,6 +328,10 @@ const routeDeps = {
         getAllChunks, getChunk, cleanBookRedisKeys,
         log: utils.log,
         setCancelFlag: (redisClient, id) => require('./runtime/scene-window').setCancelFlag(redisClient, id),
+        // Agent-session cancel port: the cascade delivers the cancellation
+        // signal through the same frozen VBook session port as cancel-worker
+        // (single owner of the agent_sessions cancel SQL).
+        agentSessionControl: require('./services/agent-session-control').createAgentSessionControl(),
         // Assistant-data purge seam: the deletion cascade must not know the
         // ai_chat_sessions table — it purges Assistant data through the port.
         purgeAssistantForBook: (bookId) => assistantPorts.purgeForBook(bookId),

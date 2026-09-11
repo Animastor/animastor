@@ -461,15 +461,9 @@ module.exports = function(app, redis, deps) {
                 if (filteredDirty.length === 0) {
                     log(`[REGENERATE] ${bookId}: diff empty — querying PG for dirty scenes`);
                     try {
-                        const pgResult = await storage.postgres.query(`
-                            SELECT chapter_id, scene_id, is_dirty, dirty_unit_ids
-                            FROM scenes
-                            WHERE book_id = $1
-                              AND (is_dirty = TRUE OR (dirty_unit_ids IS NOT NULL AND array_length(dirty_unit_ids, 1) > 0))
-                            ORDER BY chapter_id, scene_id
-                        `, [bookId]);
-                        if (pgResult.rows.length > 0) {
-                            filteredDirty = pgResult.rows.map(row => ({
+                        const pgRows = await sceneAssetsRepo.getFlaggedDirtyScenes(bookId);
+                        if (pgRows.length > 0) {
+                            filteredDirty = pgRows.map(row => ({
                                 chapter_id: row.chapter_id, scene_id: row.scene_id,
                                 reason: row.is_dirty ? 'version_stale' : 'dirty_units',
                                 dirty_layers: ['image'],

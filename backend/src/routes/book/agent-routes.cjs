@@ -3,6 +3,10 @@
 // ======================================================
 
 const { MAX_SCENES_PER_CHUNK } = require('../../services/agent-prompts');
+// VBook agent-session store (host-side domain module): the route knows the
+// status surface, not the agent_sessions/agent_steps SQL. Injectable for
+// tests; the default is the canonical store.
+const agentSessionDefault = require('../../services/agent-session');
 
 module.exports = function(app, redis, deps) {
     const {
@@ -15,6 +19,7 @@ module.exports = function(app, redis, deps) {
         iuRepo, cleanBookRedisKeys,
     } = deps;
     const { log } = utils;
+    const agentSession = deps.agentSession || agentSessionDefault;
 
     const buildWindowProgressMeta = (createdScenes, totalScenes, vbookSceneIdx) => {
         const toFiniteNumber = (value) => {
@@ -66,30 +71,13 @@ module.exports = function(app, redis, deps) {
             // window_data isn't saved yet during the pipeline.
             let configuredWindowSize = await layerConfig.getChunkSize(redis, bookId);
 
-            const agentResult = await storage.postgres.query(`
-                SELECT session_id, status as session_status, progress_msg,
-                       window_data, knowledge_base, source_type
-                FROM agent_sessions
-                WHERE book_id = $1
-                ORDER BY created_at DESC
-                LIMIT 1
-            `, [bookId]);
-
-            const agentRow = agentResult.rows[0];
+            const agentRow = await agentSession.getLatestSessionForBook(bookId);
 
             // Fetch current step_type from the latest agent_steps row
             let stepType = null;
             if (agentRow) {
                 try {
-                    const stepsResult = await storage.postgres.query(`
-                        SELECT step_type FROM agent_steps
-                        WHERE session_id = $1 AND status = 'running'
-                        ORDER BY created_at DESC
-                        LIMIT 1
-                    `, [agentRow.session_id]);
-                    if (stepsResult.rows.length > 0) {
-                        stepType = stepsResult.rows[0].step_type;
-                    }
+                    stepType = await agentSession.getRunningStepType(agentRow.session_id);
                 } catch (e) { /* best-effort */ }
             }
 
@@ -103,7 +91,7 @@ module.exports = function(app, redis, deps) {
                 ...extra,
             });
 
-            if (agentRow && agentRow.session_status === 'running') {
+            if (agentRow && agentRow.status === 'running') {
                 let windowData = null;
                 let windowIndex = null, createdScenes = null, totalScenes = null, remainingCached = null;
 
@@ -128,15 +116,7 @@ module.exports = function(app, redis, deps) {
                 }));
             }
 
-            const genResult = await storage.postgres.query(`
-                SELECT id, status, progress_msg, window_index, error
-                FROM book_generation_sessions
-                WHERE book_id = $1 AND status IN ('generating', 'pending', 'queued')
-                ORDER BY created_at DESC
-                LIMIT 1
-            `, [bookId]);
-
-            const genRow = genResult.rows[0];
+            const genRow = await genSessionRepo.getLatestActiveSession(bookId);
             if (genRow) {
                 return res.json(baseResponse({
                     active: true, session_id: genRow.id, session_status: genRow.status,
@@ -167,8 +147,8 @@ module.exports = function(app, redis, deps) {
                 const vbookSceneIdx = await redis.get(`animastor:vbook-scene-idx:${bookId}`);
                 const windowProgressMeta = buildWindowProgressMeta(createdScenes, totalScenes, vbookSceneIdx);
                 return res.json(baseResponse({
-                    active: agentRow.session_status === 'running', session_id: agentRow.session_id,
-                    session_status: agentRow.session_status, progress_msg: agentRow.progress_msg || 'Working...',
+                    active: agentRow.status === 'running', session_id: agentRow.session_id,
+                    session_status: agentRow.status, progress_msg: agentRow.progress_msg || 'Working...',
                     source_type: agentRow.source_type, window_index: windowIndex,
                     created_scenes: createdScenes, total_scenes: totalScenes, remaining_cached: remainingCached,
                     ...windowProgressMeta,
