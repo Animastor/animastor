@@ -42,3 +42,11 @@ require('@animastor/generation').ports.bookData.setBookData({
     collectSceneUnits: require('../src/book').collectSceneUnits,
     tokensToString: require('../src/book/lazy-book/appearance').tokensToString,
 });
+// O-2: PersistencePort — mirrors the production composition root: binds the
+// host persistence adapter so tier consumers (runtime/orchestration) resolve
+// persistence at call time exactly like the wired production process. Call
+// time resolution (lazy requires inside the adapter) keeps require.cache
+// repo/barrel stubs in individual harnesses fully effective.
+require('../src/runtime/persistence-port').setPersistencePort(
+    require('../src/storage/runtime-persistence-adapter')
+);

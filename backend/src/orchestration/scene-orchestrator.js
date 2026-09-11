@@ -6,6 +6,10 @@ const video = require('../video');
 // orchestrator never requires gpu-dispatcher or the workflow connector.
 const provider = require('@animastor/generation').comfyuiProvider;
 const runtimeScheduler = require('../runtime/runtime-scheduler');
+// O-2: persistence arrives ONLY through the PersistencePort (host adapter:
+// storage/runtime-persistence-adapter) — the scene-assets repository left
+// this file. SQL lives host-side.
+const persist = require('../runtime/persistence-port').persist;
 const book = require('../book');
 const layerConfig = require('../services/layer-config');
 const { log, warn, logEvent } = require('./scene-utils');
@@ -265,11 +269,10 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId, dispatchI
         return { dispatched: false, jobs: 0, completed: true, reason: 'scene_not_found' };
     }
 
-    // Read dirty unit IDs from PG
+    // Read dirty unit IDs from PG (O-2: via PersistencePort)
     let dirtyUnitIds = new Set();
     try {
-        const { getDirtyUnitIds } = require('../storage/postgres/repositories/scene-assets-repo');
-        const ids = await getDirtyUnitIds(bookId, chapterId, sceneId);
+        const ids = await persist('sceneAssets.getDirtyUnitIds')(bookId, chapterId, sceneId);
         if (ids && ids.length > 0) {
             dirtyUnitIds = new Set(ids);
             log(`[DIRTY-UNITS] ${bookId}/${chapterId}/${sceneId}: ${ids.length} dirty unit(s) from PG`);
@@ -396,11 +399,10 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchI
     }
     await videoOrch.initState(redis, bookId, chapterId, sceneId, buildId, groups);
 
-    // ── DIRTY-UNITS: читаем из PG (как в executeImageDispatch) ──
+    // ── DIRTY-UNITS: читаем из PG (как в executeImageDispatch) — O-2: via PersistencePort ──
     let dirtyUnitIds = new Set();
     try {
-        const { getDirtyUnitIds } = require('../storage/postgres/repositories/scene-assets-repo');
-        const ids = await getDirtyUnitIds(bookId, chapterId, sceneId);
+        const ids = await persist('sceneAssets.getDirtyUnitIds')(bookId, chapterId, sceneId);
         if (ids && ids.length > 0) {
             dirtyUnitIds = new Set(ids);
             log(`[DIRTY-UNITS] video ${bookId}/${chapterId}/${sceneId}: ${ids.length} dirty unit(s) from PG`);

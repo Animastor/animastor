@@ -11,7 +11,10 @@ const dispatchEngine = require('./dispatch-engine');
 // S-5: orchestration-owned behavior reaches runtime only via the injected seams
 const orchestrationSeams = require('./orchestration-seams');
 const generationProgress = require('../services/generation-progress');
-const taskRepo = require('../storage/postgres/repositories/task-repo');
+// O-2: persistence arrives ONLY through the PersistencePort (host adapter:
+// storage/runtime-persistence-adapter) — no PG repository or database
+// handles in the runtime tier.
+const persist = require('./persistence-port').persist;
 
 const logPrefix = '[SCHEDULER]';
 
@@ -219,18 +222,12 @@ function parseSceneKey(sceneKey) {
  */
 async function detectVersionStale(redis, bookId, chapterId, sceneId) {
     try {
-        const { query } = require('../storage/postgres/database');
-        const verResult = await query(`
-            SELECT s.content_version, s.audio_config_version,
-                   a.scene_content_version, a.scene_audio_config_version, a.status as asset_status
-            FROM scenes s
-            LEFT JOIN scene_assets a ON a.book_id = s.book_id
-                AND a.chapter_id = s.chapter_id
-                AND a.scene_id = s.scene_id
-            WHERE s.book_id = $1 AND s.chapter_id = $2 AND s.scene_id = $3
-        `, [bookId, chapterId, sceneId]);
+        // O-2: scenes-table version read via the PersistencePort (host SQL:
+        // storage/runtime-persistence-adapter.getAudioConfigVersions — the
+        // pre-O-2 raw query moved there verbatim).
+        const verResult = await persist('sceneVersions.getAudioConfigVersions')(bookId, chapterId, sceneId);
 
-        for (const row of verResult.rows) {
+        for (const row of verResult) {
             if (row.asset_status === 'ready') {
                 if (row.scene_content_version != null && row.content_version != null &&
                     row.scene_content_version < row.content_version) {
@@ -401,7 +398,7 @@ async function tick(redis, loadedBooks = {}) {
             );
             for (const task of completedTasks) {
                 try {
-                    await taskRepo.updateTaskStatus(task.task_id, 'completed');
+                    await persist('tasks.updateTaskStatus')(task.task_id, 'completed');
                 } catch (pgErr) {
                     warn(`TASK_COMPLETE_PERSIST_FAILED: ${task.task_id}: ${pgErr.message}`);
                 }

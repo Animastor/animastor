@@ -4,8 +4,10 @@ const state = require('../state');
 // S-4: identifier grammar composed from the canonical owner (bytes unchanged)
 const artifactNaming = require('@animastor/generation').artifactNaming;
 const runtimeScheduler = require('../runtime/runtime-scheduler');
-const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
-const { query: pgQuery } = require('../storage/postgres/database');
+// O-2: persistence arrives ONLY through the PersistencePort (host adapter:
+// storage/runtime-persistence-adapter) — the scene-assets repository and the
+// database handle left this file. SQL lives host-side.
+const persist = require('../runtime/persistence-port').persist;
 const placeholderAudio = require('../services/placeholder-audio');
 const { log, warn } = require('./scene-utils');
 
@@ -76,14 +78,13 @@ async function restoreSceneChunkStatus(redis, buildId, bookId, chapterId, sceneI
     if (fileStatus.audio.exists) {
         let audioVersionStale = false;
         try {
-            const sceneResult = await pgQuery(`
-                SELECT content_version, audio_config_version FROM scenes
-                WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
-            `, [bookId, chapterId, sceneId]);
-            if (sceneResult.rows.length > 0) {
-                const sv = sceneResult.rows[0];
-                const aAsset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio', buildId)
-                    || await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio');
+            // O-2: version staleness via the PersistencePort (same scenes-table
+            // row shape as pre-O-2, SQL lives in the host adapter).
+            const sceneRows = await persist('sceneVersions.getSceneVersions')(bookId, chapterId, sceneId);
+            if (sceneRows.length > 0) {
+                const sv = sceneRows[0];
+                const aAsset = await persist('sceneAssets.getAsset')(bookId, chapterId, sceneId, 'audio', buildId)
+                    || await persist('sceneAssets.getAsset')(bookId, chapterId, sceneId, 'audio');
                 if (aAsset && aAsset.scene_content_version != null && sv.content_version != null &&
                     aAsset.scene_content_version < sv.content_version) {
                     audioVersionStale = true;

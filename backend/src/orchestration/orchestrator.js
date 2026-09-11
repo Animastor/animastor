@@ -82,7 +82,10 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId, 
     const dispatchEngine = require('../runtime/dispatch-engine');
     const state = require('../state');
     const { log, warn, error } = require('./scene-utils');
-    const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+    // O-2: PG persistence via the PersistencePort (host adapter:
+    // storage/runtime-persistence-adapter) — the scene-assets repository and
+    // the database handle left this file. SQL lives host-side.
+    const persist = require('../runtime/persistence-port').persist;
 
     // S-2: resolve the completion handler through the registry-driven map.
     // Fallback to the direct named handlers keeps backward compatibility with
@@ -144,16 +147,14 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId, 
             // создаются лениво (ensureSceneRow) при следующем bump.
             let shouldWriteReady = false;
             try {
-                const { query: pgQuery } = require('../storage/postgres/database');
+                // O-2: version gate reads via the PersistencePort — the raw
+                // database handle and the repo left this file; the SQL moved
+                // verbatim into the host adapter (sceneVersions.getSceneVersions).
+                const sceneRows = await persist('sceneVersions.getSceneVersions')(bookId, chapterId, sceneId);
 
-                const sceneResult = await pgQuery(`
-                    SELECT content_version, audio_config_version FROM scenes
-                    WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
-                `, [bookId, chapterId, sceneId]);
-
-                if (sceneResult.rows.length === 1) {
-                    const sv = sceneResult.rows[0];
-                    const asset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, stage, buildId);
+                if (sceneRows.length === 1) {
+                    const sv = sceneRows[0];
+                    const asset = await persist('sceneAssets.getAsset')(bookId, chapterId, sceneId, stage, buildId);
 
                     if (asset) {
                         const contentVersionConfirmed =
@@ -168,7 +169,7 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId, 
                             );
                         shouldWriteReady = contentVersionConfirmed && audioVersionConfirmed;
                     }
-                } else if (sceneResult.rows.length === 0) {
+                } else if (sceneRows.length === 0) {
                     // Legacy-книга без version-схемы — READY разрешён (сцена
                     // не может устареть относительно несуществующей версии).
                     shouldWriteReady = true;
@@ -186,7 +187,7 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId, 
                     handlerOk = false;
                     phaseReason = 'artifact_path_missing';
                 } else {
-                    await sceneAssetsRepo.markReady(bookId, chapterId, sceneId, stage, artifactPath);
+                    await persist('sceneAssets.markReady')(bookId, chapterId, sceneId, stage, artifactPath);
                     log(`[PG-${stage.toUpperCase()}-READY] ${bookId}/${chapterId}/${sceneId}: status=ready`);
 
                     await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.READY);

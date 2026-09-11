@@ -47,7 +47,9 @@ const BARREL_SQL_WHITELIST = [
     'backend/src/routes/book/cache-routes.cjs',      // purge loop only — host purge composition (audit L5)
     'backend/src/services/book-deletion.cjs',        // purge loop only — host deletion cascade (audit L5)
     'backend/src/services/entity-cleanup.cjs',       // editor purge port impl; PG seam is the contract the editor seam test verifies (audit L5)
-    'backend/src/runtime/reconciliation-engine.js',  // startup recovery, fail-closed PG seams (audit L6)
+    // (O-2 removed backend/src/runtime/reconciliation-engine.js — its
+    // fail-closed PG seams moved behind the PersistencePort; the SQL lives in
+    // storage/runtime-persistence-adapter.js.)
 ].sort();
 // NOTE: backend.cjs wires storage.postgres (initialize/closePool/deps) but
 // issues no barrel SQL — deliberately NOT whitelisted here.

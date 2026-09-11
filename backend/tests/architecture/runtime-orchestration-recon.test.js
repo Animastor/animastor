@@ -72,9 +72,9 @@ describe('§32 runtime/orchestration extraction reconnaissance guards', () => {
                     offenders.push(`${rel(file)} -> ${s}`);
                 }
             }
-            // dispatch-engine's ../storage facade require is the one measured
-            // direct-PG-adjacent site; it is pinned (not condemned) here and
-            // must be replaced by the O-P1 PersistencePort at step O-2.
+            // O-2 (O-P1) DONE: the former dispatch-engine ../storage facade
+            // require is GONE — both tiers consume persistence only through
+            // runtime/persistence-port.js (see o2-persistence-port.test.js).
         }
         expect(offenders, 'redis must stay an injected parameter; PG must arrive via a port').to.deep.equal([]);
     });

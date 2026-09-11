@@ -21,14 +21,14 @@ const { listSourceFiles, readSource, rel, BACKEND_SRC } = require('./helpers');
 // moved behind the AgentSessionControl port; no direct handle remains.)
 // (Assistant prep removed middleware/ai-book-guard.js — its session→book
 // lookup moved behind the chat-session repository port.)
+// (O-2 removed orchestration/orchestrator.js, orchestration/scene-
+// restoration.js, runtime/runtime-scheduler.js and runtime/scene-window.js —
+// their version-gate/version-scene SQL moved behind the PersistencePort
+// (runtime/persistence-port → storage/runtime-persistence-adapter).)
 const DIRECT_SQL_WHITELIST = [
     'backend/src/auth/auth-service.js',
     'backend/src/image/iu-processor.js',
-    'backend/src/orchestration/orchestrator.js',
-    'backend/src/orchestration/scene-restoration.js',
     'backend/src/routes/ai-endpoint-routes.cjs',
-    'backend/src/runtime/runtime-scheduler.js',
-    'backend/src/runtime/scene-window.js',
     'backend/src/services/agent-session.js',
     'backend/src/services/agent-session-control.js',
     'backend/src/services/agent/ai-caller.js',

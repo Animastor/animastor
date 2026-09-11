@@ -20,7 +20,12 @@ const state = require('../state');
 const artifactNaming = require('@animastor/generation').artifactNaming;
 // S-2: registered stage list resolved from media registry
 const mediaRegistry = require('@animastor/generation').mediaRegistry;
-const storage = require('../storage');
+// O-2: persistence arrives ONLY through the PersistencePort (host adapter:
+// storage/runtime-persistence-adapter) — the storage barrel, PG repositories
+// and the database handle left this file. The Redis asset-registry and the
+// audio-path composition are consumed as persistence OPERATIONS through the
+// same port (their implementations stay host-side).
+const persist = require('./persistence-port').persist;
 const config = require('../config/runtime-config');
 // S-5: the event journal is an append-only observability sink (zero requires,
 // no orchestration policy) — the ONLY runtime→Generation dependency allowed
@@ -183,7 +188,9 @@ async function checkOrphanAudioState(redis, bookId, chapterId, sceneId) {
     // 'default' false-flagged every book with a real build directory.
     const buildId = resolveBookBuildId(bookId);
 
-    const audioPath = storage.filesystem.getSceneAudioPath(
+    // O-2: canonical audio path via the PersistencePort (filesystem op —
+    // the host adapter delegates to storage/filesystem-store unchanged).
+    const audioPath = persist('filesystem.getSceneAudioPath')(
         config.OUTPUT_DIR,
         buildId,
         bookId,
@@ -213,7 +220,7 @@ async function checkOrphanAudioState(redis, bookId, chapterId, sceneId) {
  * Check for assets in registry but no files.
  */
 async function checkOrphanAssets(redis, bookId, chapterId, sceneId) {
-    const assets = await storage.registry.getSceneAssetsRedis(redis, bookId, chapterId, sceneId);
+    const assets = await persist('registry.getSceneAssetsRedis')(redis, bookId, chapterId, sceneId);
 
     if (!assets) {
         return null;
@@ -275,8 +282,7 @@ async function isBookGenerationCancelled(redis, bookId) {
         if (await sceneWindow.isCancelled(redis, bookId)) return true;
     } catch (_) { /* flag unreadable — fall through to tombstone */ }
     try {
-        const generationCancelRepo = require('../storage/postgres/repositories/generation-cancel-repo');
-        return await generationCancelRepo.isCancelled(bookId);
+        return await persist('cancel.isCancelled')(bookId);
     } catch (_) {
         return false;
     }
@@ -308,8 +314,9 @@ async function checkOrphanGeneratingState(redis, bookId, chapterId, sceneId) {
 
         let hasActiveTask = false;
         try {
-            const taskRepo = require('../storage/postgres/repositories/task-repo');
-            hasActiveTask = await taskRepo.hasActiveTaskForScene(bookId, sceneId, stage);
+            // Pre-O-2 semantics preserved: a PG error is swallowed by the
+            // caller-side catch and treated as "task exists" (fail-safe).
+            hasActiveTask = await persist('tasks.hasActiveTaskForScene')(bookId, sceneId, stage);
         } catch (_) {
             hasActiveTask = true; // PG unavailable — fail safe, do NOT repair
         }
@@ -337,7 +344,7 @@ async function checkOrphanGeneratingState(redis, bookId, chapterId, sceneId) {
  */
 async function checkPartialBuilds(redis, bookId, chapterId, sceneId) {
     const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
-    const assets = await storage.registry.getSceneAssetsRedis(redis, bookId, chapterId, sceneId);
+    const assets = await persist('registry.getSceneAssetsRedis')(redis, bookId, chapterId, sceneId);
 
     // Audio READY/PLACEHOLDER but no image asset
     const audioReady = assetStates && assetStates.audio &&
@@ -1306,22 +1313,22 @@ async function applyFix(redis, fix) {
 
             case 'RECOVER_ORPHAN_ASSETS': {
                 // Clear registry entries for missing assets
-                const assets = await storage.registry.getSceneAssetsRedis(redis, scene.bookId, scene.chapterId, scene.sceneId);
+                const assets = await persist('registry.getSceneAssetsRedis')(redis, scene.bookId, scene.chapterId, scene.sceneId);
                 if (assets) {
                     if (assets.audio && assets.audio.canonical) {
-                        await storage.registry.registerSceneAudioRedis(redis, scene.bookId, scene.chapterId, scene.sceneId, {
+                        await persist('registry.registerSceneAudioRedis')(redis, scene.bookId, scene.chapterId, scene.sceneId, {
                             canonicalPath: assets.audio.canonical,
                             ready: false
                         });
                     }
                     if (assets.image && assets.image.path) {
-                        await storage.registry.registerSceneImageRedis(redis, scene.bookId, scene.chapterId, scene.sceneId, {
+                        await persist('registry.registerSceneImageRedis')(redis, scene.bookId, scene.chapterId, scene.sceneId, {
                             path: assets.image.path,
                             ready: false
                         });
                     }
                     if (assets.video && assets.video.path) {
-                        await storage.registry.registerSceneVideoRedis(redis, scene.bookId, scene.chapterId, scene.sceneId, {
+                        await persist('registry.registerSceneVideoRedis')(redis, scene.bookId, scene.chapterId, scene.sceneId, {
                             path: assets.video.path,
                             ready: false
                         });
@@ -2022,20 +2029,16 @@ async function recoverVideoOrchStates(redis, deps) {
 
 // ── PHASE C2: Version staleness check ───────────────────
 // Из startup-recovery.js: для stale-ассетов → markDirtyScene
+// O-2: the raw deps.postgres handle is GONE — the book-wide version scan is
+// the sceneVersions.getVersionStalenessRows() port op (SQL lives in the host
+// adapter verbatim). Pre-O-2 a missing deps.postgres skipped the phase; the
+// unwired-port throw hits the same catch → warn + return 0.
 async function checkVersionStaleness(redis, deps) {
-    const { postgres, orchestrator } = deps;
-    if (!postgres || !postgres.query || !orchestrator) return 0;
+    const { orchestrator } = deps;
+    if (!orchestrator) return 0;
 
     try {
-        const result = await postgres.query(`
-            SELECT s.book_id, s.chapter_id, s.scene_id, s.content_version, s.audio_config_version,
-                   a.asset_type, a.scene_content_version, a.scene_audio_config_version
-            FROM scenes s
-            LEFT JOIN scene_assets a ON a.book_id = s.book_id
-                AND a.chapter_id = s.chapter_id
-                AND a.scene_id = s.scene_id
-            WHERE s.content_version > 1 OR s.audio_config_version > 1
-        `);
+        const result = { rows: await persist('sceneVersions.getVersionStalenessRows')() };
 
         const sceneMap = new Map();
         for (const row of result.rows) {
@@ -2073,12 +2076,13 @@ async function checkVersionStaleness(redis, deps) {
 
 // ── PHASE C4: Reconcile missing scene counters from PG ─
 // Из startup-recovery.js: логирует книги с PG записями без Redis-счётчиков.
+// O-2: the raw deps.postgres handle is GONE — the DISTINCT book scan is the
+// same listBooks() port op the worklist rebuild uses (identical SQL, host
+// adapter). Unwired port → throw → catch → return 0 (pre-O-2: no
+// deps.postgres → return 0).
 async function reconcileMissingSceneState(redis, deps) {
-    const { postgres } = deps;
-    if (!postgres || !postgres.query) return 0;
-
     try {
-        const bookResult = await postgres.query(`SELECT DISTINCT book_id FROM scenes`);
+        const bookResult = { rows: await persist('listBooks')() };
         let count = 0;
         for (const row of bookResult.rows) {
             const totalKey = `animastor:book-scenes:${row.book_id}:total`;
@@ -2119,10 +2123,11 @@ async function rebuildWorkList(redis) {
     // загружен reconciliation-engine) и чтобы unit-тесты не могли подменить
     // storage/state через require.cache.
     const state = require('../state');
-    const storage = require('../storage');
     const bookModule = require('../book');
-    const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
-    const generationCancelRepo = require('../storage/postgres/repositories/generation-cancel-repo');
+    // O-2: PG persistence (scene-assets + cancel tombstone + the two raw
+    // barrel queries) via the PersistencePort; the storage barrel require
+    // left this function.
+    const persist = require('./persistence-port').persist;
     const layerConfig = require('../services/layer-config');
     const placeholderAudio = require('../services/placeholder-audio');
     const sceneWindow = require('./scene-window');
@@ -2136,12 +2141,13 @@ async function rebuildWorkList(redis) {
 
     // 0. Fail-closed: книги с cancellation tombstone (Operation #1)
     const cancelled = new Set();
-    const cancelRows = await generationCancelRepo.getAllCancelled();
+    const cancelRows = await persist('cancel.getAllCancelled')();
     for (const r of cancelRows) cancelled.add(r.book_id);
 
     // 1. Книги с историей генерации — из PG (у книги без PG-строк нет работы)
-    const bookResult = await storage.postgres.query('SELECT DISTINCT book_id FROM scenes');
-    const books = bookResult.rows.map(r => r.book_id);
+    // O-2: the raw barrel query moved verbatim to the host adapter
+    // (storage/runtime-persistence-adapter.listBooks).
+    const books = (await persist('listBooks')()).map(r => r.book_id);
 
     let scenesAdded = 0;
     for (const bookId of books) {
@@ -2175,7 +2181,7 @@ async function rebuildWorkList(redis) {
             const staleAssets = {};        // "ch:sc:asset" → ready, но version mismatch
             const dirtyStages = {};        // "ch:sc:asset" → status IN (stale,failed,pending)
             const unitDirtyScenes = new Set(); // "ch:sc" → dirty_unit_ids (image force-regen)
-            const dirtyRows = await sceneAssetsRepo.getDirtyScenesByVersion(bookId);
+            const dirtyRows = await persist('sceneAssets.getDirtyScenesByVersion')(bookId);
             for (const row of dirtyRows) {
                 const contentStale = row.scene_content_version != null && row.content_version != null &&
                     row.scene_content_version < row.content_version;
@@ -2190,16 +2196,13 @@ async function rebuildWorkList(redis) {
             // 2b. dirty_unit_ids (granular force-regen) → image; per-asset статусы
             // (stale/failed/pending) → PENDING. asset_type обязателен, чтобы
             // знать, КАКАЯ стадия грязная (раньше терялся).
-            const unitMarker = await storage.postgres.query(`
-                SELECT DISTINCT chapter_id, scene_id FROM scenes
-                WHERE book_id = $1 AND dirty_unit_ids IS NOT NULL AND array_length(dirty_unit_ids, 1) > 0
-            `, [bookId]);
-            for (const row of unitMarker.rows) unitDirtyScenes.add(`${row.chapter_id}:${row.scene_id}`);
-            const assetMarker = await storage.postgres.query(`
-                SELECT DISTINCT chapter_id, scene_id, asset_type FROM scene_assets
-                WHERE book_id = $1 AND status IN ('stale', 'failed', 'pending')
-            `, [bookId]);
-            for (const row of assetMarker.rows) dirtyStages[`${row.chapter_id}:${row.scene_id}:${row.asset_type}`] = true;
+            // O-2: dirty-marker reads via the PersistencePort. Pre-O-2 these
+            // were two raw barrel queries — the SQL moved verbatim into the
+            // host adapter op `sceneAssets.getDirtyMarkers(bookId)` which
+            // returns { unitScenes, assetStages } in the same row shapes.
+            const markers = await persist('sceneAssets.getDirtyMarkers')(bookId);
+            for (const row of markers.unitScenes) unitDirtyScenes.add(`${row.chapter_id}:${row.scene_id}`);
+            for (const row of markers.assetStages) dirtyStages[`${row.chapter_id}:${row.scene_id}:${row.asset_type}`] = true;
 
             // 3. Пройти все сцены книги: FS-проба + предикат §4 (Recon #3)
             const scenes = bookModule.collectScenes(loadedBook);

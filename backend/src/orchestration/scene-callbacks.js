@@ -18,13 +18,16 @@ const artifactNaming = require('@animastor/generation').artifactNaming;
 const audio = require('../audio');
 const image = require('../image');
 const video = require('../video');
-const storage = require('../storage');
+// O-2: persistence arrives ONLY through the PersistencePort (host adapter:
+// storage/runtime-persistence-adapter) — the storage barrel, the scene-assets
+// and IU repositories left this file. The Redis asset-registry and the
+// audio-path composition are consumed as persistence OPERATIONS through the
+// same port (their implementations stay host-side).
+const persist = require('../runtime/persistence-port').persist;
 const runtimeScheduler = require('../runtime/runtime-scheduler');
 const dispatchEngine = require('../runtime/dispatch-engine');
 const book = require('../book');
 const placeholderAudio = require('../services/placeholder-audio');
-const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
-const iuRepo = require('../storage/postgres/repositories/iu-repo');
 const { publishProgress } = require('../services/progress-pubsub.cjs');
 const { log, warn, error, logEvent } = require('./scene-utils');
 
@@ -103,12 +106,12 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
         buildId
     });
 
-    const audioPath = storage.filesystem.getSceneAudioPath(
+    const audioPath = persist('filesystem.getSceneAudioPath')(
         process.env.OUTPUT_DIR || '/data/output', buildId, bookId, chapterId, sceneId
     );
 
     try {
-        await storage.registry.registerSceneAudioRedis(redis, bookId, chapterId, sceneId, {
+        await persist('registry.registerSceneAudioRedis')(redis, bookId, chapterId, sceneId, {
             canonicalPath: audioPath,
             ready: true
         });
@@ -143,7 +146,7 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
     // only when no per-chunk data is available (e.g. pure-dialogue merged chunks).
     if (realDuration > 0) {
         try {
-            const units = await iuRepo.getImageUnitsForScene(buildId, bookId, chapterId, sceneId);
+            const units = await persist('iu.getImageUnitsForScene')(buildId, bookId, chapterId, sceneId);
             if (units && units.length > 0) {
                 const metaPath = audioPath.replace(/\.mp3$/, '.chunk-durations.json');
                 const factual = fs.existsSync(metaPath) ? JSON.parse(fs.readFileSync(metaPath, 'utf8')) : null;
@@ -192,7 +195,7 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
                             estSec = 0;
                         }
                         cursorMs = endMs;
-                        await iuRepo.upsertImageUnit(buildId, bookId, chapterId, sceneId, u.unit_id, {
+                        await persist('iu.upsertImageUnit')(buildId, bookId, chapterId, sceneId, u.unit_id, {
                             scene_order: u.scene_order || 0,
                             text: u.text,
                             text_length: u.text_length || 0,
@@ -220,7 +223,7 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
                         let endMs = cursorMs + durMs;
                         if (endMs > sceneDurationMs) endMs = sceneDurationMs;
                         cursorMs = endMs;
-                        await iuRepo.upsertImageUnit(buildId, bookId, chapterId, sceneId, u.unit_id, {
+                        await persist('iu.upsertImageUnit')(buildId, bookId, chapterId, sceneId, u.unit_id, {
                             scene_order: u.scene_order || 0,
                             text: u.text,
                             text_length: u.text_length || 0,
@@ -287,7 +290,7 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
     const imageInfo = await image.getImageMetadata(sceneImage);
 
     try {
-        await storage.registry.registerSceneImageRedis(redis, bookId, chapterId, sceneId, {
+        await persist('registry.registerSceneImageRedis')(redis, bookId, chapterId, sceneId, {
             path: sceneImage,
             width: imageInfo?.width || null,
             height: imageInfo?.height || null,
@@ -306,7 +309,7 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
 
     // R4.1: Clear dirty unit IDs
     try {
-        const dirtyIds = await sceneAssetsRepo.getDirtyUnitIds(bookId, chapterId, sceneId);
+        const dirtyIds = await persist('sceneAssets.getDirtyUnitIds')(bookId, chapterId, sceneId);
         if (dirtyIds && dirtyIds.length > 0) {
             const buildDir = path.join(process.env.OUTPUT_DIR || '/data/output', buildId);
             const stillPending = [];
@@ -317,7 +320,7 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
                 }
             }
             if (stillPending.length === 0) {
-                await sceneAssetsRepo.clearDirtyUnitIds(bookId, chapterId, sceneId);
+                await persist('sceneAssets.clearDirtyUnitIds')(bookId, chapterId, sceneId);
                 log(`[DIRTY-UNITS-CLEARED] ${bookId}/${chapterId}/${sceneId}: all ${dirtyIds.length} dirty unit(s) completed, cleared`);
                 try {
                     const iuPrefix = artifactNaming.iuImagePrefix(bookId, chapterId, sceneId);
@@ -332,7 +335,7 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
                     warn(`Failed to reset IU progress counter: ${counterErr.message}`);
                 }
             } else {
-                await sceneAssetsRepo.setDirtyUnitIds(bookId, chapterId, sceneId, stillPending);
+                await persist('sceneAssets.setDirtyUnitIds')(bookId, chapterId, sceneId, stillPending);
                 log(`[DIRTY-UNITS-PARTIAL] ${bookId}/${chapterId}/${sceneId}: ${stillPending.length}/${dirtyIds.length} dirty units still pending: ${stillPending.join(', ')}`);
             }
         }
@@ -395,7 +398,7 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
     }
 
     try {
-        await storage.registry.registerSceneVideoRedis(redis, bookId, chapterId, sceneId, {
+        await persist('registry.registerSceneVideoRedis')(redis, bookId, chapterId, sceneId, {
             path: videoPath,
             duration: duration || null,
             width: metadata?.width || null,
@@ -419,7 +422,7 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
     await publishProgress(redis, bookId, { layer: 'video', chapterId, sceneId });
 
     try {
-        await sceneAssetsRepo.clearDirtyFlag(bookId, chapterId, sceneId);
+        await persist('sceneAssets.clearDirtyFlag')(bookId, chapterId, sceneId);
         log(`[DIRTY-FLAG-CLEARED] ${bookId}/${chapterId}/${sceneId}: is_dirty=FALSE`);
     } catch (e) {
         warn(`Failed to clear dirty flag: ${e.message}`);
@@ -458,7 +461,7 @@ async function completeSceneWithoutVideo(redis, loadedBook, bookId, chapterId, s
 
 
     try {
-        await sceneAssetsRepo.clearDirtyFlag(bookId, chapterId, sceneId);
+        await persist('sceneAssets.clearDirtyFlag')(bookId, chapterId, sceneId);
     } catch (e) {
         warn(`Failed to clear dirty flag in completeSceneWithoutVideo: ${e.message}`);
     }
@@ -487,7 +490,7 @@ async function completeSceneWithoutImage(redis, loadedBook, bookId, chapterId, s
     log(`Scene complete (no image): ${bookId}/${chapterId}/${sceneId}`);
 
     try {
-        await sceneAssetsRepo.clearDirtyFlag(bookId, chapterId, sceneId);
+        await persist('sceneAssets.clearDirtyFlag')(bookId, chapterId, sceneId);
     } catch (e) {
         warn(`Failed to clear dirty flag in completeSceneWithoutImage: ${e.message}`);
     }

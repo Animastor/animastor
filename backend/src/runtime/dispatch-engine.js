@@ -17,7 +17,9 @@ const orchestrationSeams = require('./orchestration-seams');
 const leaseManager = require('./lease-manager');
 const counterReconciliation = require('./counter-reconciliation');
 const runtimeMetrics = require('./runtime-metrics');
-const storage = require('../storage');
+// O-2: the former dead `../storage` require is GONE — dispatch-engine holds
+// no persistence dependency at all (leases/quotas/markers are Redis-keyed
+// domain state over the injected redis parameter).
 const circuitBreaker = require('./circuit-breaker');
 const retryBudget = require('./retry-budget-manager');
 const crypto = require('crypto');

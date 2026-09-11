@@ -31,6 +31,15 @@ require('@animastor/generation').ports.bookData.setBookData({
     collectSceneUnits: require('./book').collectSceneUnits,
     tokensToString: require('./book/lazy-book/appearance').tokensToString,
 });
+// O-2: PERSISTENCE PORT — runtime/orchestration persistence composition.
+// The two tiers consume PG/Redis-registry/filesystem persistence ONLY
+// through runtime/persistence-port; the host adapter (storage/runtime-
+// persistence-adapter) owns every repository, SQL string and table and is
+// bound here, before any runtime module loads.
+// Docs: docs/architecture/generation-module-extraction-reconnaissance.md §32.9
+require('./runtime/persistence-port').setPersistencePort(
+    require('./storage/runtime-persistence-adapter')
+);
 
 // ======================================================
 // MODULE IMPORTS
@@ -683,8 +692,9 @@ async function startServer() {
         setImmediate(async () => {
             try {
                 const reconcileEngine = require('./runtime/reconciliation-engine');
+                // O-2: the raw postgres handle left reconcileDeps — C2/C4 read
+                // PG through the PersistencePort (wired above).
                 const reconcileDeps = {
-                    postgres: storage.postgres,
                     orchestrator,
                     taskHandler,
                     state,

@@ -29,8 +29,11 @@ const orchestrationSeams = require('./orchestration-seams');
 const activeScenes = require('./active-scenes-index');
 const audio = require('../audio/audio-service');
 const genScope = require('../services/gen-scope');
-const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
-const { query: pgQuery } = require('../storage/postgres/database');
+// O-2: persistence arrives ONLY through the PersistencePort (host adapter:
+// storage/runtime-persistence-adapter) — the scene-assets repository and the
+// database handle left this file. SQL lives host-side; this file consumes
+// state operations.
+const persist = require('./persistence-port').persist;
 const placeholderAudio = require('../services/placeholder-audio');
 const fs = require('fs');
 const path = require('path');
@@ -221,16 +224,14 @@ async function checkSceneContentCache(redis, buildId, bookId, chapterId, sceneId
         result.videoOnDisk = true;
     }
 
-    // R15: Version-based staleness check
+    // R15: Version-based staleness check (O-2: via PersistencePort —
+    // sceneVersions.getSceneVersions returns the scenes-table row shape)
     try {
-        const sceneResult = await pgQuery(`
-            SELECT content_version, audio_config_version FROM scenes
-            WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
-        `, [bookId, chapterId, sceneId]);
-        if (sceneResult.rows.length > 0) {
-            const sv = sceneResult.rows[0];
-            const aAsset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio', buildId)
-                || await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio');
+        const sceneRows = await persist('sceneVersions.getSceneVersions')(bookId, chapterId, sceneId);
+        if (sceneRows.length > 0) {
+            const sv = sceneRows[0];
+            const aAsset = await persist('sceneAssets.getAsset')(bookId, chapterId, sceneId, 'audio', buildId)
+                || await persist('sceneAssets.getAsset')(bookId, chapterId, sceneId, 'audio');
 
             if (aAsset && aAsset.scene_content_version != null && sv.content_version != null &&
                 aAsset.scene_content_version < sv.content_version) {
@@ -261,16 +262,13 @@ async function checkSceneContentCache(redis, buildId, bookId, chapterId, sceneId
 async function _checkAssetVersionStale(bookId, chapterId, sceneId, buildId) {
     const stale = Object.fromEntries(_mediaTypes().map(t => [t, false]));
     try {
-        const sceneResult = await pgQuery(`
-            SELECT content_version, audio_config_version FROM scenes
-            WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
-        `, [bookId, chapterId, sceneId]);
-        if (sceneResult.rows.length === 0) return stale;
-        const sv = sceneResult.rows[0];
+        const sceneRows = await persist('sceneVersions.getSceneVersions')(bookId, chapterId, sceneId);
+        if (sceneRows.length === 0) return stale;
+        const sv = sceneRows[0];
 
         const checkAsset = async (assetType) => {
-            const asset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, assetType, buildId)
-                || await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, assetType);
+            const asset = await persist('sceneAssets.getAsset')(bookId, chapterId, sceneId, assetType, buildId)
+                || await persist('sceneAssets.getAsset')(bookId, chapterId, sceneId, assetType);
             if (!asset) return false;
             if (asset.scene_content_version != null && sv.content_version != null &&
                 asset.scene_content_version < sv.content_version) {

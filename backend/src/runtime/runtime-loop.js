@@ -126,7 +126,7 @@ async function executeTick(redis, loadedBooks = {}) {
  * поэтому не перекрывается с другими экземплярами.
  */
 /**
- * Set reconciliation deps (taskHandler, postgres, orchestrator, etc.)
+ * Set reconciliation deps (taskHandler, orchestrator, etc.)
  * to enable full reconcileCycle phases during periodic execution.
  * Called from backend.cjs after starting the loop.
  */
