@@ -269,9 +269,12 @@ const cleanupService = require('./services/cleanup-service.cjs')(redis, config, 
 // holds no host requires.
 const chatEngine = createChatEngine(config, {
     validateBundleObject: require('./book/bundle-validator.cjs').validateBundleObject,
-    // Persona markdown is host-owned content (backend/ai tree); env
-    // override unchanged. The path is a data read, not a code edge.
-    aiProfilePath: process.env.AI_PROFILE_PATH || path.join(__dirname, '../ai/ai-assistant-profile.md'),
+    // Persona markdown is host-owned CONTENT (backend/ai tree); the HOST
+    // reads the file here and injects the ready string — the package has
+    // no fs/path knowledge. Env override (AI_PROFILE_PATH) unchanged.
+    aiProfile: require('./services/assistant-profile-loader.cjs').loadAssistantProfile(),
+    // Chat fallback base URL — operator env knob passed as injected config.
+    aiApiBaseUrl: process.env.AI_API_BASE_URL,
 });
 const windowGenerator = require('./services/window-generator.cjs')({
     redis, txtImporter, genSessionRepo, state, activeScenes,

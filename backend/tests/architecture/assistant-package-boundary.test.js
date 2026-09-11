@@ -41,6 +41,8 @@
 const { expect } = require('chai');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const { spawnSync } = require('child_process');
 const { builtinModules } = require('module');
 const {
     REPO_ROOT, BACKEND_SRC, listSourceFiles, readSource, rel, requireSpecifiers,
@@ -109,8 +111,14 @@ describe('PB2: the package manifest is publish-ready and boundary-closed', () =>
         expect(pkg.bugs && pkg.bugs.url).to.be.a('string');
         expect(pkg.engines && pkg.engines.node).to.be.a('string');
         expect(pkg.main).to.equal('src/index.cjs');
-        expect(pkg.files).to.deep.equal(['src/', 'README.md', 'LICENSE']);
+        expect(pkg.files).to.deep.equal(['src/', 'README.md', 'CHANGELOG.md', 'LICENSE']);
         expect(pkg.scripts && pkg.scripts.test).to.match(/mocha/);
+    });
+
+    it('the publish surface carries the required package docs', () => {
+        for (const doc of ['README.md', 'CHANGELOG.md', 'LICENSE']) {
+            expect(fs.existsSync(path.join(PACKAGE_DIR, doc)), `${doc} must exist for npm publish`).to.equal(true);
+        }
     });
 
     it('the package declares ZERO runtime dependencies (every host leg is injected)', () => {
@@ -227,6 +235,195 @@ describe('PB4: the package require closure stays self-contained', () => {
             }
         }
         expect(offenders, 'the package must reach these only through the injected ports').to.deep.equal([]);
+    });
+});
+
+// ── PB7 — runtime purity (no fs / env / path assumptions) ────────────────
+describe('PB7: the package runtime holds no ambient host assumptions', () => {
+    const HOST_BUILTINS = ['fs', 'node:fs', 'path', 'node:path', 'os', 'node:os', 'child_process', 'node:child_process', 'worker_threads', 'node:worker_threads'];
+
+    it('no package file requires fs/path/os/child_process or any host builtin', () => {
+        const offenders = [];
+        for (const file of listSourceFiles(PACKAGE_SRC)) {
+            for (const spec of requireSpecifiers(codeOf(readSource(file)))) {
+                if (HOST_BUILTINS.includes(spec)) offenders.push(`${rel(file)}: ${spec}`);
+            }
+        }
+        expect(offenders, 'the Assistant package must be IO-free (persona content is injected)').to.deep.equal([]);
+    });
+
+    it('no package file reads process.env / process.cwd / __dirname / __filename', () => {
+        const offenders = [];
+        for (const file of listSourceFiles(PACKAGE_SRC)) {
+            const code = codeOf(readSource(file));
+            for (const assumption of ['process.env', 'process.cwd', '__dirname', '__filename']) {
+                if (code.includes(assumption)) offenders.push(`${rel(file)}: ${assumption}`);
+            }
+        }
+        expect(offenders, 'configuration must arrive through injected dependencies').to.deep.equal([]);
+    });
+
+    it('no package file uses a dynamic require (specifier must be a string literal)', () => {
+        const offenders = [];
+        for (const file of listSourceFiles(PACKAGE_SRC)) {
+            const code = codeOf(readSource(file));
+            if (/require\s*\(\s*(?!['"])/.test(code)) offenders.push(rel(file));
+        }
+        expect(offenders, 'dynamic require is forbidden inside the package').to.deep.equal([]);
+    });
+
+    it('no package file escapes the package by a relative path', () => {
+        const offenders = [];
+        for (const file of listSourceFiles(PACKAGE_SRC)) {
+            for (const spec of requireSpecifiers(codeOf(readSource(file)))) {
+                if (!spec.startsWith('.')) continue;
+                const resolved = path.resolve(path.dirname(file), spec);
+                if (!(resolved === PACKAGE_DIR || resolved.startsWith(PACKAGE_DIR + path.sep))) {
+                    offenders.push(`${rel(file)}: ${spec}`);
+                }
+            }
+        }
+        expect(offenders, 'no require may leave the package directory').to.deep.equal([]);
+    });
+
+    it('the package does not require itself through a self-barrel or deep path', () => {
+        const offenders = [];
+        for (const file of listSourceFiles(PACKAGE_SRC)) {
+            const code = codeOf(readSource(file));
+            if (/require\(\s*['"]@animastor\/assistant/.test(code)) offenders.push(rel(file));
+        }
+        expect(offenders, 'intra-package edges use relative paths, never the package name').to.deep.equal([]);
+    });
+
+    it('the package scripts do not smuggle host paths or filesystem writes', () => {
+        const pkg = JSON.parse(fs.readFileSync(path.join(PACKAGE_DIR, 'package.json'), 'utf8'));
+        const scripts = JSON.stringify(pkg.scripts || {});
+        expect(scripts).to.not.match(/backend|\.\.\/|\.\.\\|node_modules/);
+        expect(scripts).to.not.match(/\brm\b|\bcp\b|\bmv\b/);
+    });
+});
+
+// ── PB8 — npm tarball + clean-consumer smoke test ────────────────────────
+describe('PB8: npm pack surface and clean-consumer load', function () {
+    this.timeout(120000);
+
+    const FROZEN_PACK_FILES = [
+        'CHANGELOG.md',
+        'LICENSE',
+        'README.md',
+        'package.json',
+        'src/assistant-ports-contract.cjs',
+        'src/assistant-routes.cjs',
+        'src/chat-engine.cjs',
+        'src/index.cjs',
+        'src/session-repo-contract.cjs',
+    ].sort();
+
+    let packed;
+    let tarballPath;
+    let extractDir;
+
+    before(function () {
+        const pack = spawnSync('npm', ['pack', '--json'], {
+            cwd: PACKAGE_DIR,
+            encoding: 'utf8',
+            timeout: 110000,
+        });
+        expect(pack.status, `npm pack failed: ${pack.stderr}`).to.equal(0);
+        const parsed = JSON.parse(pack.stdout);
+        packed = Array.isArray(parsed) ? parsed[0] : parsed;
+        tarballPath = path.join(PACKAGE_DIR, packed.filename);
+
+        extractDir = fs.mkdtempSync(path.join(os.tmpdir(), 'assistant-consumer-'));
+        const untar = spawnSync('tar', ['-xzf', tarballPath, '-C', extractDir], {
+            encoding: 'utf8',
+            timeout: 30000,
+        });
+        expect(untar.status, `tar extraction failed: ${untar.stderr}`).to.equal(0);
+    });
+
+    after(function () {
+        try { if (tarballPath && fs.existsSync(tarballPath)) fs.unlinkSync(tarballPath); } catch (_) {}
+        try { if (extractDir) fs.rmSync(extractDir, { recursive: true, force: true }); } catch (_) {}
+    });
+
+    it('tarball contains EXACTLY the frozen production allowlist (additions and removals both fail)', () => {
+        const files = packed.files.map((f) => f.path).sort();
+        expect(files, 'npm pack surface changed — update package.json "files" AND this guard').to.deep.equal(FROZEN_PACK_FILES);
+    });
+
+    it('tarball carries no backend source, tests, git, configs, docs or artifacts', () => {
+        const files = packed.files.map((f) => f.path);
+        const banned = [/node_modules/, /^tests?\//, /backend/, /\.git/, /\.env/, /secret/i, /package-lock/, /\.tgz$/, /^docs\//, /frontends?/];
+        const offenders = files.filter((f) => banned.some((re) => re.test(f)));
+        expect(offenders).to.deep.equal([]);
+    });
+
+    it('extracted tarball carries no host or test tree', () => {
+        const pkgRoot = path.join(extractDir, 'package');
+        expect(fs.existsSync(path.join(pkgRoot, 'src', 'index.cjs'))).to.equal(true);
+        expect(fs.existsSync(path.join(pkgRoot, 'backend'))).to.equal(false);
+        expect(fs.existsSync(path.join(pkgRoot, 'test'))).to.equal(false);
+        expect(fs.existsSync(path.join(pkgRoot, 'node_modules'))).to.equal(false);
+    });
+
+    it('a clean consumer can require the package and its public API works via injected deps', () => {
+        const pkgRoot = path.join(extractDir, 'package');
+        const api = require(path.join(pkgRoot, 'src', 'index.cjs'));
+        expect(Object.keys(api).sort()).to.deep.equal([
+            'assertAssistantPorts', 'assertSessionRepo', 'createAssistantRoutes', 'createChatEngine',
+        ]);
+
+        // createChatEngine via injected dependencies — no host files, no fs.
+        const engine = api.createChatEngine({}, {
+            validateBundleObject: () => ({ valid: true, errors: [] }),
+            aiProfile: '# Persona injected by consumer',
+            aiApiBaseUrl: 'https://example.invalid/v1',
+        });
+        expect(engine.loadSystemPrompt()).to.equal('# Persona injected by consumer');
+        expect(engine.AI_API_BASE_URL).to.equal('https://example.invalid/v1');
+
+        // fallback behavior when the consumer injects no profile
+        const fallbackEngine = api.createChatEngine({}, {
+            validateBundleObject: () => ({ valid: true, errors: [] }),
+        });
+        expect(fallbackEngine.loadSystemPrompt()).to.match(/Анимастор/);
+
+        // routes via injected ports, with a minimal express-like app double.
+        const routes = [];
+        const app = {
+            get: (p) => routes.push(['GET', p]),
+            post: (p) => routes.push(['POST', p]),
+            patch: (p) => routes.push(['PATCH', p]),
+            delete: (p) => routes.push(['DELETE', p]),
+        };
+        const repoSurface = {
+            listSessionsForBook: async () => [], getSession: async () => null,
+            getMessages: async () => [], createSession: async () => {},
+            setMessages: async () => {}, renameSession: async () => null,
+            deleteSession: async () => null, getBookIdForSession: async () => null,
+            purgeSessionsForBook: async () => {},
+        };
+        api.createAssistantRoutes(app, null, {
+            chatEngine: engine,
+            assistantPorts: {
+                loadBook: () => null, persistBook: () => ({}),
+                validateBundle: () => ({ valid: true, errors: [] }),
+                validateBundleFile: () => ({ valid: true, errors: [] }),
+                resolveChatAI: async () => ({}),
+                sessionRepo: repoSurface, purgeForBook: async () => {},
+                chatTransport: {
+                    safeFetch: async () => ({}), runSharedInference: async () => ({ ok: true }),
+                    describeSharedError: (c) => String(c), chatAiSourceToken: () => 'cloud',
+                },
+                log: () => {},
+            },
+            utils: { log: () => {} },
+        });
+        const registered = routes.map((r) => `${r[0]} ${r[1]}`);
+        expect(registered).to.include('POST /api/v1/ai/chat');
+        expect(registered).to.include('POST /api/v1/ai/chat/stream');
+        expect(registered).to.include('GET /api/v1/ai/sessions');
     });
 });
 

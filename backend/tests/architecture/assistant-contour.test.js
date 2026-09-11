@@ -61,17 +61,19 @@ describe('architecture: assistant contour (physical extraction)', () => {
         }
     });
 
-    it('A1c: the WHOLE @animastor/assistant package holds no SQL, no postgres, no ai_chat_sessions, no fs writes', () => {
+    it('A1c: the WHOLE @animastor/assistant package holds no SQL, no postgres, no ai_chat_sessions, no fs at all', () => {
         // The package is physically extracted: every src file (routes,
         // engine, contracts, entrypoint) must stay clean of host-infrastructure
-        // knowledge. The persona READ in chat-engine (injected path) is the
-        // only fs use in the package — no writeFileSync anywhere.
+        // knowledge. The persona CONTENT is injected — the package has NO
+        // filesystem knowledge whatsoever (no fs require, no fs call).
         for (const file of listSourceFiles(ASSISTANT_PKG_SRC)) {
             const src = readSource(file);
             expect(src, `${rel(file)} must not name the ai_chat_sessions table`).to.not.include('ai_chat_sessions');
             expect(src, `${rel(file)} must not require postgres/storage`).to.not.match(/require\(\s*['"][^'"]*(postgres|storage)['"]/);
             expect(src, `${rel(file)} must not contain SQL`).to.not.match(/\b(SELECT|INSERT|UPDATE|DELETE)\b[^;]*\bFROM\b|\bINSERT INTO\b|\bUPDATE\b\s+\w+\s+\bSET\b/i);
-            expect(src, `${rel(file)} must not write the filesystem`).to.not.include('writeFileSync');
+            expect(src, `${rel(file)} must not require fs`).to.not.match(/require\(\s*['"](node:)?fs['"]\s*\)/);
+            expect(src, `${rel(file)} must not use any fs API`).to.not.match(/\bfs\.(readFile|writeFile|existsSync|readdir|stat|unlink|mkdir)/);
+            expect(src, `${rel(file)} must not read process.env (injected config only)`).to.not.include('process.env');
         }
     });
 
@@ -196,7 +198,7 @@ describe('architecture: assistant contour (physical extraction)', () => {
         expect(route).to.include("res.on('close', onConnClosed)");
     });
 
-    it('A7: chat-engine bundle validation is injected (composition-root bound, NO host require)', () => {
+    it('A7: chat-engine bundle validation + persona content are injected (composition-root bound, NO host require)', () => {
         const engine = readSource(CHAT_ENGINE);
         expect(engine).to.match(/module\.exports = function\(config, deps = \{\}\)/);
         // The package engine requires the validator via injection ONLY —
@@ -205,10 +207,14 @@ describe('architecture: assistant contour (physical extraction)', () => {
         expect(engine).to.include('deps.validateBundleObject is required');
         expect(engine, 'the package engine must not require host book files').to.not.include("require('../book/bundle-validator.cjs')");
         expect(engine, 'the package engine must not require anything host-side').to.not.match(/require\(\s*['"][^'"]*book/);
-        // The composition root binds the shared validator + persona path.
+        // The persona arrives as injected CONTENT — no fs, no path.
+        expect(engine, 'the package engine must have no fs').to.not.match(/require\(\s*['"](node:)?fs['"]/);
+        expect(engine).to.include('deps.aiProfile');
+        // The composition root binds the shared validator + persona content.
         const root = readSource(COMPOSITION_ROOT);
         expect(root).to.match(/createChatEngine\(config, \{\s*validateBundleObject:/);
-        expect(root).to.include('aiProfilePath');
+        expect(root).to.include('aiProfile');
+        expect(root, 'the host reads the persona through its loader').to.include('loadAssistantProfile');
     });
 });
 

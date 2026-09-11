@@ -206,7 +206,7 @@ function startBackend() {
     const config = require('../src/config/runtime-config');
     const chatEngine = require('@animastor/assistant').createChatEngine(config, {
         validateBundleObject: require('../src/book/bundle-validator.cjs').validateBundleObject,
-        aiProfilePath: null,
+        aiProfile: null,
     });
     const app = express();
     app.use(express.json());

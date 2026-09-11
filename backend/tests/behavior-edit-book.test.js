@@ -19,7 +19,7 @@ const bookModule = require('../src/book/index');
 const config = require('../src/config/runtime-config');
 const chatEngineFactory = (cfg) => require('@animastor/assistant').createChatEngine(cfg, {
     validateBundleObject: require('../src/book/bundle-validator.cjs').validateBundleObject,
-    aiProfilePath: null,
+    aiProfile: null,
 });
 
 const ORIG_BOOKS_DIR = config.BOOKS_DIR;

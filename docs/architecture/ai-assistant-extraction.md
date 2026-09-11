@@ -21,7 +21,7 @@
 |---|---|---|
 | `chat-session-repo.js` (PG impl) | PostgreSQL infrastructure stays host | `assistantPorts.sessionRepo` |
 | `ai-book-guard.js` | Middleware + auth-context + sessionRepo | injected in `backend.cjs` composition root |
-| `backend/ai/ai-assistant-profile.md` | Persona file on host filesystem | `deps.aiProfilePath` injected at engine creation |
+| `backend/ai/ai-assistant-profile.md` | Persona file on host filesystem | `deps.aiProfile` (host reads the file via `assistant-profile-loader.cjs`, injects the CONTENT) |
 | `provider-gateway.js` | Cloud resolution, Redis, config | `assistantPorts.resolveChatAI` |
 | `url-safety.js` | SSRF guard (shared infra) | `assistantPorts.chatTransport.safeFetch` (wraps url-safety) |
 | `shared-pool.js` | Shared inference (private workers) | `assistantPorts.chatTransport.runSharedInference` |
@@ -40,11 +40,14 @@ packages/animastor-assistant/
 │   ├── assistant-routes.cjs         # HTTP contour: sessions CRUD + chat + SSE stream
 │   ├── assistant-ports-contract.cjs # Ports interface + assertAssistantPorts()
 │   └── session-repo-contract.cjs    # Session repo interface + assertSessionRepo()
+├── README.md                        # Package docs (public API, ports, architecture)
+├── CHANGELOG.md                     # Release history
+├── LICENSE
 └── test/
-    └── assistant-package.test.js    # Package-owned unit tests (PT1–PT3)
+    └── assistant-package.test.js    # Package-owned unit tests (PT1–PT4)
 ```
 
-**Dependency direction:** package → host is ZERO. All host legs are injected through the ports seam at registration time. The package has no `require()` calls into `backend/src/`.
+**Dependency direction:** package → host is ZERO. All host legs are injected through the ports seam at registration time. The package has no `require()` calls into `backend/src/`, no `fs`, no `path`, and reads no `process.env` — it is pure logic + contracts.
 
 ## 4. Ports seam (AssistantPorts)
 
@@ -83,9 +86,9 @@ The local `sharedPool = { runSharedInference, describeSharedError }` shim inside
 | Aspect | Before (host) | After (package) |
 |---|---|---|
 | `validateBundleObject` | Fallback `require('../book/bundle-validator.cjs')` | **Required** injection — throws if missing |
-| `AI_PROFILE_PATH` | `const path = require('path')` + env/fallback | `deps.aiProfilePath \|\| process.env.AI_PROFILE_PATH` (path module removed) |
-| Persona file read | `fs.readFileSync` hardcoded path | `fs.readFileSync(deps.aiProfilePath)` — fs kept only for persona read |
-| `fs` module | Full fs usage (multiple) | Only `fs.readFileSync` + `fs.existsSync` for persona read |
+| Persona | host read `fs.readFileSync(path)` at every call | `deps.aiProfile` — host loads CONTENT and injects it; package keeps no path/fs |
+| `fs` module | Full fs usage (multiple) | **REMOVED** — the package no longer requires or uses `fs` |
+| `process.env` | `AI_PROFILE_PATH`, `AI_API_BASE_URL` read inside engine | **REMOVED** — `deps.aiApiBaseUrl` injected; env read in host loader |
 
 ## 7. Architecture guards
 
@@ -99,13 +102,17 @@ The local `sharedPool = { runSharedInference, describeSharedError }` shim inside
 - **A6:** Chat transport contract (SSE frames, tools, AbortController)
 - **A7:** Engine validator injectable + composition-root bound
 
-### assistant-package-boundary.test.js (PB1–PB6) — NEW
-- **PB1:** Package `package.json` is valid JSON with correct name/version/entrypoint
-- **PB2:** Package has ZERO runtime dependencies
-- **PB3:** All `src/` files resolve inside the package or to Node builtins (no `backend/src/` requires)
-- **PB4:** No host file deep-imports package internals (subpath blocked by `package.json` exports map)
-- **PB5:** Host shim (`backend/src/routes/ai-routes.js`) is a one-line re-export of the package entrypoint
-- **PB6:** `session-repo-contract.cjs` has all 9 required methods (contract surface frozen)
+### assistant-package-boundary.test.js (PB1–PB8)
+- **PB1:** Deep-import guard — host consumes the package root only
+- **PB2:** Export-map + manifest freeze (name/version/docs/files), ZERO runtime deps
+- **PB3:** Public API surface (exactly the four factories)
+- **PB4:** Package require closure (intra-package + builtins, no cycles, no host/other packages)
+- **PB5:** Host-side adapters (PG repo, assistant-ports, ai-book-guard) stay host-side
+- **PB6:** Dependency direction (composition root is the only host consumer)
+- **PB7:** Runtime purity — no fs/path/os/child_process, no `process.env`/`__dirname`/`cwd`,
+  no dynamic require, no relative escape, no self-barrel, scripts carry no host paths
+- **PB8:** `npm pack` file allowlist + no junk + extracted tree + clean-consumer
+  `require()` smoke (engine via injected deps, routes via injected ports)
 
 ### chat-transport.test.js (updated)
 - Chat routes use package paths (not old host paths)
@@ -117,19 +124,23 @@ The local `sharedPool = { runSharedInference, describeSharedError }` shim inside
 
 ## 8. Test suite
 
-### Package tests (PT1–PT3)
+### Package tests (PT1–PT6)
 `packages/animastor-assistant/test/assistant-package.test.js` — run from `backend/`:
 ```
 npx mocha --exit ../packages/animastor-assistant/test/*.test.js
 ```
-- PT1: public API surface (4 exports, required deps)
+- PT1: public API surface (4 exports, injected persona/base URL, fallback)
 - PT2: port contracts fail closed (assertAssistantPorts, assertSessionRepo)
-- PT3: engine logic (participants normalization, patch validation, system prompt, tool modes)
+- PT3: engine logic (participants normalization, patch validation, system prompt,
+  tool modes, tool definition, context builders, response parsing, patch apply)
+- PT4: prompt building + tools + parsing (former PT3 split)
+- PT5: runtime purity (no host builtins / env / path assumptions / host requires)
+- PT6: HTTP contour registers the `/api/v1/ai/*` surface via injected ports
 
 ### Host-rewired tests (all pass)
-All runtime tests (`ai-patch-validation`, `ai-editor-mode`, `behavior-edit-book`, `ai-participants-doctrine`, `workspace-ai-security`, `ai-model-propagation`, `ai-connector-provider`, `personal-ai-provider-phase4`, `workspace-ai-provider`, `ai-shared-stream`, `ai-connector-acceptance`, `ai-shared-inference`) rewired to use `require('@animastor/assistant').createChatEngine(config, { validateBundleObject, aiProfilePath })`.
+All runtime tests (`ai-patch-validation`, `ai-editor-mode`, `behavior-edit-book`, `ai-participants-doctrine`, `workspace-ai-security`, `ai-model-propagation`, `ai-connector-provider`, `personal-ai-provider-phase4`, `workspace-ai-provider`, `ai-shared-stream`, `ai-connector-acceptance`, `ai-shared-inference`) rewired to use `require('@animastor/assistant').createChatEngine(config, { validateBundleObject, aiProfile: null })`.
 
-### Architecture guards: 819 passing, 0 failing
+### Architecture guards: 830 passing, 0 failing
 
 ### Pre-existing environment failures (not caused by extraction)
 - `16b. shared snapshot is safe for health checks` — fails on clean HEAD
@@ -163,7 +174,7 @@ packages/animastor-assistant/src/
 
 backend/src/
   ├── backend.cjs              ← require('@animastor/assistant')
-  │     ├── createChatEngine(config, { validateBundleObject, aiProfilePath })
+  │     ├── createChatEngine(config, { validateBundleObject, aiProfile })
   │     ├── createAssistantPorts({ ..., urlSafety, sharedPool })
   │     └── createAssistantRoutes(app, redis, { chatEngine, assistantPorts, utils })
   ├── services/assistant-ports.cjs  ← host adapter
@@ -171,18 +182,84 @@ backend/src/
   └── middleware/ai-book-guard.js    ← host (unchanged)
 ```
 
-## 10. What is NOT done (out of scope)
+## 10. npm / package boundary
+
+**Status:** publish-ready. `npm publish` has **NOT** been run — publication
+remains a manual, explicit step.
+
+### Boundary model
+
+```
+Host
+ ├── PostgreSQL adapter        (chat-session repository implementation)
+ ├── Book adapter              (bookModel.loadBook / book.saveBookBundle)
+ ├── Provider adapter          (provider-gateway.chat.resolveProvider)
+ ├── Transport adapter         (url-safety.safeFetch / shared-pool)
+ └── AI profile loader         (assistant-profile-loader.cjs reads the persona)
+             ↓  injected at composition root
+      @animastor/assistant
+             ↓
+        public API
+   createChatEngine / createAssistantRoutes
+   assertAssistantPorts / assertSessionRepo
+```
+
+### Published files (`package.json` `"files"`)
+
+`npm pack` emits exactly:
+
+```
+package.json
+README.md
+CHANGELOG.md
+LICENSE
+src/index.cjs
+src/chat-engine.cjs
+src/assistant-routes.cjs
+src/assistant-ports-contract.cjs
+src/session-repo-contract.cjs
+```
+
+No backend source, no `.git`, no tests, no local configs, no temporary
+files, no monorepo docs, no host infrastructure. The `exports` map is
+root-only (`"." → "./src/index.cjs"`); deep imports are blocked.
+
+### Host-side pieces (never packaged)
+
+| Piece | Home |
+|---|---|
+| `chat-session-repo.js` (PG, `ai_chat_sessions` SQL) | `backend/src/storage/postgres/repositories/` |
+| `assistant-ports.cjs` (book/PG/gateway/transport wiring) | `backend/src/services/` |
+| `assistant-profile-loader.cjs` (persona file read) | `backend/src/services/` |
+| `ai-book-guard.js` (middleware + auth context) | `backend/src/middleware/` |
+| `provider-gateway.js`, `url-safety.js`, `shared-pool.js` | `backend/src/services/` |
+
+### Publish-readiness checks
+
+- `backend/tests/architecture/assistant-package-boundary.test.js`
+  - PB1 deep-import guard, PB2 manifest freeze, PB3 public API surface,
+    PB4 package closure, PB5 host adapters, PB6 dependency direction,
+    **PB7 runtime purity** (no fs/path/os/child_process, no `process.env`,
+    no dynamic require, no relative escape, no self-barrel),
+    **PB8 npm tarball + clean-consumer smoke** (`npm pack` file allowlist,
+    no junk, extracted tree, `require()` from a clean directory, engine via
+    injected deps, routes via injected ports).
+- `backend/tests/architecture/assistant-contour.test.js` A1c/A7: no fs, no
+  env, no host require in the package.
+
+## 11. What is NOT done (out of scope)
 
 - `ai-book-guard.js` stays host-side (middleware + auth-context + sessionRepo)
-- Persona file stays on host filesystem (injected via `aiProfilePath`)
+- Persona file stays on host filesystem; the HOST reads it and injects the
+  content via `deps.aiProfile` (the package holds no fs/path)
 - `provider-gateway.js`, `url-safety.js`, `shared-pool.js` stay host-side (transport infra)
 - No PG/Redis extraction (PostgreSQL stays host infrastructure)
 - No HTTP/SSE contract changes; frontend clients untouched
-- Package-level `npm publish` (not yet — monorepo `"file:"` dependency only)
+- Package-level `npm publish` (not yet — a manual explicit step; the code is
+  publish-ready and `npm pack` verified)
 
-## 11. Remaining work
+## 12. Remaining work
 
-1. **Package `README.md`** — document public API, ports contract, host integration
-2. **Package runtime tests** — engine-level edge cases (optional, current PT1–PT3 cover core)
-3. **`npm publish`** — after monorepo stabilization and version freeze
-4. **Old host file references** — comment-only references in 5+ test files (cosmetic, non-functional)
+1. **`npm publish`** — after monorepo stabilization and version freeze
+   (manual, explicit step; the package is publish-ready and `npm pack` verified)
+2. **Old host file references** — comment-only references in 5+ test files (cosmetic, non-functional)

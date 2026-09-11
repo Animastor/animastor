@@ -91,7 +91,7 @@ const CREATE_BOOK_SUBPATHS = new Set(['import', 'import-txt', 'import-text', 'lo
 function buildApp() {
     const chatEngine = require('@animastor/assistant').createChatEngine(config, {
         validateBundleObject: require('../src/book/bundle-validator.cjs').validateBundleObject,
-        aiProfilePath: null,
+        aiProfile: null,
     });
     const registerAuthRoutes = require('../src/routes/auth-routes.cjs');
     const registerAiRoutes = require('@animastor/assistant').createAssistantRoutes;

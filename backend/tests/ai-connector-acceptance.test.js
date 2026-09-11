@@ -160,7 +160,7 @@ function buildBackend() {
     const config = require('../src/config/runtime-config');
     const chatEngine = require('@animastor/assistant').createChatEngine(config, {
         validateBundleObject: require('../src/book/bundle-validator.cjs').validateBundleObject,
-        aiProfilePath: null,
+        aiProfile: null,
     });
     const registerAiRoutes = require('@animastor/assistant').createAssistantRoutes;
     const registerSettingsRoutes = require('../src/routes/settings-ai-routes.cjs');

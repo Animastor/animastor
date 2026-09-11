@@ -27,8 +27,8 @@
 // requires. Every host leg — book read/write, bundle
 // validation, provider resolution, session persistence, the SSRF-guarded
 // fetch, connector shared inference, the AI-source token mapping and the
-// persona profile path — arrives as an injected port at registration
-// time, wired at the composition root (backend.cjs).
+// persona profile CONTENT — arrives as an injected dependency at
+// registration time, wired at the composition root (backend.cjs).
 //
 // Public API:
 //   const { createChatEngine, createAssistantRoutes,
@@ -36,7 +36,8 @@
 //       require('@animastor/assistant');
 //   const chatEngine = createChatEngine(config, {
 //       validateBundleObject,            // host bundle-validator binding
-//       aiProfilePath,                  // host persona file path
+//       aiProfile,                      // host persona CONTENT (host reads the file)
+//       aiApiBaseUrl,                   // optional chat fallback base URL (env knob)
 //   });
 //   createAssistantRoutes(app, redis, { chatEngine, assistantPorts, utils });
 //

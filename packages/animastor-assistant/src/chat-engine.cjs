@@ -10,23 +10,26 @@
 // validator arrives ONLY through injection (deps.validateBundleObject) —
 // the host ../book/bundle-validator.cjs require is gone with the move;
 // the composition root binds the shared validator instance. The AI
-// assistant profile (persona markdown) is host-owned content: its path
-// arrives via deps.aiProfilePath (composition root binds
-// backend/ai/ai-assistant-profile.md; env override unchanged).
-// The package holds no host imports — pure Assistant logic only.
-
-const fs = require('fs');
+// assistant profile (persona) is host-owned CONTENT: the composition root
+// READS the host markdown file and injects the resulting string via
+// deps.aiProfile — the package never knows the path, the file name or the
+// filesystem. The chat fallback base URL (an operator env knob) is passed
+// as deps.aiApiBaseUrl.
+// The package holds no host imports, no fs and no ambient env reads —
+// pure Assistant logic only.
 
 module.exports = function(config, deps = {}) {
     const { validateBundleObject } = deps;
     if (typeof validateBundleObject !== 'function') {
         throw new Error('chatEngine: deps.validateBundleObject is required (composition-root bound)');
     }
-    // AI assistant profile lives in the host AI tree (backend/ai) — the
-    // PATH is injected by the composition root; env override unchanged.
-    const AI_PROFILE_PATH = deps.aiProfilePath
-        || process.env.AI_PROFILE_PATH;
-    const AI_API_BASE_URL = process.env.AI_API_BASE_URL || 'https://integrate.api.nvidia.com/v1';
+    // AI assistant profile CONTENT — injected by the composition root (the
+    // host owns the persona file and reads it). Absent/empty → built-in
+    // fallback profile, the same behavior as the historical missing file.
+    const AI_PROFILE = typeof deps.aiProfile === 'string' ? deps.aiProfile.trim() : '';
+    // Chat fallback base URL — injected by the composition root (operator
+    // env knob). The literal default is the last-resort contract value.
+    const AI_API_BASE_URL = deps.aiApiBaseUrl || 'https://integrate.api.nvidia.com/v1';
 
     // ── Mode-specific system prompts ──────────────────
     const MODE_PROMPTS = {
@@ -203,16 +206,12 @@ module.exports = function(config, deps = {}) {
     }
 
     // ── System prompt (fallback for legacy clients) ────
-    // The persona FILE is host-owned content reached through the injected
-    // path (never a host-relative require): no path → the built-in profile
-    // fallback, same as a missing file historically. fs use is confined to
-    // this read of the injected path — no book-directory knowledge.
+    // The persona CONTENT is host-owned and injected as a ready string
+    // (deps.aiProfile) — the package has no fs, no path and no knowledge of
+    // the host persona file. No injected content → the built-in profile
+    // fallback, same as a missing file historically.
     function loadSystemPrompt() {
-        try {
-            if (AI_PROFILE_PATH && fs.existsSync(AI_PROFILE_PATH)) {
-                return fs.readFileSync(AI_PROFILE_PATH, 'utf-8').trim();
-            }
-        } catch (_) { /* ignore */ }
+        if (AI_PROFILE) return AI_PROFILE;
         return `# AI Assistant Profile: Анимастор
 
 ## Identity
@@ -546,7 +545,7 @@ module.exports = function(config, deps = {}) {
     // `applyPatches` is kept exported for tests/legacy callers; AI mutation
     // routes use `applyPatchesValidated` (see ai-routes.cjs).
     return {
-        AI_PROFILE_PATH,
+        AI_PROFILE,
         AI_API_BASE_URL,
         loadSystemPrompt,
         buildChatSystemPrompt,

@@ -168,7 +168,7 @@ describe('AI Editor Mode — edit_book tool', () => {
         const bookData = bookModule.loadBook(bookId);
         const chatEngine = require('@animastor/assistant').createChatEngine(config, {
             validateBundleObject: require('../src/book/bundle-validator.cjs').validateBundleObject,
-            aiProfilePath: null,
+            aiProfile: null,
         });
 
         const result = chatEngine.applyPatches(bookData, [
@@ -203,7 +203,7 @@ describe('AI Editor Mode — edit_book tool', () => {
         const bookData = bookModule.loadBook(bookId);
         const chatEngine = require('@animastor/assistant').createChatEngine(config, {
             validateBundleObject: require('../src/book/bundle-validator.cjs').validateBundleObject,
-            aiProfilePath: null,
+            aiProfile: null,
         });
 
         const result = chatEngine.applyPatches(bookData, [

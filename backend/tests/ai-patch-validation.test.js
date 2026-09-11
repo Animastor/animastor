@@ -25,7 +25,7 @@ const os = require('os');
 const bookModule = require('../src/book/index');
 const chatEngine = require('@animastor/assistant').createChatEngine({}, {
     validateBundleObject: require('../src/book/bundle-validator.cjs').validateBundleObject,
-    aiProfilePath: null,
+    aiProfile: null,
 });
 const config = require('../src/config/runtime-config');
 
