@@ -2023,3 +2023,323 @@ Exports map: `{ ".": "./src/index.js" }`
 16. ✅ Generation runtime architecture unchanged
 
 **Exact next action for publication:** `npm publish --access public` (after `@animastor/contracts` and `animastor-comfyui-workflow-connector` have been published, which they already are at v0.1.0).
+
+---
+
+## 32. Runtime Orchestration Extraction Reconnaissance
+
+**Date:** 2026-09-11
+**Baseline:** HEAD `0e58a434` ("chore(generation): prepare package for npm release")
+**Status:** RECONNAISSANCE ONLY — read-only measurement; no files moved, no ports created, no runtime behavior changed, no packages created.
+**Method:** full require-graph extraction over `backend/src/**` (top-level AND in-function/lazy requires resolved to files), iterative Tarjan SCC over both the static and the full graph, export-surface dumps for every runtime/orchestration module, env/fs/http access grep, inbound consumer scan, cross-checked against S-5/S-6/S-7 doc sections and their guard suites. Analysis script run offline (not committed); results below are its verbatim output, condensed.
+**Scope note (mandate correction):** the task names `backend/src/runtime/orchestration/**`; no such directory exists at this HEAD. The physical layout is two flat tiers: `backend/src/runtime/**` (20 files, 12,619 LOC — dispatch/scheduler/reconciliation infra) and `backend/src/orchestration/**` (8 files, 1,952 LOC — scene lifecycle policy). Both tiers were measured together as the "runtime/orchestration" contour; sub-division into a single future module was NOT assumed — see the ownership classification (§32.5), which splits the contour six ways.
+
+### 32.1 Scope — exact inventory
+
+**`backend/src/orchestration/` (8 files, 1,952 LOC):**
+
+| File | LOC | Public API (module.exports) | Classification |
+|---|---|---|---|
+| `orchestrator.js` | 624 | markDirty, markDirtyScene, planScene, beginStage, completeStage, failStage, completeStageWithoutVideo, completeStageWithoutImage, setScenePending, setSceneGenerating, setSceneAllReady, setScenePlaceholder, rollbackStageToPending, reconcile, resetScenes | A (facade; writers are re-exports of state/scene-state-ops) |
+| `scene-orchestrator.js` | 568 | ensureStageDispatchable, dispatchStage, restoreSceneChunkStatus, handleAudio/Image/VideoCompleted, completeStage, failStage | A + D (per-stage executor selection is orchestration policy; audio segment math is media detail) |
+| `scene-callbacks.js` | 520 | updateSceneChunks, handleAudio/VideoCompleted, completeSceneWithoutVideo, completeSceneWithoutImage, getStageHandler, STAGE_HANDLERS | A + B (validation/artifact check is domain; fs reads + music-metadata are host IO) |
+| `scene-restoration.js` | 119 | restoreSceneChunkStatus | A + B (domain resume logic; direct PG query + fs scan) |
+| `runtime-result-consumer.js` | 54 | createRuntimeResultConsumer | A (zero-require leaf, injected via composition root) |
+| `scene-utils.js` | 33 | log, warn, error, logEvent | F (pure logging utils) |
+| `index.js` | 24 | spread of scene-orchestrator + orchestrator facade + `.orchestrator` | A (facade aggregator) |
+| `event-journal.js` | 10 | one-line shim → `state/event-journal.js` | G (S-5 leftover shim; deletable host-internal re-export) |
+
+**`backend/src/runtime/` (20 files, 12,619 LOC):**
+
+| File | LOC | Public API (selected) | Classification |
+|---|---|---|---|
+| `dispatch-engine.js` | 1758 | acquireStageLease, createDispatchMetadata, verifyDispatchIdentity, registerInFlightMarker, checkQuota/acquireQuota, dispatchStage, finalizeDispatch, cancelActiveDispatch, markDispatchCompleted/Failed, startDispatchRenewal, clearHubDispatches, repairOrphanGeneratingStates + Redis key builders | A core + B (leases/quotas/markers = domain; `../storage` PG pool + hub HTTP = host) |
+| `reconciliation-engine.js` | 2341 | reconcileScene/Book/All/Cycle, 15 check* repairs, applyFix, rebuildWorkList, ReconciliationReport | A core + B/D (repair policy = domain; direct media/audio-orch/video-orch/PG/fs = host+media) |
+| `scene-window.js` | 810 | checkSceneContentCache, reconcileWindowStatuses, setCancelFlag + FSM/cache ops | A + B (window lifecycle = domain; PG + book + placeholder-audio = host) |
+| `runtime-scheduler.js` | 669 | tick, shouldScheduleAssets, detectVersionStale, addSceneToActiveIndex, initializeRuntime | A + B (scheduling policy = domain; taskRepo/PG/book = host; initializeRuntime is host lifecycle glue) |
+| `lease-manager.js` | 607 | acquireLeaseSafe, heartbeat/recovery ops | A (Redis-parameterized, registry-driven — pure domain over injected client) |
+| `retention-manager.js` | 570 | retention sweeps | B/A-adjacent (exported from runtime index, zero inbound production callers found — dead or host-ops) |
+| `circuit-breaker.js` | 588 | recordFailure/Success, checkDispatch(WithRecovery) | A (pure domain over redis param) |
+| `runtime-persistence.js` | 841 | snapshot/recovery ops | B (host persistence; **dead code** — only consumer is scheduler `initializeRuntime`, which has zero production callers per `tests/dispatch-meta-lease-lifecycle.test.js:25`) |
+| `gpu-dispatcher.js` | 224 | send, sendUnified, resolveWorkspaceForBook, workspaceHasPrivateWorker, workspaceGrantPolicyLane, clearRoutingCaches | **G — host transport adapter** (implements `ports.dispatchTransport`; routing policy PW-2 lives here) |
+| `lease/circuit/retry/counters/metrics/failure-taxonomy/active-scenes-index/worker-health/runtime-loop/runtime-result-emitter` | — | see file dumps | A (domain over injected redis) / runtime-loop = lifecycle shell (B) |
+| `job-schema.js` | 31 | re-export of `@animastor/contracts`.jobProtocolV2 (Phase 9C facade) | F (frozen choke point) |
+| `runtime-result-emitter.js` | 122 | setConsumer/emit | A (C9 observer, zero orchestration knowledge) |
+| `orchestration-seams.js` | 87 | SEAM_NAMES(6), register/clear/get/isWired | G (S-5 injection point; zero requires) |
+| `index.js` | 80 | lazy facade | A |
+
+**Runtime entry points** (who starts the machinery): `backend.cjs` — `runtime.loop.start(redis)` (:676), `reconcileEngine.reconcileCycle` at startup (:685–700), counter resets (:712–728), `registerOrchestrationSeams` (:54), `runtimeResultEmitter.setConsumer(createRuntimeResultConsumer())` (:140–141), `initializeRuntime` (exported by scheduler; **zero production callers** — dead). Health check reads `runtime.loop.isRunning()` (:563).
+
+### 32.2 Dependency graph (measured, full require closure incl. lazy)
+
+**Orchestration → outbound (12 edges to runtime, all lazy or in-callbacks):** orchestrator → {runtime-scheduler, dispatch-engine, failure-taxonomy, runtime-metrics, reconciliation-engine}; scene-callbacks → {runtime-scheduler, dispatch-engine, scene-window}; scene-orchestrator → {runtime-scheduler, job-schema}; scene-restoration → {runtime-scheduler, scene-window}.
+
+**Orchestration → host/media/state (32 edges):** state/index (×4 files), state/scene-state-ops (×2), state/event-journal (shim), storage (scene-assets-repo ×4, iu-repo, database ×2, storage/index), services (audio-orchestrator ×3, video-orchestrator ×3, placeholder-audio ×2, layer-config, progress-pubsub), audio (index ×2, segments, chunks), image/index ×2, video/index ×2, book/index ×2, config/runtime-config (orchestrator cancel leg).
+
+**Runtime → outbound (34 edges to non-runtime):** state/index (×6), state/event-journal (×2 — the classified S-5 sink), storage (scene-assets-repo ×3, task-repo ×2, database ×2, generation-cancel-repo, book/worker/workspace-repo via gpu-dispatcher, storage/index ×3), services (generation-progress ×2, audio-orchestrator ×3, video-orchestrator ×2, placeholder-audio ×2, layer-config, gen-scope), audio (index ×2, audio-service, chunks), image/index (reconciliation repair leg), book/index ×3, config/runtime-config ×4, metrics/prometheus, contracts/runtime-result.
+
+**Inbound (production consumers outside the two tiers):**
+- → orchestration: `backend.cjs` ×3 (index, event-journal shim, runtime-result-consumer); `services/scene-asset-registry.js` → orchestrator (lazy ×2).
+- → runtime: `backend.cjs` ×9; `routes/generation-routes.cjs` (scene-window, worker-health, job-schema, dispatch-engine ×2); `routes/book/generation-routes.cjs` (dispatch-engine); `services/task-handler.cjs` (job-schema, dispatch-engine); `services/video-orchestrator.js` (dispatch-engine lazy ×3); `services/provider-gateway.js` (gpu-dispatcher); `image/iu-processor.js` (dispatch-engine lazy ×4, runtime-metrics); `video/video-service.js` (job-schema); `helpers/redis-helpers.cjs` (worker-health, gpu-dispatcher, runtime-scheduler, active-scenes-index).
+- CLI/scripts: none. Frontend: none (HTTP/SSE only).
+
+**External packages:** both tiers require `@animastor/generation` (root specifier only) and node builtins; orchestration additionally `music-metadata` (audio validation, 2 lazy sites); runtime/job-schema → `@animastor/contracts`. No express, no ioredis import, no pg import anywhere in either tier.
+
+**Environment/filesystem:** zero `process.env` reads in `runtime/**` (env reaches it only via `config/runtime-config`). Orchestration: `OUTPUT_DIR` direct env reads ×3 (scene-callbacks ×2, scene-restoration ×1) — a hidden env access that bypasses runtime-config. fs: scene-callbacks, scene-restoration, orchestrator (artifact existence checks); reconciliation-engine (fs.promises + sync fs); scene-window, scheduler (book FS via lazy-book shims). HTTP: `gpu-dispatcher.js:196` `fetch(HUB_URL/task)`; `dispatch-engine.clearHubDispatches:1362` DELETE hub queue (injectable); `orchestrator.js:515` → clearHubDispatches.
+
+**Dynamic requires:** all lazy requires use literal specifiers (resolvable statically); one dynamic-require proximity case in scene-callbacks (`require('music-metadata')` inside function bodies). No computed require paths in either tier (S-5 T9 scan convention still holds).
+
+### 32.3 S-5/S-6 seam coverage — what the previous steps already prepared
+
+| Seam / port | Border it closes | Contract owner | Sufficient for extraction? | Still bypassing it |
+|---|---|---|---|---|
+| `runtime/orchestration-seams.js` (6 function seams) | runtime → orchestration policy (executor entry, FSM writers, rollback) | runtime owns registry; composition root wires | YES — the direction runtime→orchestration is already injection-based; the future package keeps this as its inbound policy seam | — |
+| `state/scene-state-ops.js` | pure FSM writers (5) | state layer (host adapter over package sceneState) | YES | — |
+| `state/event-journal.js` | journal sink | state layer | YES (zero-require leaf) | `orchestration/event-journal.js` shim remains (10 lines; deletable) |
+| `ports.dispatchTransport` | provider → GPU transport | `@animastor/generation` | YES for provider-side dispatch | runtime's OWN transport legs (gpu-dispatcher fetch, clearHubDispatches) are NOT behind it — they are the implementation side |
+| `ports.generationConfig` | config slices | `@animastor/generation` | YES for package core | runtime/orchestration still read `config/runtime-config` directly (×5 files) — no OrchestrationConfig port exists |
+| `ports.profileStore`, `ports.bookData` | profile/book payloads | `@animastor/generation` | YES for media/workflow core | orchestration/runtime read `book` facade directly ×5 (scene-window, reconciliation ×2, scene-orchestrator, scene-callbacks) — no SceneData port exists |
+| mediaRegistry / artifactNaming (package exports) | capability + artifact grammar | `@animastor/generation` | YES | — |
+| Job Protocol facade (`runtime/job-schema`) | wire contract | `@animastor/contracts` | YES | — |
+| Runtime Result Contract (C9) | finalize observation | `backend/src/contracts/runtime-result.js` (leaf) | YES, but **observation only** — semantic completion reactions still flow task-handler→completeStage (documented Phase-5 debt) | — |
+
+**Net:** S-5 dissolved the runtime→orchestration cycle and S-6 closed Generation Core's host edges, but NO seam yet exists for: PG repositories (task/scene-assets/iu/cancel), book reads, media FSM services (audio-orchestrator/video-orchestrator), placeholder-audio, progress publish, layer-config, gen-scope, runtime-config for the runtime tier itself, and the OUTPUT_DIR env reads. These are exactly the O-P ports below.
+
+### 32.4 Cycle / SCC analysis (real graph computation, not static guards)
+
+Tarjan over the full require closure (top-level + lazy) of `backend/src` (~260 files): **exactly one multi-node SCC exists — `services/system-ai ⇄ services/workspace-ai-provider` (2 modules, pre-existing, AI domain).** The 14-module orchestration⇄runtime⇄services⇄image SCC reported by the original recon (§10.2) and dissolved by S-5 (§27.2) is **confirmed dead**: no cycle touches runtime/** or orchestration/**, in either the static or the full graph. Checking each mandated candidate cycle:
+
+| Candidate cycle | Exists? | Evidence |
+|---|---|---|
+| orchestration → runtime → orchestration | NO | runtime→orchestration edges = 0 (S5-A guard + measured); orchestration→runtime = 12 one-way lazy edges |
+| orchestration → generation → orchestration | NO | generation package cannot require backend (G7-B/C transitive closure guard); orchestration→generation is root-API only |
+| orchestration → media → orchestration | NO | media (audio/image/video) never requires orchestration; the contact points are task-handler (services) and reconciliation's lazy repair legs |
+| orchestration → state → orchestration | NO | state/* is a downward sink (asset-state-store, scene-state-ops, event-journal require nothing upward) |
+| orchestration → services → orchestration | **NEARLY** | the S-5 services bridge was re-pointed to state-layer owners; the single remaining edge is `services/scene-asset-registry → orchestration/orchestrator` (lazy ×2) — one-way, no return edge, so no SCC; flagged for O-3 cleanup |
+| orchestration → VBook → orchestration | NO | VBook runtime is a package with zero backend requires; orchestration's 5 `book` reads resolve to host shims over `@animastor/vbook-runtime` |
+
+**Caveat honored:** this is a require-graph SCC of the measured tree; component-registry indirection (executor EXECUTORS map, STAGE_HANDLERS map, seams registry) is data-driven wiring wired by the composition root — it creates no module-level cycle, and the S5/P7 guards pin its wiring shape.
+
+### 32.5 Ownership audit (A orchestration / B host / C Generation Core / D media / E VBook / F shared / G future port)
+
+| File/behavior | Owner | Argument |
+|---|---|---|
+| dispatch-engine (leases, quotas, dispatch meta, identity, in-flight markers, finalization) | **A** | This IS the runtime orchestration domain; redis is an injected parameter; media knowledge comes only from mediaRegistry (package-owned) |
+| runtime-scheduler `tick`/`shouldScheduleAssets`/`detectVersionStale` | **A** | Pure scheduling policy over injected deps; layer-config read is a config edge (port candidate) |
+| scheduler `initializeRuntime` + `runtime-persistence.js` (841 LOC) | **B (dead)** | Host lifecycle glue with zero production callers; guarded as dead by tests/dispatch-meta-lease-lifecycle.test.js:25. Do NOT move to a package; mark for deletion in a separate cleanup commit |
+| retention-manager.js (570 LOC) | **B/A-adjacent (orphaned)** | Exported from runtime index but zero inbound production callers found; host-ops sweep logic. Defer — deletion candidate, not extraction candidate |
+| runtime-loop.js | **B** | setInterval/setTimeout shell + prometheus; lifecycle glue, not domain |
+| reconciliation-engine repair policy (check*/applyFix/rebuildWorkList) | **A** | Domain self-healing policy — but its 20+ lazy host legs must go through ports first |
+| reconciliation `applyFix` media-repair legs (audio chunks, image orphan repair, video orphan state) | **D** | Media-specific repair knowledge (reads audio/chunks, image, artifact files). Belongs behind a MediaRepair port, not inside the future package |
+| scene-window | **A** | Window lifecycle/cache/cancel policy — but PG query + book + placeholder-audio legs are B edges to port |
+| scene-window book/cache reads (`book`, `audio/audio-service`, `gen-scope`) | **E/D-adjacent** | Reads VBook-owned scene content + gen-scope service; needs SceneData/GenScope ports, not migration |
+| orchestration facade (orchestrator.js five-command lifecycle) | **A** | Canonical scene lifecycle policy |
+| state/scene-state-ops, state/event-journal | **B** (host adapters over C primitives) | Already placed by S-4/S-5; stay host-side, consumed via seams |
+| scene-orchestrator stage selection + EXECUTORS map | **A** | Capability-driven via mediaRegistry — no media names in code (S-2/S-3 verified) |
+| scene-orchestrator audio segment math (buildSegments, chunk cache-hit scan) | **D** | `audio/segments.buildSegments` is media implementation detail leaking into orchestration; goes behind a MediaPlanning port (O-P6) |
+| scene-callbacks validation/artifact-check/markReady | **A + B** | Policy stays; fs reads, music-metadata, PG markReady go behind ports |
+| scene-callbacks `STAGE_HANDLERS` per-media validation (mp3 duration, PNG checks, ffprobe) | **D** | Media-type knowledge; the S-2 registry covers dispatch capabilities but NOT completion validation — a validation-strategy port is needed |
+| scene-restoration | **A + B** | Resume policy vs PG query + OUTPUT_DIR fs scan |
+| runtime-result-consumer | **A** | Zero-require leaf; stays (currently only logs) |
+| gpu-dispatcher | **G→B** | Host transport adapter implementing ports.dispatchTransport; stays backend-side forever (routing policy PW-2 + hub HTTP) |
+| orchestration-seams.js | **G** | The injection seam — future package keeps an equivalent inbound port surface |
+| job-schema.js facade | **F** | Frozen Phase-9C choke point over @animastor/contracts |
+| scene-utils.js | **F** | Pure logging utils |
+| event-journal.js (orchestration shim) | **G** | 10-line S-5 leftover; delete in O-1 |
+
+### 32.6 Boundary with the published `@animastor/generation`
+
+Measured across both tiers: 12 files require `@animastor/generation` — every one via the **root specifier** (zero deep imports; G7-H exports map enforces this at runtime anyway). Exports consumed: `mediaRegistry` (dispatch-engine, gpu-dispatcher, lease-manager, circuit-breaker, retry-budget-manager, counter-reconciliation, runtime-metrics, runtime-persistence, runtime-scheduler, orchestrator, scene-orchestrator), `artifactNaming` (reconciliation-engine, scene-window, orchestrator, scene-callbacks, scene-restoration), `comfyuiProvider` (scene-orchestrator:7 — the S-3 seam call `provider.generate(...)`; no direct gpu.send remains in orchestration).
+
+**Reverse dependency Generation → orchestration/runtime: NONE** (G7-B/G7-C guard the package's transitive closure against backend imports — re-verified at this HEAD).
+
+**Contract stability:** everything orchestration consumes from Generation is already the frozen public API (G7-G: mediaRegistry/artifactNaming/comfyuiProvider surfaces). No orchestration file touches Generation internals, ports' wiring (that is composition-root only), or backend-specific implementation. **Risk that a new orchestration package depends on backend-specific Generation implementation: LOW** — the dependency is already public-API-shaped. Proposed contract (confirmed necessary, matches existing reality):
+
+```
+orchestration → @animastor/generation (public API root only):
+  mediaRegistry     — capability lists/quotas/timeout resolution (read-only)
+  artifactNaming    — canonical artifact filename grammar (read-only)
+  comfyuiProvider   — dispatch seam for stage executors (orchestration side: scene-orchestrator only)
+FORBIDDEN: deep imports, ports wiring from inside orchestration, generation→orchestration of any kind
+```
+
+### 32.7 Host dependencies → proposed ports (O-P1..O-P10; NOT created in this task)
+
+| Port | API shape | Current consumers | Host owner | Why it is a boundary |
+|---|---|---|---|---|
+| **O-P1 PersistencePort** | `tasks.{create,claimPending,markStatus}`, `sceneAssets.{get,set,markReady,getDirtyUnitIds}`, `iu.{upsert,getDurations,count}`, `cancel.{isCancelled,setTombstone}` | dispatch-engine (`../storage`), scheduler (taskRepo + raw `database.query`:222), reconciliation (3 repos), scene-window/scene-restoration/scene-callbacks (scene-assets, iu) | backend/storage (PG already frozen host-side by `postgres-host-infrastructure.test.js`) | Domain needs state CRUD, not a PG pool; §29.12 blocker #1 |
+| **O-P2 SceneDataPort** | `loadScene(bookId, chapterId, sceneId)`, `loadBuild(bookId)`, `sceneWindowContent(...)` | scene-orchestrator (book:9), scene-callbacks (book:24), reconciliation (book ×2), scene-window (book:22), scheduler (book:442) | backend host over `@animastor/vbook-runtime` shims | Orchestration must consume scene content, not the Book Model facade; keeps VBook dependency OUT of the package |
+| **O-P3 MediaFsmPort** | `audioOrch.{setGenerating,completeChunk,...}`, `videoOrch.{initState,completeGroup,...}` | scene-orchestrator (×2 each), orchestrator (×2), reconciliation (×4), scene-window | backend/services (Redis FSM adapters `animastor:audio-orch:*`/`video-orch:*`) | The per-media Redis FSMs are host state machines; the package must not own their keys |
+| **O-P4 ProgressEventsPort** | `publishProgress(bookId, payload)` | scene-callbacks (progress-pubsub), scene-window (generation-progress), scheduler (generation-progress) | backend/services (Redis pubsub `animastor:progress:*` + task registry) | Observer boundary (mirrors Generation P-2); SSE is host transport |
+| **O-P5 OrchestrationConfigPort** | `get()` → `{ leaseTtl, quotas, stuckThresholds, tickMs, outputDir, hubUrl }` | dispatch-engine, scene-window, worker-health, gpu-dispatcher, orchestrator (cancel leg) | backend/config (runtime-config) | Same shape as Generation's config port; kills direct `runtime-config` requires ×5 |
+| **O-P6 MediaPlanningPort** | `planAudioSegments(sceneData)`, `planVideoGroups(scene, iuMeta)`, `validateCompletion(stage, artifact, meta)` | scene-orchestrator (audio/segments, audio/chunks), scene-callbacks STAGE_HANDLERS, reconciliation repair legs | media modules (audio/image/video stay backend-side until their own extraction) | Isolates the remaining media implementation knowledge (segment math, completion validation) from workflow control |
+| **O-P7 PlaceholderAudioPort** | `ensurePlaceholder(scene)`, `estimateDuration(text)` | scene-window, reconciliation, scene-restoration, scene-callbacks | backend/services/placeholder-audio | ffmpeg/fs child-process work is host IO |
+| **O-P8 SceneStateSink** | the six S-5 writer signatures, typed | via orchestration-seams (already) | backend/state (scene-state-ops) | Formalizes the S-5 seam as the package's inbound contract |
+| **O-P9 DispatchExecutorPort** | `dispatchStage(redis, scene, book, buildId, stage, dispatchId)` (the existing seam signature) | dispatch-engine via seam (already) | future orchestration package implements | Formalizes the S-5 outbound executor seam |
+| **O-P10 HubCancelPort** | `clearHubDispatches(dispatchIds, opts)` | orchestrator cancel leg (orchestrator.js:515), reconciliation STALE_LEASE fix | backend host (gpu-dispatcher/fetch) | Hub HTTP must not enter the package; today it reaches in through dispatch-engine's own export |
+
+Layer-config and gen-scope reads (scene-window, reconciliation, scheduler) fold into O-P5/O-P2 as `getLayerConfig(bookId)`/`getScope(bookId)` accessors rather than their own ports.
+
+### 32.8 Startup / lifecycle: domain runtime vs host glue
+
+Traced through `backend.cjs` (composition root):
+
+| Step | Code | Verdict |
+|---|---|---|
+| Port binding (dispatchTransport, config, profileStore, bookData) | backend.cjs:15–30 | host glue |
+| VBook/player/editor package wiring | backend.cjs:70–99 | host glue |
+| `registerOrchestrationSeams(...)` (6 seams) | backend.cjs:54–61 | host glue — the composition contract |
+| `runtimeResultEmitter.setConsumer(createRuntimeResultConsumer())` | backend.cjs:139–141 | host glue |
+| Redis client construction (`ioredis`) | backend.cjs:147 | host glue — Redis never enters runtime/** as an import |
+| `startup-resume.js` (VBook session resume, tombstone-gated) | backend.cjs:48, used via reconcileDeps:692 | **VBook lifecycle glue, NOT orchestration** — reads gen-session-repo + cancel tombstone only; belongs to the VBook contour |
+| `runtime.loop.start(redis)` + startup `reconcileCycle(...)` + counter resets | backend.cjs:676–728 | host glue invoking domain entry points |
+| `initializeRuntime`/`runtime-persistence` snapshot recovery | runtime-scheduler.js:597–660 | **dead code** (zero production callers) — host lifecycle artifact, delete separately |
+| scheduler tick / reconcile cycle / dispatch finalization | runtime-loop, scheduler, reconciliation, dispatch-engine | **domain runtime** — self-contained given injected redis + ports |
+
+**Conclusion:** the orchestration domain runtime is a self-contained library (redis-parameterized functions, no process/timers ownership except runtime-loop's interval shell and no config/env ownership). Everything that touches `process`, Redis client construction, Express, PG pool, hub URL, and startup ordering is already composition-root-only. **No process/lifecycle glue needs to be (or accidentally would be) carried into a package.** The only lifecycle-adjacent pieces inside runtime/** are runtime-loop (interval shell — keep host-side or inject the timer) and the dead runtime-persistence/initializeRuntime pair.
+
+### 32.9 Persistence inventory
+
+| Call site | Kind | Domain requirement | Infrastructure impl | Port | Post-extraction owner |
+|---|---|---|---|---|---|
+| dispatch-engine → `../storage` (PG pool: leases stale sync? — storage/index facade) + Redis lease/meta/completed keys | Redis + PG | durable dispatch identity, lease mutual exclusion | host Redis/PG | O-P1 | host adapters implement; package owns the key GRAMMAR only if explicitly frozen (currently key builders live in dispatch-engine — keep them package-side as pure functions) |
+| scheduler → task-repo (`generation_tasks`), raw `database.query` (:222) | PG | worklist claims | host | O-P1 | backend/storage |
+| reconciliation → task-repo, generation-cancel-repo, scene-assets-repo | PG | repair reads/writes | host | O-P1 | backend/storage |
+| scene-window / scene-restoration / scene-callbacks → scene-assets-repo, iu-repo, raw query | PG | asset status truth | host | O-P1 | backend/storage |
+| all Redis usage (FSM, counters, heartbeats, circuit, retry budget, active scenes, chunk keys, progress) | Redis | transient coordination state | host client injected per call | (injected param — no port needed for the client; only key-owning adapters O-P3/O-P4) | key ownership: orchestration package owns its key grammars as pure functions; backend owns the client |
+| state/event-journal | Redis | observability sink | host adapter | already seam-shaped | backend/state |
+| runtime-persistence (snapshots) | Redis | restart recovery | host | — | DEAD — delete |
+
+### 32.10 Media coupling: real workflow control vs leaked media knowledge
+
+**What orchestration legitimately owns (workflow control):** stage sequencing, dispatch admission, completion aggregation, retry/circuit/lease policy, scope filtering, window lifecycle. This knowledge is capability-abstracted through the S-2 registry — no `if (stage === 'audio')` capability branching outside registry lookups (S2 sweep verified).
+
+**Residual media knowledge found (must go behind O-P6, not migrate):**
+1. `scene-orchestrator.js:145,187` — calls `audio/segments.buildSegments(sceneData)` and `audio/chunks` for chunk-cache-hit scanning (audio domain math inside orchestration).
+2. `scene-callbacks.js STAGE_HANDLERS` — per-stage completion validation embeds media artifact knowledge: mp3 duration probing via `music-metadata` (:90,:125), canonical-PNG/preview resolution, ffprobe video validation (delegated to video service), music-metadata is imported LAZILY inside handlers.
+3. `reconciliation-engine` repair legs: `audio/chunks` (:1877), `image` module (:147) orphan repair, artifact fs existence checks — media repair strategies.
+4. `scene-window` — `audio/audio-service` import for placeholder/cache logic (:30).
+5. **ComfyUI/node IDs/provider details: ZERO** in both tiers — the S-3 provider seam and S-2 registry sweeps hold (only `comfyuiProvider` usage is the seam call). No numeric node-id literals, no workflow names, no provider strings.
+6. **Filesystem layout knowledge:** artifact path composition goes through `artifactNaming` (package grammar) + `OUTPUT_DIR` env — the env read itself is the leak (O-P5), not the grammar.
+7. `image_units` knowledge: `getDirtyUnitIds`/`iu-repo` calls in scene-orchestrator (:271,:402) and scene-callbacks — IU is a domain concept of generation (package owns `image_units` FSM adjacency), but the PG access must be O-P1.
+
+### 32.11 VBook / Player / Editor boundaries
+
+| Dependency | Direct/indirect | Domain necessity | Host leak? | Port | Removable pre-extraction? |
+|---|---|---|---|---|---|
+| `book` facade (`@animastor/vbook-runtime` shims) — orchestration ×2, runtime ×3 | direct require | YES — scene content is the input data of orchestration | YES (package must not know the Book Model) | O-P2 | YES — replace 5 require sites with O-P2 |
+| `@animastor/vbook-runtime` deep specifiers (books-root, lazy-book/*) | NONE from runtime/orchestration (only backend.cjs + book shims) | — | — | — | already clean |
+| `@animastor/player` | ZERO from both tiers (routes/backend.cjs only) | NO | — | — | nothing to do |
+| `@animastor/editor` | ZERO from both tiers | NO | — | — | nothing to do |
+| VBook session SQL (`agent_sessions`, `book_generation_sessions`) | ZERO from both tiers (S-1 moved it behind AgentSessionControl; startup-resume is VBook-owned and composition-root-injected via reconcileDeps) | NO | — | — | already clean |
+| VBook window-generator → orchestration | indirect only via active-scenes-index (runtime) — the sanctioned trigger | registration trigger | no | — | no |
+
+### 32.12 Candidate extraction shapes
+
+**Option A — `runtime/orchestration` as its own npm package (`@animastor/orchestration`).**
+- Pros: single focused domain unit; symmetric with @animastor/generation; the graph (§32.4) is cycle-free and one-directional, so the package can require @animastor/generation cleanly.
+- Cons: 10 ports (O-P1..O-P10) must exist before the package compiles host-free; largest untested surface (scheduler/reconciliation are the most behavior-critical code in the backend); upstream consumers (routes/services/media) still require `../runtime/*` deep paths — a facade/shim phase is needed; release complexity highest.
+- Dependency implications: package → @animastor/generation (public API), @animastor/contracts (job protocol), nothing else. Backend keeps: gpu-dispatcher, runtime-loop, runtime-persistence(dead), scene FSMs, media, storage.
+- Ports needed: all 10. Migration risk: HIGH (dispatch/reconciliation semantics). Release complexity: HIGH.
+
+**Option B — merge INTO `@animastor/generation` as an internal runtime tier (`@animastor/generation/runtime`).**
+- Pros: no new package; the recon §17 runtime-command API (`createGeneration`, `generation.request/cancel`) becomes implementable inside the existing package (matches §29.13 step 4); fewer publish ceremonies.
+- Cons: violates the measured boundary reality — Generation Core is pure/domain (zero host deps) while orchestration needs 10 injected ports; merging forces Generation's public API to grow a heavyweight tier and its G7 zero-host-closure guarantees to be rewritten; couples the two release cadences; the S-6/§28.8 design explicitly deferred runtime ports OUT of the generation package.
+- Dependency implications: package grows 10 ports; backend shrinks by ~14,500 LOC. Ports needed: same 10. Migration risk: HIGH plus regression risk to a published, npm-released package. Release complexity: MEDIUM-HIGH (semver-major on a published package).
+
+**Option C — extract as a host-independent package/runtime library but DO NOT publish yet (`packages/animastor-orchestration`, private, consumed via workspace `file:`).**
+- Pros: full physical boundary + guards can land and stabilize inside the monorepo; npm publication deferred until the port set is proven and the facade/deep-import consumer migration settles; matches the S-7→S-9 trajectory that worked for Generation (extract → close boundary → release); reversible.
+- Cons: no npm-consumer pressure yet means some port shapes may need breaking changes later (acceptable at 0.x private); requires monorepo consumers to use the package root only (enforceable with the same G7-style guards).
+- Dependency implications: identical to A. Ports needed: 10, but can land incrementally as seams (O-1..O-6) BEFORE the physical move, exactly like S-1..S-6 preceded S-7. Migration risk: MEDIUM (seam-first de-risks). Release complexity: LOW now, MEDIUM at publish time.
+
+**Recommended: Option C.** It is the proven playbook of this repository (S-1..S-9), keeps the published Generation package untouched, and converts the HIGH-risk parts (dispatch/reconciliation semantics) into guarded seam steps before any physical move.
+
+### 32.13 Proposed target architecture (Option C — NOT created)
+
+```
+packages/animastor-orchestration/          (private 0.x; npm publish deferred)
+├── src/
+│   ├── index.js                    frozen public API (lazy getters, zero top-level requires)
+│   ├── core/
+│   │   ├── dispatch-engine.js          (moves; key grammars stay pure functions)
+│   │   ├── runtime-scheduler.js        (tick/shouldSchedule/detectVersionStale; initializeRuntime DROPPED)
+│   │   ├── reconciliation-engine.js    (policy; repair legs via ports)
+│   │   ├── scene-window.js
+│   │   ├── lease-manager.js  circuit-breaker.js  retry-budget-manager.js
+│   │   ├── counter-reconciliation.js  runtime-metrics.js  failure-taxonomy.js
+│   │   ├── active-scenes-index.js     worker-health.js
+│   │   ├── runtime-result-emitter.js
+│   │   ├── orchestrator.js  scene-orchestrator.js  scene-callbacks.js  scene-restoration.js
+│   │   └── runtime-result-consumer.js
+│   ├── ports/                      (O-P1..O-P10 contract modules, zero-require fail-fast — S-6 style)
+│   └── utils/scene-utils.js
+├── test/                            (moved orchestration tests + package isolation suite)
+└── package.json                     deps: @animastor/generation, @animastor/contracts
+
+STAYS in backend (host):
+  runtime/gpu-dispatcher.js          (transport adapter implementing ports.dispatchTransport; PW-2 routing)
+  runtime/runtime-loop.js            (timer shell; or inject timer into package loop)
+  runtime/runtime-persistence.js     DELETE (dead)
+  runtime/retention-manager.js       DELETE or host-ops (orphaned)
+  runtime/orchestration-seams.js     → becomes thin binding of O-P8/O-P9 ports (or deleted if ports supersede)
+  runtime/job-schema.js facade       stays (Phase 9C choke point) — package imports @animastor/contracts directly
+  state/* (scene-state-ops, event-journal, asset-state-store)  host adapters over Generation package primitives
+  services/audio-orchestrator, video-orchestrator, placeholder-audio, generation-progress, progress-pubsub,
+    layer-config, gen-scope, task-handler, scene-asset-registry  (port implementations O-P3/O-P4/O-P6/O-P7)
+  storage/postgres/** (O-P1 impl), config/runtime-config (O-P5 impl), routes/** (unchanged consumers),
+    backend.cjs (composition root: binds all ports + seams → bootstrap), media dirs audio/image/video/workflows
+  orchestration/event-journal.js shim  DELETE (O-1)
+```
+
+Media stays media-owned: audio/image/video/workflows never move into orchestration; VBook stays VBook-owned: scene content flows in via O-P2 only.
+
+### 32.14 Extraction sequence (proposed; each step behavior-neutral, recon/seam commits only)
+
+| Step | Seam | Files | Dependency edge closed | Guard | Expected result |
+|---|---|---|---|---|---|
+| O-1 | shim/junk deletion | `orchestration/event-journal.js` (delete; re-point backend.cjs:63 to `../state/event-journal`) | orchestration→state shim | arch test: shim absent, journal single-owner (S5-E already covers) | −10 LOC, one less re-export surface |
+| O-2 | **O-P1 PersistencePort** | dispatch-engine, scheduler (:222 raw query), reconciliation, scene-window, scene-restoration, scene-callbacks; impl in backend/storage adapter | PG repos out of both tiers | O-G: zero `../storage` requires in runtime/orchestration | both tiers PG-free |
+| O-3 | **O-P2 SceneDataPort** + scene-asset-registry cleanup | the 5 `book` require sites; `services/scene-asset-registry` lazy orchestrator deps → composition root | orchestration→VBook facade, services→orchestration | O-G: zero `../book` requires; inbound services→orchestration = 0 | VBook edge gone; last inbound non-host consumer gone |
+| O-4 | **O-P3 MediaFsmPort + O-P7 PlaceholderAudioPort** | scene-orchestrator, orchestrator, reconciliation, scene-window, scene-callbacks | orchestration/runtime→services FSM adapters | O-G: zero `services/audio-orchestrator|video-orchestrator|placeholder-audio` requires | media FSM knowledge behind port |
+| O-5 | **O-P5 OrchestrationConfigPort + O-P4 ProgressEventsPort** | dispatch-engine, scene-window, worker-health, gpu-dispatcher(stays host), orchestrator cancel leg, progress-pubsub consumers, OUTPUT_DIR env sites | config/env/progress out | O-G: zero `config/runtime-config`, zero `process.env` in orchestration | env/config-free tiers |
+| O-6 | **O-P6 MediaPlanningPort (+ validation strategies)** | scene-orchestrator segments/chunks calls, scene-callbacks STAGE_HANDLERS (music-metadata → injected prober), reconciliation repair legs, scene-window audio-service | last media-implementation edges | O-G: media-module requires in orchestration = 0 (except via port impl) | orchestration is media-implementation-free |
+| O-7 | **O-P10 HubCancelPort** | orchestrator.js:515, reconciliation STALE_LEASE leg | hub HTTP out of domain code | O-G: no fetch/http in moved set | domain code never talks HTTP |
+| O-8 | **physical move** (only after O-2..O-7 guards green): `packages/animastor-orchestration` per §32.13 tree; `git mv`; consumer re-point via package root; delete dead `runtime-persistence` + `initializeRuntime` in a separate cleanup commit | — | — | O-G full suite + S5/S6/G7 regression | package loads standalone with bound ports; full-suite parity vs worktree baseline |
+| O-9 | publish ceremony (deferred, mirror of S-9) | — | — | npm pack/clean-install audit | public release when needed |
+
+### 32.15 Proposed architecture guards (for the future extraction; to be added incrementally with O-steps)
+
+1. no orchestration-package file requires `backend/src/**` (static + dynamic-proximity scan, S5-A style);
+2. no orchestration → Redis/PG client imports (`ioredis`, `pg`, `../storage`) — redis stays an injected parameter, persistence via O-P1;
+3. no orchestration → Express/HTTP (no `express`, no `fetch(` outside port impls);
+4. no orchestration → GPU Hub implementation (only `ports.dispatchTransport`/O-P10 shapes);
+5. no orchestration → VBook internals (`book/**`, `@animastor/vbook-runtime` deep specifiers) — O-P2 only;
+6. no orchestration → Player/Editor (any require of `@animastor/player|editor`);
+7. no deep imports into `@animastor/generation` (root specifier only, G7-H parity);
+8. no reverse dependency (Generation package closure never mentions orchestration — extend G7-C);
+9. no duplicate orchestration implementation (facade re-export identity pins during shim phase; delete shims at O-8);
+10. no hidden filesystem/env access (zero `process.env`, zero raw `fs` outside injected artifact-IO port — OUTPUT_DIR reads must die at O-5);
+11. no SCC involving the orchestration package and backend (extend P7-T7 to include the package tree in the graph);
+12. no orchestration → media implementation modules (`audio/**`, `image/**`, `video/**`, `workflows/**`) — O-P6 only.
+
+### 32.16 Tests protecting orchestration behavior today (regression set for extraction)
+
+**Unit:** reconciliation-engine (72), counter-reconciliation (52), scene-state (37), asset-state (21), audio-orchestrator, video-orchestrator, job-schema, fail-stage, scope-slide (20), stale-lease-semantics, lease (dispatch-meta-lease-lifecycle 17), circuit-breaker-recovery, runtime-timeouts, gen-scope, layer-config (persistence/reconcile 17+4), iu-progress-utils, audio-segments.
+**Architecture:** s5-runtime-orchestration-cycle (7), s6-generation-host-ports (14), dependency-guardrails (R-series), phase5-runtime-result (T2/T9/T10), phase7-extraction-readiness (P7-T7/T8), generation-package-boundary (G7 ×14), generation-media-registry (S2 series), postgres-host-infrastructure, redis-ownership/registry.
+**Integration/backend-wide (the real behavior net):** happy-path, stage-dispatch-lifecycle, orchestration-stabilization, image-ghost-no-jobs-sent (28), image-orphan-generating-repair (24), worklist-rebuild, layer-config-reconcile, cancellation-recovery, gpu-hub-cleanup, gpu-hub-bootstrap/artifacts, generation-routes, progress-panel, scene-asset-registry, private-worker-phase2/3, worker-share-policy/grants, execute-lifecycle, reconciliation + fail-stage + happy-path combined runs.
+
+**Minimal regression set for O-steps (must stay green at every step):** reconciliation-engine, counter-reconciliation, dispatch-meta-lease-lifecycle, stale-lease-semantics, stage-dispatch-lifecycle, orchestration-stabilization, fail-stage, happy-path, image-ghost-no-jobs-sent, image-orphan-generating-repair, worklist-rebuild, scope-slide, layer-config-reconcile, cancellation-recovery, gpu-hub-cleanup, circuit-breaker-recovery + full `test:arch` (830) + full-suite failure-set parity vs pristine worktree baseline (the S-5/S-7 discipline).
+
+**Known pre-existing failure baseline (NOT caused by this recon):** ~13 environment-dependent failures (PW-4 worker-sharing routes, LLM-sharing control plane, worker-share-policy timeouts, private-worker identity, guest workspace, 16b snapshot, bootstrap-cancel-continue tombstone). Failure-set must remain byte-identical through all O-steps.
+
+### 32.17 Verdict
+
+**READY FOR SEAM WORK.**
+
+The graph is cycle-free (SCC-verified), the Generation boundary is public-API-shaped, the S-5 seams already carry the two hardest directions (runtime→orchestration policy, FSM writers), and the host dependencies are enumerable (10 ports) — but NOT yet ported: both tiers still directly touch PG repositories (×11 sites), the book facade (×5), media FSM services (×9), runtime-config (×5), and orchestration still embeds media planning/validation knowledge and reads `OUTPUT_DIR` from the environment. A physical move today (Option A/B) would either smuggle host infrastructure into a package or require one giant risky commit. The seam list (O-1..O-7) is concrete and each step is independently behavior-neutral and guardable.
+
+**First concrete seam for the next commit: O-1** — delete the 10-line `orchestration/event-journal.js` shim and re-point its single consumer (`backend.cjs:63`) to `../state/event-journal` (the S-5 canonical owner). Smallest possible diff, closes a leftover S-5 re-export surface, guarded by the existing S5-E single-owner test plus one new absence pin. **The substantive first port seam is O-2 (PersistencePort)** — it removes the largest single class of host edges (PG ×11 sites) and unlocks every later step.
+
+**Blockers for extraction (NOT for seam work):** O-P1..O-P10 do not exist yet; 11 direct PG require sites; 5 direct book-facade sites; media planning/validation knowledge in scene-orchestrator/scene-callbacks; OUTPUT_DIR env reads ×3; dead `runtime-persistence`/`initializeRuntime` and orphaned `retention-manager` should be removed before any move; consumer re-pointing (routes/services deep paths → package root) pending.
+
+*End of §32.*
