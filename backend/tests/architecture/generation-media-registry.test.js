@@ -329,7 +329,7 @@ describe('architecture: Generation media registry (S-2)', () => {
             'config/runtime-config.js',          // WORKER_HEARTBEAT_TYPES (S2-G consistency-guarded)
             'orchestration/scene-orchestrator.js', // media executors (implementation)
             'orchestration/scene-callbacks.js',   // media handlers (implementation)
-            'orchestration/event-journal.js',     // per-type event types (workflow contract)
+            'state/event-journal.js',           // per-type event types (workflow contract; canonical owner since O-1)
             'orchestration/orchestrator.js',     // FAIL_EVENT_TYPES fallback keys per media type in comment + Stage literal handlers
             'services/generation-progress.js',    // (docs only after completion pass)
             'services/scene-asset-registry.js',   // ['audio','image','video','storyboard'] — PG asset registry incl. non-media 'storyboard'

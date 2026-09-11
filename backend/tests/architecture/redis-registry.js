@@ -322,7 +322,7 @@ const REDIS_OWNERSHIP = [
         readers: ['backend'],
         writers: ['backend'],
         crossModule: false,
-        note: 'Event journal feeds per scene (orchestration/event-journal, retention-manager).',
+        note: 'Event journal feeds per scene (state/event-journal — canonical owner since O-1, retention-manager).',
     },
     {
         pattern: 'animastor:layer-config:*',

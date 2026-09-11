@@ -1,4 +1,4 @@
-const journal = require('./event-journal');
+const journal = require('../state/event-journal');
 
 const logPrefix = '[ORCH]';
 

@@ -65,7 +65,7 @@ const P = {
     state: require.resolve('../src/state'),
     scheduler: require.resolve('../src/runtime/runtime-scheduler'),
     sceneWindow: require.resolve('../src/runtime/scene-window'),
-    journal: require.resolve('../src/orchestration/event-journal'),
+    journal: require.resolve('../src/state/event-journal'),
     cancelRoute: require.resolve('../src/routes/book/generation-routes.cjs'),
 };
 

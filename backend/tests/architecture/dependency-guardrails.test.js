@@ -174,16 +174,16 @@ describe('architecture: Book domain dependency boundary', () => {
 });
 
 describe('architecture: orchestration ↔ runtime cycle freeze (S-5 reduced)', () => {
-    // R5 → S-5: the runtime→orchestration POLICY cycle is broken. All seven
-    // frozen R5 edges (orchestrator/index imports from dispatch-engine,
+    // R5 → S-5 → O-1: the runtime→orchestration POLICY cycle is broken. All
+    // seven frozen R5 edges (orchestrator/index imports from dispatch-engine,
     // reconciliation-engine, scene-window, runtime-scheduler) were replaced
-    // by composition-root seams (runtime/orchestration-seams.js). The ONLY
-    // remaining runtime→orchestration-directory requires are the event-journal
-    // sink requires (state/event-journal.js canonical owner, orchestration/
-    // event-journal.js shim) — a zero-dep append-only observability leaf that
-    // cannot form a cycle. The multi-module SCC is dissolved (P7-T7 pins its
-    // absence). Full before/after evidence: recon doc §26.
-    // Docs: docs/architecture/generation-module-extraction-reconnaissance.md §26
+    // by composition-root seams (runtime/orchestration-seams.js). The event
+    // journal lives at state/event-journal.js (canonical owner — a zero-dep
+    // append-only observability leaf that cannot form a cycle); the S-5
+    // orchestration/event-journal.js relocation shim was deleted at O-1.
+    // The multi-module SCC is dissolved (P7-T7 pins its absence). Full
+    // before/after evidence: recon doc §26/§32.
+    // Docs: docs/architecture/generation-module-extraction-reconnaissance.md §26, §32
     const RUNTIME_TO_ORCH_ALLOWED = [
         'backend/src/runtime/dispatch-engine.js:../state/event-journal',
         'backend/src/runtime/reconciliation-engine.js:../state/event-journal',
@@ -206,17 +206,18 @@ describe('architecture: orchestration ↔ runtime cycle freeze (S-5 reduced)', (
         expect(set, 'A runtime→orchestration POLICY edge appeared (orchestrator/index/scene-*) — runtime must reach orchestration behavior ONLY via runtime/orchestration-seams.js (S-5).').to.deep.equal(allowed);
     });
 
-    it('event-journal is a zero-require sink and runtime consumes it via the canonical owner, not the shim', () => {
+    it('event-journal is a zero-require sink, single-owned by state/event-journal.js (O-1 shim deleted)', () => {
         // The journal is the only runtime→orchestration-directory edge that
         // may exist: it is an append-only observability ledger with ZERO
         // requires of its own (a graph sink — it cannot close a cycle).
-        // Relocation of the require path is the S-6 physical-move concern.
-        const journalShim = readSource(path.join(BACKEND_SRC, 'orchestration', 'event-journal.js'));
-        const shimSpecs = requireSpecifiers(journalShim);
-        expect(shimSpecs, 'event-journal shim must stay a one-line re-export of the canonical owner').to.deep.equal(['../state/event-journal']);
+        // O-1 deleted the orchestration/event-journal.js relocation shim —
+        // pin its absence so the re-export surface cannot return.
+        expect(fs.existsSync(path.join(BACKEND_SRC, 'orchestration', 'event-journal.js')),
+            'orchestration/event-journal.js was deleted at O-1 — canonical owner is state/event-journal.js')
+            .to.equal(false);
         const journal = readSource(path.join(BACKEND_SRC, 'state', 'event-journal.js'));
         expect(requireSpecifiers(journal), 'the journal itself must stay a zero-require sink').to.deep.equal([]);
-        // runtime files must consume the canonical owner, never the shim
+        // runtime files must consume the canonical owner, never a re-export
         for (const f of ['dispatch-engine.js', 'reconciliation-engine.js']) {
             const specs = requireSpecifiers(readSource(path.join(BACKEND_SRC, 'runtime', f)));
             expect(specs.filter((s) => /event-journal$/.test(s)), `${f} journal require`).to.deep.equal(['../state/event-journal']);

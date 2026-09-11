@@ -39,7 +39,7 @@
 // docs/architecture/generation-module-extraction-reconnaissance.md §22):
 //   orchestration/scene-orchestrator.js  per-media executors (audio/image/video)
 //   orchestration/scene-callbacks.js     per-media completion handlers
-//   orchestration/event-journal.js        per-media event types (workflow contract)
+//   state/event-journal.js           per-media event types (workflow contract)
 //   runtime/runtime-scheduler.js          video→image dependency chain, per-type branching
 //   dispatch-engine.js                    image IU in-flight markers
 //   routes/connector-routes.cjs           connector profiles (outside generation contour, S2-E)

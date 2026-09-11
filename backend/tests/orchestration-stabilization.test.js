@@ -375,7 +375,7 @@ describe('audio-orch invariant (R6)', () => {
         '../src/state',
         '../src/orchestration/scene-callbacks',
         '../src/orchestration/scene-utils',
-        '../src/orchestration/event-journal',
+        '../src/state/event-journal',
         '../src/runtime/dispatch-engine',
         '../src/runtime/failure-taxonomy',
         '../src/storage/postgres/repositories/scene-assets-repo',
@@ -433,7 +433,7 @@ describe('audio-orch invariant (R6)', () => {
             handleVideoCompleted: async () => ({ ok: true }),
         });
         stub('../src/orchestration/scene-utils', { log: () => {}, warn: () => {}, error: () => {} });
-        stub('../src/orchestration/event-journal', {
+        stub('../src/state/event-journal', {
             EventType: { AUDIO_COMPLETED: 'AUDIO_COMPLETED' },
             appendSceneEvent: async () => ({ success: true }),
         });
@@ -494,7 +494,7 @@ describe('audio-orch invariant (R6)', () => {
             validateAssetTransition: (from, to) => ({ valid: true, reason: 'valid' }),
         });
         stub('../src/orchestration/scene-utils', { log: () => {}, warn: () => {} });
-        stub('../src/orchestration/event-journal', {
+        stub('../src/state/event-journal', {
             EventType: { AUDIO_FAILED: 'AUDIO_FAILED', IMAGE_FAILED: 'IMAGE_FAILED', VIDEO_FAILED: 'VIDEO_FAILED' },
             appendSceneEvent: async () => ({ success: true }),
         });
@@ -545,7 +545,7 @@ describe('audio-orch invariant (R6)', () => {
             handleVideoCompleted: async () => ({ ok: true }),
         });
         stub('../src/orchestration/scene-utils', { log: () => {}, warn: () => {}, error: () => {} });
-        stub('../src/orchestration/event-journal', {
+        stub('../src/state/event-journal', {
             EventType: { AUDIO_COMPLETED: 'AUDIO_COMPLETED' },
             appendSceneEvent: async () => ({ success: true }),
         });

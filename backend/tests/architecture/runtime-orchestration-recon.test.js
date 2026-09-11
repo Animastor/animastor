@@ -24,7 +24,8 @@
 //         baseline (3 sites) — must NOT grow, shrink at O-5
 //   O-G10 SCC safety: no module may re-introduce a runtime→orchestration
 //         require (static + dynamic-proximity scan over the FULL tree),
-//         and the orchestration event-journal shim stays one-line
+//         and the O-1 shim deletion is pinned: orchestration/event-journal.js
+//         must NOT exist and no source may require it
 //
 // Docs: generation-module-extraction-reconnaissance.md §32.15
 
@@ -173,7 +174,7 @@ describe('§32 runtime/orchestration extraction reconnaissance guards', () => {
         ]);
     });
 
-    it('O-G10: cycle safety — no dynamic require may re-introduce runtime→orchestration; journal shim stays one-line', () => {
+    it('O-G10: cycle safety — no dynamic require may re-introduce runtime→orchestration; the O-1 shim stays deleted', () => {
         // dynamic/computed require proximity scan (S5-A convention) over runtime/**
         for (const file of listSourceFiles(RUNTIME_DIR)) {
             const src = readSource(file);
@@ -184,11 +185,24 @@ describe('§32 runtime/orchestration extraction reconnaissance guards', () => {
             });
             expect(near, `${rel(file)} must not dynamically require orchestration`).to.deep.equal([]);
         }
-        // the S-5 leftover shim is a commented one-line re-export (delete at O-1)
-        const shim = readSource(path.join(ORCH_DIR, 'event-journal.js'));
-        const codeLines = shim.split('\n').filter((l) => l.trim() && !l.trim().startsWith('//'));
-        expect(codeLines, 'the journal shim must remain a single re-export line (S5-E/§32.5)')
-            .to.deep.equal(["module.exports = require('../state/event-journal');"]);
+        // O-1: the orchestration event-journal shim is DELETED — the journal
+        // has a single canonical owner (state/event-journal.js). Pin the
+        // deletion: the shim file must not come back, and no source/test
+        // file anywhere in the repo may require the dead deep path.
+        expect(fs.existsSync(path.join(ORCH_DIR, 'event-journal.js')),
+            'orchestration/event-journal.js was deleted at O-1 — do not re-create it (canonical owner: state/event-journal.js)')
+            .to.equal(false);
+        const offenders = [];
+        for (const file of listSourceFiles(BACKEND_SRC)) {
+            const src = readSource(file);
+            for (const spec of requireSpecifiers(src)) {
+                if (spec.endsWith('orchestration/event-journal')) {
+                    offenders.push(`${rel(file)} -> ${spec}`);
+                }
+            }
+        }
+        expect(offenders, 'no source may require the deleted orchestration/event-journal shim (O-1)')
+            .to.deep.equal([]);
     });
 
 });

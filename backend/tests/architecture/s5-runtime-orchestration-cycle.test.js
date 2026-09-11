@@ -15,7 +15,8 @@
 //   S5-C  composition root wires all six seams (fail-fast unwired seams)
 //   S5-D  no duplicated FSM-writer implementations in runtime/** (ownership
 //         stays with state/scene-state-ops.js; facade re-exports only)
-//   S5-E  event journal: canonical owner + shim remain, shim is one-line
+//   S5-E  event journal: single canonical owner (state/event-journal.js);
+//         the O-1 orchestration shim is deleted — its return is pinned
 //   S5-F  runtime→Generation core direction (media-registry/artifact-naming)
 //         stays downward — no reverse orchestration→generation policy edges
 //         beyond the pre-existing media-registry bootstrap pair
@@ -123,16 +124,18 @@ describe('S5-R5: runtime → orchestration cycle reduction', () => {
         }
     });
 
-    it('S5-E: the event journal keeps a single canonical owner + one-line shim (no duplicate locations)', () => {
+    it('S5-E: the event journal keeps a single canonical owner (O-1 shim deleted, no duplicate locations)', () => {
         const canonical = readSource(path.join(BACKEND_SRC, 'state', 'event-journal.js'));
         expect(requireSpecifiers(canonical), 'journal must stay a zero-require sink').to.deep.equal([]);
         expect(canonical).to.include('animastor:event-journal:'); // key grammar owner
-        const shim = readSource(path.join(ORCH_DIR, 'event-journal.js'));
-        expect(requireSpecifiers(shim), 'orchestration/event-journal.js stays a one-line re-export shim').to.deep.equal(['../state/event-journal']);
+        // O-1: the orchestration relocation shim is DELETED — the canonical
+        // owner is the ONLY journal module in the tree.
+        expect(fs.existsSync(path.join(ORCH_DIR, 'event-journal.js')),
+            'orchestration/event-journal.js was deleted at O-1 — the canonical owner is state/event-journal.js')
+            .to.equal(false);
         // no journal implementation copies elsewhere in orchestration/runtime
         for (const file of [...listSourceFiles(ORCH_DIR), ...allRuntimeFiles()]) {
             const r = rel(file);
-            if (r.endsWith('orchestration/event-journal.js')) continue;
             const src = readSource(file);
             expect(src.includes('async function appendSceneEvent'), `${r} must not re-implement the journal appender`).to.equal(false);
         }

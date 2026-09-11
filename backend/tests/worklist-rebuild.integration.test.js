@@ -62,7 +62,7 @@ const MOCKED_PATHS = [
     'src/image/index.js',
     'src/services/audio-orchestrator.js',
     'src/orchestration/orchestrator.js',
-    'src/orchestration/event-journal.js',
+    'src/state/event-journal.js',
     'src/runtime/reconciliation-engine.js',
     'src/runtime/runtime-scheduler.js',
     'src/book/index.js',

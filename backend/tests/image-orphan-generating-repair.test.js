@@ -73,7 +73,7 @@ const P = {
     state: require.resolve('../src/state'),
     scheduler: require.resolve('../src/runtime/runtime-scheduler'),
     sceneWindow: require.resolve('../src/runtime/scene-window'),
-    journal: require.resolve('../src/orchestration/event-journal'),
+    journal: require.resolve('../src/state/event-journal'),
     genProgress: require.resolve('../src/services/generation-progress'),
     cancelRoute: require.resolve('../src/routes/book/generation-routes.cjs'),
     progressPanel: require.resolve('../src/routes/book/progress-panel.cjs'),

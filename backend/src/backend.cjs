@@ -60,7 +60,7 @@ require('./runtime/orchestration-seams').registerOrchestrationSeams({
     setScenePlaceholder: orchestrator.setScenePlaceholder,
 });
 const wfManager = require('./services/workflow-manager');
-const journal = require('./orchestration/event-journal');
+const journal = require('./state/event-journal');
 const storage = require('./storage');
 const runtime = require('./runtime');
 const activeScenes = require('./runtime/active-scenes-index');

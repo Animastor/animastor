@@ -2047,7 +2047,7 @@ Exports map: `{ ".": "./src/index.js" }`
 | `runtime-result-consumer.js` | 54 | createRuntimeResultConsumer | A (zero-require leaf, injected via composition root) |
 | `scene-utils.js` | 33 | log, warn, error, logEvent | F (pure logging utils) |
 | `index.js` | 24 | spread of scene-orchestrator + orchestrator facade + `.orchestrator` | A (facade aggregator) |
-| `event-journal.js` | 10 | one-line shim → `state/event-journal.js` | G (S-5 leftover shim; deletable host-internal re-export) |
+| `event-journal.js` | 10 | one-line shim → `state/event-journal.js` | G (S-5 leftover shim; **deleted at O-1 — see §32.14**) |
 
 **`backend/src/runtime/` (20 files, 12,619 LOC):**
 
@@ -2095,7 +2095,7 @@ Exports map: `{ ".": "./src/index.js" }`
 |---|---|---|---|---|
 | `runtime/orchestration-seams.js` (6 function seams) | runtime → orchestration policy (executor entry, FSM writers, rollback) | runtime owns registry; composition root wires | YES — the direction runtime→orchestration is already injection-based; the future package keeps this as its inbound policy seam | — |
 | `state/scene-state-ops.js` | pure FSM writers (5) | state layer (host adapter over package sceneState) | YES | — |
-| `state/event-journal.js` | journal sink | state layer | YES (zero-require leaf) | `orchestration/event-journal.js` shim remains (10 lines; deletable) |
+| `state/event-journal.js` | journal sink | state layer | YES (zero-require leaf) | ~~`orchestration/event-journal.js` shim~~ — **shim deleted at O-1**; single canonical owner, no re-export surface remains |
 | `ports.dispatchTransport` | provider → GPU transport | `@animastor/generation` | YES for provider-side dispatch | runtime's OWN transport legs (gpu-dispatcher fetch, clearHubDispatches) are NOT behind it — they are the implementation side |
 | `ports.generationConfig` | config slices | `@animastor/generation` | YES for package core | runtime/orchestration still read `config/runtime-config` directly (×5 files) — no OrchestrationConfig port exists |
 | `ports.profileStore`, `ports.bookData` | profile/book payloads | `@animastor/generation` | YES for media/workflow core | orchestration/runtime read `book` facade directly ×5 (scene-window, reconciliation ×2, scene-orchestrator, scene-callbacks) — no SceneData port exists |
@@ -2145,7 +2145,7 @@ Tarjan over the full require closure (top-level + lazy) of `backend/src` (~260 f
 | orchestration-seams.js | **G** | The injection seam — future package keeps an equivalent inbound port surface |
 | job-schema.js facade | **F** | Frozen Phase-9C choke point over @animastor/contracts |
 | scene-utils.js | **F** | Pure logging utils |
-| event-journal.js (orchestration shim) | **G** | 10-line S-5 leftover; delete in O-1 |
+| event-journal.js (orchestration shim) | **G** | 10-line S-5 leftover; **deleted at O-1** — done |
 
 ### 32.6 Boundary with the published `@animastor/generation`
 
@@ -2288,7 +2288,7 @@ STAYS in backend (host):
     layer-config, gen-scope, task-handler, scene-asset-registry  (port implementations O-P3/O-P4/O-P6/O-P7)
   storage/postgres/** (O-P1 impl), config/runtime-config (O-P5 impl), routes/** (unchanged consumers),
     backend.cjs (composition root: binds all ports + seams → bootstrap), media dirs audio/image/video/workflows
-  orchestration/event-journal.js shim  DELETE (O-1)
+  ~~orchestration/event-journal.js shim~~  DELETED at O-1 (commit "arch(orchestration): remove event journal shim")
 ```
 
 Media stays media-owned: audio/image/video/workflows never move into orchestration; VBook stays VBook-owned: scene content flows in via O-P2 only.
@@ -2297,7 +2297,7 @@ Media stays media-owned: audio/image/video/workflows never move into orchestrati
 
 | Step | Seam | Files | Dependency edge closed | Guard | Expected result |
 |---|---|---|---|---|---|
-| O-1 | shim/junk deletion | `orchestration/event-journal.js` (delete; re-point backend.cjs:63 to `../state/event-journal`) | orchestration→state shim | arch test: shim absent, journal single-owner (S5-E already covers) | −10 LOC, one less re-export surface |
+| O-1 | shim/junk deletion | `orchestration/event-journal.js` (delete; re-point backend.cjs:63 to `../state/event-journal`) | orchestration→state shim | arch test: shim absent, journal single-owner (S5-E already covers) | **DONE (see §32.18): −10 LOC, one less re-export surface** |
 | O-2 | **O-P1 PersistencePort** | dispatch-engine, scheduler (:222 raw query), reconciliation, scene-window, scene-restoration, scene-callbacks; impl in backend/storage adapter | PG repos out of both tiers | O-G: zero `../storage` requires in runtime/orchestration | both tiers PG-free |
 | O-3 | **O-P2 SceneDataPort** + scene-asset-registry cleanup | the 5 `book` require sites; `services/scene-asset-registry` lazy orchestrator deps → composition root | orchestration→VBook facade, services→orchestration | O-G: zero `../book` requires; inbound services→orchestration = 0 | VBook edge gone; last inbound non-host consumer gone |
 | O-4 | **O-P3 MediaFsmPort + O-P7 PlaceholderAudioPort** | scene-orchestrator, orchestrator, reconciliation, scene-window, scene-callbacks | orchestration/runtime→services FSM adapters | O-G: zero `services/audio-orchestrator|video-orchestrator|placeholder-audio` requires | media FSM knowledge behind port |
@@ -2338,8 +2338,34 @@ Media stays media-owned: audio/image/video/workflows never move into orchestrati
 
 The graph is cycle-free (SCC-verified), the Generation boundary is public-API-shaped, the S-5 seams already carry the two hardest directions (runtime→orchestration policy, FSM writers), and the host dependencies are enumerable (10 ports) — but NOT yet ported: both tiers still directly touch PG repositories (×11 sites), the book facade (×5), media FSM services (×9), runtime-config (×5), and orchestration still embeds media planning/validation knowledge and reads `OUTPUT_DIR` from the environment. A physical move today (Option A/B) would either smuggle host infrastructure into a package or require one giant risky commit. The seam list (O-1..O-7) is concrete and each step is independently behavior-neutral and guardable.
 
-**First concrete seam for the next commit: O-1** — delete the 10-line `orchestration/event-journal.js` shim and re-point its single consumer (`backend.cjs:63`) to `../state/event-journal` (the S-5 canonical owner). Smallest possible diff, closes a leftover S-5 re-export surface, guarded by the existing S5-E single-owner test plus one new absence pin. **The substantive first port seam is O-2 (PersistencePort)** — it removes the largest single class of host edges (PG ×11 sites) and unlocks every later step.
+**First concrete seam: O-1 — DONE** (§32.18). **The substantive first port seam is O-2 (PersistencePort)** — it removes the largest single class of host edges (PG ×11 sites) and unlocks every later step.
 
 **Blockers for extraction (NOT for seam work):** O-P1..O-P10 do not exist yet; 11 direct PG require sites; 5 direct book-facade sites; media planning/validation knowledge in scene-orchestrator/scene-callbacks; OUTPUT_DIR env reads ×3; dead `runtime-persistence`/`initializeRuntime` and orphaned `retention-manager` should be removed before any move; consumer re-pointing (routes/services deep paths → package root) pending.
+
+### 32.18 O-1 execution result — event-journal shim removal (DONE)
+
+**Date:** 2026-09-11 · **Commit:** "arch(orchestration): remove event journal shim" · **Behavior-neutral seam commit.**
+
+**What was measured at O-1 time (actual consumers of `orchestration/event-journal.js`, incl. lazy requires and test-harness `require.resolve`/stub paths — not grep-guesses):**
+
+| Consumer | Kind | Action taken |
+|---|---|---|
+| `backend/src/backend.cjs:63` | top-level require (composition root; only production top-level consumer) | re-pointed to `./state/event-journal` |
+| `backend/src/orchestration/orchestrator.js:254/353/470` | lazy requires (failStage, rollbackStageToPending, resetScenes) | re-pointed to `../state/event-journal` |
+| `backend/src/orchestration/scene-utils.js:1` | top-level require (logEvent helper) | re-pointed to `../state/event-journal` |
+| `backend/tests/reconciliation-engine.test.js` (JOURNAL_PATH cache mock) | test-harness require.cache path | re-pointed to `src/state/event-journal.js` |
+| `backend/tests/orchestration-stabilization.test.js` (modulePaths + 3 stubs) | test-harness stub path | re-pointed to `../src/state/event-journal` |
+| `backend/tests/image-orphan-generating-repair.test.js` (P.journal) | test-harness resolve path | re-pointed to `../src/state/event-journal` |
+| `backend/tests/dispatch-meta-lease-lifecycle.test.js` (P.journal) | test-harness resolve path | re-pointed to `../src/state/event-journal` |
+| `backend/tests/worklist-rebuild.integration.test.js` (MOCKED_PATHS purge) | test-harness cache purge path | re-pointed to `src/state/event-journal.js` |
+
+(runtime/dispatch-engine.js and runtime/reconciliation-engine.js already consumed the canonical `../state/event-journal` since S-5 — no change needed.)
+
+**Changes:**
+- `backend/src/orchestration/event-journal.js` **deleted** — `state/event-journal.js` is the single canonical owner (zero-require append-only Redis sink; Redis key bytes `animastor:event-journal:${bookId}:${chapterId}:${sceneId}` unchanged; event types, payload shapes and exports unchanged — no semantic edits).
+- Guards updated: O-G10 (runtime-orchestration-recon.test.js) now pins the shim's **absence** + zero requires of the dead deep path across `backend/src/**`; S5-E (s5-runtime-orchestration-cycle.test.js) pins single canonical ownership; dependency-guardrails R5 shim-reading assertions replaced by absence pins; S2-H allowlist entry moved to the canonical path; redis-registry note updated; package media-registry doc comment updated.
+- No runtime→orchestration edges created (post-change scan: 0); no SCC re-introduced (P7-T7 baseline unchanged); `@animastor/generation` boundary untouched (root specifier only).
+
+**Next step: O-2 — PersistencePort (O-P1).** Removes the largest single class of host edges (PG ×11 sites: dispatch-engine, scheduler :222 raw query, reconciliation, scene-window, scene-restoration, scene-callbacks) and unlocks every later step.
 
 *End of §32.*

@@ -251,7 +251,7 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId, 
 async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reason = 'unknown', { redispatch = true, dispatchId } = {}) {
     const state = require('../state');
     const dispatchEngine = require('../runtime/dispatch-engine');
-    const journal = require('./event-journal');
+    const journal = require('../state/event-journal');
     const { log, warn } = require('./scene-utils');
 
     // S-2: fail event type map — derived from journal event types.
@@ -350,7 +350,7 @@ async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reas
 // rejection проглочен → вечный GENERATING).
 async function rollbackStageToPending(redis, bookId, chapterId, sceneId, asset, buildId = null, reason = 'dispatch_cancelled') {
     const state = require('../state');
-    const journal = require('./event-journal');
+    const journal = require('../state/event-journal');
     const { log, error } = require('./scene-utils');
 
     const states = await state.getAssetStates(redis, bookId, chapterId, sceneId);
@@ -467,7 +467,7 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
         readdToActiveIndex = true,
     } = options;
     const { log, warn } = require('./scene-utils');
-    const journal = require('./event-journal');
+    const journal = require('../state/event-journal');
 
     if (!scenes || scenes.length === 0) {
         log('[RESET-SCENES] No scenes to reset');

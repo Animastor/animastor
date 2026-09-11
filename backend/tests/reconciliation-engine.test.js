@@ -42,7 +42,7 @@ const STORAGE_PATH = path.join(CWD, 'src/storage/index.js');
 const IMAGE_PATH = path.join(CWD, 'src/image/index.js');
 const AUDIO_ORCH_PATH = path.join(CWD, 'src/services/audio-orchestrator.js');
 const ORCH_PATH = path.join(CWD, 'src/orchestration/orchestrator.js');
-const JOURNAL_PATH = path.join(CWD, 'src/orchestration/event-journal.js');
+const JOURNAL_PATH = path.join(CWD, 'src/state/event-journal.js');
 
 function mockDeps(redis, overrides = {}) {
     // Clear ALL our mock paths so each call starts fresh.
