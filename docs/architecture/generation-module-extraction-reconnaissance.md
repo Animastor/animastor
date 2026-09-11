@@ -1174,7 +1174,7 @@ Redis keys/TTLs, FSM transitions, lifecycle/progress behavior, reconciliation an
 
 ### 26.6 Unrelated changes excluded (S-4 focus)
 
-`frontends/app/vite.config.ts` (preact dedupe) and `packages/animastor-file/test/file.test.tsx` (URL spy fix) belong to commit 5e5f9279 ("fix(app): dedupe preact…", the C21.4 file-extraction fix) — they are NOT part of S-4 commit 8e77d950, are required by that separate workstream (blank-page regression), and are NOT included in the correction commit.
+`frontends/app/vite.config.ts` (preact dedupe) and `packages/animastor-web-file/test/file.test.tsx` (URL spy fix) belong to commit 5e5f9279 ("fix(app): dedupe preact…", the C21.4 file-extraction fix) — they are NOT part of S-4 commit 8e77d950, are required by that separate workstream (blank-page regression), and are NOT included in the correction commit.
 
 ### 26.7 Remaining blockers before S-5 (unchanged by this pass)
 

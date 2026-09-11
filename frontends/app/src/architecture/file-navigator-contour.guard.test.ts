@@ -159,8 +159,8 @@ describe('File contour guard (file-module-extraction-audit.md)', () => {
   it('Physical extraction — no host file resolves the file package by relative path', () => {
     for (const f of allSourceFiles()) {
       for (const spec of importSpecifiers(f)) {
-        expect(spec, `${f} bypasses the package entry via "${spec}"`).not.toMatch(/\.\.\/\.\.\/packages\/animastor-file/);
-        expect(spec, `${f} imports file package internals via "${spec}"`).not.toMatch(/packages\/animastor-file\/src\//);
+        expect(spec, `${f} bypasses the package entry via "${spec}"`).not.toMatch(/\.\.\/\.\.\/packages\/animastor-web-file/);
+        expect(spec, `${f} imports file package internals via "${spec}"`).not.toMatch(/packages\/animastor-web-file\/src\//);
       }
     }
   });
@@ -262,8 +262,8 @@ describe('Navigator contour guard (navigator-module-extraction-audit.md, Phase 2
   it('npm prep — no host file resolves the navigator package by relative path', () => {
     for (const f of allSourceFiles()) {
       for (const spec of importSpecifiers(f)) {
-        expect(spec, `${f} bypasses the package entry via "${spec}"`).not.toMatch(/\.\.\/\.\.\/packages\/animastor-navigator/);
-        expect(spec, `${f} imports navigator package internals via "${spec}"`).not.toMatch(/packages\/animastor-navigator\/src\//);
+        expect(spec, `${f} bypasses the package entry via "${spec}"`).not.toMatch(/\.\.\/\.\.\/packages\/animastor-web-navigator/);
+        expect(spec, `${f} imports navigator package internals via "${spec}"`).not.toMatch(/packages\/animastor-web-navigator\/src\//);
       }
     }
   });

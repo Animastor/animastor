@@ -173,7 +173,7 @@ Design decisions frozen by the implementation:
 | `src/modules/navigator/navigator.test.tsx` | 27 characterization tests (below) |
 | `frontends/app/package.json` | devDeps `happy-dom`, `@testing-library/preact`, `@testing-library/dom` (test environment only) |
 
-Not done (hard limits respected): no `packages/animastor-navigator`, `NavigatePage.tsx` not moved, backend/API untouched, no user-visible behavior change, no unrelated refactors, no shared-store changes.
+Not done (hard limits respected): no `packages/animastor-web-navigator`, `NavigatePage.tsx` not moved, backend/API untouched, no user-visible behavior change, no unrelated refactors, no shared-store changes.
 
 ## Phase 4 — Test ownership
 
@@ -203,7 +203,7 @@ No backend blockers: both consumed endpoints already live in extracted backend p
 1. ~~**Characterization tests first**~~ — **DONE**: 27 tests, fake ports, vitest + happy-dom + `@testing-library/preact` (devDeps only).
 2. ~~**Introduce `NavigatorPorts` in-app (no package yet)**~~ — **DONE**: `NavigatePage` receives `ports` via props; `main.tsx`/`AppShell.tsx` wire `navigatorPorts` from `app/navigatorAdapters.ts`; no behavior change; guards updated (11 kept + 3 new) and green.
 3. **Move the file** to `src/modules/navigator/` (still in-app) with its tests; verify desktop panel + mobile tab behavior unchanged. Guards: `NAV_PAGE` path + reverse-dep filter update.
-4. **Cut `packages/animastor-navigator`** — physical move, `@animastor/web-navigator@0.1.0`, host keeps the ports wiring (`ports.ts` → package `index.ts`); peer-dependency on `preact`/`@preact/signals` per the repo's npm checklist pattern. Decision deferred to that step: shared `api/models` types + `unitIndex` (currently imported by the page as types + pure helper — must not drift, see hidden dep #5).
+4. **Cut `packages/animastor-web-navigator`** — physical move, `@animastor/web-navigator@0.1.0`, host keeps the ports wiring (`ports.ts` → package `index.ts`); peer-dependency on `preact`/`@preact/signals` per the repo's npm checklist pattern. Decision deferred to that step: shared `api/models` types + `unitIndex` (currently imported by the page as types + pure helper — must not drift, see hidden dep #5).
 5. **Verify** — vitest + `tsc --noEmit` + smoke: mobile unit-tap → Play switch; desktop select/⏯/dbl-click; AI-patch invalidation refreshes tree; generation completion refreshes tree; no-book empty state.
 
 ## Final verdict

@@ -1,16 +1,16 @@
 {
-  "name": "@animastor/web-file",
+  "name": "@animastor/web-navigator",
   "version": "0.1.0",
-  "description": "Preact/Web UI module: Animastor Web File — book import/open/create/close/export UI for the web frontend. NOT a platform-independent or domain module — it renders through Preact and consumes host capabilities only via the injected FilePorts contract (session, actions, http, i18n, toast, navigation, open-requests, deep-link, icons).",
+  "description": "Preact/Web UI module: Animastor Web Navigator — book structure navigation tree (chapters/scenes/units) for the web frontend. NOT a platform-independent or domain module — it renders through Preact and consumes host capabilities only via the injected NavigatorPorts contract (seek, book source, position, invalidations, reload, shell mode, navigation, http, i18n, icons).",
   "keywords": [
     "animastor",
-    "file",
+    "navigator",
     "preact",
     "web-ui",
     "frontend",
     "ui-component",
     "signals",
-    "book-import",
+    "book-structure",
     "ports-and-adapters"
   ],
   "type": "module",
@@ -59,9 +59,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Animastor/animastor.git",
-    "directory": "packages/animastor-file"
+    "directory": "packages/animastor-web-navigator"
   },
-  "homepage": "https://github.com/Animastor/animastor/tree/main/packages/animastor-file#readme",
+  "homepage": "https://github.com/Animastor/animastor/tree/main/packages/animastor-web-navigator#readme",
   "bugs": {
     "url": "https://github.com/Animastor/animastor/issues"
   }

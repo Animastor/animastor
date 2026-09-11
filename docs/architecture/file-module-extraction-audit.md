@@ -201,7 +201,7 @@ Ports and their purpose:
 3. **Break the cycle for the slice** — `fileStore.closeBook` receives `playerPort.closeBook` from the composition root (`main.tsx`), removing the file-slice leg of the `generateStore ⇄ playbackStore` cycle.
 4. **Move `pages/FilePage.tsx` next to `fileStore.ts`** (still in-app): page imports only its store + ports; replace the `animastor:open-file` window event with an explicit prop/ports callback (keep the event as a deprecated alias for one release if desired).
 5. **Freeze the contour with guards** (this audit's guard test already pins the current boundary; update the allowed-imports list to the new relative layout).
-6. **Only then cut `packages/animastor-file`** — physical move, `@animastor/web-file@0.1.0`, host keeps `FilePorts` wiring in `main.tsx`/`AppShell.tsx`; bump version, publish per the repo's npm checklist (`PHASE_8F_FIRST_NPM_RELEASE.md` pattern).
+6. **Only then cut `packages/animastor-web-file`** — physical move, `@animastor/web-file@0.1.0`, host keeps `FilePorts` wiring in `main.tsx`/`AppShell.tsx`; bump version, publish per the repo's npm checklist (`PHASE_8F_FIRST_NPM_RELEASE.md` pattern).
 7. **Verify** — full vitest suite + `tsc --noEmit` + manual smoke: import .vbook, deep link `?book=`, create blank → /edit, four downloads, desktop panel mount + `animastor:open-file` trigger, logout/login stash.
 
 ## Final verdict
@@ -283,7 +283,7 @@ Rendering (cards, i18n, empty-session disable rules), status priority (error > e
 
 ### Remaining blockers (unchanged from Phase 5)
 
-B1 slice split (`generateStore` → `fileStore`), B2 `generateStore ⇄ playbackStore` cycle (resolved for the slice at extraction via the composition root), B4 cross-module backend surface, B6 shared `phase` contract. B3 (shell embedding) is now **prepared** (explicit ports), B5 (no tests) is **resolved** by the characterization suite. The physical `packages/animastor-file` cut is a separate task.
+B1 slice split (`generateStore` → `fileStore`), B2 `generateStore ⇄ playbackStore` cycle (resolved for the slice at extraction via the composition root), B4 cross-module backend surface, B6 shared `phase` contract. B3 (shell embedding) is now **prepared** (explicit ports), B5 (no tests) is **resolved** by the characterization suite. The physical `packages/animastor-web-file` cut is a separate task.
 
 ---
 

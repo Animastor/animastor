@@ -37,8 +37,8 @@
 | `@animastor/gpu-hub` | `packages/animastor-gpu-hub` | queue dispatcher (Redis-only, **no PG**) |
 | `@animastor/editor` | `packages/animastor-editor` | edit HTTP contour + model |
 | `@animastor/player` | `packages/animastor-player` | playback HTTP contour |
-| `@animastor/web-navigator` | `packages/animastor-navigator` | web UI navigation tree |
-| `@animastor/web-file` | `packages/animastor-file` | web UI file panel |
+| `@animastor/web-navigator` | `packages/animastor-web-navigator` | web UI navigation tree |
+| `@animastor/web-file` | `packages/animastor-web-file` | web UI file panel |
 | `@animastor/ai-agent` | `packages/animastor-ai-agent` | fail-closed host-port mechanism (C21) |
 | `@animastor/ai-analysis` | `packages/animastor-ai-analysis` | analysis tasks (structure/characters/…) (C21.1) |
 
