@@ -40,8 +40,8 @@
         "url": "https://github.com/Animastor/animastor/issues"
     },
     "dependencies": {
-        "@animastor/contracts": "file:../animastor-contracts",
-        "animastor-comfyui-workflow-connector": "file:../animastor-comfyui-workflow-connector"
+        "@animastor/contracts": "^0.1.0",
+        "animastor-comfyui-workflow-connector": "^0.1.0"
     },
     "devDependencies": {
         "chai": "^6.2.2",

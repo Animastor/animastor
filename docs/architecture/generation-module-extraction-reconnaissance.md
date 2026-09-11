@@ -1839,3 +1839,187 @@ The runtime-tier relocation (§29.13 plan) remains a future step (S-9+), but is 
 **S-8: READY.**
 
 `@animastor/generation` v0.1.0 is a genuine standalone npm package. The boundary is closed. No code changes were required — the S-7 extraction was complete and the S-8 audit confirms it.
+
+---
+
+## 31. S-9 — npm Release Readiness
+
+**Date:** 2026-09-11
+**Baseline:** `e6a0b6a0`
+**Method:** npm release readiness audit per §29 checklist; clean-install validation from tarball; G7 architecture guard re-run.
+
+### 31.1 Package metadata
+
+| Field | Value |
+|---|---|
+| name | `@animastor/generation` |
+| version | `0.1.0` |
+| description | ✅ Present, accurate |
+| license | `MIT` |
+| repository | `git+https://github.com/Animastor/animastor.git` (directory: `packages/animastor-generation`) |
+| homepage | ✅ Present |
+| bugs | ✅ Present |
+| main | `src/index.js` |
+| exports | `{ ".": "./src/index.js" }` (root-only, deep imports blocked) |
+| files | `["src/", "README.md", "LICENSE"]` |
+| engines | `{ "node": ">=18" }` |
+| publishConfig | `{ "access": "public" }` (required for scoped npm package) |
+| private | Not set (correct for public npm publication) |
+| package-lock.json | Present in directory but excluded from tarball by `files` field |
+| .gitignore | `node_modules/` only — correct |
+
+### 31.2 Production dependencies
+
+| Dependency | Resolved version | Runtime needed? | npm published? |
+|---|---|---|---|
+| `@animastor/contracts` | `^0.1.0` | ✅ Yes — Job Protocol v2 constants/grammar | ✅ Yes |
+| `animastor-comfyui-workflow-connector` | `^0.1.0` | ✅ Yes — consumed by `providers/comfyui-provider.js` only | ✅ Yes |
+
+**devDependencies** (not published): `chai ^6.2.2`, `mocha ^11.7.5` — correct.
+
+**No backend-only, workspace-only, or accidental dev/build dependencies in production deps.**
+
+### 31.3 Dependency fix (the only code change)
+
+**Pre-fix:** Both production dependencies used `file:` references (`file:../animastor-contracts`, `file:../animastor-comfyui-workflow-connector`). These are valid in a monorepo workspace but resolve to empty symlinks when the tarball is installed in a clean project — the dependencies physically cannot be found.
+
+**Fix:** Changed to npm registry semver ranges (`^0.1.0`). Both dependency packages are published on the public npm registry at version `0.1.0`.
+
+**Impact:** Single line in `packages/animastor-generation/package.json` — `dependencies` block only. No functional change. No runtime behavior change. The monorepo workspace still resolves these via `workspace:*` or `file:` semantics in development.
+
+### 31.4 npm pack result
+
+```
+📦  @animastor/generation@0.1.0
+Package size: 27.3 kB
+Unpacked size: 90.7 kB
+Total files: 19
+```
+
+**Tarball contents:**
+- `package.json`
+- `README.md`
+- `LICENSE`
+- `src/index.js` (entry point)
+- `src/core/` — 5 files (artifact-naming, default-registrations, generation-progress, media-registry, scene-state)
+- `src/providers/` — 1 file (comfyui-provider)
+- `src/prompt-profiles/` — 3 files (assembly-profile, character-utils, prompt-text-utils)
+- `src/ports/` — 4 files (book-data, dispatch-transport, generation-config, profile-store)
+- `src/utils/` — 2 files (cyr-latin-map, escape-regexp)
+
+**Excluded (correct):** `backend/`, `frontends/`, `docs/`, `test/`, `.git/`, `.env`, coverage, caches, `package-lock.json`, `node_modules/`.
+
+### 31.5 Clean install result
+
+1. Created fresh `/tmp/gen-clean-install` with `npm init -y`
+2. Copied tarball, ran `npm install ./animastor-generation-0.1.0.tgz`
+3. Both transitive deps resolved from npm registry (`@animastor/contracts`, `animastor-comfyui-workflow-connector`)
+4. `require('@animastor/generation')` — ✅ loads, 8 root exports present
+5. `require('@animastor/contracts')` — ✅ loads, 21 contract exports
+6. `require('animastor-comfyui-workflow-connector')` — ✅ loads, factory + error types
+7. All 4 ports fail-fast when unwired — ✅
+8. No backend-relative paths attempted — ✅
+
+### 31.6 Public API
+
+Frozen (G7-G). 8 root properties:
+
+```
+artifactNaming, bootstrap, comfyuiProvider, generationProgress,
+mediaRegistry, ports, promptProfiles, sceneState
+```
+
+Sub-surfaces: `ports` (4: bookData, dispatchTransport, generationConfig, profileStore), `promptProfiles` (3: assemblyProfile, characterUtils, promptTextUtils).
+
+Deep imports blocked by exports map (`"."` only).
+
+### 31.7 Exports / deep imports
+
+Exports map: `{ ".": "./src/index.js" }`
+
+`require('@animastor/generation/core/artifact-naming')` → throws (correct).
+`require('@animastor/generation/ports/dispatch-transport')` → throws (correct).
+
+### 31.8 README
+
+✅ Sufficient for npm consumer. Covers: what the package is, directory layout, dependency boundary, public API with code example, host responsibilities (port binding), test instructions. Not over-documented; no internal architecture leaks.
+
+### 31.9 License / metadata
+
+- LICENSE: MIT, Copyright (c) 2026 Animastor — ✅
+- No conflicting licenses in dependencies (both deps are MIT) — ✅
+- GitHub repository URL correct — ✅
+- `publishConfig.access = "public"` — ✅ (required for `@animastor/` scoped package)
+
+### 31.10 Security / publication audit
+
+- No `.env`, credentials, tokens, private keys — ✅
+- No absolute local paths (`/root/`, `/home/`, `/tmp/`) — ✅
+- No internal hostnames (127.0.0.1, localhost, 192.168.x, 10.0.x) — ✅
+- No debug artifacts or test fixtures with secrets — ✅
+- Source comments reference `backend/src/**` paths only as documentation, never in require() — ✅
+
+### 31.11 Runtime compatibility
+
+- CommonJS only (`"use strict"` + `require`/`module.exports`) — ✅
+- No transpilation/build step required — ✅
+- Uses only node builtins (`crypto`, `path`, `fs`, `util`) + 2 npm dependencies — ✅
+- `engines.node >= 18` matches actual code (no ESM, no Node 22+ features) — ✅
+
+### 31.12 Tests
+
+| Suite | Result | Classification |
+|---|---|---|
+| Package own tests (`npm test`) | **11 passing / 0 failing** | PRE-EXISTING |
+| G7-A…G7-M boundary guards | **14 passing / 0 failing** | PRE-EXISTING |
+| S6 host ports | **14 passing / 0 failing** | PRE-EXISTING |
+| S5 runtime/orchestration | **7 passing / 0 failing** | PRE-EXISTING |
+| npm pack validation | **19 files, clean** | NEW (S-9) |
+| Clean-install test | **PASS** | NEW (S-9) |
+| Public API test (from tarball) | **PASS** | NEW (S-9) |
+| Exports/deep-import test | **PASS** | NEW (S-9) |
+| Security/publication audit | **PASS** | NEW (S-9) |
+
+**No new failures. No regressions.**
+
+### 31.13 CI
+
+**CI evidence unavailable.** The repository uses a local `git://` remote — no GitHub Actions or CI service is configured. All verification was performed locally.
+
+### 31.14 Blockers
+
+**RESOLVED:** `file:` dependency references → npm semver ranges. This was the only blocker for npm publication.
+
+### 31.15 Release policy (proposed)
+
+- **Current version:** `0.1.0` (initial release)
+- **0.x policy:** Minor versions (`0.1.x` → `0.2.x`) may contain breaking changes. Patch versions (`0.1.0` → `0.1.1`) are backward-compatible fixes only.
+- **`0.1.0` → `1.0.0`:** Promote to `1.0.0` when the API surface is considered stable for production consumers.
+- **What is patch:** Bug fixes in existing functions, documentation corrections, internal refactors that preserve the public API.
+- **What is minor:** New exports added to the root surface, new port shapes, new capability registrations — backward-compatible additions.
+- **What is major:** Removing/renaming root exports, changing port contracts, altering FSM states/transitions, breaking the artifact naming grammar.
+
+### 31.16 Verdict
+
+**S-9: READY (after dependency fix).
+
+`@animastor/generation` v0.1.0 is npm publication-ready. The single required change — converting `file:` dependency references to npm semver ranges — has been applied. All acceptance criteria met:
+
+1. ✅ `npm pack --dry-run` clean
+2. ✅ Tarball contains only intended package files (19 files)
+3. ✅ Package installs in clean project from tarball
+4. ✅ `require('@animastor/generation')` works outside monorepo
+5. ✅ Public API preserved (8 root exports)
+6. ✅ Deep imports blocked
+7. ✅ Production dependencies correct for npm
+8. ✅ No backend/workspace leakage
+9. ✅ README sufficient
+10. ✅ License and npm metadata correct
+11. ✅ Scoped-package semantics correct (`publishConfig.access = "public"`)
+12. ✅ No accidental secrets/internal artifacts
+13. ✅ Package tests + G7/G8 guards pass
+14. ✅ All new failures classified (none)
+15. ✅ `npm publish` NOT executed
+16. ✅ Generation runtime architecture unchanged
+
+**Exact next action for publication:** `npm publish --access public` (after `@animastor/contracts` and `animastor-comfyui-workflow-connector` have been published, which they already are at v0.1.0).
