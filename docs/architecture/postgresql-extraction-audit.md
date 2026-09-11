@@ -90,8 +90,8 @@ Legend for how each module touches PG: **A** raw SQL in module, **B** direct pg 
 | GPU Hub (`@animastor/gpu-hub`) | yes | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗* | ✗ | Redis + HTTP only; *gpu-hub.js:64 carries a SYNC comment referencing worker-repo token format — intentional contract sync, comment-only |
 | Editor (`@animastor/editor`) | yes | ✗ | ✗ | ✗ | ✗ | ✗ | via ports | ✗ | ✗ | `editorPorts` carries `sceneAssetsRepo` + `purge` (entity-cleanup) — HOST_ADAPTER; entity-cleanup SQL stays host-side |
 | Player (`@animastor/player`) | yes | ✗ | ✗ | ✗ | ✗ | ✗ | via ports | ✗ | ✗ | `playerPorts` HOST_ADAPTER |
-| Navigator (`@animastor/navigator`) | yes | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | web UI, no persistence |
-| File (`@animastor/file`) | yes | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | web UI, no persistence |
+| Navigator (`@animastor/web-navigator`) | yes | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | web UI, no persistence |
+| File (`@animastor/web-file`) | yes | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | web UI, no persistence |
 | AI Agent (`@animastor/ai-agent`) | yes | ✗ | ✗ | ✗ | ✗ | ✗ | via ports | ✗ | ✗ | mechanism only; PG session/step bookkeeping injected via `assertHostPorts` — HOST_ADAPTER (pipeline-steps.js injects updateSession/createStep/completeStep/failStep/logConversation) |
 | AI Analysis (`@animastor/ai-analysis`) | yes | ✗ | ✗ | ✗ | ✗ | ✗ | via ports | ✗ | ✗ | tasks receive host ports; zero persistence |
 | AI Assistant (`@animastor/assistant`) | yes | ✗ | ✗ | ✗ | ✗ | ✗ | via ports | ✗ | ✗ | `AssistantPorts.sessionRepo` → chat-session-repo; contract in package, PG impl host-side — the model case |
@@ -160,8 +160,8 @@ Method: transitive require/import closure per package entrypoint, resolving `@an
 | `@animastor/gpu-hub` | CLEAN | Redis/HTTP only; gpu-hub.js:64 SYNC comment references worker-repo token format — intentional cross-repo contract documentation |
 | `@animastor/editor` | CLEAN | editor-ports.cjs carries repo references as PORTS (functions injected by backend.cjs), not requires |
 | `@animastor/player` | CLEAN | |
-| `@animastor/navigator` | CLEAN | |
-| `@animastor/file` | CLEAN | |
+| `@animastor/web-navigator` | CLEAN | |
+| `@animastor/web-file` | CLEAN | |
 | `@animastor/ai-agent` | CLEAN | zero requires beyond `./ports` |
 | `@animastor/ai-analysis` | CLEAN | tasks are port-driven |
 | `@animastor/assistant` | CLEAN | session-repo-contract.cjs documents the host-side PG repo by path — contract doc, not a require |

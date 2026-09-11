@@ -1,4 +1,4 @@
-// NavigatorPorts — the complete host contract of the @animastor/navigator
+// NavigatorPorts — the complete host contract of the @animastor/web-navigator
 // package (docs/architecture/navigator-module-extraction-audit.md).
 //
 // Dependency direction (frozen by arch guards):

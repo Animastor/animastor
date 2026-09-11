@@ -1,6 +1,6 @@
-# Navigator Module Extraction Audit — Navigator contour → `@animastor/navigator`
+# Navigator Module Extraction Audit — Navigator contour → `@animastor/web-navigator`
 
-> **Package scope (fixed, `41016f23`+):** `@animastor/navigator` is a **specialized Preact/Web UI module** for the browser frontend (`frontends/app`). It is **not** a platform-independent or domain module: rendering is Preact JSX/DOM, the desktop/mobile fork is web-shell-specific (`matchMedia` port), and thumbnails/scroll behavior are web-specific. The Android/native Navigator (`NavigateFragment`) is a separate implementation — this package does not target it directly. Domain logic stays host-owned behind `NavigatorPorts`; a cross-platform `navigator-core` split, if ever needed, is a separate future task (NOT part of this package).
+> **Package scope (fixed, `41016f23`+):** `@animastor/web-navigator` is a **specialized Preact/Web UI module** for the browser frontend (`frontends/app`). It is **not** a platform-independent or domain module: rendering is Preact JSX/DOM, the desktop/mobile fork is web-shell-specific (`matchMedia` port), and thumbnails/scroll behavior are web-specific. The Android/native Navigator (`NavigateFragment`) is a separate implementation — this package does not target it directly. Domain logic stays host-owned behind `NavigatorPorts`; a cross-platform `navigator-core` split, if ever needed, is a separate future task (NOT part of this package).
 
 **Status:** Phase 0 reconnaissance COMPLETE + **Phase 1 boundary preparation COMPLETE** (ports in-app, extraction still NOT performed — `NavigatePage.tsx` has NOT moved, no package exists).
 **Date:** 2026-09-09
@@ -104,7 +104,7 @@ Backend HTTP surface consumed (contract only):
 **Cycles:** none through the page (verified: only `main.tsx` and `AppShell.tsx` import it; neither is imported back). Upstream store cycle `generateStore ⇄ playbackStore` is pre-existing and untouched by this contour. The `desktop.ts` comment (lines 1–6) documents the AppShell-cycle avoidance pattern Navigator already follows.
 
 **Hidden dependencies:**
-1. **Behavioral fork on `isDesktop`** (`NavigatePage.tsx:85`, `308`, `336`, `349`): mobile unit-tap = select + `navigate('/play')` (Android `switchToPlayTab()`); desktop = select-only, playback requires dbl-click or the active-row ⏯ button. A consumer embedding `@animastor/navigator` outside the desktop query would silently change semantics — the fork must be an explicit prop/port.
+1. **Behavioral fork on `isDesktop`** (`NavigatePage.tsx:85`, `308`, `336`, `349`): mobile unit-tap = select + `navigate('/play')` (Android `switchToPlayTab()`); desktop = select-only, playback requires dbl-click or the active-row ⏯ button. A consumer embedding `@animastor/web-navigator` outside the desktop query would silently change semantics — the fork must be an explicit prop/port.
 2. **`data-nav-active` DOM contract**: scroll-into-view effect queries `[data-nav-active="true"]` — an internal selector contract between `renderItem` and the scroll effect (stays internal, but e2e/UI tests would couple to it).
 3. **Preview URL grammar** in `UnitThumb` (`/preview/{book}/{ch}/{sc}/{iu}?build_id=`) — duplicated knowledge of the Player media path shape (same grammar in EditPage:2760, PlayPage) — must go through `mediaUrl` port, never a local base.
 4. **Reload triggers triad** (`bookId` change, `onPlaybackPrepared`, EXTERNAL invalidation) — an implicit freshness contract with the shell: the tree is expected to be current without manual reload on desktop where the panel stays mounted.
@@ -203,7 +203,7 @@ No backend blockers: both consumed endpoints already live in extracted backend p
 1. ~~**Characterization tests first**~~ — **DONE**: 27 tests, fake ports, vitest + happy-dom + `@testing-library/preact` (devDeps only).
 2. ~~**Introduce `NavigatorPorts` in-app (no package yet)**~~ — **DONE**: `NavigatePage` receives `ports` via props; `main.tsx`/`AppShell.tsx` wire `navigatorPorts` from `app/navigatorAdapters.ts`; no behavior change; guards updated (11 kept + 3 new) and green.
 3. **Move the file** to `src/modules/navigator/` (still in-app) with its tests; verify desktop panel + mobile tab behavior unchanged. Guards: `NAV_PAGE` path + reverse-dep filter update.
-4. **Cut `packages/animastor-navigator`** — physical move, `@animastor/navigator@0.1.0`, host keeps the ports wiring (`ports.ts` → package `index.ts`); peer-dependency on `preact`/`@preact/signals` per the repo's npm checklist pattern. Decision deferred to that step: shared `api/models` types + `unitIndex` (currently imported by the page as types + pure helper — must not drift, see hidden dep #5).
+4. **Cut `packages/animastor-navigator`** — physical move, `@animastor/web-navigator@0.1.0`, host keeps the ports wiring (`ports.ts` → package `index.ts`); peer-dependency on `preact`/`@preact/signals` per the repo's npm checklist pattern. Decision deferred to that step: shared `api/models` types + `unitIndex` (currently imported by the page as types + pure helper — must not drift, see hidden dep #5).
 5. **Verify** — vitest + `tsc --noEmit` + smoke: mobile unit-tap → Play switch; desktop select/⏯/dbl-click; AI-patch invalidation refreshes tree; generation completion refreshes tree; no-book empty state.
 
 ## Final verdict

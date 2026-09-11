@@ -5,7 +5,7 @@
 // import/export bookkeeping, the unified import flow
 // (importBookFromFile / openBookById / closeBook / createBlankBook) and the
 // cold-start session restore (restoreBookSession). This is still host app
-// code — the physical `@animastor/file` package is NOT cut here.
+// code — the physical `@animastor/web-file` package is NOT cut here.
 //
 // Dependency direction (frozen by architecture guards):
 //

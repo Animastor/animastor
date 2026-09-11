@@ -4,7 +4,7 @@
 // This file is the ONLY seam where the app's shared infrastructure meets the
 // File contract: the File surface consumes `filePorts` and knows nothing about
 // the modules below. When the physical package is cut, this wiring stays in the
-// host app and becomes the composition root for @animastor/file.
+// host app and becomes the composition root for @animastor/web-file.
 //
 // Since the B1 split the File STATE itself is host-owned in
 // `state/fileStore.ts`; this root binds it to the shared session identity and
@@ -42,7 +42,7 @@ import {
   importBookFromFile, openBookById, closeBook, createBlankBook, setExporting, setExportProgress,
   wireFileStore,
 } from '../state/fileStore';
-import type { FilePorts, FileRoute } from '@animastor/file';
+import type { FilePorts, FileRoute } from '@animastor/web-file';
 
 // ── Bind the File store to the shared seams (host-owned single wiring) ──
 wireFileStore({

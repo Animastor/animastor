@@ -1,4 +1,4 @@
-# @animastor/navigator
+# @animastor/web-navigator
 
 Book-structure navigation tree (chapters → scenes → units) for Animastor, packaged as a standalone Preact module.
 
@@ -9,7 +9,7 @@ The Navigator owns no runtime infrastructure. Every host dependency — playback
 ## Install
 
 ```sh
-npm install @animastor/navigator
+npm install @animastor/web-navigator
 ```
 
 Peer dependencies (must be provided by the host):
@@ -21,7 +21,7 @@ Peer dependencies (must be provided by the host):
 
 ```tsx
 import { render } from 'preact';
-import { NavigatePage, type NavigatorPorts } from '@animastor/navigator';
+import { NavigatePage, type NavigatorPorts } from '@animastor/web-navigator';
 
 const ports: NavigatorPorts = {
   seek: { seekToPosition: (ch, sc, idx, unitId) => myPlayer.seek(ch, sc, idx, unitId) },
@@ -79,8 +79,8 @@ render(<NavigatePage ports={ports} />, document.getElementById('app'));
 
 - The package imports only `preact`, `preact/hooks`, `preact/jsx-runtime` and `@preact/signals`.
 - Host stores, `api/client`, router, i18n, icons, `AppShell` and adapter modules are **forbidden** inside the package (enforced by boundary tests in the repository).
-- `@animastor/navigator → host` = forbidden; `host → @animastor/navigator` = allowed through the public entry point only.
-- **Technology boundary**: `@animastor/navigator` is a **Preact/Web UI module** — not a cross-platform or domain package. No `navigator-core` split exists yet; the Android/native Navigator is out of scope for this package.
+- `@animastor/web-navigator → host` = forbidden; `host → @animastor/web-navigator` = allowed through the public entry point only.
+- **Technology boundary**: `@animastor/web-navigator` is a **Preact/Web UI module** — not a cross-platform or domain package. No `navigator-core` split exists yet; the Android/native Navigator is out of scope for this package.
 
 ## Development
 

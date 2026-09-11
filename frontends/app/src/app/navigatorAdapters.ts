@@ -4,7 +4,7 @@
 // This file is the ONLY seam where the app's shared infrastructure meets the
 // Navigator contract: the Navigator surface consumes `navigatorPorts` and knows
 // nothing about the modules below. When the physical package is cut, this wiring
-// stays in the host app and becomes the composition root for @animastor/navigator.
+// stays in the host app and becomes the composition root for @animastor/web-navigator.
 
 import { signal } from '@preact/signals';
 import { getJson, mediaUrl } from '../api/client';
@@ -17,7 +17,7 @@ import { navigateTo, position as positionSignal } from '../state/positionStore';
 import { bookResource, onResourceInvalidated } from '../state/resourceInvalidations';
 import { resilientReload, sharedRecovery } from '../state/resilientReloader';
 import { seekToPosition } from '../state/playbackStore';
-import type { NavigatorPorts } from '@animastor/navigator';
+import type { NavigatorPorts } from '@animastor/web-navigator';
 
 // ShellModePort host implementation: the same query as useDesktopShell
 // (min-width: 1180px), backed by a signal so a Navigator rendered through the

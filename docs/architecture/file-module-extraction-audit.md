@@ -1,4 +1,4 @@
-# File Module Extraction Audit — File contour → `@animastor/file`
+# File Module Extraction Audit — File contour → `@animastor/web-file`
 
 **Status:** Phase 0 reconnaissance COMPLETE + **Phase 1-prep boundary COMPLETE** + **B1 state split COMPLETE (extraction NOT performed — no package exists yet)**.
 **Date:** 2026-09-09
@@ -105,7 +105,7 @@ Backend HTTP surface consumed (contract only — backend untouched by extraction
 
 ## Phase 2 — Boundary analysis
 
-**Internal dependencies (move into `@animastor/file`):**
+**Internal dependencies (move into `@animastor/web-file`):**
 - `pages/FilePage.tsx` (282 LOC: page + `DownloadCard` + `triggerDownload`)
 - File state slice from `generateStore.ts` (~260 LOC: signals + import/open/close/create/restore/session functions)
 
@@ -132,7 +132,7 @@ Backend HTTP surface consumed (contract only — backend untouched by extraction
 
 ## Phase 3 — Contract
 
-Proposed public API of `@animastor/file`:
+Proposed public API of `@animastor/web-file`:
 
 ```ts
 export function FilePage(props?: { embedded?: boolean }): JSX.Element;
@@ -201,7 +201,7 @@ Ports and their purpose:
 3. **Break the cycle for the slice** — `fileStore.closeBook` receives `playerPort.closeBook` from the composition root (`main.tsx`), removing the file-slice leg of the `generateStore ⇄ playbackStore` cycle.
 4. **Move `pages/FilePage.tsx` next to `fileStore.ts`** (still in-app): page imports only its store + ports; replace the `animastor:open-file` window event with an explicit prop/ports callback (keep the event as a deprecated alias for one release if desired).
 5. **Freeze the contour with guards** (this audit's guard test already pins the current boundary; update the allowed-imports list to the new relative layout).
-6. **Only then cut `packages/animastor-file`** — physical move, `@animastor/file@0.1.0`, host keeps `FilePorts` wiring in `main.tsx`/`AppShell.tsx`; bump version, publish per the repo's npm checklist (`PHASE_8F_FIRST_NPM_RELEASE.md` pattern).
+6. **Only then cut `packages/animastor-file`** — physical move, `@animastor/web-file@0.1.0`, host keeps `FilePorts` wiring in `main.tsx`/`AppShell.tsx`; bump version, publish per the repo's npm checklist (`PHASE_8F_FIRST_NPM_RELEASE.md` pattern).
 7. **Verify** — full vitest suite + `tsc --noEmit` + manual smoke: import .vbook, deep link `?book=`, create blank → /edit, four downloads, desktop panel mount + `animastor:open-file` trigger, logout/login stash.
 
 ## Final verdict
@@ -240,7 +240,7 @@ existing Animastor infrastructure (generateStore, api/client, i18n, router, icon
 
 | File | Role |
 |---|---|
-| `frontends/app/src/modules/file/ports.ts` | `FilePorts` contract — File-local structural types; imports only `@preact/signals` + Preact types. Future public surface of `@animastor/file`. |
+| `frontends/app/src/modules/file/ports.ts` | `FilePorts` contract — File-local structural types; imports only `@preact/signals` + Preact types. Future public surface of `@animastor/web-file`. |
 | `frontends/app/src/app/fileAdapters.ts` | Host composition root: wires generateStore signals/actions, `api/client.getBlob`, `t`/`tf`, `navigate`, `toast`, icons, `OPEN_FILE_EVENT`, deep-link `?book=`/`?open=` grammar into `filePorts`. |
 | `frontends/app/src/modules/file/file.test.tsx` | Characterization tests through fake ports (19 tests — see below). |
 | `frontends/app/src/app/fileAdapters.test.ts` | Wiring tests: session signals are the generateStore signals **themselves** (no fork); i18n resolves real keys; open-request subscribe/unsubscribe; deep-link read+strip. |
@@ -350,7 +350,7 @@ All Phase 1-prep guards kept. Added in `architecture/file-navigator-contour.guar
 
 Import / drag & drop / Open / Create New Book / Export-download / `/file` `/library` `/edit` `/play` routes / desktop File panel / deep links / navigation events are covered by the automated suites (characterization + fileStore + adapters + guards + build). Browser-level smoke (real backend, real media, Safari/Chrome) was NOT run here — listed as the remaining manual verification step before the physical cut.
 
-### Remaining blockers before the physical `@animastor/file` cut
+### Remaining blockers before the physical `@animastor/web-file` cut
 
 - **B4** — cross-module backend surface (`POST /book/blank` = Editor contour, `assets-state` = Player contour): documentation-only, still open.
 - **B6** — shared `phase` contract: PREPARED but structurally unresolved — the signal is still written by both slices; the physical cut needs an explicit who-owns-which-values contract (the seam interface already documents the File-owned values).
@@ -369,7 +369,7 @@ B1 itself: **CLOSED** — all File state/actions that can be separated ARE separ
 
 **Blocker:** File calls `POST /book/blank` (Editor contour) and `GET /book/{id}/assets-state` (Player contour) — cross-module product boundary.
 
-**Resolution:** HTTP is the contract. The File module calls these endpoints exclusively through `api/client` (`postJson`/`getJson`). No backend-package import exists, no route implementation is referenced. The physical `@animastor/file` package will call these same HTTP endpoints through an injected `FileHttpPort`; the backend ownership stays unchanged.
+**Resolution:** HTTP is the contract. The File module calls these endpoints exclusively through `api/client` (`postJson`/`getJson`). No backend-package import exists, no route implementation is referenced. The physical `@animastor/web-file` package will call these same HTTP endpoints through an injected `FileHttpPort`; the backend ownership stays unchanged.
 
 **Evidence — Backend endpoints used by File (fileStore.ts + FilePage.tsx):**
 
@@ -424,11 +424,11 @@ B1 itself: **CLOSED** — all File state/actions that can be separated ARE separ
 
 ### fileStore package-cut readiness
 
-**Verified:** After future physical extraction to `@animastor/file`, the dependency chain:
+**Verified:** After future physical extraction to `@animastor/web-file`, the dependency chain:
 ```
 File UI → FilePorts → host adapters → fileStore / shared host state
 ```
-creates NO hidden dependency of `@animastor/file` on:
+creates NO hidden dependency of `@animastor/web-file` on:
 - `generateStore` — injected via SessionSeam + GenerationResetSeam
 - `playbackStore` — injected via PlayerSeam
 - AppShell — FilePage never imports AppShell

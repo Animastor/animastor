@@ -2,14 +2,14 @@
 // (docs/architecture/file-module-extraction-audit.md,
 //  docs/architecture/navigator-module-extraction-audit.md).
 //
-// Phase 2 guards: Navigator physically extracted to @animastor/navigator package.
+// Phase 2 guards: Navigator physically extracted to @animastor/web-navigator package.
 // File physical extraction: FilePage + FilePorts physically extracted to
-// @animastor/file package. The host consumes the package through its public
+// @animastor/web-file package. The host consumes the package through its public
 // entry point; fileStore (host-owned state/flows) stays in the host; the
 // composition root (fileAdapters.ts) wires the package to the host seams.
 //
 // B1 split guards: File state lives in state/fileStore.ts (host-owned); the
-// File UI contour (now @animastor/file package) reaches it only via FilePorts
+// File UI contour (now @animastor/web-file package) reaches it only via FilePorts
 // + fileAdapters, the shared session identity is NOT forked, and the
 // generateStore ⇄ playbackStore cycle is dissolved (the File-slice closeBook
 // player release moved with the slice into fileStore's `player` seam).
@@ -60,7 +60,7 @@ const FILE_STORE = 'state/fileStore.ts';
 // ── Audit §Phase 1 — Navigator host boundary (frozen, carries into Phase 2) ──
 
 // The host adapter is the single seam that wires the shared infrastructure.
-// Phase 2: adapter imports from @animastor/navigator instead of local modules.
+// Phase 2: adapter imports from @animastor/web-navigator instead of local modules.
 const ADAPTERS_REQUIRED = [
   '../state/generateStore',
   '../state/positionStore',
@@ -68,7 +68,7 @@ const ADAPTERS_REQUIRED = [
   '../state/resilientReloader',
   '../state/playbackStore',
   '../api/client',
-  '@animastor/navigator',
+  '@animastor/web-navigator',
   './i18n',
   './router',
   './desktop',
@@ -88,10 +88,10 @@ const FILE_ADAPTERS_REQUIRED = [
   '../state/generateStore',
   '../state/fileStore',
   '../state/playbackStore',
-  '@animastor/file',
+  '@animastor/web-file',
 ].sort();
 
-// Host files allowed to reference @animastor/file (entry points +
+// Host files allowed to reference @animastor/web-file (entry points +
 // composition root + this guard's subject files).
 const FILE_CONSUMERS_ALLOWED = [
   'main.tsx',
@@ -100,20 +100,20 @@ const FILE_CONSUMERS_ALLOWED = [
 ].sort();
 
 describe('File contour guard (file-module-extraction-audit.md)', () => {
-  it('Physical extraction — host imports FilePage ONLY from @animastor/file', () => {
+  it('Physical extraction — host imports FilePage ONLY from @animastor/web-file', () => {
     const main = requireRaw('main.tsx');
-    expect(main).toContain("import { FilePage } from '@animastor/file'");
+    expect(main).toContain("import { FilePage } from '@animastor/web-file'");
     expect(main).not.toContain("import { FilePage } from './pages/FilePage'");
     expect(main).not.toContain("import { FilePage } from '../pages/FilePage'");
 
     const shell = requireRaw('app/AppShell.tsx');
-    expect(shell).toContain("import { FilePage } from '@animastor/file'");
+    expect(shell).toContain("import { FilePage } from '@animastor/web-file'");
     expect(shell).not.toContain("import { FilePage } from '../pages/FilePage'");
   });
 
-  it('Physical extraction — host adapter imports from @animastor/file (not local modules/file)', () => {
+  it('Physical extraction — host adapter imports from @animastor/web-file (not local modules/file)', () => {
     const specs = importSpecifiers(FILE_ADAPTERS);
-    expect(specs).toContain('@animastor/file');
+    expect(specs).toContain('@animastor/web-file');
     expect(specs).not.toContain('../modules/file/ports');
     expect(specs).not.toContain('../pages/FilePage');
   });
@@ -136,12 +136,12 @@ describe('File contour guard (file-module-extraction-audit.md)', () => {
     expect(fileModuleKeys).toEqual([]);
   });
 
-  it('Physical extraction — zero reverse dependencies: only main.tsx, AppShell, and fileAdapters import @animastor/file', () => {
+  it('Physical extraction — zero reverse dependencies: only main.tsx, AppShell, and fileAdapters import @animastor/web-file', () => {
     const consumers = allSourceFiles()
       .filter((f) => !FILE_CONSUMERS_ALLOWED.includes(f))
       .filter((f) => {
         const specs = importSpecifiers(f);
-        return specs.some((s) => s.includes('@animastor/file'));
+        return specs.some((s) => s.includes('@animastor/web-file'));
       });
     expect(consumers).toEqual([]);
   });
@@ -149,10 +149,10 @@ describe('File contour guard (file-module-extraction-audit.md)', () => {
   it('Physical extraction — host reaches the package ONLY through the public entry point', () => {
     for (const f of allSourceFiles()) {
       const src = requireRaw(f);
-      if (!src.includes('@animastor/file')) continue;
+      if (!src.includes('@animastor/web-file')) continue;
       // Deep-import specifiers into package internals are forbidden
       expect(src, `${f} deep-imports package internals`).not.toMatch(/@animastor\/file\/(?:src|dist|test)\//);
-      expect(src, `${f} imports @animastor/file/package.json`).not.toContain('@animastor/file/package.json');
+      expect(src, `${f} imports @animastor/web-file/package.json`).not.toContain('@animastor/web-file/package.json');
     }
   });
 
@@ -191,20 +191,20 @@ describe('File contour guard (file-module-extraction-audit.md)', () => {
 });
 
 describe('Navigator contour guard (navigator-module-extraction-audit.md, Phase 2)', () => {
-  it('Phase 2 — host imports NavigatePage ONLY from @animastor/navigator', () => {
+  it('Phase 2 — host imports NavigatePage ONLY from @animastor/web-navigator', () => {
     const main = requireRaw('main.tsx');
-    expect(main).toContain("import { NavigatePage } from '@animastor/navigator'");
+    expect(main).toContain("import { NavigatePage } from '@animastor/web-navigator'");
     expect(main).not.toContain("import { NavigatePage } from './pages/NavigatePage'");
     expect(main).not.toContain("import { NavigatePage } from '../pages/NavigatePage'");
 
     const shell = requireRaw('app/AppShell.tsx');
-    expect(shell).toContain("import { NavigatePage } from '@animastor/navigator'");
+    expect(shell).toContain("import { NavigatePage } from '@animastor/web-navigator'");
     expect(shell).not.toContain("import { NavigatePage } from '../pages/NavigatePage'");
   });
 
-  it('Phase 2 — host adapter imports from @animastor/navigator (not local modules/navigator)', () => {
+  it('Phase 2 — host adapter imports from @animastor/web-navigator (not local modules/navigator)', () => {
     const specs = importSpecifiers(NAV_ADAPTERS);
-    expect(specs).toContain('@animastor/navigator');
+    expect(specs).toContain('@animastor/web-navigator');
     expect(specs).not.toContain('../modules/navigator/ports');
     expect(specs).not.toContain('../pages/NavigatePage');
   });
@@ -232,13 +232,13 @@ describe('Navigator contour guard (navigator-module-extraction-audit.md, Phase 2
     expect(navModuleKeys).toEqual([]);
   });
 
-  it('Phase 2 — zero reverse dependencies: only main.tsx, AppShell, and navigatorAdapters import @animastor/navigator', () => {
+  it('Phase 2 — zero reverse dependencies: only main.tsx, AppShell, and navigatorAdapters import @animastor/web-navigator', () => {
     const allowedConsumers = ['main.tsx', 'app/AppShell.tsx', 'app/navigatorAdapters.ts'];
     const consumers = allSourceFiles()
       .filter((f) => !allowedConsumers.includes(f))
       .filter((f) => {
         const src = requireRaw(f);
-        return src.includes('@animastor/navigator');
+        return src.includes('@animastor/web-navigator');
       });
     expect(consumers).toEqual([]);
   });
@@ -252,10 +252,10 @@ describe('Navigator contour guard (navigator-module-extraction-audit.md, Phase 2
   it('npm prep — host reaches the package ONLY through the public entry point', () => {
     for (const f of allSourceFiles()) {
       const src = requireRaw(f);
-      if (!src.includes('@animastor/navigator')) continue;
+      if (!src.includes('@animastor/web-navigator')) continue;
       // Deep-import specifiers into package internals are forbidden
       expect(src, `${f} deep-imports package internals`).not.toMatch(/@animastor\/navigator\/(?:src|dist|test)\//);
-      expect(src, `${f} imports @animastor/navigator/package.json`).not.toContain('@animastor/navigator/package.json');
+      expect(src, `${f} imports @animastor/web-navigator/package.json`).not.toContain('@animastor/web-navigator/package.json');
     }
   });
 
@@ -290,13 +290,13 @@ describe('Shared guards', () => {
     expect(routerRefs, 'fileStore must not reach shell router').toEqual([]);
   });
 
-  it('Package boundary — @animastor/file must not import features/ or other pages', () => {
+  it('Package boundary — @animastor/web-file must not import features/ or other pages', () => {
     // The package has its own boundary.test.ts that scans src/; here we pin
     // from the host side that the package entry is the ONLY way to reach it.
     const consumers = allSourceFiles()
       .filter((f) => {
         const specs = importSpecifiers(f);
-        return specs.some((s) => s.includes('@animastor/file'));
+        return specs.some((s) => s.includes('@animastor/web-file'));
       });
     expect(consumers.sort()).toEqual(FILE_CONSUMERS_ALLOWED);
   });

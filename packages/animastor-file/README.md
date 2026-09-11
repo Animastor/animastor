@@ -1,4 +1,4 @@
-# @animastor/file
+# @animastor/web-file
 
 Book import/open/create/close/export UI for Animastor, packaged as a standalone Preact module.
 
@@ -9,7 +9,7 @@ The File owns no runtime infrastructure. Every host dependency — session ident
 ## Install
 
 ```sh
-npm install @animastor/file
+npm install @animastor/web-file
 ```
 
 Peer dependencies (must be provided by the host):
@@ -21,7 +21,7 @@ Peer dependencies (must be provided by the host):
 
 ```tsx
 import { render } from 'preact';
-import { FilePage, type FilePorts } from '@animastor/file';
+import { FilePage, type FilePorts } from '@animastor/web-file';
 
 const ports: FilePorts = {
   session: { bookId, buildId, phase, errorMessage, importMessages, isExporting, navigationEvent },
@@ -75,8 +75,8 @@ render(<FilePage ports={ports} />, document.getElementById('app'));
 
 - The package imports only `preact`, `preact/hooks`, `preact/jsx-runtime` and `@preact/signals`.
 - Host stores, `api/client`, router, i18n, icons, `AppShell` and adapter modules are **forbidden** inside the package (enforced by boundary tests in the repository).
-- `@animastor/file → host` = forbidden; `host → @animastor/file` = allowed through the public entry point only.
-- **Technology boundary**: `@animastor/file` is a **Preact/Web UI module** — not a cross-platform or domain package. The Android/native File surface is out of scope.
+- `@animastor/web-file → host` = forbidden; `host → @animastor/web-file` = allowed through the public entry point only.
+- **Technology boundary**: `@animastor/web-file` is a **Preact/Web UI module** — not a cross-platform or domain package. The Android/native File surface is out of scope.
 
 ## Development
 

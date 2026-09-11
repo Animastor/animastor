@@ -1,4 +1,4 @@
-// FilePorts — the complete host contract of the @animastor/file package
+// FilePorts — the complete host contract of the @animastor/web-file package
 // (docs/architecture/file-module-extraction-audit.md, Phase 1 prep).
 //
 // Dependency direction (frozen by arch guards):
@@ -11,7 +11,7 @@
 // app/router / app/icons / lib/ui / app/desktop / AppShell directly. The ONLY
 // host-side place where those modules meet this contract is app/fileAdapters.ts.
 // This file imports nothing but Preact types — it is the future package's
-// public surface, kept in-app until the physical cut of @animastor/file.
+// public surface, kept in-app until the physical cut of @animastor/web-file.
 //
 // Port payload types are File-local structural types (NOT imports of the host
 // store types): the host adapter bridges them, and TypeScript rejects the

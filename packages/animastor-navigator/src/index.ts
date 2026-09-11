@@ -1,4 +1,4 @@
-// @animastor/navigator — public API
+// @animastor/web-navigator — public API
 //
 // The package exposes the Navigator UI surface (NavigatePage) and the
 // NavigatorPorts contract. The host wires real implementations of the ports

@@ -4,7 +4,7 @@ import preact from '@preact/preset-vite';
 export default defineConfig({
   plugins: [preact()],
   resolve: {
-    // The extracted @animastor/file and @animastor/navigator packages carry
+    // The extracted @animastor/web-file and @animastor/web-navigator packages carry
     // their own node_modules with a second preact copy. Without dedupe their
     // hooks render against a foreign component tree
     // ("Cannot read properties of undefined (reading '__H')") and the app

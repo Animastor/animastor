@@ -1,4 +1,4 @@
-// Package boundary tests — verify that @animastor/file never imports
+// Package boundary tests — verify that @animastor/web-file never imports
 // host stores, host infrastructure, or app-level modules.
 //
 // These tests scan the raw source of every file in the package's src/ directory
@@ -46,7 +46,7 @@ const ALLOWED_EXTERNAL = [
   '@preact/signals',
 ].sort();
 
-// Forbidden imports — these must NEVER appear inside @animastor/file
+// Forbidden imports — these must NEVER appear inside @animastor/web-file
 const FORBIDDEN_IMPORTS: (string | RegExp)[] = [
   // Host stores
   '../state/generateStore',
@@ -88,7 +88,7 @@ const FORBIDDEN_IMPORTS: (string | RegExp)[] = [
   'lib/ui',
 ];
 
-describe('@animastor/file package boundary', () => {
+describe('@animastor/web-file package boundary', () => {
   const srcFiles = allSourceFiles();
 
   it('package source files exist', () => {

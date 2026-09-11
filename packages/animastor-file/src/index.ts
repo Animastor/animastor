@@ -1,4 +1,4 @@
-// @animastor/file — public API
+// @animastor/web-file — public API
 //
 // The package exposes the File UI surface (FilePage) and the FilePorts contract.
 // The host wires real implementations of the ports in app/fileAdapters.ts.
