@@ -490,6 +490,34 @@ describe('Player test isolation guard (Phase 2.2 — suites move verbatim with t
     expect(offenders).toEqual([]);
   });
 
+  // The isolation scan only inspects *.test.* files, and the production
+  // boundary suite scans a FIXED file list — a file in neither category would
+  // escape every scan (e.g. a "fakePorts.ts" helper reaching the host, then
+  // imported by the suites; or a new engine-internal module never added to
+  // PLAYER_MODULE_FILES). Pin the directory's exact physical inventory: every
+  // file under modules/player/ is either pinned production contour or a
+  // pinned suite — no third category can exist silently.
+  it('test isolation — modules/player/ contains exactly the pinned contour files + suites (no unscanned third category)', () => {
+    const expectedSuites = [
+      'playbackBookSwitch',
+      'playbackCacheInvalidation',
+      'playbackGate',
+      'playbackIdentityUiStates',
+      'playbackRevealOvershoot',
+      'playbackStickySeeking',
+      'playbackStore',
+      'playbackTargetCleanup',
+      'playbackVideoListener',
+      'mediaCache',
+    ].map((n) => `${PLAYER_MODULE}/${n}.test.ts`).sort();
+    const actual = allSourceFiles()
+      .filter((f) => f.startsWith(`${PLAYER_MODULE}/`))
+      .sort();
+    // Exact inventory: nothing extra (unscanned helper), nothing missing
+    // (a "silently deleted" suite must fail, unlike the >= 9 count check).
+    expect(actual).toEqual([...PLAYER_MODULE_FILES, ...expectedSuites].sort());
+  });
+
   // Regression cases for the resolution rule itself — the escaped-relative
   // forms the original specifier-shape regex let through.
   describe('isolation rule regression (the relative-path escape hole)', () => {
