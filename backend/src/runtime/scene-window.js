@@ -444,8 +444,10 @@ async function trySlideWindowOnComplete(redis, bookId, loadedBook, buildId) {
         return { started: 0, remaining: 0, reason: 'cancelled' };
     }
 
-    const generationProgress = require('../services/generation-progress');
-    if (await generationProgress.hasActiveTasks(redis, bookId)) {
+    // O-5: selective-task gate via the ProgressEventsPort (host adapter:
+    // storage/progress-events-adapter) — the generation-progress host
+    // service require left this call site (lazy resolution preserved).
+    if (await require('./progress-events-port').progressEventsOp('hasActiveTasks')(redis, bookId)) {
         return { started: 0, remaining: 0, reason: 'task_managed' };
     }
 

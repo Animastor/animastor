@@ -63,3 +63,11 @@ require('../src/runtime/scene-data-port').setSceneDataPort(
 require('../src/runtime/placeholder-audio-port').setPlaceholderAudioPort(
     require('../src/storage/placeholder-audio-adapter')
 );
+// O-5: ProgressEventsPort — same convention: binds the host progress-events
+// adapter so tier consumers resolve publishProgress/getSceneTaskState/
+// hasActiveTasks/reconcileCompletedTasks at call time through the
+// '../src/services/progress-pubsub.cjs' and '../src/services/generation-
+// progress' channels (stubbing them keeps working).
+require('../src/runtime/progress-events-port').setProgressEventsPort(
+    require('../src/storage/progress-events-adapter')
+);

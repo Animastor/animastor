@@ -59,6 +59,17 @@ require('./runtime/scene-data-port').setSceneDataPort(
 require('./runtime/placeholder-audio-port').setPlaceholderAudioPort(
     require('./storage/placeholder-audio-adapter')
 );
+// O-5: PROGRESS EVENTS PORT — runtime/orchestration progress-observer
+// composition. The two tiers consume progress events (SSE layer-advance
+// pub/sub) and selective-task reads ONLY through runtime/progress-events-
+// port; the host adapter (storage/progress-events-adapter) owns the Redis
+// progress host services (services/progress-pubsub, services/generation-
+// progress) and is bound here, before any runtime/orchestration module
+// loads.
+// Docs: docs/architecture/generation-module-extraction-reconnaissance.md §32.7 (O-P4)
+require('./runtime/progress-events-port').setProgressEventsPort(
+    require('./storage/progress-events-adapter')
+);
 
 // ======================================================
 // MODULE IMPORTS

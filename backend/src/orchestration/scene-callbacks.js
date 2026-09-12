@@ -39,7 +39,10 @@ const sceneData = require('../runtime/scene-data-port').sceneDataOp;
 // (host adapter: storage/placeholder-audio-adapter) — the ffmpeg/fs host
 // service (../services/placeholder-audio) left this file.
 const placeholderAudioOp = require('../runtime/placeholder-audio-port').placeholderAudioOp;
-const { publishProgress } = require('../services/progress-pubsub.cjs');
+// O-5: progress events arrive ONLY through the ProgressEventsPort (host
+// adapter: storage/progress-events-adapter) — the Redis pub/sub host
+// service (../services/progress-pubsub) left this file.
+const progressEventsOp = require('../runtime/progress-events-port').progressEventsOp;
 const { log, warn, error, logEvent } = require('./scene-utils');
 
 // Stage constants (replaces removed scene-state-machine.js)
@@ -256,7 +259,7 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
         }
     }
 
-    await publishProgress(redis, bookId, { layer: 'audio', chapterId, sceneId });
+    await progressEventsOp('publishProgress')(redis, bookId, { layer: 'audio', chapterId, sceneId });
     log(`AUDIO_CALLBACK: ${bookId}/${chapterId}/${sceneId} -> READY check passed`);
 
     return {
@@ -430,7 +433,7 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
 
     await video.updateSceneVideoStatus(redis, bookId, chapterId, sceneId, 'ready');
     await updateSceneChunks(redis, bookId, chapterId, sceneId, { video: true, video_status: 'ready' });
-    await publishProgress(redis, bookId, { layer: 'video', chapterId, sceneId });
+    await progressEventsOp('publishProgress')(redis, bookId, { layer: 'video', chapterId, sceneId });
 
     try {
         await persist('sceneAssets.clearDirtyFlag')(bookId, chapterId, sceneId);
@@ -451,7 +454,7 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
         } else if (slide && slide.remaining === 0 && slide.started === 0) {
             log(`SCENE-COMPLETE auto-slide: scope fully complete`);
             try {
-                await publishProgress(redis, bookId, { type: 'generation_complete' });
+                await progressEventsOp('publishProgress')(redis, bookId, { type: 'generation_complete' });
             } catch (_) {}
         }
     } catch (e) {
@@ -487,7 +490,7 @@ async function completeSceneWithoutVideo(redis, loadedBook, bookId, chapterId, s
             log(`SCENE-COMPLETE auto-slide: started=${slide.started} remaining=${slide.remaining}`);
         } else if (slide && slide.remaining === 0 && slide.started === 0) {
             log(`SCENE-COMPLETE auto-slide (no-video): scope fully complete`);
-            try { await publishProgress(redis, bookId, { type: 'generation_complete' }); } catch (_) {}
+            try { await progressEventsOp('publishProgress')(redis, bookId, { type: 'generation_complete' }); } catch (_) {}
         }
     } catch (e) {
         warn(`SCENE-COMPLETE auto-slide failed: ${e.message}`);
@@ -515,7 +518,7 @@ async function completeSceneWithoutImage(redis, loadedBook, bookId, chapterId, s
             log(`SCENE-COMPLETE auto-slide: started=${slide.started} remaining=${slide.remaining}`);
         } else if (slide && slide.remaining === 0 && slide.started === 0) {
             log(`SCENE-COMPLETE auto-slide (no-image): scope fully complete`);
-            try { await publishProgress(redis, bookId, { type: 'generation_complete' }); } catch (_) {}
+            try { await progressEventsOp('publishProgress')(redis, bookId, { type: 'generation_complete' }); } catch (_) {}
         }
     } catch (e) {
         warn(`SCENE-COMPLETE auto-slide failed: ${e.message}`);

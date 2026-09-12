@@ -10,7 +10,11 @@ const state = require('../state');
 const dispatchEngine = require('./dispatch-engine');
 // S-5: orchestration-owned behavior reaches runtime only via the injected seams
 const orchestrationSeams = require('./orchestration-seams');
-const generationProgress = require('../services/generation-progress');
+// O-5: progress events (selective-task reads + completion reconciliation)
+// arrive ONLY through the ProgressEventsPort (host adapter:
+// storage/progress-events-adapter) — the Redis task-registry host service
+// (../services/generation-progress) left this file.
+const progressEventsOp = require('./progress-events-port').progressEventsOp;
 // O-2: persistence arrives ONLY through the PersistencePort (host adapter:
 // storage/runtime-persistence-adapter) — no PG repository or database
 // handles in the runtime tier.
@@ -257,7 +261,7 @@ async function detectVersionStale(redis, bookId, chapterId, sceneId) {
  */
 async function markVersionStaleDirty(redis, bookId, chapterId, sceneId) {
     const layerCfg = await getLayerConfig(redis, bookId);
-    const taskState = await generationProgress.getSceneTaskState(redis, bookId, chapterId, sceneId);
+    const taskState = await progressEventsOp('getSceneTaskState')(redis, bookId, chapterId, sceneId);
     const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
     const audioEnabled = taskState.managed
         ? taskState.activeTypes.has('audio')
@@ -291,7 +295,7 @@ async function shouldScheduleAssets(redis, bookId, chapterId, sceneId) {
     // from the mutation (single arbiter — see docs/STATE_WRITERS_MAP.md P3).
     const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
     const layerCfg = await getLayerConfig(redis, bookId);
-    const taskState = await generationProgress.getSceneTaskState(redis, bookId, chapterId, sceneId);
+    const taskState = await progressEventsOp('getSceneTaskState')(redis, bookId, chapterId, sceneId);
 
     // Selective generation tasks are authoritative for their target scenes.
     // Book-wide layer preferences are only a fallback for the initial/legacy
@@ -391,7 +395,7 @@ async function tick(redis, loadedBooks = {}) {
             if (parsed) activeBookIds.add(parsed.bookId);
         }
         for (const bookId of activeBookIds) {
-            const completedTasks = await generationProgress.reconcileCompletedTasks(
+            const completedTasks = await progressEventsOp('reconcileCompletedTasks')(
                 redis,
                 bookId,
                 state.getAssetStates
