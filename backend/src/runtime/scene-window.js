@@ -38,7 +38,10 @@ const genScope = require('../services/gen-scope');
 // database handle left this file. SQL lives host-side; this file consumes
 // state operations.
 const persist = require('./persistence-port').persist;
-const placeholderAudio = require('../services/placeholder-audio');
+// O-4: placeholder audio arrives ONLY through the PlaceholderAudioPort
+// (host adapter: storage/placeholder-audio-adapter) — the ffmpeg/fs host
+// service (../services/placeholder-audio) left this file.
+const placeholderAudioOp = require('./placeholder-audio-port').placeholderAudioOp;
 const fs = require('fs');
 const path = require('path');
 
@@ -201,7 +204,7 @@ async function checkSceneContentCache(redis, buildId, bookId, chapterId, sceneId
         result.audioOnDisk = fileStatus.audio.exists;
         if (result.audioOnDisk) {
             try {
-                const hasReal = await placeholderAudio.hasRealAudio(bookId, chapterId, sceneId, buildId);
+                const hasReal = await placeholderAudioOp('hasRealAudio')(bookId, chapterId, sceneId, buildId);
                 if (!hasReal) result.audioOnDisk = false; // placeholder doesn't count as valid content
             } catch (_) {
                 result.audioOnDisk = false;
@@ -314,7 +317,7 @@ async function restoreChunkStatusForScene(redis, buildId, bookId, chapterId, sce
     const fileStatus = await getSceneFilesStatus(buildDir, bookId, chapterId, sceneId);
     let audioIsReal = false;
     if (fileStatus.audio.exists && !versionStale.audio) {
-        try { audioIsReal = await placeholderAudio.hasRealAudio(bookId, chapterId, sceneId, buildId); }
+        try { audioIsReal = await placeholderAudioOp('hasRealAudio')(bookId, chapterId, sceneId, buildId); }
         catch (_) {}
     }
 
@@ -587,7 +590,7 @@ async function reconcileWindowStatuses(redis, bookId, buildId) {
             if (fileStatus.audio.exists && !stale.audio) {
                 data.audio = true;
                 try {
-                    const hasReal = await placeholderAudio.hasRealAudio(data.book_id, data.chapter_id, data.scene_id, buildId);
+                    const hasReal = await placeholderAudioOp('hasRealAudio')(data.book_id, data.chapter_id, data.scene_id, buildId);
                     data.audio_status = hasReal ? 'ready' : 'placeholder';
                 } catch (_) {
                     data.audio_status = 'placeholder';
@@ -760,7 +763,7 @@ async function startScene(redis, s, buildId, bookId) {
     // между setImmediate и generateSceneAudio (placeholder re-created после удаления).
     try {
         const buildEffective = buildId || 'default';
-        const phResult = await placeholderAudio.ensurePlaceholderAudio(buildEffective, bookId, chapterId, sceneId);
+        const phResult = await placeholderAudioOp('ensurePlaceholderAudio')(buildEffective, bookId, chapterId, sceneId);
         if (phResult.created) {
             log(`Placeholder audio created for ${bookId}/${chapterId}/${sceneId} (${phResult.durationSec.toFixed(1)}s)`);
         } else {

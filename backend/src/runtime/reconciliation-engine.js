@@ -2134,7 +2134,10 @@ async function rebuildWorkList(redis) {
     // left this function.
     const persist = require('./persistence-port').persist;
     const layerConfig = require('../services/layer-config');
-    const placeholderAudio = require('../services/placeholder-audio');
+    // O-4: placeholder audio arrives ONLY through the PlaceholderAudioPort
+    // (host adapter: storage/placeholder-audio-adapter) — the ffmpeg/fs
+    // host service left this function.
+    const placeholderAudioOp = require('./placeholder-audio-port').placeholderAudioOp;
     const sceneWindow = require('./scene-window');
     const runtimeScheduler = require('./runtime-scheduler');
     // S-5: asset-state writers via the injected orchestration seams
@@ -2219,7 +2222,7 @@ async function rebuildWorkList(redis) {
                 const fsStatus = await sceneWindow.getSceneFilesStatus(buildDir, bookId, chapterId, sceneId);
                 let audioReal = false;
                 if (fsStatus.audio.exists) {
-                    try { audioReal = await placeholderAudio.hasRealAudio(bookId, chapterId, sceneId, buildId); }
+                    try { audioReal = await placeholderAudioOp('hasRealAudio')(bookId, chapterId, sceneId, buildId); }
                     catch (err) { warn(`Rebuild: hasRealAudio probe failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`); }
                 }
 

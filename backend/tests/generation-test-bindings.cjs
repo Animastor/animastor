@@ -56,3 +56,10 @@ require('../src/runtime/persistence-port').setPersistencePort(
 require('../src/runtime/scene-data-port').setSceneDataPort(
     require('../src/storage/scene-data-adapter')
 );
+// O-4: PlaceholderAudioPort — same convention: binds the host placeholder-
+// audio adapter so tier consumers resolve hasRealAudio/ensurePlaceholder-
+// Audio/replacePlaceholderWithRealAudio at call time through the
+// '../src/services/placeholder-audio' channel (stubbing it keeps working).
+require('../src/runtime/placeholder-audio-port').setPlaceholderAudioPort(
+    require('../src/storage/placeholder-audio-adapter')
+);

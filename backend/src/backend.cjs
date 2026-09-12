@@ -49,6 +49,16 @@ require('./runtime/persistence-port').setPersistencePort(
 require('./runtime/scene-data-port').setSceneDataPort(
     require('./storage/scene-data-adapter')
 );
+// O-4: PLACEHOLDER AUDIO PORT — runtime/orchestration placeholder-audio
+// composition. The two tiers consume the three placeholder-audio operations
+// they use ONLY through runtime/placeholder-audio-port; the host adapter
+// (storage/placeholder-audio-adapter) owns the ffmpeg/fs/scene_assets
+// service (services/placeholder-audio) and is bound here, before any
+// runtime/orchestration module loads.
+// Docs: docs/architecture/generation-module-extraction-reconnaissance.md §32.7 (O-P7)
+require('./runtime/placeholder-audio-port').setPlaceholderAudioPort(
+    require('./storage/placeholder-audio-adapter')
+);
 
 // ======================================================
 // MODULE IMPORTS

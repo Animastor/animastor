@@ -30,8 +30,15 @@ const dispatchEngine = require('../runtime/dispatch-engine');
 // storage/scene-data-adapter) — the Book Model facade (../book) left this
 // file. loadBook is consumed as `sceneData('loadBook')(bookId)` at the
 // auto-slide call site.
+// O-3: scene content arrives ONLY through the SceneDataPort (host adapter:
+// storage/scene-data-adapter) — the Book Model facade (../book) left this
+// file. loadBook is consumed as `sceneData('loadBook')(bookId)` at the
+// auto-slide call site.
 const sceneData = require('../runtime/scene-data-port').sceneDataOp;
-const placeholderAudio = require('../services/placeholder-audio');
+// O-4: placeholder audio arrives ONLY through the PlaceholderAudioPort
+// (host adapter: storage/placeholder-audio-adapter) — the ffmpeg/fs host
+// service (../services/placeholder-audio) left this file.
+const placeholderAudioOp = require('../runtime/placeholder-audio-port').placeholderAudioOp;
 const { publishProgress } = require('../services/progress-pubsub.cjs');
 const { log, warn, error, logEvent } = require('./scene-utils');
 
@@ -134,7 +141,7 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
             const metadata = await mm.parseFile(audioPath);
             realDuration = metadata.format.duration || 0;
         } catch {}
-        await placeholderAudio.replacePlaceholderWithRealAudio(
+        await placeholderAudioOp('replacePlaceholderWithRealAudio')(
             bookId, chapterId, sceneId, buildId, audioPath, realDuration
         );
     } catch (err) {

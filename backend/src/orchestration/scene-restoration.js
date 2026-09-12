@@ -8,7 +8,10 @@ const runtimeScheduler = require('../runtime/runtime-scheduler');
 // storage/runtime-persistence-adapter) — the scene-assets repository and the
 // database handle left this file. SQL lives host-side.
 const persist = require('../runtime/persistence-port').persist;
-const placeholderAudio = require('../services/placeholder-audio');
+// O-4: placeholder audio arrives ONLY through the PlaceholderAudioPort
+// (host adapter: storage/placeholder-audio-adapter) — the ffmpeg/fs host
+// service (../services/placeholder-audio) left this file.
+const placeholderAudioOp = require('../runtime/placeholder-audio-port').placeholderAudioOp;
 const { log, warn } = require('./scene-utils');
 
 const OUTPUT_DIR = process.env.OUTPUT_DIR || '/data/output';
@@ -26,7 +29,7 @@ async function restoreSceneChunkStatus(redis, buildId, bookId, chapterId, sceneI
         let audioIsReal = false;
         if (fileStatus.audio.exists) {
             try {
-                audioIsReal = await placeholderAudio.hasRealAudio(bookId, chapterId, sceneId, buildId);
+                audioIsReal = await placeholderAudioOp('hasRealAudio')(bookId, chapterId, sceneId, buildId);
             } catch (_) {}
         }
         const hasAnyContent = audioIsReal || fileStatus.image.exists || fileStatus.video.exists;
