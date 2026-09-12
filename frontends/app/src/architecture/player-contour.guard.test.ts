@@ -27,7 +27,9 @@
 //     identity (bookId/buildId) ONLY through PlayerPorts.session — never via
 //     the engine's internal projection signals.
 //   - Phase 2.2 test isolation: the suites physically inside modules/player/
-//     import vitest + package-internal modules ONLY (no host reach) — they
+//     import vitest + package-internal modules ONLY (resolution-checked
+//     relative paths — no "./../…"/"../../…" escapes, no bare host
+//     specifiers, no host-reaching dynamic imports or vi.mock paths) — they
 //     move verbatim into the package's vitest run at the Phase 3 cut.
 //
 // The guard is written specifier-driven (no file-path coupling of the rules
@@ -398,27 +400,125 @@ describe('Player host contour guard (Phase 2 — public entry only)', () => {
 // Phase 2.2 test-isolation guard — the relocated suites are package-owned too
 // ─────────────────────────────────────────────────────────────────────────────
 
+// External modules a player suite may import (the future package's
+// devDependencies at the Phase 3 cut). vitest is the only one used today; any
+// addition must be a conscious edit of this list — a bare specifier is never
+// free to appear in a suite ("@animastor/web-*" siblings, happy-dom etc. are
+// host/dev infrastructure, not package-test surface).
+const PLAYER_TEST_EXTERNALS = ['vitest'] as const;
+
+/** Resolve a relative specifier against the importing file's directory (posix,
+ *  pure string ops — no node:path in this app). "./../state/x" and
+ *  "../../api/x" collapse to host paths OUTSIDE modules/player/. */
+function resolveRelative(fromFile: string, spec: string): string {
+  const parts = `${fromFile.slice(0, fromFile.lastIndexOf('/'))}/${spec}`.split('/');
+  const out: string[] = [];
+  for (const part of parts) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') out.pop();
+    else out.push(part);
+  }
+  return out.join('/');
+}
+
+/** Strip block comments and full/line-trailing // comments from a module's
+ *  raw source — the isolation scan must read CODE, not prose (a comment
+ *  mentioning vi.mock('../api/client') is documentation, not a reach; the
+ *  (^|\s) anchor keeps "https://…" string literals intact). Line count is
+ *  preserved for debugging. */
+function stripComments(src: string): string {
+  const noBlock = src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ''));
+  return noBlock
+    .split('\n')
+    .map((l) => l.replace(/(^|\s)\/\/.*$/, (_m, p1) => p1))
+    .join('\n');
+}
+
+/** ALL module reaches of a suite — static + type + side-effect imports,
+ *  dynamic `import('…')` and `vi.mock('…')` module paths (a mock path is a
+ *  module reach too: vi.mock('../../api/client') escapes the contour without
+ *  any import statement) — extracted from comment-stripped source. */
+function suiteImportSpecifiers(rel: string): string[] {
+  const src = stripComments(requireRaw(rel));
+  const specs = new Set<string>();
+  for (const m of src.matchAll(/(?:import|export)\s[^'"]*?from\s+['"]([^'"]+)['"]/g)) specs.add(m[1]);
+  for (const m of src.matchAll(/\bimport\s+['"]([^'"]+)['"]/g)) specs.add(m[1]);
+  for (const m of src.matchAll(/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g)) specs.add(m[1]);
+  for (const m of src.matchAll(/\bvi\.mock\s*\(\s*['"]([^'"]+)['"]/g)) specs.add(m[1]);
+  return [...specs];
+}
+
+/** The isolation rule for ONE import of a player suite: null = allowed,
+ *  otherwise the violation message. Relative specifiers are RESOLVED against
+ *  the suite's directory and must stay inside modules/player/ (the Phase 2.2
+ *  hole: "./../state/…" and "../../api/…" start with '.' but leave the
+ *  contour); bare specifiers must be in PLAYER_TEST_EXTERNALS. */
+function suiteImportViolation(suite: string, spec: string): string | null {
+  if (spec.startsWith('.')) {
+    const resolved = resolveRelative(suite, spec);
+    return resolved.startsWith(`${PLAYER_MODULE}/`)
+      ? null
+      : `resolves outside ${PLAYER_MODULE}/ (→ ${resolved})`;
+  }
+  return (PLAYER_TEST_EXTERNALS as readonly string[]).includes(spec)
+    ? null
+    : `bare specifier not in PLAYER_TEST_EXTERNALS [${PLAYER_TEST_EXTERNALS.join(', ')}]`;
+}
+
 describe('Player test isolation guard (Phase 2.2 — suites move verbatim with the package)', () => {
   // Every suite physically inside modules/player/ moves verbatim into
   // packages/animastor-web-player/test/ at the Phase 3 cut. A host-reaching
   // import in a suite would become a package→host edge in the package's own
   // vitest run — the exact edge the boundary rules forbid in src/. Pin the
-  // suites' import surface today: vitest + package-internal relatives only
-  // (fake ports are constructed in-suite, never imported from the host).
-  it('test isolation — every player suite imports only vitest + package-internal modules (no host reach)', () => {
+  // suites' import surface today: vitest + contour-internal relatives only,
+  // checked by PATH RESOLUTION (not specifier shape): fake ports are
+  // constructed in-suite, never imported from the host.
+  it('test isolation — every player suite imports only vitest + contour-internal modules (resolution-checked, no host reach)', () => {
     const suites = allSourceFiles().filter(
       (f) => f.startsWith(`${PLAYER_MODULE}/`) && f.includes('.test.'),
     );
     // The relocated suites must exist — else this guard scans an empty set
     // and pins nothing (Phase 2 moved 9 suites in; they stay here).
     expect(suites.length).toBeGreaterThanOrEqual(9);
+    const offenders: string[] = [];
     for (const f of suites) {
-      for (const spec of importSpecifiers(f)) {
-        expect(
-          spec,
-          `${f} imports "${spec}" — a player suite must not reach the host (vitest + ./-internal only; it moves verbatim into the package at Phase 3)`,
-        ).toMatch(/^(?:vitest|\.[^.].*)$/);
+      for (const spec of suiteImportSpecifiers(f)) {
+        const violation = suiteImportViolation(f, spec);
+        if (violation) offenders.push(`${f}: "${spec}" — ${violation}`);
       }
     }
+    expect(offenders).toEqual([]);
+  });
+
+  // Regression cases for the resolution rule itself — the escaped-relative
+  // forms the original specifier-shape regex let through.
+  describe('isolation rule regression (the relative-path escape hole)', () => {
+    const SUITE = `${PLAYER_MODULE}/playbackStore.test.ts`;
+
+    it('"./models" — inside the contour → allowed', () => {
+      expect(suiteImportViolation(SUITE, './models')).toBeNull();
+    });
+
+    it('"../state/generateStore" — one-level escape → forbidden', () => {
+      expect(suiteImportViolation(SUITE, '../state/generateStore')).toMatch(/outside modules\/player\/.*state\/generateStore/);
+    });
+
+    it('"../../api/client" — two-level escape → forbidden', () => {
+      expect(suiteImportViolation(SUITE, '../../api/client')).toMatch(/outside modules\/player\/.*api\/client/);
+    });
+
+    it('"./../state/foo" — the "./"-masked escape → forbidden', () => {
+      expect(suiteImportViolation(SUITE, './../state/foo')).toMatch(/outside modules\/player\//);
+    });
+
+    it('"../../../../app/i18n" — deep escape → forbidden', () => {
+      expect(suiteImportViolation(SUITE, '../../../../app/i18n')).toMatch(/outside modules\/player\/.*app\/i18n/);
+    });
+
+    it('"vitest" — the only allowlisted external; other bare specifiers are forbidden', () => {
+      expect(suiteImportViolation(SUITE, 'vitest')).toBeNull();
+      expect(suiteImportViolation(SUITE, '@animastor/web-file')).toMatch(/PLAYER_TEST_EXTERNALS/);
+      expect(suiteImportViolation(SUITE, 'happy-dom')).toMatch(/PLAYER_TEST_EXTERNALS/);
+    });
   });
 });
