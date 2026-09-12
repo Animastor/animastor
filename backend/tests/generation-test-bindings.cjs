@@ -78,3 +78,10 @@ require('../src/runtime/progress-events-port').setProgressEventsPort(
 require('../src/runtime/audio-fsm-port').setAudioFsmPort(
     require('../src/storage/audio-fsm-adapter')
 );
+// O-8: VideoFsmPort — same convention: binds the host video-FSM adapter so
+// tier consumers resolve the video-FSM operations at call time through the
+// '../src/services/video-orchestrator' channel (stubbing it keeps working
+// — the orchestration-stabilization harness replaces exactly that module).
+require('../src/runtime/video-fsm-port').setVideoFsmPort(
+    require('../src/storage/video-fsm-adapter')
+);

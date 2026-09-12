@@ -383,7 +383,8 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchI
     // Группа → { suffix: '_gN', unit_ids: [...] }. Маппинг юнитов на группу
     // хранится в state для точечной dirty-регенерации: при повторном
     // dispatch перегенерируются только группы, содержащие dirty-юниты.
-    const videoOrch = require('../services/video-orchestrator');
+    // O-8: через VideoFsmPort (host adapter: storage/video-fsm-adapter).
+    const videoOrch = require('../runtime/video-fsm-port').videoFsm();
     const jobSchema = require('../runtime/job-schema');
     const groups = jobSpecs.map(js => {
         const parsed = jobSchema.parseJobId(js.job_id);

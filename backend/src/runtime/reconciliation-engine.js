@@ -499,9 +499,18 @@ async function checkStalledAudioScenes(redis, deps) {
 // недостающих групп и публикует failStage (→ re-dispatch).
 
 async function checkStalledVideoScenes(redis, deps) {
+    // O-8: the video FSM is consumed through the VideoFsmPort (host adapter:
+    // storage/video-fsm-adapter). The pre-O-8 optional-load semantics are
+    // preserved EXACTLY: when the video-orchestrator host service cannot be
+    // required, this watchdog leg returns 0 (missing module ≠ stalled scene).
+    // The try/catch therefore wraps the ADAPTER's lazy require — the port
+    // itself stays fail-fast.
     let videoOrch;
+    let PHASES;
     try {
-        videoOrch = require('../services/video-orchestrator');
+        const videoFsmPort = require('./video-fsm-port');
+        videoOrch = videoFsmPort.videoFsm();
+        PHASES = videoFsmPort.videoFsmPhases();
     } catch (_) {
         return 0;
     }
@@ -513,7 +522,7 @@ async function checkStalledVideoScenes(redis, deps) {
     let stalled = 0;
     for (const entry of allStates) {
         const { bookId, chapterId, sceneId, state: orchState } = entry;
-        if (orchState.phase !== videoOrch.PHASES.WAITING_CHUNKS) continue;
+        if (orchState.phase !== PHASES.WAITING_CHUNKS) continue;
 
         // ── ПЕРЕСМОТР ПОРОГА ЗАСТОЯ ──
         // Видео-генерация долгая по природе (LTX 5-10 мин на группу, на слабом
@@ -661,7 +670,11 @@ async function checkAudioOrchInvariants(redis, bookId, chapterId, sceneId) {
 //   промежуточные  ⇒ asset.video = PENDING|GENERATING|DIRTY
 
 async function checkVideoOrchInvariants(redis, bookId, chapterId, sceneId) {
-    const videoOrch = require('../services/video-orchestrator');
+    // O-8: through the VideoFsmPort (host adapter: storage/video-fsm-adapter)
+    // — the video-orchestrator host service left this file. Mandatory load
+    // (pre-O-8 behavior: a broken require here throws, no optional-load).
+    const videoOrch = require('./video-fsm-port').videoFsm();
+    const PHASES = require('./video-fsm-port').videoFsmPhases();
     const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
     const orchState = await videoOrch.getState(redis, bookId, chapterId, sceneId);
 
@@ -671,7 +684,7 @@ async function checkVideoOrchInvariants(redis, bookId, chapterId, sceneId) {
     const videoState = assetStates.video;
     const violations = [];
 
-    if (phase === videoOrch.PHASES.DONE) {
+    if (phase === PHASES.DONE) {
         if (videoState !== state.AssetState.READY && videoState !== state.AssetState.PLACEHOLDER) {
             violations.push({
                 type: 'video_orch_invariant_done',
@@ -682,7 +695,7 @@ async function checkVideoOrchInvariants(redis, bookId, chapterId, sceneId) {
                 recommendation: 'run_completeStage'
             });
         }
-    } else if (phase === videoOrch.PHASES.FAILED) {
+    } else if (phase === PHASES.FAILED) {
         if (videoState !== state.AssetState.FAILED && videoState !== state.AssetState.PENDING) {
             violations.push({
                 type: 'video_orch_invariant_failed',
@@ -693,7 +706,7 @@ async function checkVideoOrchInvariants(redis, bookId, chapterId, sceneId) {
                 recommendation: 'mark_dirty'
             });
         }
-    } else if (phase !== videoOrch.PHASES.NEW && phase !== videoOrch.PHASES.GENERATING) {
+    } else if (phase !== PHASES.NEW && phase !== PHASES.GENERATING) {
         // WAITING_CHUNKS, MERGING — ассет не должен быть READY
         if (videoState === state.AssetState.READY) {
             violations.push({
@@ -1971,9 +1984,14 @@ async function recoverAudioOrchStates(redis, deps) {
 // Зеркало recoverAudioOrchStates: не-терминальные фазы → FAILED (re-dispatch),
 // MERGING/WAITING_CHUNKS с полным набором групп → доигрываем merge.
 async function recoverVideoOrchStates(redis, deps) {
+    // O-8: through the VideoFsmPort (host adapter: storage/video-fsm-adapter).
+    // The pre-O-8 optional-load semantics are preserved EXACTLY: when the
+    // video-orchestrator host service cannot be required, this recovery leg
+    // returns 0 (missing module ≠ recoverable state). The try/catch wraps
+    // the ADAPTER's lazy require — the port itself stays fail-fast.
     let videoOrch;
     try {
-        videoOrch = require('../services/video-orchestrator');
+        videoOrch = require('./video-fsm-port').videoFsm();
     } catch (_) {
         return 0;
     }

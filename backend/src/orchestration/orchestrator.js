@@ -301,13 +301,14 @@ async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reas
         try {
             // O-7: the audio FSM sync rides the AudioFsmPort (host adapter:
             // storage/audio-fsm-adapter) — the audio-orchestrator host
-            // service left this file. The video FSM stays on its host service
-            // until its own seam step.
+            // service left this file.
+            // O-8: the video FSM sync rides the VideoFsmPort (host adapter:
+            // storage/video-fsm-adapter) — the video-orchestrator host
+            // service left this file.
             if (stage === 'audio') {
                 await require('../runtime/audio-fsm-port').audioFsmOp('setFailed')(redis, bookId, chapterId, sceneId, reason);
             } else if (stage === 'video') {
-                const videoOrch = require('../services/video-orchestrator');
-                await videoOrch.setFailed(redis, bookId, chapterId, sceneId, reason);
+                await require('../runtime/video-fsm-port').videoFsmOp('setFailed')(redis, bookId, chapterId, sceneId, reason);
             }
         } catch (_) {}
         log(`[FAIL-STAGE] ${bookId}/${chapterId}/${sceneId}: ${stage} → FAILED (reason=${reason})`);

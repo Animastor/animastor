@@ -77,10 +77,22 @@ require('./runtime/progress-events-port').setProgressEventsPort(
 // owns the audio-orchestrator host service (Redis key grammar, state
 // envelope, transition map, merge/hub-dedup logic) and is bound here,
 // before any runtime/orchestration module loads. The video FSM stays a
-// separate future seam (never merged into this port).
+// separate seam (O-8 below — never merged into this port).
 // Docs: docs/architecture/generation-module-extraction-reconnaissance.md §32.24
 require('./runtime/audio-fsm-port').setAudioFsmPort(
     require('./storage/audio-fsm-adapter')
+);
+// O-8: VIDEO FSM PORT — runtime/orchestration video-FSM composition. The
+// two tiers drive the video scene FSM (group dispatch init, cache-hit
+// group marking, stall watchdog, invariant checks, startup recovery) ONLY
+// through runtime/video-fsm-port; the host adapter (storage/video-fsm-
+// adapter) owns the video-orchestrator host service (Redis key grammar,
+// state envelope, transition map, group-file validation, merge/source-cap
+// pipeline, hub-dedup cleanup) and is bound here, before any
+// runtime/orchestration module loads. Never merged with the audio FSM.
+// Docs: docs/architecture/generation-module-extraction-reconnaissance.md §32.25
+require('./runtime/video-fsm-port').setVideoFsmPort(
+    require('./storage/video-fsm-adapter')
 );
 
 // ======================================================
