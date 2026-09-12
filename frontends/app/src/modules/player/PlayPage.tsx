@@ -9,11 +9,15 @@
 // the surface consumes the host through the injected PlayerPorts prop ONLY
 // (i18n / shellMode / icons / session identity) — no direct app/* or
 // state/generateStore imports; the host composition root is app/playerAdapters.ts.
+//
+// Phase 2.1 identity closure: the session identity (bookId/buildId) arrives
+// ONLY through props.ports.session — never via playbackStore's internal
+// projection signals (they are engine bookkeeping set by preparePlayback).
 import type { JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useSignalEffect } from '@preact/signals';
 import {
-  uiState, bookId, missingIuPosition, coverImage, previewImage, currentIuBlobUrl,
+  uiState, missingIuPosition, coverImage, previewImage, currentIuBlobUrl,
   subtitleText, iuMissing, videoVisible, pendingExternalSeek,
   layerAudio, layerImage, layerVideo, layerSubtitles,
   handlePlayButton, pauseIfPlaying, checkPendingExternalSeek, ensureInitialized,
@@ -23,7 +27,7 @@ import {
 import type { PlaybackUiState } from './playbackStore';
 import type { PlayerPorts, PlayerIconProps } from './ports';
 
-function statusText(s: PlaybackUiState, t: PlayerPorts['i18n']['t'], sessionBookId: string): string {
+function statusText(s: PlaybackUiState, t: PlayerPorts['i18n']['t'], hasBook: boolean): string {
   if (s.errorMessage) return `Error: ${s.errorMessage}`;
   switch (s.phase) {
     case 'LOADING_BOOK':
@@ -41,8 +45,8 @@ function statusText(s: PlaybackUiState, t: PlayerPorts['i18n']['t'], sessionBook
       return t('play_paused');
     case 'IDLE':
     default:
-      if (!bookId.value && !sessionBookId) return t('empty_state');
-      if (!bookId.value) return t('play_placeholder_no_generation');
+      if (!hasBook) return t('empty_state');
+      if (!s.sceneCount) return t('play_placeholder_no_generation');
       return t('empty_state_book_loaded');
   }
 }
@@ -97,6 +101,12 @@ export function PlayPage(props: { path?: string; ports: PlayerPorts }) {
   const { t } = props.ports.i18n;
   const genBookId = props.ports.session.bookId;
   const genBuildId = props.ports.session.buildId;
+  // Session identity is read ONLY here (Phase 2.1): both the port singleton
+  // and the engine prepare projection are folded into one boolean per render —
+  // the boolean flips when EITHER the host open signal or the engine
+  // projection is set, so the pre-Phase-2.1 OR-truth is preserved without
+  // ever reading playbackStore's internal identity signals.
+  const hasBook = !!genBookId.value || !!uiState.value.sceneCount;
   // Desktop console (plan §7): the stage takes the majority of the workspace
   // and the mobile layerbar/meta/big-button are replaced by a transport bar
   // with labelled layer toggles. Mobile keeps the Android 1:1 composition.
@@ -123,7 +133,10 @@ export function PlayPage(props: { path?: string; ports: PlayerPorts }) {
   useEffect(() => {
     if (videoRef.current) attachVideo(videoRef.current);
     restoreSavedPositionIfAny();
-    if (!bookId.value && genBookId.value) {
+    // Auto-init when the host has a book open but the engine hasn't adopted it
+    // yet — "engine not initialized" is expressed WITHOUT the engine-internal
+    // bookId signal (ensureInitialized is idempotent on same book).
+    if (!uiState.value.sceneCount && !sceneQueueSize() && genBookId.value) {
       void ensureInitialized(genBookId.value, genBuildId.value);
     }
     checkPendingExternalSeek();
@@ -227,8 +240,8 @@ export function PlayPage(props: { path?: string; ports: PlayerPorts }) {
 
   let placeholder = '';
   if (s.phase === 'IDLE') {
-    if (!bookId.value && !genBookId.value) placeholder = t('play_placeholder');
-    else if (!bookId.value) placeholder = t('play_placeholder_no_generation');
+    if (!hasBook) placeholder = t('play_placeholder');
+    else if (!s.sceneCount) placeholder = t('play_placeholder_no_generation');
     else placeholder = t('play_generate_hint');
   }
 
@@ -268,7 +281,7 @@ export function PlayPage(props: { path?: string; ports: PlayerPorts }) {
         <div class="play-progress" style={loading ? undefined : 'display:none'}>
           <div class="play-progress__bar" />
         </div>
-        <span class="play-status">{missing ? t('iu_not_generated') : statusText(s, t, genBookId.value)}</span>
+        <span class="play-status">{missing ? t('iu_not_generated') : statusText(s, t, hasBook)}</span>
       </div>
 
       {/* Big velvet play button (mobile) */}
@@ -302,7 +315,7 @@ export function PlayPage(props: { path?: string; ports: PlayerPorts }) {
               <div class="play-progress" style={loading ? undefined : 'display:none'}>
                 <div class="play-progress__bar" />
               </div>
-              <span class="play-status">{missing ? t('iu_not_generated') : statusText(s, t, genBookId.value)}</span>
+              <span class="play-status">{missing ? t('iu_not_generated') : statusText(s, t, hasBook)}</span>
             </div>
             <button type="button" class="play-console__play" disabled={!buttonEnabled} onClick={handlePlayButton}>
               {showPause ? <IconPause width={18} height={18} /> : <IconPlay width={18} height={18} />}

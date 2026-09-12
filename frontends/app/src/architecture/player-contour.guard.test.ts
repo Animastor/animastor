@@ -22,7 +22,10 @@
 //     or state/;
 //   - the engine never becomes a second public identity source (bookId/
 //     buildId singletons live in generateStore; the engine keeps its
-//     internal projection).
+//     internal projection);
+//   - Phase 2.1 identity closure: the Play surface consumes the session
+//     identity (bookId/buildId) ONLY through PlayerPorts.session — never via
+//     the engine's internal projection signals.
 //
 // The guard is written specifier-driven (no file-path coupling of the rules
 // themselves): when Phase 3 moves the directory into
@@ -214,6 +217,30 @@ describe('Player boundary guard (web-player-module-extraction-audit.md, Phase 2)
     const engineSrc = requireRaw(PLAYER_ENGINE);
     expect(engineSrc, 'the engine must not re-export bookId/buildId as a public identity source')
       .not.toMatch(/export\s*\{[^}]*\b(?:bookId|buildId)\b[^}]*\}/);
+  });
+
+  it('identity — PlayPage takes bookId/buildId ONLY through PlayerPorts.session (Phase 2.1 identity closure)', () => {
+    const pageSrc = requireRaw(PLAYER_PAGE);
+    // 1. No import statement (named, aliased, type or side-effect form) may
+    //    bind the engine-internal identity signals from playbackStore —
+    //    they are projection bookkeeping set by preparePlayback, not the
+    //    public session identity.
+    for (const m of pageSrc.matchAll(/(?:import|export)\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g)) {
+      const names = m[1].split(',').map((s) => s.trim().split(/\s+as\s+/)[0]).filter(Boolean);
+      expect(
+        names.filter((n) => n === 'bookId' || n === 'buildId'),
+        `PlayPage imports the engine-internal identity signals from "${m[2]}" — session identity must arrive through props.ports.session only`,
+      ).toEqual([]);
+    }
+    // 2. No free-standing signal reads either — `bookId.value` anywhere in
+    //    the surface would fork the identity source.
+    expect(pageSrc, 'PlayPage must not read bookId.value/buildId.value (use props.ports.session)')
+      .not.toMatch(/\b(?:bookId|buildId)\.value\b/);
+    // 3. And the session port IS the consumed identity seam.
+    expect(pageSrc, 'PlayPage must read session bookId through props.ports.session')
+      .toMatch(/props\.ports\.session\.bookId/);
+    expect(pageSrc, 'PlayPage must read session buildId through props.ports.session')
+      .toMatch(/props\.ports\.session\.buildId/);
   });
 });
 
