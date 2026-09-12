@@ -19,9 +19,9 @@ import {
   handlePlayButton, pauseIfPlaying, checkPendingExternalSeek, ensureInitialized,
   attachVideo, detachVideo, restoreSavedPositionIfAny, sceneQueueSize,
   setLayerAudio, setLayerImage, setLayerVideo, setLayerSubtitles,
-} from '../state/playbackStore';
-import type { PlaybackUiState } from '../state/playbackStore';
-import type { PlayerPorts, PlayerIconProps } from '../modules/player/ports';
+} from './playbackStore';
+import type { PlaybackUiState } from './playbackStore';
+import type { PlayerPorts, PlayerIconProps } from './ports';
 
 function statusText(s: PlaybackUiState, t: PlayerPorts['i18n']['t'], sessionBookId: string): string {
   if (s.errorMessage) return `Error: ${s.errorMessage}`;

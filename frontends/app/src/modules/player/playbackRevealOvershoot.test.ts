@@ -1,13 +1,18 @@
-// P2 regression (docs/05-frontend/PLAYER_STATE_MACHINE_AUDIT_T6.md §12): the
-// explicit video-timeline target (pendingVideoTargetSec) is stale after a
-// successful reveal — the video is already positioned inside the unit (the
-// gate is target + tolerance), so the value must be cleared. Before the fix a
-// later resumePlayback re-applied the stale target (seek back to the unit
-// start when the video had moved on) and attachVideo re-armed a needless
-// SEEKING. Fix: one line in the onVideoTimeUpdate reveal branch.
+// P2-4 regression (docs/05-frontend/PLAYER_STATE_MACHINE_AUDIT_T6.md §10): the
+// unit-seek reveal gate must not permanently lock the video hidden when the
+// position crosses the gate already past the selected unit's end (overshoot).
+// Root cause: P0-1 made the seek land once (seekLanded flip by position) and
+// the guard `!videoSeekInFlight()` then bailed forever, so a tick where
+// withinUnit=false could never retry. Fix: guard on `playerState.name !==
+// 'SEEKING'` — every tick re-evaluates the AND-gate, and the reveal fires on
+// the first tick where withinUnit becomes true.
+//
+// Invariant under test: SEEKING + seekLanded=true + frame ready + gate reached
+// + withinUnit=true ⇒ reveal MUST happen (PLAYING when playing, VIDEO_READY
+// when paused); while withinUnit=false the video must NOT reveal.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SceneRef } from '../modules/player/models';
-import type { PlayerPorts } from '../modules/player/ports';
+import type { SceneRef } from './models';
+import type { PlayerPorts } from './ports';
 
 // ── Mocked environment (network / Cache API / DOM are irrelevant here) ──────
 // Fake PlayerPorts replace the old ../api/client + generateStore/positionStore
@@ -36,7 +41,7 @@ const fakePorts = {
     videoUrl: vi.fn((path: string) => 'http://test' + path),
   },
 };
-vi.mock('../cache/mediaCache', () => ({
+vi.mock('./mediaCache', () => ({
   getMedia: vi.fn(async () => undefined),
   putMedia: vi.fn(async () => {}),
   clearCache: vi.fn(async () => 0),
@@ -45,8 +50,6 @@ vi.mock('../cache/mediaCache', () => ({
 import {
   attachVideo,
   checkPendingExternalSeek,
-  detachVideo,
-  getPendingVideoTargetSec,
   getPlayerState,
   pausePlayback,
   playSceneQueue,
@@ -54,11 +57,12 @@ import {
   resumePlayback,
   seekToPosition,
   stopAll,
+  uiState,
   videoVisible,
   wirePlaybackCoordination,
 } from './playbackStore';
 
-/** Minimal media element (position driven by the test). */
+/** Minimal media element. readyState/currentTime/duration are driven by the test. */
 class FakeMedia {
   preload = 'auto';
   src: string | null = null;
@@ -88,10 +92,11 @@ class FakeMedia {
   removeAttribute(attr: string): void { if (attr === 'src') this.src = null; }
 }
 
-// u1: 0..300ms (gate for target 0: min(0+150, 300−40) = 150ms; end 300ms).
+// u1: 0..300ms, u2: 300..600ms — reveal gate for a seek to u1 (target 0) is
+// min(0 + 150ms, 300ms − 40ms) = 150ms; u1's end is 300ms.
 const bookA: SceneRef[] = [{ chapterId: 'ch', sceneId: 'scA1' }, { chapterId: 'ch', sceneId: 'scA2' }];
 
-describe('P2 — pendingVideoTargetSec cleared on successful reveal', () => {
+describe('P2-4 — reveal gate survives unit-end overshoot (web)', () => {
   let audios: FakeMedia[];
   let rafQueue: Array<() => void>;
 
@@ -101,6 +106,9 @@ describe('P2 — pendingVideoTargetSec cleared on successful reveal', () => {
     audios = [];
     rafQueue = [];
     vi.stubGlobal('window', { setTimeout: () => 0, clearTimeout: () => {} });
+    // Capture the cycling ticks instead of discarding them — the test drives
+    // the "selectedUnit switches to the next unit" step through the REAL
+    // startIuCycling tick (runCyclingTick below).
     vi.stubGlobal('requestAnimationFrame', (fn: () => void) => {
       rafQueue.push(fn);
       return rafQueue.length;
@@ -144,13 +152,19 @@ describe('P2 — pendingVideoTargetSec cleared on successful reveal', () => {
     return video;
   }
 
-  /** External unit tap on u1 → SEEKING{landed:false, paused:true}, target 0. */
+  /** External unit tap on scA2/u1 → SEEKING armed for u1 (gate 150ms). */
   async function armSeeking(): Promise<FakeMedia> {
     const video = await startBook();
     await seekToPosition('ch', 'scA2', 1, 'u1');
-    checkPendingExternalSeek();
+    checkPendingExternalSeek(); // pendingLoad → SEEKING{landed:false, paused:true}
     await vi.waitFor(() => expect(getPlayerState()).toBe('SEEKING'));
     return video;
+  }
+
+  /** Run one captured startIuCycling tick (maps the AUDIO position to a unit). */
+  function runCyclingTick(): void {
+    const tick = rafQueue.pop();
+    if (tick) tick();
   }
 
   /** Fire a video timeupdate with the given position and a decodable frame. */
@@ -160,66 +174,86 @@ describe('P2 — pendingVideoTargetSec cleared on successful reveal', () => {
     video.fire('timeupdate');
   }
 
-  it('TEST A — direct seek → reveal clears the target', async () => {
+  it('overshoot does NOT reveal while withinUnit=false and does NOT lock — reveal after selectedUnit advances', async () => {
     const video = await armSeeking();
-    expect(getPendingVideoTargetSec()).toBe(0); // armed, alive before reveal
+    resumePlayback(); // SEEKING{landed:false, paused:false} — playing variant
+    expect(getPlayerState()).toBe('SEEKING');
 
-    timeupdate(video, 0.2); // inside u1, past the gate → paused reveal (VIDEO_READY)
-    expect(getPlayerState()).toBe('VIDEO_READY');
-    expect(getPendingVideoTargetSec()).toBe(-1); // cleared by the reveal
+    // First tick: pos crosses the gate (150ms) but is already PAST u1's end
+    // (300ms) — withinUnit=false. Must flip the landing but NOT reveal.
+    timeupdate(video, 0.35);
+    expect(getPlayerState()).toBe('SEEKING'); // no reveal on overshoot
+    expect(videoVisible.value).toBe(false);
+
+    // The audio moves into u2; the real cycling tick switches selectedUnit to u2.
+    audios.at(-1)!.currentTime = 0.35;
+    audios.at(-1)!.duration = 10;
+    runCyclingTick();
+
+    // Next timeupdate: withinUnit=true now → reveal MUST happen (PLAYING).
+    timeupdate(video, 0.35);
+    expect(getPlayerState()).toBe('PLAYING');
     expect(videoVisible.value).toBe(true);
   });
 
-  it('TEST B — seek → pause → resume → reveal: target lives until consumed, -1 after', async () => {
+  it('negative: while withinUnit=false the video never reveals (multiple ticks)', async () => {
     const video = await armSeeking();
-    expect(getPendingVideoTargetSec()).toBe(0); // alive before pause
+    resumePlayback();
 
-    pausePlayback(); // sticky — target NOT touched by the pause
+    timeupdate(video, 0.35);
     expect(getPlayerState()).toBe('SEEKING');
-    expect(getPendingVideoTargetSec()).toBe(0);
-
-    resumePlayback(); // consumes the target (applies it) — still before reveal
+    timeupdate(video, 0.4); // deeper into u2, but selectedUnit is still u1
     expect(getPlayerState()).toBe('SEEKING');
-    expect(getPendingVideoTargetSec()).toBe(-1);
-
-    timeupdate(video, 0.2); // reveal
-    expect(getPlayerState()).toBe('PLAYING');
-    expect(getPendingVideoTargetSec()).toBe(-1);
+    timeupdate(video, 0.5);
+    expect(getPlayerState()).toBe('SEEKING');
+    expect(videoVisible.value).toBe(false);
   });
 
-  it('TEST C — attachVideo after a reveal must NOT re-arm SEEKING from a stale target', async () => {
+  it('happy path: seek → gate → withinUnit=true → reveal on the same tick', async () => {
     const video = await armSeeking();
-    timeupdate(video, 0.2); // reveal → VIDEO_READY, target cleared
-    expect(getPlayerState()).toBe('VIDEO_READY');
-    expect(getPendingVideoTargetSec()).toBe(-1);
+    resumePlayback();
 
-    detachVideo();
-    expect(getPlayerState()).toBe('PAUSED');
-    const video2 = new FakeMedia();
-    attachVideo(video2 as unknown as HTMLVideoElement);
-    // No stale target → no SEEKING re-armed (audio-sync branch, storyboard up).
-    expect(getPlayerState()).toBe('PAUSED');
-    expect(getPendingVideoTargetSec()).toBe(-1);
-  });
-
-  it('TEST D — resumePlayback after a reveal must NOT re-apply a stale target', async () => {
-    const video = await armSeeking();
-    timeupdate(video, 0.2); // reveal — the video has moved ON from the target (0)
-    expect(getPlayerState()).toBe('VIDEO_READY');
-    expect(video.currentTime).toBeCloseTo(0.2);
-
-    pausePlayback(); // VIDEO_READY → stays revealed (target already -1)
-    expect(getPlayerState()).toBe('VIDEO_READY');
-
-    resumePlayback(); // must NOT seek the video back to the stale target (0)
+    timeupdate(video, 0.2); // >= gate (150ms) and inside u1 (< 300ms)
     expect(getPlayerState()).toBe('PLAYING');
-    expect(video.currentTime).toBeCloseTo(0.2); // position preserved — no jump back
-    expect(getPendingVideoTargetSec()).toBe(-1);
+    expect(videoVisible.value).toBe(true);
   });
 
-  it('plain playback without any seek never arms a target', async () => {
-    await startBook();
-    expect(getPlayerState()).toBe('SHOWING_STORYBOARD');
-    expect(getPendingVideoTargetSec()).toBe(-1);
+  it('paused seek reveals as VIDEO_READY (not PLAYING)', async () => {
+    const video = await armSeeking(); // SEEKING{landed:false, paused:true} (pendingLoad)
+    expect(getPlayerState()).toBe('SEEKING');
+
+    timeupdate(video, 0.2); // inside u1, past the gate
+    expect(getPlayerState()).toBe('VIDEO_READY'); // paused → revealed but held
+    expect(videoVisible.value).toBe(true);
+  });
+
+  it('pause before reveal keeps the gate (sticky SEEKING, §11.3) — no reveal while withinUnit=false', async () => {
+    const video = await armSeeking();
+    // P1 fix: a pause during an in-flight seek must NOT drop the SEEKING
+    // payload — SEEKING → SEEKING{paused:true}, not PAUSED.
+    pausePlayback();
+    expect(getPlayerState()).toBe('SEEKING');
+    expect(uiState.value.phase).toBe('PAUSED');
+    expect(videoVisible.value).toBe(false);
+
+    timeupdate(video, 0.35); // pos past gate AND past u1's end — withinUnit=false, must NOT reveal
+    expect(getPlayerState()).toBe('SEEKING');
+    expect(videoVisible.value).toBe(false);
+
+    // Resume keeps the gate (never SEEKING → SHOWING_STORYBOARD with payload
+    // loss): still no reveal while withinUnit=false...
+    resumePlayback();
+    expect(getPlayerState()).toBe('SEEKING');
+    timeupdate(video, 0.35);
+    expect(getPlayerState()).toBe('SEEKING');
+    expect(videoVisible.value).toBe(false);
+
+    // ...and the reveal fires once selectedUnit/position enters the unit.
+    audios.at(-1)!.currentTime = 0.35;
+    audios.at(-1)!.duration = 10;
+    runCyclingTick();
+    timeupdate(video, 0.35);
+    expect(getPlayerState()).toBe('PLAYING');
+    expect(videoVisible.value).toBe(true);
   });
 });

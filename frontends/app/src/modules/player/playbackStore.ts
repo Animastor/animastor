@@ -25,13 +25,17 @@
 // generateStore, positionStore, resourceInvalidations) — every host
 // dependency arrives through injected PlayerPorts (app/playerAdapters.ts is
 // the single composition seam; the future package wires the same way).
+//
+// Phase 2 physical relocation: the contour lives in src/modules/player/ —
+// the future @animastor/web-player package layout (Phase 3 cuts the package;
+// this directory keeps the package boundary rules from today).
 import { signal } from '@preact/signals';
 import { shouldRevealSeekVideo, unitEndMs, unitRevealGateSec, unitStartMs } from './playbackGate';
-import type { BookData, SceneStatusResponse, StoryboardResponse } from '../modules/player/models';
-import { sceneRefs } from '../modules/player/models';
-import type { SceneRef } from '../modules/player/models';
-import type { PlayerActivePosition, PlayerPorts } from '../modules/player/ports';
-import { getMedia, putMedia, clearCache as clearMediaCache, evictSceneMedia, evictChapterMedia } from '../cache/mediaCache';
+import type { BookData, SceneStatusResponse, StoryboardResponse } from './models';
+import { sceneRefs } from './models';
+import type { SceneRef } from './models';
+import type { PlayerActivePosition, PlayerPorts } from './ports';
+import { getMedia, putMedia, clearCache as clearMediaCache, evictSceneMedia, evictChapterMedia } from './mediaCache';
 
 export type PlayerPhase =
   | 'IDLE' | 'LOADING_BOOK' | 'GENERATING' | 'DOWNLOADING'

@@ -13,8 +13,8 @@
 // fake audio elements from a stubbed document — no store changes were needed
 // for the test.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SceneRef } from '../modules/player/models';
-import type { PlayerPorts } from '../modules/player/ports';
+import type { SceneRef } from './models';
+import type { PlayerPorts } from './ports';
 
 // ── Mocked environment (network / Cache API / DOM are irrelevant here) ──────
 // Fake PlayerPorts replace the old ../api/client + generateStore/positionStore
@@ -37,7 +37,7 @@ const fakePorts = {
     videoUrl: vi.fn((path: string) => 'http://test' + path),
   },
 };
-vi.mock('../cache/mediaCache', () => ({
+vi.mock('./mediaCache', () => ({
   getMedia: vi.fn(async () => undefined),
   putMedia: vi.fn(async () => {}),
   clearCache: vi.fn(async () => 0),

@@ -10,8 +10,8 @@
 // Covers §4 (Delete Module), §5 (Delete Scene), §6 (Delete Chapter) of the
 // Local Cache Invalidation audit.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SceneRef } from '../modules/player/models';
-import type { PlayerPorts } from '../modules/player/ports';
+import type { SceneRef } from './models';
+import type { PlayerPorts } from './ports';
 
 // ── Mocks ──────────────────────────────────────────────────────
 // Fake PlayerPorts replace the old ../api/client + generateStore/positionStore
@@ -30,7 +30,7 @@ const fakePorts = {
     videoUrl: vi.fn((path: string) => 'http://test' + path),
   },
 };
-vi.mock('../cache/mediaCache', () => ({
+vi.mock('./mediaCache', () => ({
   getMedia: vi.fn(async () => undefined),
   putMedia: vi.fn(async () => {}),
   clearCache: vi.fn(async () => 0),
@@ -47,7 +47,7 @@ import {
   uiState,
   wirePlaybackCoordination,
 } from './playbackStore';
-import { evictSceneMedia, evictChapterMedia, clearCache } from '../cache/mediaCache';
+import { evictSceneMedia, evictChapterMedia, clearCache } from './mediaCache';
 
 // ── Test data ──────────────────────────────────────────────────
 const testScenes: SceneRef[] = [
