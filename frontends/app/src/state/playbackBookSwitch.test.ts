@@ -12,31 +12,34 @@
 //   C: Book A SEEKING  → Book B → stale seek does not execute against B.
 //   D: Book A selected → Book B SCENE_READY → currentIuBlobUrl === null.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SceneRef } from '../api/models';
+import type { SceneRef } from '../modules/player/models';
+import type { PlayerPorts } from '../modules/player/ports';
 
 // ── Mocked environment (network / Cache API / DOM are irrelevant here) ──────
-vi.mock('../api/client', () => ({
-  API_BASE: 'http://test',
-  getJson: vi.fn(async (url: string) => {
-    if (url.includes('/status')) return { audio_ready: true, video_ready: true };
-    if (url.includes('/storyboard')) return { ius: [{ unit_id: 'u1', duration_ms: 500, start_ms: 0, text: null }] };
-    throw new Error(`unexpected url: ${url}`);
-  }),
-  getBlob: vi.fn(async () => new Blob([new Uint8Array([1])])), // non-empty audio + iu image
-  retryWithBackoff: vi.fn(async (fn: () => Promise<unknown>) => fn()),
-}));
+// Fake PlayerPorts replace the old ../api/client + generateStore/positionStore
+// module mocks (Phase 1 prep: the engine reaches the host ONLY via ports).
+const fakePorts = {
+  generation: { onPlaybackPrepared: vi.fn() },
+  position: { navigateTo: vi.fn() },
+  invalidations: {
+    onResourceInvalidated: vi.fn(),
+    isBookResource: vi.fn((resource: string) => resource.startsWith('book:')),
+  },
+  http: {
+    getJson: vi.fn(async (url: string) => {
+      if (url.includes('/status')) return { audio_ready: true, video_ready: true };
+      if (url.includes('/storyboard')) return { ius: [{ unit_id: 'u1', duration_ms: 500, start_ms: 0, text: null }] };
+      throw new Error(`unexpected url: ${url}`);
+    }),
+    getBlob: vi.fn(async () => new Blob([new Uint8Array([1])])), // non-empty audio + iu image
+    retryWithBackoff: vi.fn(async (fn: () => Promise<unknown>) => fn()),
+    videoUrl: vi.fn((path: string) => 'http://test' + path),
+  },
+};
 vi.mock('../cache/mediaCache', () => ({
   getMedia: vi.fn(async () => undefined),
   putMedia: vi.fn(async () => {}),
   clearCache: vi.fn(async () => 0),
-}));
-vi.mock('./generateStore', () => ({
-  onPlaybackPrepared: vi.fn(),
-}));
-vi.mock('./positionStore', () => ({
-  navigateTo: vi.fn(),
-  clearPosition: vi.fn(),
-  position: { value: null },
 }));
 
 import {
@@ -50,6 +53,7 @@ import {
   seekToPosition,
   stopAll,
   uiState,
+  wirePlaybackCoordination,
 } from './playbackStore';
 
 /** Minimal media element with a listener registry. */
@@ -87,6 +91,7 @@ describe('P2-3 — book switch resets stale player state', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    wirePlaybackCoordination(fakePorts as unknown as PlayerPorts);
     audios = [];
     vi.stubGlobal('window', { setTimeout: () => 0, clearTimeout: () => {} });
     vi.stubGlobal('requestAnimationFrame', () => 0);

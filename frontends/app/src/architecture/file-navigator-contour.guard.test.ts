@@ -328,12 +328,15 @@ describe('B1 split guards — fileStore ownership + cycle dissolution (file-modu
     expect(specs).not.toContain('./playbackStore');
   });
 
-  it('Cycle guard (dissolved) — generateStore no longer imports playbackStore; playbackStore → generateStore stays one-way', () => {
+  it('Cycle guard (dissolved → inverted) — generateStore no longer imports playbackStore; the playbackStore → generateStore edge is now a PlayerPorts injection', () => {
     // The old generateStore ⇄ playbackStore cycle existed ONLY for the File
     // slice's closeBook player release. B1 moved closeBook into fileStore with
-    // an injected player port, so the generateStore leg is gone.
+    // an injected player port, so the generateStore leg is gone. The Player
+    // Phase-1 prep then inverted the surviving edge: playbackStore no longer
+    // imports generateStore at all — the generation event arrives through the
+    // injected PlayerPorts (composition root: app/playerAdapters.ts).
     expect(importSpecifiers('state/generateStore.ts')).not.toContain('./playbackStore');
-    expect(importSpecifiers('state/playbackStore.ts')).toContain('./generateStore');
+    expect(importSpecifiers('state/playbackStore.ts')).not.toContain('./generateStore');
     // The player release moved into the composition root's wiring:
     expect(importSpecifiers(FILE_ADAPTERS)).toContain('../state/playbackStore');
   });
@@ -359,8 +362,10 @@ describe('B1 split guards — fileStore ownership + cycle dissolution (file-modu
         expect(edges.get(to), `state cycle ${from} → ${to}`).not.toContain(from);
       }
     }
-    // Documented post-B1 shape (all one-directional):
-    expect(edges.get('state/playbackStore.ts')).toContain('state/generateStore.ts');
+    // Documented post-B1 + post-Player-prep shape (all one-directional, and the
+    // Player Phase-1 prep removed the last direct state-store edge from
+    // playbackStore — its host reach is the injected PlayerPorts only):
+    expect(edges.get('state/playbackStore.ts')).not.toContain('state/generateStore.ts');
     expect(edges.get('state/generateStore.ts')).not.toContain('state/playbackStore.ts');
   });
 });

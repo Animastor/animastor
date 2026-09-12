@@ -17,6 +17,7 @@ import { AiAssistantPage } from './pages/AiAssistantPage';
 import { AdminPage } from './pages/AdminPage';
 import { applyTheme, applyLanguage } from './app/theme';
 import { wirePlaybackCoordination, wirePlaybackLifecycle } from './state/playbackStore';
+import { playerPorts } from './app/playerAdapters';
 import { bookId } from './state/generateStore';
 import { restoreBookSession } from './state/fileStore';
 import { authMe } from './state/authStore';
@@ -24,8 +25,10 @@ import { navigatorPorts } from './app/navigatorAdapters';
 import { filePorts } from './app/fileAdapters';
 
 // MainActivity.setupPlaybackCoordination() equivalent — forwards
-// generateStore.playbackPrepared to PlaybackViewModel (stage 4).
-wirePlaybackCoordination();
+// generateStore.playbackPrepared to PlaybackViewModel (stage 4). Phase 1
+// extraction prep: the engine receives ALL host dependencies through the
+// injected PlayerPorts (composition root: app/playerAdapters.ts).
+wirePlaybackCoordination(playerPorts);
 // PlayFragment.onPause/onResume equivalent — pause on document.hidden, save /
 // restore playback position via sessionStorage (stage 7, 06 §1.8).
 wirePlaybackLifecycle();
@@ -40,7 +43,7 @@ function Routes() {
       <FilePage path="/" ports={filePorts} />
       <FilePage path="/file" ports={filePorts} />
       <GeneratePage path="/generate" />
-      <PlayPage path="/play" />
+      <PlayPage path="/play" ports={playerPorts} />
       <EditPage path="/edit" />
       <NavigatePage path="/navigate" ports={navigatorPorts} />
       <SettingsPage path="/settings" />

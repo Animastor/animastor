@@ -4,11 +4,14 @@
 // subtitle), the 4 layer chips, the big play button, progress and status, plus
 // the fullscreen toggle anchored to the displayed image bounds
 // (anchorFullscreenToImage). All state comes from playbackStore signals.
+//
+// Phase 1 extraction prep (docs/architecture/web-player-module-extraction-audit.md):
+// the surface consumes the host through the injected PlayerPorts prop ONLY
+// (i18n / shellMode / icons / session identity) — no direct app/* or
+// state/generateStore imports; the host composition root is app/playerAdapters.ts.
 import type { JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useSignalEffect } from '@preact/signals';
-import { t } from '../app/i18n';
-import { useDesktopShell } from '../app/desktop';
 import {
   uiState, bookId, missingIuPosition, coverImage, previewImage, currentIuBlobUrl,
   subtitleText, iuMissing, videoVisible, pendingExternalSeek,
@@ -18,15 +21,9 @@ import {
   setLayerAudio, setLayerImage, setLayerVideo, setLayerSubtitles,
 } from '../state/playbackStore';
 import type { PlaybackUiState } from '../state/playbackStore';
-import { bookId as genBookId, buildId as genBuildId } from '../state/generateStore';
-import {
-  IconPlay, IconPause, IconVolumeUp, IconVolumeOff, IconImage, IconImageOff,
-  IconVideocam, IconVideocamOff, IconSubtitles, IconSubtitlesOff,
-  IconFullscreen, IconFullscreenExit,
-} from '../app/icons';
-import type { IconProps } from '../app/icons';
+import type { PlayerPorts, PlayerIconProps } from '../modules/player/ports';
 
-function statusText(s: PlaybackUiState): string {
+function statusText(s: PlaybackUiState, t: PlayerPorts['i18n']['t'], sessionBookId: string): string {
   if (s.errorMessage) return `Error: ${s.errorMessage}`;
   switch (s.phase) {
     case 'LOADING_BOOK':
@@ -44,7 +41,7 @@ function statusText(s: PlaybackUiState): string {
       return t('play_paused');
     case 'IDLE':
     default:
-      if (!bookId.value && !genBookId.value) return t('empty_state');
+      if (!bookId.value && !sessionBookId) return t('empty_state');
       if (!bookId.value) return t('play_placeholder_no_generation');
       return t('empty_state_book_loaded');
   }
@@ -54,8 +51,8 @@ function LayerChip({ checked, onToggle, label, On, Off }: {
   checked: boolean;
   onToggle: (v: boolean) => void;
   label: string;
-  On: (p: IconProps) => JSX.Element;
-  Off: (p: IconProps) => JSX.Element;
+  On: (p: PlayerIconProps) => JSX.Element;
+  Off: (p: PlayerIconProps) => JSX.Element;
 }) {
   return (
     <button
@@ -76,8 +73,8 @@ function LayerButton({ checked, onToggle, label, On, Off }: {
   checked: boolean;
   onToggle: (v: boolean) => void;
   label: string;
-  On: (p: IconProps) => JSX.Element;
-  Off: (p: IconProps) => JSX.Element;
+  On: (p: PlayerIconProps) => JSX.Element;
+  Off: (p: PlayerIconProps) => JSX.Element;
 }) {
   return (
     <button
@@ -92,12 +89,24 @@ function LayerButton({ checked, onToggle, label, On, Off }: {
   );
 }
 
-export function PlayPage(props: { path?: string }) {
-  void props;
+export function PlayPage(props: { path?: string; ports: PlayerPorts }) {
+  void props.path;
+  // Host seam (Phase 1 prep): i18n / shell mode / icons / session identity
+  // arrive through the injected PlayerPorts — the composition root is
+  // app/playerAdapters.ts (single host place that wires the infra).
+  const { t } = props.ports.i18n;
+  const genBookId = props.ports.session.bookId;
+  const genBuildId = props.ports.session.buildId;
   // Desktop console (plan §7): the stage takes the majority of the workspace
   // and the mobile layerbar/meta/big-button are replaced by a transport bar
   // with labelled layer toggles. Mobile keeps the Android 1:1 composition.
-  const isDesktop = useDesktopShell();
+  const isDesktop = props.ports.shellMode.isDesktop();
+  const {
+    Play: IconPlay, Pause: IconPause, VolumeUp: IconVolumeUp, VolumeOff: IconVolumeOff,
+    Image: IconImage, ImageOff: IconImageOff, Videocam: IconVideocam, VideocamOff: IconVideocamOff,
+    Subtitles: IconSubtitles, SubtitlesOff: IconSubtitlesOff,
+    Fullscreen: IconFullscreen, FullscreenExit: IconFullscreenExit,
+  } = props.ports.icons;
   const s = uiState.value;
   const missing = missingIuPosition.value;
 
@@ -259,7 +268,7 @@ export function PlayPage(props: { path?: string }) {
         <div class="play-progress" style={loading ? undefined : 'display:none'}>
           <div class="play-progress__bar" />
         </div>
-        <span class="play-status">{missing ? t('iu_not_generated') : statusText(s)}</span>
+        <span class="play-status">{missing ? t('iu_not_generated') : statusText(s, t, genBookId.value)}</span>
       </div>
 
       {/* Big velvet play button (mobile) */}
@@ -293,7 +302,7 @@ export function PlayPage(props: { path?: string }) {
               <div class="play-progress" style={loading ? undefined : 'display:none'}>
                 <div class="play-progress__bar" />
               </div>
-              <span class="play-status">{missing ? t('iu_not_generated') : statusText(s)}</span>
+              <span class="play-status">{missing ? t('iu_not_generated') : statusText(s, t, genBookId.value)}</span>
             </div>
             <button type="button" class="play-console__play" disabled={!buttonEnabled} onClick={handlePlayButton}>
               {showPause ? <IconPause width={18} height={18} /> : <IconPlay width={18} height={18} />}

@@ -10,32 +10,35 @@
 // + phase PLAYING), then pauseIfPlaying() must produce the coherent pause.
 // Network / Cache API / DOM are stubbed — they are irrelevant to this contract.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SceneRef } from '../api/models';
+import type { SceneRef } from '../modules/player/models';
+import type { PlayerPorts } from '../modules/player/ports';
 
-vi.mock('../api/client', () => ({
-  API_BASE: 'http://test',
-  getJson: vi.fn(async (url: string) => {
-    if (url.includes('/status')) return { audio_ready: true, video_ready: false };
-    if (url.includes('/storyboard')) return { ius: [{ unit_id: 'u1', duration_ms: 500, start_ms: 0, text: null }] };
-    throw new Error(`unexpected url: ${url}`);
-  }),
-  getBlob: vi.fn(async () => new Blob([])),
-  retryWithBackoff: vi.fn(async (fn: () => Promise<unknown>) => fn()),
-}));
+// ── Fake PlayerPorts (Phase 1 prep: the engine reaches host infrastructure
+//    ONLY through injected ports — the old vi.mock('../api/client') /
+//    generateStore / positionStore module mocks become this fake port object,
+//    exactly like the vi.mock factories they replace) ─────────────────────
+const fakePorts = {
+  generation: { onPlaybackPrepared: vi.fn() },
+  position: { navigateTo: vi.fn() },
+  invalidations: {
+    onResourceInvalidated: vi.fn(),
+    isBookResource: vi.fn((resource: string) => resource.startsWith('book:')),
+  },
+  http: {
+    getJson: vi.fn(async (url: string) => {
+      if (url.includes('/status')) return { audio_ready: true, video_ready: false };
+      if (url.includes('/storyboard')) return { ius: [{ unit_id: 'u1', duration_ms: 500, start_ms: 0, text: null }] };
+      throw new Error(`unexpected url: ${url}`);
+    }),
+    getBlob: vi.fn(async () => new Blob([])),
+    retryWithBackoff: vi.fn(async (fn: () => Promise<unknown>) => fn()),
+    videoUrl: vi.fn((path: string) => 'http://test' + path),
+  },
+};
 vi.mock('../cache/mediaCache', () => ({
   getMedia: vi.fn(async () => undefined),
   putMedia: vi.fn(async () => {}),
   clearCache: vi.fn(async () => 0),
-}));
-// Cut the runtime-only circular import (generateStore ⇄ playbackStore) and the
-// position store — none of them participate in this contract.
-vi.mock('./generateStore', () => ({
-  onPlaybackPrepared: vi.fn(),
-}));
-vi.mock('./positionStore', () => ({
-  navigateTo: vi.fn(),
-  clearPosition: vi.fn(),
-  position: { value: null },
 }));
 
 import {
@@ -45,6 +48,7 @@ import {
   preparePlayback,
   resumePlayback,
   uiState,
+  wirePlaybackCoordination,
 } from './playbackStore';
 
 const silentScene: SceneRef[] = [{ chapterId: 'ch', sceneId: 'sc' } as SceneRef];
@@ -62,6 +66,11 @@ async function playSilentScene(): Promise<void> {
 describe('P1-1 — pauseIfPlaying() on a silent scene', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Inject the fake ports — the engine's only host reach (idempotent wire).
+    // Only the engine-side halves (generation/position/invalidations/http) are
+    // populated; the page-side ports (session/i18n/icons/shellMode) are never
+    // touched by the engine, so they stay stubbed away by the cast.
+    wirePlaybackCoordination(fakePorts as unknown as PlayerPorts);
     // startSilentIuCycling schedules via window.setTimeout — a no-op keeps the
     // polling loop inert in the test (it must never actually advance units).
     vi.stubGlobal('window', { setTimeout: () => 0, clearTimeout: () => {} });

@@ -10,29 +10,32 @@
 // Covers §4 (Delete Module), §5 (Delete Scene), §6 (Delete Chapter) of the
 // Local Cache Invalidation audit.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SceneRef } from '../api/models';
+import type { SceneRef } from '../modules/player/models';
+import type { PlayerPorts } from '../modules/player/ports';
 
 // ── Mocks ──────────────────────────────────────────────────────
-vi.mock('../api/client', () => ({
-  API_BASE: 'http://test',
-  getJson: vi.fn(async () => ({})),
-  getBlob: vi.fn(async () => new Blob([])),
-  retryWithBackoff: vi.fn(async (fn: () => Promise<unknown>) => fn()),
-}));
+// Fake PlayerPorts replace the old ../api/client + generateStore/positionStore
+// module mocks (Phase 1 prep: the engine reaches the host ONLY via ports).
+const fakePorts = {
+  generation: { onPlaybackPrepared: vi.fn() },
+  position: { navigateTo: vi.fn() },
+  invalidations: {
+    onResourceInvalidated: vi.fn(),
+    isBookResource: vi.fn((resource: string) => resource.startsWith('book:')),
+  },
+  http: {
+    getJson: vi.fn(async () => ({})),
+    getBlob: vi.fn(async () => new Blob([])),
+    retryWithBackoff: vi.fn(async (fn: () => Promise<unknown>) => fn()),
+    videoUrl: vi.fn((path: string) => 'http://test' + path),
+  },
+};
 vi.mock('../cache/mediaCache', () => ({
   getMedia: vi.fn(async () => undefined),
   putMedia: vi.fn(async () => {}),
   clearCache: vi.fn(async () => 0),
   evictSceneMedia: vi.fn(async () => 1),
   evictChapterMedia: vi.fn(async () => 3),
-}));
-vi.mock('./generateStore', () => ({
-  onPlaybackPrepared: vi.fn(),
-}));
-vi.mock('./positionStore', () => ({
-  navigateTo: vi.fn(),
-  clearPosition: vi.fn(),
-  position: { value: { chapterId: null, sceneId: null, unitId: null, chunkId: null, unitIndex: 0 } },
 }));
 
 import {
@@ -42,6 +45,7 @@ import {
   sceneQueue,
   preparePlayback,
   uiState,
+  wirePlaybackCoordination,
 } from './playbackStore';
 import { evictSceneMedia, evictChapterMedia, clearCache } from '../cache/mediaCache';
 
@@ -56,6 +60,7 @@ const testScenes: SceneRef[] = [
 describe('Delete Scene — cache invalidation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    wirePlaybackCoordination(fakePorts as unknown as PlayerPorts);
     vi.stubGlobal('window', { setTimeout: () => 0, clearTimeout: () => {} });
     vi.stubGlobal('URL', {
       ...URL,
@@ -100,6 +105,7 @@ describe('Delete Scene — cache invalidation', () => {
 describe('Delete Chapter — cache invalidation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    wirePlaybackCoordination(fakePorts as unknown as PlayerPorts);
     vi.stubGlobal('window', { setTimeout: () => 0, clearTimeout: () => {} });
     vi.stubGlobal('URL', {
       ...URL,
@@ -136,6 +142,7 @@ describe('Delete Chapter — cache invalidation', () => {
 describe('Delete Book — full cache invalidation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    wirePlaybackCoordination(fakePorts as unknown as PlayerPorts);
     vi.stubGlobal('window', { setTimeout: () => 0, clearTimeout: () => {} });
     vi.stubGlobal('URL', {
       ...URL,

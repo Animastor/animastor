@@ -19,17 +19,19 @@
 //    sessionStorage on pagehide/pageshow (06 §1.8)
 //  - DONT_DO.md: no IU stall/retry, no skip-IU-by-null-bitmap, no rewrite of
 //    the sliding-window preload, single navigation source (FileFragment only).
+//
+// Phase 1 extraction prep (docs/architecture/web-player-module-extraction-audit.md):
+// the engine no longer imports host infrastructure (api/client, api/models,
+// generateStore, positionStore, resourceInvalidations) — every host
+// dependency arrives through injected PlayerPorts (app/playerAdapters.ts is
+// the single composition seam; the future package wires the same way).
 import { signal } from '@preact/signals';
-import { API_BASE, getBlob, getJson, retryWithBackoff } from '../api/client';
 import { shouldRevealSeekVideo, unitEndMs, unitRevealGateSec, unitStartMs } from './playbackGate';
-import type { BookData, SceneStatusResponse, StoryboardResponse } from '../api/models';
-import { sceneRefs } from '../api/models';
-import { navigateTo } from './positionStore';
-import type { ActivePosition } from './positionStore';
-import { onPlaybackPrepared } from './generateStore';
-import type { SceneRef } from './generateStore';
+import type { BookData, SceneStatusResponse, StoryboardResponse } from '../modules/player/models';
+import { sceneRefs } from '../modules/player/models';
+import type { SceneRef } from '../modules/player/models';
+import type { PlayerActivePosition, PlayerPorts } from '../modules/player/ports';
 import { getMedia, putMedia, clearCache as clearMediaCache, evictSceneMedia, evictChapterMedia } from '../cache/mediaCache';
-import { onResourceInvalidated, BOOK_RESOURCE_PREFIX } from './resourceInvalidations';
 
 export type PlayerPhase =
   | 'IDLE' | 'LOADING_BOOK' | 'GENERATING' | 'DOWNLOADING'
@@ -55,8 +57,8 @@ export const buildId = signal('');
 export const sceneQueue = signal<SceneRef[]>([]);
 
 // ── External seek (PlaybackViewModel.pendingExternalSeek / missingIuPosition) ──
-export const missingIuPosition = signal<ActivePosition | null>(null);
-export const pendingExternalSeek = signal<ActivePosition | null>(null);
+export const missingIuPosition = signal<PlayerActivePosition | null>(null);
+export const pendingExternalSeek = signal<PlayerActivePosition | null>(null);
 
 // ── Layer toggles (fragment_play.xml layer chips) ──
 export const layerAudio = signal(true);
@@ -432,7 +434,7 @@ export function setPreviewImage(blobUrl: string | null): void {
 export async function ensureInitialized(targetBookId: string, targetBuildId: string): Promise<void> {
   if (bookId.value && bookId.value === targetBookId) return;
   try {
-    const bookData = await getJson<BookData>(`/book/${enc(targetBookId)}`);
+    const bookData = await ports().http.getJson<BookData>(`/book/${enc(targetBookId)}`);
     const scenes = sceneRefs(bookData);
     const coverScene = scenes.find((s) => s.sceneType === 'cover');
     preparePlayback(targetBookId, targetBuildId, scenes);
@@ -462,11 +464,11 @@ async function loadCoverIntoState(chapterId: string | null, sceneId: string | nu
   const bld = buildId.value;
   if (!bId) return;
   try {
-    const blob = await retryWithBackoff(async () => {
-      const sb = await getJson<StoryboardResponse>(`/scene/${enc(bId)}/${enc(chapterId)}/${enc(sceneId)}/storyboard?build_id=${enc(bld)}`);
+    const blob = await ports().http.retryWithBackoff(async () => {
+      const sb = await ports().http.getJson<StoryboardResponse>(`/scene/${enc(bId)}/${enc(chapterId)}/${enc(sceneId)}/storyboard?build_id=${enc(bld)}`);
       const iu = sb.ius?.[0];
       if (!iu) throw new Error('no IU');
-      return await getBlob(iuPath(bId, bld, chapterId, sceneId, iu.unit_id));
+      return await ports().http.getBlob(iuPath(bId, bld, chapterId, sceneId, iu.unit_id));
     }, 5, 1000, 5000);
     // bookId+buildId guard: a stale async result for a previous book/build must
     // never clobber the current book's cover (Android ties this to one VM scope).
@@ -663,7 +665,7 @@ export async function seekToPosition(chapterId: string, sceneId: string, unitInd
     return;
   }
   try {
-    const bookData = await getJson<BookData>(`/book/${enc(bId)}`);
+    const bookData = await ports().http.getJson<BookData>(`/book/${enc(bId)}`);
     const allScenes = sceneRefs(bookData);
     const allKeys = allScenes.map(sceneKeyOf);
     const newIdx = allKeys.indexOf(sceneKey);
@@ -720,7 +722,7 @@ export function executePendingSeek(): void {
   pendingExplicitUnitTarget = true;
   currentUnitIndex = seek.unitIndex;
   pendingExternalUnitId = seek.unitId;
-  navigateTo({ ...seek });
+  ports().position.navigateTo({ ...seek });
   needsContentRefresh = false;
   bumpSceneEpoch();
   uiState.value = { ...uiState.value, phase: 'DOWNLOADING', currentUnitIndex: seek.unitIndex };
@@ -751,7 +753,7 @@ export function closeBook(): void {
   currentUnitIndex = 0;
   pendingExternalUnitId = null;
   sessionStorage.removeItem(SAVED_POS_KEY);
-  navigateTo({ chapterId: null, sceneId: null, unitId: null, chunkId: null, unitIndex: 0 });
+  ports().position.navigateTo({ chapterId: null, sceneId: null, unitId: null, chunkId: null, unitIndex: 0 });
   uiState.value = { ...initial };
 }
 
@@ -991,7 +993,7 @@ function playNext(): void {
   if (!isExecutingExternalSeek) {
     currentUnitIndex = 0;
     pendingExternalUnitId = null;
-    navigateTo({ chapterId: chId, sceneId: scId, unitId: null, chunkId: sceneKey, unitIndex: 0 });
+    ports().position.navigateTo({ chapterId: chId, sceneId: scId, unitId: null, chunkId: sceneKey, unitIndex: 0 });
   }
   isExecutingExternalSeek = false;
 
@@ -1006,7 +1008,7 @@ function playNext(): void {
   uiState.value = { ...uiState.value, phase: 'DOWNLOADING' };
   transition('LOADING_SCENE');
   const epoch = sceneEpoch;
-  void retryWithBackoff(() => fetchSceneData(sceneKey), 3, 1000, 5000)
+  void ports().http.retryWithBackoff(() => fetchSceneData(sceneKey), 3, 1000, 5000)
     .then((data) => {
       if (epoch !== sceneEpoch) { revokeSceneUrls(data); return; }
       if (needsContentRefresh) { revokeSceneUrls(data); return; }
@@ -1109,7 +1111,7 @@ const inflightAssets = new Map<string, Promise<SceneAssets>>();
  *  (saves ~43 MB per preloaded/skipped scene). */
 async function fetchSceneAssets(sceneKey: string): Promise<SceneAssets> {
   const [chId, scId] = sceneKey.split(':', 2);
-  const status = await getJson<SceneStatusResponse>(scenePath(chId, scId, 'status')).catch(() => null);
+  const status = await ports().http.getJson<SceneStatusResponse>(scenePath(chId, scId, 'status')).catch(() => null);
   if (!status || !status.audio_ready) {
     throw new Error(`Audio not ready for ${sceneKey}`);
   }
@@ -1152,7 +1154,7 @@ async function getSceneAudioBlob(chId: string, scId: string, sceneKey: string): 
   const cached = await getMedia(bld, sceneKey, 'audio');
   if (cached) return cached;
   try {
-    const blob = await getBlob(scenePath(chId, scId, 'audio'));
+    const blob = await ports().http.getBlob(scenePath(chId, scId, 'audio'));
     void putMedia(bld, sceneKey, 'audio', blob);
     return blob;
   } catch {
@@ -1167,7 +1169,7 @@ async function getSceneAudioBlob(chId: string, scId: string, sceneKey: string): 
  *  never skip the index — DONT_DO #3). */
 async function fetchIuSequence(chapterId: string, sceneId: string): Promise<RawIu[]> {
   try {
-    const sb = await getJson<StoryboardResponse>(scenePath(chapterId, sceneId, 'storyboard'));
+    const sb = await ports().http.getJson<StoryboardResponse>(scenePath(chapterId, sceneId, 'storyboard'));
     if (!sb.ius || sb.ius.length === 0) return [];
     return await Promise.all(sb.ius.map(async (iu) => {
       const durationMs = iu.duration_ms ?? 200; // N1: server-computed; floor fallback
@@ -1190,7 +1192,7 @@ async function getIuImageBlob(chId: string, scId: string, unitId: string): Promi
   const key = `${chId}:${scId}:${unitId}`;
   const cached = await getMedia(bld, key, 'iu');
   if (cached) return cached;
-  const blob = await getBlob(iuPath(bookId.value, bld, chId, scId, unitId));
+  const blob = await ports().http.getBlob(iuPath(bookId.value, bld, chId, scId, unitId));
   void putMedia(bld, key, 'iu', blob);
   return blob;
 }
@@ -1449,7 +1451,7 @@ function startIuCycling(): void {
       uiState.value = { ...uiState.value, currentUnitIndex: idx };
       const item = ius[idx];
       showIu(item);
-      navigateTo({
+      ports().position.navigateTo({
         chapterId: currentChapterId(),
         sceneId: currentSceneId(),
         unitId: item.unitId,
@@ -1491,7 +1493,7 @@ function startSilentIuCycling(): void {
       selectedUnit = { ...sel, index: nextIdx };
       uiState.value = { ...uiState.value, currentUnitIndex: nextIdx };
       showIu(ius[nextIdx]);
-      navigateTo({
+      ports().position.navigateTo({
         chapterId: currentChapterId(),
         sceneId: currentSceneId(),
         unitId: ius[nextIdx].unitId,
@@ -1665,7 +1667,7 @@ function ensureSceneVideo(sceneKey: string | null, explicitSeekMs: number | null
     return;
   }
   const [chId, scId] = sceneKey.split(':', 2);
-  const url = API_BASE + scenePath(chId, scId, 'video');
+  const url = ports().http.videoUrl(scenePath(chId, scId, 'video'));
   playVideoOverlay(url, explicitSeekMs);
 }
 
@@ -2084,11 +2086,27 @@ export function wirePlaybackLifecycle(): void {
 }
 
 // ── Playback coordinator (MainActivity.setupPlaybackCoordination) ──
+//
+// Phase 1 extraction prep: the coordinator is wired through the INJECTED
+// PlayerPorts (host composition root: app/playerAdapters.ts → main.tsx).
+// The ports are stored module-side because the engine outlives the Play
+// page — every http/position/invalidation/generation reach below goes
+// through them; the engine must never import the host modules directly.
+
+/** Injected host ports (set once by wirePlaybackCoordination; null before). */
+let playerPorts: PlayerPorts | null = null;
+
+function ports(): PlayerPorts {
+  if (!playerPorts) throw new Error('playbackStore: wirePlaybackCoordination(ports) must run before engine use');
+  return playerPorts;
+}
+
 let wired = false;
-export function wirePlaybackCoordination(): void {
+export function wirePlaybackCoordination(injected: PlayerPorts): void {
+  playerPorts = injected;
   if (wired) return;
   wired = true;
-  onPlaybackPrepared((prep) => {
+  injected.generation.onPlaybackPrepared((prep) => {
     if (prep.softRefresh) {
       refreshContent(prep.bookId, prep.buildId, prep.scenes);
     } else {
@@ -2111,7 +2129,7 @@ export function wirePlaybackCoordination(): void {
   // Data-layer invalidation subscriber (Android GenerateViewModel init
   // parity): any book-bundle invalidation evicts the player's JSON-derived
   // scene cache so subsequent loads re-read the canonical data.
-  onResourceInvalidated((e) => {
-    if (e.resource.startsWith(BOOK_RESOURCE_PREFIX)) invalidateBookContent();
+  injected.invalidations.onResourceInvalidated((e) => {
+    if (injected.invalidations.isBookResource(e.resource)) invalidateBookContent();
   });
 }
