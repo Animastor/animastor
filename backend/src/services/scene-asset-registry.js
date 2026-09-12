@@ -150,20 +150,26 @@ async function updateAssetPath(bookId, chapterId, sceneId, assetType, newPath, b
 }
 
 // ======================================================
-// STALE / INVALIDATE (T5: через фасад orchestrator)
+// STALE / INVALIDATE (T5)
 // ======================================================
+// O-3: the orchestration facade require left this file. `orchestrator.
+// markDirtyScene` is a pure re-export of the canonical FSM-writer owner
+// state/scene-state-ops.markDirtyScene (S-4/S-5 ownership, §32.5) — this
+// registry consumes the SAME state operation from its canonical host-owned
+// owner, byte-equal arguments and return semantics. No new reverse
+// dependency: state/* is a downward host sink, orchestration is not
+// involved.
+const { markDirtyScene } = require('../state/scene-state-ops');
 
 async function invalidateSceneAssets(redis, bookId, chapterId, sceneId, buildId = null) {
-    const orchestrator = require('../orchestration/orchestrator');
-    const result = await orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, 
+    const result = await markDirtyScene(redis, bookId, chapterId, sceneId,
         ['audio', 'image', 'video', 'storyboard'], buildId);
-    log(`INVALIDATED ${bookId}/${chapterId}/${sceneId} via facade`);
+    log(`INVALIDATED ${bookId}/${chapterId}/${sceneId} via state ops`);
     return { audio: true, image: true, video: true, storyboard: true };
 }
 
 async function markAssetStale(redis, bookId, chapterId, sceneId, assetType, buildId = null) {
-    const orchestrator = require('../orchestration/orchestrator');
-    await orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, [assetType], buildId);
+    await markDirtyScene(redis, bookId, chapterId, sceneId, [assetType], buildId);
     return { stale: true, assetType };
 }
 

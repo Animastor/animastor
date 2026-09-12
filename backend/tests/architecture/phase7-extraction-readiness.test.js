@@ -129,8 +129,11 @@ describe('P7-T4: VBook internals are not reached by new direct consumers', () =>
         // two operations video-workflows consumes — through the host shims.)
         'backend/src/backend.cjs: ./book/lazy-book/appearance',
         'backend/src/helpers/redis-helpers.cjs: ../book',
-        'backend/src/orchestration/scene-callbacks.js: ../book',
-        'backend/src/orchestration/scene-orchestrator.js: ../book',
+        // (O-3: orchestration/scene-callbacks.js and orchestration/
+        // scene-orchestrator.js left this baseline — orchestration consumes
+        // scene content ONLY through the tier-owned runtime/scene-data-port.js;
+        // the VBook binding moved to the host adapter
+        // storage/scene-data-adapter.js, wired by the composition root.)
         // (entity-crud-routes.cjs was removed from this baseline at the Phase 4
         // physical move: the Editor package now imports the id grammar as the
         // @animastor/vbook-runtime/lazy-book/paths package export — not a
@@ -138,9 +141,14 @@ describe('P7-T4: VBook internals are not reached by new direct consumers', () =>
         // (routes/ai-routes.cjs was removed from this baseline at the
         // Assistant extraction preparation: the targeted-save fallback moved
         // behind the AssistantPorts persistBook seam.)
-        'backend/src/runtime/reconciliation-engine.js: ../book',
-        'backend/src/runtime/runtime-scheduler.js: ../book',
-        'backend/src/runtime/scene-window.js: ../book',
+        // (O-3: runtime/reconciliation-engine.js, runtime-scheduler.js and
+        // runtime/scene-window.js left this baseline for the same seam —
+        // runtime consumes scene content ONLY through
+        // runtime/scene-data-port.js (O-3).)
+        // (O-3: the five tier edges above collapsed into ONE host edge — the
+        // host scene-data adapter is the VBook binding the tiers used to hold,
+        // wired by the composition root through runtime/scene-data-port.js.)
+        'backend/src/storage/scene-data-adapter.js: ../book',
         'backend/src/services/agent-prompts.js: ../book/lazy-book/parser',
         'backend/src/services/agent/bootstrap.js: ../../book/lazy-book',
         'backend/src/services/agent/pipeline-runner.js: ../../book/lazy-book',

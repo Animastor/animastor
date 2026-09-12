@@ -19,7 +19,11 @@
 const config = require('../config/runtime-config');
 // S-2: per-asset stale shape derived from media registry
 const { listMediaTypes: _mediaTypes } = require('@animastor/generation').mediaRegistry;
-const book = require('../book');
+// O-3: scene content arrives ONLY through the SceneDataPort (host adapter:
+// storage/scene-data-adapter) — the Book Model facade (../book) left this
+// file. loadBook/collectScenes are consumed as `sceneData(op)(...)` at the
+// call sites.
+const sceneData = require('./scene-data-port').sceneDataOp;
 const state = require('../state');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
 const artifactNaming = require('@animastor/generation').artifactNaming;
@@ -367,9 +371,9 @@ async function isWindowComplete(redis, bookId) {
     const nextIdx = parseInt(await redis.get(BOOK_SCENE_NEXT(bookId)) || '0', 10);
     if (nextIdx === 0) return false;
     const windowStart = parseInt(await redis.get(BOOK_WINDOW_START(bookId)) || '0', 10);
-    const bookData = book.loadBook(bookId);
+    const bookData = sceneData('loadBook')(bookId);
     if (!bookData) return false;
-    const scenes = book.collectScenes(bookData);
+    const scenes = sceneData('collectScenes')(bookData);
 
     const workerHealth = require('./worker-health');
     // VISIBILITY: workspace-aware availability — a foreign workspace's private
@@ -475,8 +479,8 @@ async function slideWindow(redis, bookId, loadedBook, buildId) {
         return { started: 0, remaining: 0 };
     }
 
-    const bookData = loadedBook || book.loadBook(bookId);
-    const scenes = book.collectScenes(bookData);
+    const bookData = loadedBook || sceneData('loadBook')(bookId);
+    const scenes = sceneData('collectScenes')(bookData);
     let started = 0;
     const windowStart = nextIdx;
 

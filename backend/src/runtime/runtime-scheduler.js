@@ -436,8 +436,10 @@ async function tick(redis, loadedBooks = {}) {
                     sceneLoadedBook = bookCache.get(bookId);
                 } else {
                     try {
-                        const bookModule = require('../book');
-                        sceneLoadedBook = bookModule.loadBook(bookId);
+                        // O-3: scene content via the SceneDataPort (host
+                        // adapter: storage/scene-data-adapter) — the Book
+                        // Model facade require left the scheduler.
+                        sceneLoadedBook = require('./scene-data-port').sceneDataOp('loadBook')(bookId);
                         bookCache.set(bookId, sceneLoadedBook);
                     } catch (_) {
                         sceneLoadedBook = null;

@@ -40,6 +40,15 @@ require('@animastor/generation').ports.bookData.setBookData({
 require('./runtime/persistence-port').setPersistencePort(
     require('./storage/runtime-persistence-adapter')
 );
+// O-3: SCENE DATA PORT — runtime/orchestration scene-content composition.
+// The two tiers consume book/scene reads ONLY through runtime/scene-data-port;
+// the host adapter (storage/scene-data-adapter) owns the Book Model facade
+// (backend/src/book → @animastor/vbook-runtime) and is bound here, before any
+// runtime module loads.
+// Docs: docs/architecture/generation-module-extraction-reconnaissance.md §32.11
+require('./runtime/scene-data-port').setSceneDataPort(
+    require('./storage/scene-data-adapter')
+);
 
 // ======================================================
 // MODULE IMPORTS

@@ -95,8 +95,10 @@ class ReconciliationReport {
  */
 function resolveBookBuildId(bookId) {
     try {
-        const bookModule = require('../book');
-        const loadedBook = bookModule.loadBook(bookId);
+        // O-3: scene content via the SceneDataPort (host adapter:
+        // storage/scene-data-adapter) — the Book Model facade require left
+        // the reconciliation engine.
+        const loadedBook = require('./scene-data-port').sceneDataOp('loadBook')(bookId);
         return loadedBook?.manifest?.build_id || 'default';
     } catch (_) {
         return 'default';
@@ -2123,7 +2125,10 @@ async function rebuildWorkList(redis) {
     // загружен reconciliation-engine) и чтобы unit-тесты не могли подменить
     // storage/state через require.cache.
     const state = require('../state');
-    const bookModule = require('../book');
+    // O-3: scene content via the SceneDataPort (host adapter:
+    // storage/scene-data-adapter) — the Book Model facade require left this
+    // function. loadBook/collectScenes consumed as `sceneData(op)(...)`.
+    const sceneData = require('./scene-data-port').sceneDataOp;
     // O-2: PG persistence (scene-assets + cancel tombstone + the two raw
     // barrel queries) via the PersistencePort; the storage barrel require
     // left this function.
@@ -2157,7 +2162,7 @@ async function rebuildWorkList(redis) {
         }
 
         try {
-            const loadedBook = bookModule.loadBook(bookId);
+            const loadedBook = sceneData('loadBook')(bookId);
             if (!loadedBook) {
                 log(`[WORKLIST] ${bookId}: no book.json on disk — skipped`);
                 continue;
@@ -2205,7 +2210,7 @@ async function rebuildWorkList(redis) {
             for (const row of markers.assetStages) dirtyStages[`${row.chapter_id}:${row.scene_id}:${row.asset_type}`] = true;
 
             // 3. Пройти все сцены книги: FS-проба + предикат §4 (Recon #3)
-            const scenes = bookModule.collectScenes(loadedBook);
+            const scenes = sceneData('collectScenes')(loadedBook);
             for (const s of scenes) {
                 const chapterId = s.chapter_id;
                 const sceneId = s.scene_id;

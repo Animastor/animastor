@@ -2227,7 +2227,7 @@ Traced through `backend.cjs` (composition root):
 
 | Dependency | Direct/indirect | Domain necessity | Host leak? | Port | Removable pre-extraction? |
 |---|---|---|---|---|---|
-| `book` facade (`@animastor/vbook-runtime` shims) — orchestration ×2, runtime ×3 | direct require | YES — scene content is the input data of orchestration | YES (package must not know the Book Model) | O-P2 | YES — replace 5 require sites with O-P2 |
+| `book` facade (`@animastor/vbook-runtime` shims) — orchestration ×2, runtime ×3 | direct require | YES — scene content is the input data of orchestration | YES (package must not know the Book Model) | O-P2 | **DONE at O-3** — the 5 require sites were replaced by runtime/scene-data-port (§32.20); the VBook binding moved to the host adapter storage/scene-data-adapter |
 | `@animastor/vbook-runtime` deep specifiers (books-root, lazy-book/*) | NONE from runtime/orchestration (only backend.cjs + book shims) | — | — | — | already clean |
 | `@animastor/player` | ZERO from both tiers (routes/backend.cjs only) | NO | — | — | nothing to do |
 | `@animastor/editor` | ZERO from both tiers | NO | — | — | nothing to do |
@@ -2299,7 +2299,7 @@ Media stays media-owned: audio/image/video/workflows never move into orchestrati
 |---|---|---|---|---|---|
 | O-1 | shim/junk deletion | `orchestration/event-journal.js` (delete; re-point backend.cjs:63 to `../state/event-journal`) | orchestration→state shim | arch test: shim absent, journal single-owner (S5-E already covers) | **DONE (see §32.18): −10 LOC, one less re-export surface** |
 | O-2 | **O-P1 PersistencePort** | dispatch-engine, scheduler (:222 raw query), reconciliation, scene-window, scene-restoration, scene-callbacks; impl in backend/storage adapter | PG repos out of both tiers | O-G: zero `../storage` requires in runtime/orchestration | **DONE (see §32.19): both tiers consume persistence ONLY via runtime/persistence-port — zero storage/PG requires (gpu-dispatcher host-transport adapter pinned until O-3/O-4)** |
-| O-3 | **O-P2 SceneDataPort** + scene-asset-registry cleanup | the 5 `book` require sites; `services/scene-asset-registry` lazy orchestrator deps → composition root | orchestration→VBook facade, services→orchestration | O-G: zero `../book` requires; inbound services→orchestration = 0 | VBook edge gone; last inbound non-host consumer gone |
+| O-3 | **O-P2 SceneDataPort** + scene-asset-registry cleanup | the 5 `book` require sites; `services/scene-asset-registry` lazy orchestrator deps → composition root | orchestration→VBook facade, services→orchestration | O-G: zero `../book` requires; inbound services→orchestration = 0 | **DONE (see §32.20): both tiers consume scene content ONLY via runtime/scene-data-port — zero book requires; scene-asset-registry re-pointed to the canonical state-layer owner; inbound services→orchestration = 0** |
 | O-4 | **O-P3 MediaFsmPort + O-P7 PlaceholderAudioPort** | scene-orchestrator, orchestrator, reconciliation, scene-window, scene-callbacks | orchestration/runtime→services FSM adapters | O-G: zero `services/audio-orchestrator|video-orchestrator|placeholder-audio` requires | media FSM knowledge behind port |
 | O-5 | **O-P5 OrchestrationConfigPort + O-P4 ProgressEventsPort** | dispatch-engine, scene-window, worker-health, gpu-dispatcher(stays host), orchestrator cancel leg, progress-pubsub consumers, OUTPUT_DIR env sites | config/env/progress out | O-G: zero `config/runtime-config`, zero `process.env` in orchestration | env/config-free tiers |
 | O-6 | **O-P6 MediaPlanningPort (+ validation strategies)** | scene-orchestrator segments/chunks calls, scene-callbacks STAGE_HANDLERS (music-metadata → injected prober), reconciliation repair legs, scene-window audio-service | last media-implementation edges | O-G: media-module requires in orchestration = 0 (except via port impl) | orchestration is media-implementation-free |
@@ -2338,9 +2338,9 @@ Media stays media-owned: audio/image/video/workflows never move into orchestrati
 
 The graph is cycle-free (SCC-verified), the Generation boundary is public-API-shaped, the S-5 seams already carry the two hardest directions (runtime→orchestration policy, FSM writers), and the host dependencies are enumerable (10 ports) — but NOT yet ported: both tiers still directly touch PG repositories (×11 sites), the book facade (×5), media FSM services (×9), runtime-config (×5), and orchestration still embeds media planning/validation knowledge and reads `OUTPUT_DIR` from the environment. A physical move today (Option A/B) would either smuggle host infrastructure into a package or require one giant risky commit. The seam list (O-1..O-7) is concrete and each step is independently behavior-neutral and guardable.
 
-**First concrete seam: O-1 — DONE** (§32.18). **The substantive first port seam O-2 (PersistencePort) — DONE** (§32.19) — it removed the largest single class of host edges (PG ×11 tier sites → 0 direct sites) and unlocks every later step.
+**First concrete seam: O-1 — DONE** (§32.18). **The substantive first port seam O-2 (PersistencePort) — DONE** (§32.19) — it removed the largest single class of host edges (PG ×11 tier sites → 0 direct sites). **O-3 (SceneDataPort) — DONE** (§32.20) — it removed the VBook facade edges (×5 `../book` sites → 0) and the last inbound non-host consumer (services→orchestration = 0).
 
-**Blockers for extraction (NOT for seam work):** O-P1..O-P10 do not exist yet; 11 direct PG require sites; 5 direct book-facade sites; media planning/validation knowledge in scene-orchestrator/scene-callbacks; OUTPUT_DIR env reads ×3; dead `runtime-persistence`/`initializeRuntime` and orphaned `retention-manager` should be removed before any move; consumer re-pointing (routes/services deep paths → package root) pending.
+**Blockers for extraction (NOT for seam work):** O-P1..O-P10 do not exist yet (O-P1 done as the tier-owned PersistencePort at O-2, O-P2 as SceneDataPort at O-3 — both move into the package at O-8); media planning/validation knowledge in scene-orchestrator/scene-callbacks; OUTPUT_DIR env reads ×3; dead `runtime-persistence`/`initializeRuntime` and orphaned `retention-manager` should be removed before any move; consumer re-pointing (routes/services deep paths → package root) pending. As of O-3 the two largest host-edge classes are gone: direct PG require sites 11→0 (§32.19) and direct book-facade sites 5→0 (§32.20).
 
 ### 32.18 O-1 execution result — event-journal shim removal (DONE)
 
@@ -2421,3 +2421,37 @@ No transactions, no pool, no query handles, no SQL and no PostgreSQL types cross
 **Tests:** full backend suite `869 passing, 0 failing` (pristine-HEAD worktree parity confirmed for the affected harness combos; the 3-failure layer-config/reconcile cross-file-pollution combination reproduces byte-identically on HEAD — pre-existing, not O-2). O-2 guard suite 6/6; recon O-G 10/10; s5 cycle 7/7; dependency guardrails R-series green; sql-boundary + PG-1..PG-5 green (with the shrunk baselines).
 
 **Next step: O-3 — SceneDataPort (O-P2)** (§32.14): removes the orchestration→VBook facade edges (×5 `../book` sites) and the last inbound services→orchestration consumer (scene-asset-registry).
+
+### 32.20 O-3 execution result — SceneDataPort extraction (DONE)
+
+**Date:** 2026-09-11 · **Commit:** "arch(orchestration): introduce scene data port" · **Behavior-neutral seam commit. No physical move (O-8 untouched).**
+
+**Reconnaissance corrections (measured at O-3 time, not doc-guessed):** the §32.11 "×5 `../book` sites" figure was CONFIRMED exact — `orchestration/scene-orchestrator.js:13` (top-level), `orchestration/scene-callbacks.js:29` (top-level), `runtime/scene-window.js:22` (top-level), `runtime/runtime-scheduler.js:439` (lazy), `runtime/reconciliation-engine.js:98,2126` (lazy ×2; 2,126 was the C-phase book cache-miss leg added with O-2). The actual VBook operations used by the two tiers are EXACTLY THREE (not the wider surface an earlier draft implied): `loadBook`, `findSceneRuntimeData`, `collectScenes`. The `services/scene-asset-registry → orchestration` edge is TWO lazy requires of `orchestrator.markDirtyScene` — which is itself a pure re-export of `state/scene-state-ops.markDirtyScene` (host-owned state layer), so the correct fix is a re-point to the canonical owner, NOT a new port or a hidden reverse channel.
+
+**Port contract (`backend/src/runtime/scene-data-port.js`, tier-owned, zero-require):**
+
+| Op | Signature shape | Consumers (measured) |
+|---|---|---|
+| `loadBook` | `(bookId) → loadedBook \| null` | scene-orchestrator dispatch fallback ×3, scene-callbacks auto-slide, scene-window window-complete + trySlide, runtime-scheduler tick cache-miss leg, reconciliation resolveBookBuildId + rebuildWorkList |
+| `findSceneRuntimeData` | `(loadedBook, chapterId, sceneId) → scene \| null` | scene-orchestrator per-stage dispatch legs ×3 |
+| `collectScenes` | `(loadedBook) → scenes[]` | scene-window isWindowComplete + trySlide, reconciliation rebuildWorkList |
+
+`setSceneDataPort` fail-fasts on any missing op; call-time `sceneDataOp(op)` fail-fasts when unwired. The `loadedBook` argument stays the same opaque value the tiers already pass around. No SQL, no VBook internals, no Express, no future CRUD. Deliberately NOT in the port: the rest of the VBook facade (save/delete/import/sessions), lazy-book deep modules, book-model internals. No op overlaps PersistencePort (O-2) — the two contracts are disjoint.
+
+**Host adapter (`backend/src/storage/scene-data-adapter.js`, host-owned):** resolves `backend/src/book` (the VBook shim) at CALL time inside each method — the established O-2 lazy-resolution discipline — so the require.cache-based VBook stubbing in orchestration-stabilization/scene-window/reconciliation test harnesses stays byte-identical effective. The adapter is the ONLY new raw-book consumer (one host edge replaces five tier edges; P7-T4 baseline updated consciously).
+
+**Consumers migrated (5 files, every require site):** orchestration/scene-orchestrator (top-level), orchestration/scene-callbacks (top-level), runtime/scene-window (top-level), runtime/runtime-scheduler (lazy), runtime/reconciliation-engine (lazy ×2). Both tiers now bind ONLY `runtime/scene-data-port`.
+
+**services→orchestration closure:** `services/scene-asset-registry.js` lazy requires of `orchestration/orchestrator` (for `markDirtyScene`) re-pointed to `state/scene-state-ops` — the canonical implementation owner the orchestrator was re-exporting. One-directional (services→state, which already existed elsewhere in services). No hidden reverse dependency introduced.
+
+**Composition root:** `backend.cjs` calls `setSceneDataPort(makeSceneDataAdapter())` BEFORE the first top-level tier require (adjacent to the O-2 persistence wiring); `tests/generation-test-bindings.cjs` mirrors production wiring for the mocharc require chain.
+
+**Guards — NEW `tests/architecture/o3-scene-data-port.test.js` (10):** O3-G1 zero `../book` requires in both tiers (static + dynamic-proximity); O3-G2 zero lazy/dynamic VBook requires (computed-require scan, mirrors Phase-5 T9 discipline); O3-G3 port is zero-require and host-knowledge-free; O3-G4 op-set minimality (every tier `sceneDataOp('…')` declared in OPS); O3-G5 no SQL/PG/VBook-implementation leakage through the port; O3-G6 scene-asset-registry has zero orchestration requires (static + dynamic); O3-G7 composition-root wiring precedes the first top-level tier require; O3-G8 O-1 shim stays deleted; O3-G9 O-2 PersistencePort boundary intact; O3-G10 runtime→orchestration stays 0.
+
+**Existing guards updated (consciously, per their own conventions):** `phase7-extraction-readiness.test.js` P7-T4 RAW_BOOK_BASELINE −5 tier entries / +1 host adapter entry with O-3 notes; `phase5-runtime-result.test.js` T9 — the port comment was reworded to keep runtime/** free of residual computed-require lookalikes (the guard is comment-sensitive by design).
+
+**Dependency/SCC audit (post-change, full-tree Tarjan, static + lazy — `scripts/o3-scc-audit.cjs`):** nodes 241, lazy edges 155. runtime→orchestration: 0. services→orchestration: 0. orchestration→book: 0. runtime→book: 0. orchestration→storage: 0. runtime→storage: 3 (pinned gpu-dispatcher host adapter, unchanged O-2 baseline). SCCs >1 node: 1 (pre-existing `services/workspace-ai-provider ↔ services/system-ai`, host side, unchanged). No new reverse dependency, no new SCC.
+
+**Tests:** full backend suite `3308 passing, 13 failing` vs pristine-parent (88cd791e) worktree `3289 passing, 22 failing`; the failure-set on this branch is a strict SUBSET of the pristine baseline — 0 O-3 regressions (the 9 baseline-only failures are flaky environment/PG-timeout suites; the branch run caught them green). Named regression targets all green: runtime-orchestration-recon, s5-runtime-orchestration-cycle, dependency guardrails (R-series), orchestration-stabilization (87), reconciliation-engine + scene-asset-registry + counter-reconciliation (78), O-2 guards (6/6), Phase-5/Phase-7 suites, sql-boundary + PG-1..PG-5 (unchanged baselines).
+
+**Not done (out of scope, per mandate):** no physical move; O-4 MediaFsmPort/PlaceholderAudioPort is the NEXT seam (§32.14); Generation API, HTTP API, VBook behavior, SQL semantics untouched.

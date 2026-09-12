@@ -50,3 +50,9 @@ require('@animastor/generation').ports.bookData.setBookData({
 require('../src/runtime/persistence-port').setPersistencePort(
     require('../src/storage/runtime-persistence-adapter')
 );
+// O-3: SceneDataPort — same convention: binds the host scene-data adapter so
+// tier consumers resolve loadBook/findSceneRuntimeData/collectScenes at call
+// time through the '../src/book' shim channel (stubbing it keeps working).
+require('../src/runtime/scene-data-port').setSceneDataPort(
+    require('../src/storage/scene-data-adapter')
+);

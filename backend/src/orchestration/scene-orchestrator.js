@@ -10,7 +10,11 @@ const runtimeScheduler = require('../runtime/runtime-scheduler');
 // storage/runtime-persistence-adapter) — the scene-assets repository left
 // this file. SQL lives host-side.
 const persist = require('../runtime/persistence-port').persist;
-const book = require('../book');
+// O-3: scene content arrives ONLY through the SceneDataPort (host adapter:
+// storage/scene-data-adapter) — the Book Model facade (../book →
+// @animastor/vbook-runtime) left this file. Aliased `sceneDataPort` because
+// the per-stage legs bind their result to a local `sceneData` variable.
+const sceneDataPort = require('../runtime/scene-data-port').sceneDataOp;
 const layerConfig = require('../services/layer-config');
 const { log, warn, logEvent } = require('./scene-utils');
 const { handleAudioCompleted, handleImageCompleted, handleVideoCompleted } = require('./scene-callbacks');
@@ -108,8 +112,8 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
     }
 
     // Fallback to disk load when runtime doesn't pass loadedBook
-    const bookData = loadedBook || book.loadBook(bookId);
-    const sceneData = book.findSceneRuntimeData(bookData, chapterId, sceneId);
+    const bookData = loadedBook || sceneDataPort('loadBook')(bookId);
+    const sceneData = sceneDataPort('findSceneRuntimeData')(bookData, chapterId, sceneId);
 
     if (!sceneData) {
         warn(`AUDIO_DISPATCH: sceneData not found for ${bookId}/${chapterId}/${sceneId}`);
@@ -255,8 +259,8 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId, dispatchI
         return { dispatched: false, jobs: 0, reason: dispatchable.reason };
     }
 
-    const bookData = loadedBook || book.loadBook(bookId);
-    const sceneData = book.findSceneRuntimeData(bookData, chapterId, sceneId);
+    const bookData = loadedBook || sceneDataPort('loadBook')(bookId);
+    const sceneData = sceneDataPort('findSceneRuntimeData')(bookData, chapterId, sceneId);
 
     if (!sceneData) {
         warn(`IMAGE_DISPATCH: sceneData not found for ${bookId}/${chapterId}/${sceneId}`);
@@ -332,8 +336,8 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchI
         return { dispatched: false, jobs: 0, reason: dispatchable.reason };
     }
 
-    const bookData = loadedBook || book.loadBook(bookId);
-    const sceneData = book.findSceneRuntimeData(bookData, chapterId, sceneId);
+    const bookData = loadedBook || sceneDataPort('loadBook')(bookId);
+    const sceneData = sceneDataPort('findSceneRuntimeData')(bookData, chapterId, sceneId);
 
     if (!sceneData) {
         warn(`VIDEO_DISPATCH: sceneData not found for ${bookId}/${chapterId}/${sceneId}`);

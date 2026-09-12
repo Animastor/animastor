@@ -26,7 +26,11 @@ const video = require('../video');
 const persist = require('../runtime/persistence-port').persist;
 const runtimeScheduler = require('../runtime/runtime-scheduler');
 const dispatchEngine = require('../runtime/dispatch-engine');
-const book = require('../book');
+// O-3: scene content arrives ONLY through the SceneDataPort (host adapter:
+// storage/scene-data-adapter) — the Book Model facade (../book) left this
+// file. loadBook is consumed as `sceneData('loadBook')(bookId)` at the
+// auto-slide call site.
+const sceneData = require('../runtime/scene-data-port').sceneDataOp;
 const placeholderAudio = require('../services/placeholder-audio');
 const { publishProgress } = require('../services/progress-pubsub.cjs');
 const { log, warn, error, logEvent } = require('./scene-utils');
@@ -432,7 +436,7 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
     log(`SCENE COMPLETE: ${bookId}/${chapterId}/${sceneId} - removed from active index`);
 
     try {
-        const bookData = book.loadBook(bookId);
+        const bookData = sceneData('loadBook')(bookId);
         const sceneWindow = require('../runtime/scene-window');
         const slide = await sceneWindow.trySlideWindowOnComplete(redis, bookId, bookData, buildId);
         if (slide && slide.started > 0) {
