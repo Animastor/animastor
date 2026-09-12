@@ -299,9 +299,12 @@ async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reas
         await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.FAILED);
         // F2: sync audio-orch/video-orch phase → FAILED through the orchestrator facade
         try {
+            // O-7: the audio FSM sync rides the AudioFsmPort (host adapter:
+            // storage/audio-fsm-adapter) — the audio-orchestrator host
+            // service left this file. The video FSM stays on its host service
+            // until its own seam step.
             if (stage === 'audio') {
-                const audioOrch = require('../services/audio-orchestrator');
-                await audioOrch.setFailed(redis, bookId, chapterId, sceneId, reason);
+                await require('../runtime/audio-fsm-port').audioFsmOp('setFailed')(redis, bookId, chapterId, sceneId, reason);
             } else if (stage === 'video') {
                 const videoOrch = require('../services/video-orchestrator');
                 await videoOrch.setFailed(redis, bookId, chapterId, sceneId, reason);

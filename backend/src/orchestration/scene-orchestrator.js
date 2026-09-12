@@ -15,6 +15,12 @@ const persist = require('../runtime/persistence-port').persist;
 // @animastor/vbook-runtime) left this file. Aliased `sceneDataPort` because
 // the per-stage legs bind their result to a local `sceneData` variable.
 const sceneDataPort = require('../runtime/scene-data-port').sceneDataOp;
+// O-7: the audio scene FSM is driven ONLY through the AudioFsmPort (host
+// adapter: storage/audio-fsm-adapter) — the audio-orchestrator host
+// service left this file. The video FSM remains on its host service until
+// its own seam step.
+const audioFsmOp = require('../runtime/audio-fsm-port').audioFsmOp;
+const audioFsmPhases = require('../runtime/audio-fsm-port').audioFsmPhases;
 const layerConfig = require('../services/layer-config');
 const { log, warn, logEvent } = require('./scene-utils');
 const { handleAudioCompleted, handleImageCompleted, handleVideoCompleted } = require('./scene-callbacks');
@@ -128,7 +134,7 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
     }
 
     // 🔧 AUDIO-ORCH: Transition PLACEHOLDER_READY → GENERATING
-    const audioOrch = require('../services/audio-orchestrator');
+    // O-7: через AudioFsmPort (host adapter: storage/audio-fsm-adapter).
 
     // ── PHASE CHECK: DONE → skip, иначе продолжаем ──
     // WAITING_CHUNKS/MERGING guard удалён (см. AUDIO_ORCH_ARCHITECTURAL_FIXES.md §3):
@@ -136,24 +142,24 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
     // LEASE_TTL (≈31 мин при GPU_TIMEOUT=10мин) > STALL (30 мин) > GPU_TIMEOUT (10 мин).
     // Если сцена в WAITING_CHUNKS, lease ещё активен → dispatch-engine не допустит
     // re-dispatch. Если lease истёк → STALL уже перевёл сцену в FAILED.
-    const orchState = await audioOrch.getState(redis, bookId, chapterId, sceneId);
+    const orchState = await audioFsmOp('getState')(redis, bookId, chapterId, sceneId);
     if (orchState) {
-        if (orchState.phase === audioOrch.PHASES.DONE) {
+        if (orchState.phase === audioFsmPhases().DONE) {
             log(`AUDIO_ALREADY_DONE: ${bookId}/${chapterId}/${sceneId} — skipping dispatch`);
             return { dispatched: false, jobs: 0, completed: true, reason: 'already_done' };
         }
     }
 
-    let transResult = await audioOrch.setGenerating(redis, bookId, chapterId, sceneId);
+    let transResult = await audioFsmOp('setGenerating')(redis, bookId, chapterId, sceneId);
 
     // 🔧 FIX: Если стейт не существует (no_state), инициализируем PLACEHOLDER_READY
     // и повторяем переход.
     if (!transResult.success && transResult.reason === 'no_state') {
         log(`  🔧 AUDIO_ORCH: state missing for ${bookId}/${chapterId}/${sceneId} — initializing PLACEHOLDER_READY first`);
         const segList = require('../audio/segments').buildSegments(sceneData);
-        await audioOrch.initPlaceholderReady(redis, bookId, chapterId, sceneId, buildId, segList.length);
+        await audioFsmOp('initPlaceholderReady')(redis, bookId, chapterId, sceneId, buildId, segList.length);
         log(`  🔧 AUDIO_ORCH: initialized PLACEHOLDER_READY with ${segList.length} expected segments`);
-        transResult = await audioOrch.setGenerating(redis, bookId, chapterId, sceneId);
+        transResult = await audioFsmOp('setGenerating')(redis, bookId, chapterId, sceneId);
     }
 
     // 🔧 FIX: Stale phase recovery — DONE и WAITING_CHUNKS/MERGING уже отсечены выше.
@@ -161,7 +167,7 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
     if (!transResult.success && transResult.reason === 'invalid_transition') {
         const stalePhase = transResult.from;
         // DONE — дополнительный safety net (выше уже должен был отсечься)
-        if (stalePhase === audioOrch.PHASES.DONE) {
+        if (stalePhase === audioFsmPhases().DONE) {
             warn(`AUDIO_ORCH: DONE guard prevented stale reset for ${bookId}/${chapterId}/${sceneId}`);
             return { dispatched: false, jobs: 0, completed: true, reason: 'already_done' };
         }
@@ -170,7 +176,7 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
         // и watchdog уже перевёл сцену в FAILED. WAITING_CHUNKS/MERGING в stale
         // recovery больше не возникает (бывший phase guard удалён).
         // Проверка оставлена как assertion-style safety net для логирования.
-        if (stalePhase === audioOrch.PHASES.WAITING_CHUNKS || stalePhase === audioOrch.PHASES.MERGING) {
+        if (stalePhase === audioFsmPhases().WAITING_CHUNKS || stalePhase === audioFsmPhases().MERGING) {
             log(`  🔧 AUDIO_ORCH: unexpected WAITING_CHUNKS/MERGING in stale recovery — lease outpaced watchdog (phase=${stalePhase})`);
             // 🔧 FIX: Прежде чем reset'ить, проверяем — есть ли чанки на диске?
             // Если все чанки на месте, зовём completeChunk для завершения merge.
@@ -179,7 +185,7 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
             if (presentChunks.length > 0) {
                 log(`  🔧 AUDIO_ORCH: ${presentChunks.length} chunks on disk for ${bookId}/${chapterId}/${sceneId} — calling completeChunk instead of reset`);
                 try {
-                    await audioOrch.completeChunk(redis, bookId, chapterId, sceneId, 'recovery', buildId, {
+                    await audioFsmOp('completeChunk')(redis, bookId, chapterId, sceneId, 'recovery', buildId, {
                         audio: require('../audio'),
                         orchestrator: require('./orchestrator'),
                         dispatchId: 'stale-recovery',
@@ -191,11 +197,11 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
             }
         }
         log(`  🔧 AUDIO_ORCH: stale phase ${stalePhase} for ${bookId}/${chapterId}/${sceneId} — resetting to PLACEHOLDER_READY`);
-        await audioOrch.deleteState(redis, bookId, chapterId, sceneId);
+        await audioFsmOp('deleteState')(redis, bookId, chapterId, sceneId);
         const segList = require('../audio/segments').buildSegments(sceneData);
-        await audioOrch.initPlaceholderReady(redis, bookId, chapterId, sceneId, buildId, segList.length);
+        await audioFsmOp('initPlaceholderReady')(redis, bookId, chapterId, sceneId, buildId, segList.length);
         log(`  🔧 AUDIO_ORCH: reset stale phase, initialized PLACEHOLDER_READY with ${segList.length} expected segments`);
-        transResult = await audioOrch.setGenerating(redis, bookId, chapterId, sceneId);
+        transResult = await audioFsmOp('setGenerating')(redis, bookId, chapterId, sceneId);
     }
 
     if (!transResult.success) {
@@ -208,7 +214,7 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
     // jobs, иначе первый чанк может вернуться быстрее чем setWaitingChunks выполнится,
     // и completeChunk увидит фазу GENERATING → early return → чанк на диске есть,
     // но merge не запускается → retry exhausting → failStage → re-dispatch → цикл.
-    await audioOrch.setWaitingChunks(redis, bookId, chapterId, sceneId);
+    await audioFsmOp('setWaitingChunks')(redis, bookId, chapterId, sceneId);
 
     const result = await audio.generateSceneAudio(redis, sceneData, bookData, buildId, bookId, dispatchId);
 
@@ -219,8 +225,8 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
         return { dispatched: true, jobs: result.chunks || 1, reason: null };
     } else if (result && result.reason === 'already_ready') {
         // Audio already on disk — fast-track WAITING_CHUNKS→MERGING→DONE
-        await audioOrch.setMerging(redis, bookId, chapterId, sceneId);
-        await audioOrch.setDone(redis, bookId, chapterId, sceneId);
+        await audioFsmOp('setMerging')(redis, bookId, chapterId, sceneId);
+        await audioFsmOp('setDone')(redis, bookId, chapterId, sceneId);
         log(`AUDIO_DISPATCH: ${bookId}/${chapterId}/${sceneId} — already ready`);
         const completion = await completeStage(redis, bookId, chapterId, sceneId, 'audio', buildId, dispatchId);
         return { dispatched: false, jobs: 0, completed: completion.completed, reason: 'already_ready' };
@@ -230,8 +236,8 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
         // dispatch→pending→re-dispatch loop that occurs when buildSegments
         // returns 0 (invalid units, missing audio data, etc).
         log(`AUDIO_DISPATCH: ${bookId}/${chapterId}/${sceneId} — 0 segments, nothing to generate, marking DONE`);
-        await audioOrch.setMerging(redis, bookId, chapterId, sceneId);
-        await audioOrch.setDone(redis, bookId, chapterId, sceneId);
+        await audioFsmOp('setMerging')(redis, bookId, chapterId, sceneId);
+        await audioFsmOp('setDone')(redis, bookId, chapterId, sceneId);
         const completion = await completeStage(redis, bookId, chapterId, sceneId, 'audio', buildId, dispatchId);
         return { dispatched: false, jobs: 0, completed: completion.completed, reason: 'no_segments' };
     } else {

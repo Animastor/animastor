@@ -71,3 +71,10 @@ require('../src/runtime/placeholder-audio-port').setPlaceholderAudioPort(
 require('../src/runtime/progress-events-port').setProgressEventsPort(
     require('../src/storage/progress-events-adapter')
 );
+// O-7: AudioFsmPort — same convention: binds the host audio-FSM adapter so
+// tier consumers resolve the audio-FSM operations at call time through the
+// '../src/services/audio-orchestrator' channel (stubbing it keeps working
+// — the reconciliation/worklist harnesses replace exactly that module).
+require('../src/runtime/audio-fsm-port').setAudioFsmPort(
+    require('../src/storage/audio-fsm-adapter')
+);

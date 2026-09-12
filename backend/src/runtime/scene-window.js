@@ -42,6 +42,10 @@ const persist = require('./persistence-port').persist;
 // (host adapter: storage/placeholder-audio-adapter) — the ffmpeg/fs host
 // service (../services/placeholder-audio) left this file.
 const placeholderAudioOp = require('./placeholder-audio-port').placeholderAudioOp;
+// O-7: the audio scene FSM is driven ONLY through the AudioFsmPort (host
+// adapter: storage/audio-fsm-adapter) — the audio-orchestrator host
+// service left this file.
+const audioFsmOp = require('./audio-fsm-port').audioFsmOp;
 const fs = require('fs');
 const path = require('path');
 
@@ -786,8 +790,8 @@ async function startScene(redis, s, buildId, bookId) {
             }
         }
         // 🔧 AUDIO-ORCH: Установить phase = PLACEHOLDER_READY — единственный арбитр состояния
-        const audioOrch = require('../services/audio-orchestrator');
-        await audioOrch.initPlaceholderReady(redis, bookId, chapterId, sceneId, buildEffective, expectedChunkCount);
+        // O-7: через AudioFsmPort (host adapter: storage/audio-fsm-adapter).
+        await audioFsmOp('initPlaceholderReady')(redis, bookId, chapterId, sceneId, buildEffective, expectedChunkCount);
     } catch (err) {
         warn(`Placeholder audio failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
     }

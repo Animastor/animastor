@@ -70,6 +70,18 @@ require('./runtime/placeholder-audio-port').setPlaceholderAudioPort(
 require('./runtime/progress-events-port').setProgressEventsPort(
     require('./storage/progress-events-adapter')
 );
+// O-7: AUDIO FSM PORT — runtime/orchestration audio-FSM composition. The
+// two tiers drive the audio scene FSM (phase transitions, chunk-completeness
+// merge drive, stall watchdog, startup recovery) ONLY through
+// runtime/audio-fsm-port; the host adapter (storage/audio-fsm-adapter)
+// owns the audio-orchestrator host service (Redis key grammar, state
+// envelope, transition map, merge/hub-dedup logic) and is bound here,
+// before any runtime/orchestration module loads. The video FSM stays a
+// separate future seam (never merged into this port).
+// Docs: docs/architecture/generation-module-extraction-reconnaissance.md §32.24
+require('./runtime/audio-fsm-port').setAudioFsmPort(
+    require('./storage/audio-fsm-adapter')
+);
 
 // ======================================================
 // MODULE IMPORTS

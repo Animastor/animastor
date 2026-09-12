@@ -389,9 +389,18 @@ async function checkPartialBuilds(redis, bookId, chapterId, sceneId) {
 // разные сценарии (стоп прогресса vs мёртвый воркер).
 
 async function checkStalledAudioScenes(redis, deps) {
+    // O-7: the audio FSM is consumed through the AudioFsmPort (host adapter:
+    // storage/audio-fsm-adapter). The pre-O-7 optional-load semantics are
+    // preserved EXACTLY: when the audio-orchestrator host service cannot be
+    // required, this watchdog leg returns 0 (missing module ≠ stalled scene).
+    // The try/catch therefore wraps the ADAPTER's lazy require — the port
+    // itself stays fail-fast.
     let audioOrch;
+    let PHASES;
     try {
-        audioOrch = require('../services/audio-orchestrator');
+        const audioFsmPort = require('./audio-fsm-port');
+        audioOrch = audioFsmPort.audioFsm();
+        PHASES = audioFsmPort.audioFsmPhases();
     } catch (_) {
         return 0;
     }
@@ -403,7 +412,7 @@ async function checkStalledAudioScenes(redis, deps) {
     let stalled = 0;
     for (const entry of allStates) {
         const { bookId, chapterId, sceneId, state: orchState } = entry;
-        if (orchState.phase !== audioOrch.PHASES.WAITING_CHUNKS) continue;
+        if (orchState.phase !== PHASES.WAITING_CHUNKS) continue;
 
         const buildId = orchState.build_id || 'default';
 
@@ -591,7 +600,11 @@ async function checkStalledVideoScenes(redis, deps) {
 //   промежуточные  ⇒ asset.audio ∈ {PENDING, GENERATING, DIRTY}
 
 async function checkAudioOrchInvariants(redis, bookId, chapterId, sceneId) {
-    const audioOrch = require('../services/audio-orchestrator');
+    // O-7: through the AudioFsmPort (host adapter: storage/audio-fsm-adapter)
+    // — the audio-orchestrator host service left this file. Mandatory load
+    // (pre-O-7 behavior: a broken require here throws, no optional-load).
+    const audioOrch = require('./audio-fsm-port').audioFsm();
+    const PHASES = require('./audio-fsm-port').audioFsmPhases();
     const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
     const orchState = await audioOrch.getState(redis, bookId, chapterId, sceneId);
 
@@ -601,7 +614,7 @@ async function checkAudioOrchInvariants(redis, bookId, chapterId, sceneId) {
     const audioState = assetStates.audio;
     const violations = [];
 
-    if (phase === audioOrch.PHASES.DONE) {
+    if (phase === PHASES.DONE) {
         if (audioState !== state.AssetState.READY && audioState !== state.AssetState.PLACEHOLDER) {
             violations.push({
                 type: 'audio_orch_invariant_done',
@@ -612,7 +625,7 @@ async function checkAudioOrchInvariants(redis, bookId, chapterId, sceneId) {
                 recommendation: 'run_completeStage'
             });
         }
-    } else if (phase === audioOrch.PHASES.FAILED) {
+    } else if (phase === PHASES.FAILED) {
         if (audioState !== state.AssetState.FAILED && audioState !== state.AssetState.PENDING) {
             violations.push({
                 type: 'audio_orch_invariant_failed',
@@ -623,7 +636,7 @@ async function checkAudioOrchInvariants(redis, bookId, chapterId, sceneId) {
                 recommendation: 'mark_dirty'
             });
         }
-    } else if (phase !== audioOrch.PHASES.NEW && phase !== audioOrch.PHASES.PLACEHOLDER_READY) {
+    } else if (phase !== PHASES.NEW && phase !== PHASES.PLACEHOLDER_READY) {
         // Intermediate phases: GENERATING, WAITING_CHUNKS, MERGING
         if (audioState === state.AssetState.READY) {
             violations.push({
@@ -1857,9 +1870,14 @@ async function recoverResultKeys(redis, deps, scope) {
 // Из startup-recovery.js: не-терминальные фазы → FAILED,
 // MERGING → DONE если файл есть, иначе FAILED.
 async function recoverAudioOrchStates(redis, deps) {
+    // O-7: through the AudioFsmPort (host adapter: storage/audio-fsm-adapter).
+    // The pre-O-7 optional-load semantics are preserved EXACTLY: when the
+    // audio-orchestrator host service cannot be required, this recovery leg
+    // returns 0 (missing module ≠ recoverable state). The try/catch wraps
+    // the ADAPTER's lazy require — the port itself stays fail-fast.
     let audioOrch;
     try {
-        audioOrch = require('../services/audio-orchestrator');
+        audioOrch = require('./audio-fsm-port').audioFsm();
     } catch (_) {
         return 0;
     }
