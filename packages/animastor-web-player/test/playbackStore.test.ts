@@ -10,8 +10,8 @@
 // + phase PLAYING), then pauseIfPlaying() must produce the coherent pause.
 // Network / Cache API / DOM are stubbed — they are irrelevant to this contract.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SceneRef } from './models';
-import type { PlayerPorts } from './ports';
+import type { SceneRef } from '../src/models';
+import type { PlayerPorts } from '../src/ports';
 
 // ── Fake PlayerPorts (Phase 1 prep: the engine reaches host infrastructure
 //    ONLY through injected ports — the old vi.mock('../api/client') /
@@ -35,7 +35,7 @@ const fakePorts = {
     videoUrl: vi.fn((path: string) => 'http://test' + path),
   },
 };
-vi.mock('./mediaCache', () => ({
+vi.mock('../src/mediaCache', () => ({
   getMedia: vi.fn(async () => undefined),
   putMedia: vi.fn(async () => {}),
   clearCache: vi.fn(async () => 0),
@@ -49,7 +49,7 @@ import {
   resumePlayback,
   uiState,
   wirePlaybackCoordination,
-} from './playbackStore';
+} from '../src/playbackStore';
 
 const silentScene: SceneRef[] = [{ chapterId: 'ch', sceneId: 'sc' } as SceneRef];
 

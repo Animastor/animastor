@@ -66,7 +66,7 @@ const ADAPTERS_REQUIRED = [
   '../state/positionStore',
   '../state/resourceInvalidations',
   '../state/resilientReloader',
-  '../modules/player', // Player release/seek — Phase 2: contour physically moved to modules/player
+  '@animastor/web-player', // Player release/seek — Phase 3: package entry
   '../api/client',
   '@animastor/web-navigator',
   './i18n',
@@ -87,7 +87,7 @@ const FILE_ADAPTERS_REQUIRED = [
   './icons',
   '../state/generateStore',
   '../state/fileStore',
-  '../modules/player', // Player release port — Phase 2: contour physically moved to modules/player
+  '@animastor/web-player', // Player release port — Phase 3: package entry
   '@animastor/web-file',
 ].sort();
 
@@ -335,12 +335,13 @@ describe('B1 split guards — fileStore ownership + cycle dissolution (file-modu
     // Phase-1 prep then inverted the surviving edge: playbackStore no longer
     // imports generateStore at all — the generation event arrives through the
     // injected PlayerPorts (composition root: app/playerAdapters.ts).
-    // Phase 2: playbackStore physically moved to modules/player/playbackStore.ts
+    // Phase 3: playbackStore physically lives in @animastor/web-player
     // (the future @animastor/web-player layout) — the edge assertions follow.
     expect(importSpecifiers('state/generateStore.ts')).not.toContain('./playbackStore');
-    expect(importSpecifiers('modules/player/playbackStore.ts')).not.toContain('./generateStore');
-    // The player release moved into the composition root's wiring:
-    expect(importSpecifiers(FILE_ADAPTERS)).toContain('../modules/player');
+    // Phase 3: the Player engine lives in @animastor/web-player (package-side
+    // boundary.test.ts pins that it imports no host module — the edge cannot
+    // exist in host source anymore). The host leg reaches the package entry:
+    expect(importSpecifiers(FILE_ADAPTERS)).toContain('@animastor/web-player');
   });
 
   it('Cycle guard — NO state-module cycle exists at all (was: one frozen cycle allowed)', () => {
@@ -367,8 +368,8 @@ describe('B1 split guards — fileStore ownership + cycle dissolution (file-modu
     // Documented post-B1 + post-Player-prep shape (all one-directional, and the
     // Player Phase-1 prep removed the last direct state-store edge from
     // playbackStore — its host reach is the injected PlayerPorts only):
-    // Phase 2: playbackStore lives outside state/ now (modules/player), so it
-    // is not even part of the state-module graph scanned here.
+    // Phase 3: playbackStore lives in the @animastor/web-player package, so it
+    // is not even part of the host state-module graph scanned here.
     expect(edges.get('state/generateStore.ts')).not.toContain('state/playbackStore.ts');
   });
 });

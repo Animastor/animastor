@@ -36,7 +36,7 @@ import {
 } from '../state/generateStore';
 // Player release port — the former generateStore ⇄ playbackStore cycle leg
 // (closeBook's closePlayerBook), now an injected call through fileStore.
-import { closeBook as closePlayerBook } from '../modules/player';
+import { closeBook as closePlayerBook } from '@animastor/web-player';
 import {
   importMessages, isExporting, navigationEvent,
   importBookFromFile, openBookById, closeBook, createBlankBook, setExporting, setExportProgress,

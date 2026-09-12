@@ -40,7 +40,7 @@ import {
   bookId as bookIdSignal, buildId as buildIdSignal, dirtySummary as dirtySignal, onPlaybackPrepared,
 } from '../state/generateStore';
 import { navigateTo, position as positionSignal } from '../state/positionStore';
-import { seekToPosition, invalidateDeletedScene, invalidateDeletedChapter } from '../modules/player';
+import { seekToPosition, invalidateDeletedScene, invalidateDeletedChapter } from '@animastor/web-player';
 import { bookResource, emitLocal, onResourceInvalidated } from '../state/resourceInvalidations';
 import { resilientReload, sharedRecovery } from '../state/resilientReloader';
 import { Waveform } from '../lib/waveform';

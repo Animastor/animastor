@@ -6,7 +6,7 @@ import type { StrKey } from '../app/i18n';
 import { getJson, postJson, putJson, deleteJson, ApiError } from '../api/client';
 import { bookId, resetProgressState } from '../state/generateStore';
 import { closeBook as closeGenerateBook } from '../state/fileStore';
-import { closeBook as closePlayerBook, clearMediaCache } from '../modules/player';
+import { closeBook as closePlayerBook, clearMediaCache } from '@animastor/web-player';
 import { Modal, toast } from '../lib/ui';
 import { workerType } from '../app/routeState';
 import { navigate } from '../app/router';

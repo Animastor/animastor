@@ -11,8 +11,8 @@
 // keeps its old semantics; a buffered seek resumes into the same SEEKING, not
 // SHOWING_STORYBOARD.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SceneRef } from './models';
-import type { PlayerPorts } from './ports';
+import type { SceneRef } from '../src/models';
+import type { PlayerPorts } from '../src/ports';
 
 // ── Mocked environment (network / Cache API / DOM are irrelevant here) ──────
 // Fake PlayerPorts replace the old ../api/client + generateStore/positionStore
@@ -41,7 +41,7 @@ const fakePorts = {
     videoUrl: vi.fn((path: string) => 'http://test' + path),
   },
 };
-vi.mock('./mediaCache', () => ({
+vi.mock('../src/mediaCache', () => ({
   getMedia: vi.fn(async () => undefined),
   putMedia: vi.fn(async () => {}),
   clearCache: vi.fn(async () => 0),
@@ -60,7 +60,7 @@ import {
   uiState,
   videoVisible,
   wirePlaybackCoordination,
-} from './playbackStore';
+} from '../src/playbackStore';
 
 /** Minimal media element. currentTime assignments are counted (a seek to the
  *  SAME position — e.g. the unconsumed pendingVideoTargetSec re-apply on

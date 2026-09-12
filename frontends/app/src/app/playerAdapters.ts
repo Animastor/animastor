@@ -3,8 +3,8 @@
 // relocation).
 //
 // This file is the ONLY seam where the app's shared infrastructure meets the
-// Player contract: the engine (modules/player/playbackStore.ts) and the Play
-// surface (modules/player/PlayPage.tsx) consume `playerPorts` and know nothing
+// Player contract: the engine (@animastor/web-player playbackStore) and the Play
+// surface (@animastor/web-player PlayPage) consume `playerPorts` and know nothing
 // about the modules below. When the physical package is cut (Phase 3), this
 // wiring stays in the host app and becomes the composition root for
 // @animastor/web-player.
@@ -13,7 +13,7 @@
 //   main.tsx ──render──▶ <PlayPage ports={playerPorts} />
 //   PlayPage/engine
 //      ↓
-//   PlayerPorts (modules/player — public entry)
+//   PlayerPorts (@animastor/web-player — public entry)
 //      ↓
 //   playerAdapters (this file — the single composition seam)
 //   ├── state/generateStore      ← session identity (host singletons, never
@@ -35,7 +35,7 @@ import {
 import { bookId, buildId, onPlaybackPrepared } from '../state/generateStore';
 import { navigateTo } from '../state/positionStore';
 import { BOOK_RESOURCE_PREFIX, onResourceInvalidated } from '../state/resourceInvalidations';
-import type { PlayerPorts } from '../modules/player';
+import type { PlayerPorts } from '@animastor/web-player';
 
 // ShellModePort host implementation: the same query as useDesktopShell
 // (min-width: 1180px), backed by a signal so a PlayPage rendered through the

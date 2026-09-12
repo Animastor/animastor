@@ -4,7 +4,7 @@ import Router from "preact-router";
 import { AppShell } from './app/AppShell';
 import { FilePage } from '@animastor/web-file';
 import { GeneratePage } from './pages/GeneratePage';
-import { PlayPage, wirePlaybackCoordination, wirePlaybackLifecycle } from './modules/player';
+import { PlayPage, wirePlaybackCoordination, wirePlaybackLifecycle } from '@animastor/web-player';
 import { EditPage } from './pages/EditPage';
 import { NavigatePage } from '@animastor/web-navigator';
 import { SettingsPage } from './pages/SettingsPage';

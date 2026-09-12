@@ -43,7 +43,7 @@
 //        precondition would drop the seek; the new gate stays closed until
 //        preparePlayback lands, and preparePlayback executes deferred seeks.
 import { describe, it, expect } from 'vitest';
-import type { PlaybackUiState } from './playbackStore';
+import type { PlaybackUiState } from '../src/playbackStore';
 
 // ── The decision bodies under audit ─────────────────────────────────────────
 
@@ -297,8 +297,8 @@ describe('Phase 2.1 identity rewrite — behavioral equivalence audit', () => {
 // book. This describe drives the REAL playbackStore (fake ports, same pattern
 // as the sibling suites) to prove that contract instead of trusting it.
 import { beforeEach, afterEach, vi } from 'vitest';
-import type { SceneRef } from './models';
-import type { PlayerPorts } from './ports';
+import type { SceneRef } from '../src/models';
+import type { PlayerPorts } from '../src/ports';
 
 const fakePorts = {
   generation: { onPlaybackPrepared: vi.fn() },
@@ -314,13 +314,13 @@ const fakePorts = {
     videoUrl: vi.fn((path: string) => 'http://test' + path),
   },
 };
-vi.mock('./mediaCache', () => ({
+vi.mock('../src/mediaCache', () => ({
   getMedia: vi.fn(async () => undefined),
   putMedia: vi.fn(async () => {}),
   clearCache: vi.fn(async () => 0),
 }));
 
-import { ensureInitialized, preparePlayback, sceneQueue, uiState, wirePlaybackCoordination } from './playbackStore';
+import { ensureInitialized, preparePlayback, sceneQueue, uiState, wirePlaybackCoordination } from '../src/playbackStore';
 
 const adoptedScenes: SceneRef[] = [
   { chapterId: 'ch', sceneId: 'sc1' } as SceneRef,

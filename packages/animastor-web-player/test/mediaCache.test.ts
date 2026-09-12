@@ -32,7 +32,7 @@ vi.stubGlobal('caches', {
   })),
 });
 
-import { evictSceneMedia, evictChapterMedia } from './mediaCache';
+import { evictSceneMedia, evictChapterMedia } from '../src/mediaCache';
 
 describe('evictSceneMedia', () => {
   beforeEach(() => {

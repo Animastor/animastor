@@ -1,0 +1,67 @@
+{
+  "name": "@animastor/web-player",
+  "version": "0.1.0",
+  "description": "Preact/Web UI module: Animastor Web Player — the browser playback engine (queue/preload/gapless/IU-cycling/state machine/video buffer gate) plus the Play surface. NOT a platform-independent or domain module: media elements (HTMLAudioElement/HTMLVideoElement), Cache API, requestAnimationFrame, sessionStorage, document.visibilitychange and the desktop shell fork are web-browser specifics. All host capabilities arrive ONLY via the injected PlayerPorts contract (session, generation, position, invalidations, http, shellMode, i18n, icons). The Android player (PlaybackViewModel.kt/PlayFragment.kt) is a separate parity implementation — out of scope (parity is contractual, per ANDROID_WEB_PARITY.md). The backend playback contour lives in @animastor/player — HTTP is the contract; this package must NOT depend on it.",
+  "keywords": [
+    "animastor",
+    "player",
+    "playback",
+    "preact",
+    "web-ui",
+    "frontend",
+    "ui-component",
+    "signals",
+    "vbook",
+    "ports-and-adapters"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+  },
+  "peerDependencies": {
+    "@preact/signals": ">=1.0.0",
+    "preact": ">=10.5.0"
+  },
+  "devDependencies": {
+    "@preact/signals": "^1.3.0",
+    "@preact/preset-vite": "^2.9.0",
+    "happy-dom": "^20.14.0",
+    "preact": "^10.24.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Animastor/animastor.git",
+    "directory": "packages/animastor-web-player"
+  },
+  "homepage": "https://github.com/Animastor/animastor/tree/main/packages/animastor-web-player#readme",
+  "bugs": {
+    "url": "https://github.com/Animastor/animastor/issues"
+  }
+}

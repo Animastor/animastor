@@ -12,8 +12,8 @@ import {
   unitStartMs,
   UNIT_REVEAL_SAFETY_MARGIN_MS,
   UNIT_REVEAL_TOLERANCE_MS,
-} from './playbackGate';
-import type { GateIu } from './playbackGate';
+} from '../src/playbackGate';
+import type { GateIu } from '../src/playbackGate';
 
 const SEC = 1000;
 

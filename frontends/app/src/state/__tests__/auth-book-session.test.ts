@@ -27,9 +27,9 @@ vi.mock('../../api/client', () => ({
 }));
 
 // Mock playback / position side-effect imports used by generateStore/fileStore module init.
-// (Phase 2: the Player contour is physically relocated to modules/player —
-// the mock targets its public entry.)
-vi.mock('../../modules/player', () => ({
+// (Phase 3: the Player contour is the @animastor/web-player package —
+// the mock targets the package public entry.)
+vi.mock('@animastor/web-player', () => ({
   closeBook: vi.fn(),
   wirePlaybackCoordination: vi.fn(),
   wirePlaybackLifecycle: vi.fn(),
