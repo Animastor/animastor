@@ -26,6 +26,9 @@
 //   - Phase 2.1 identity closure: the Play surface consumes the session
 //     identity (bookId/buildId) ONLY through PlayerPorts.session — never via
 //     the engine's internal projection signals.
+//   - Phase 2.2 test isolation: the suites physically inside modules/player/
+//     import vitest + package-internal modules ONLY (no host reach) — they
+//     move verbatim into the package's vitest run at the Phase 3 cut.
 //
 // The guard is written specifier-driven (no file-path coupling of the rules
 // themselves): when Phase 3 moves the directory into
@@ -388,5 +391,34 @@ describe('Player host contour guard (Phase 2 — public entry only)', () => {
     // And each suite wires the fake ports before driving the engine.
     const unwired = suites.filter((f) => !requireRaw(f).includes('wirePlaybackCoordination(fakePorts'));
     expect(unwired).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 2.2 test-isolation guard — the relocated suites are package-owned too
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Player test isolation guard (Phase 2.2 — suites move verbatim with the package)', () => {
+  // Every suite physically inside modules/player/ moves verbatim into
+  // packages/animastor-web-player/test/ at the Phase 3 cut. A host-reaching
+  // import in a suite would become a package→host edge in the package's own
+  // vitest run — the exact edge the boundary rules forbid in src/. Pin the
+  // suites' import surface today: vitest + package-internal relatives only
+  // (fake ports are constructed in-suite, never imported from the host).
+  it('test isolation — every player suite imports only vitest + package-internal modules (no host reach)', () => {
+    const suites = allSourceFiles().filter(
+      (f) => f.startsWith(`${PLAYER_MODULE}/`) && f.includes('.test.'),
+    );
+    // The relocated suites must exist — else this guard scans an empty set
+    // and pins nothing (Phase 2 moved 9 suites in; they stay here).
+    expect(suites.length).toBeGreaterThanOrEqual(9);
+    for (const f of suites) {
+      for (const spec of importSpecifiers(f)) {
+        expect(
+          spec,
+          `${f} imports "${spec}" — a player suite must not reach the host (vitest + ./-internal only; it moves verbatim into the package at Phase 3)`,
+        ).toMatch(/^(?:vitest|\.[^.].*)$/);
+      }
+    }
   });
 });
