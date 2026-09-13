@@ -19,13 +19,15 @@
 // disclosure modal, held in transient `useState`, dropped on close — never
 // persisted, never re-displayable. The status/models responses never carry
 // credential material (not even the prefix mask).
+//
+// Package boundary (docs/architecture/web-local-ai-extraction-audit.md):
+// host capabilities (HTTP, i18n strings, Modal/toast) arrive ONLY through
+// the injected LocalAiPorts contract; domain logic comes from the pure
+// @animastor/web-settings package (the first package→package dependency).
 // ─────────────────────────────────────────────────────────────────────────
 
 import { useState, useCallback, useEffect, useRef } from 'preact/hooks';
-import { t, tf } from '../../app/i18n';
-import type { StrKey } from '../../app/i18n';
-import { getJson, postJson, putJson, deleteJson, ApiError } from '../../api/client';
-import { Modal, toast } from '../../lib/ui';
+import type { LocalAiI18nKey, LocalAiPorts } from './ports';
 import { formatLastTested } from '@animastor/web-settings';
 import {
   RUNTIME_TYPE_OPTIONS,
@@ -61,16 +63,18 @@ interface ProviderRead { provider: LocalProviderMeta | null; has_workspace_provi
 
 /** One-time credential disclosure (registration token or rotated llmc.*).
  *  The plaintext lives ONLY here, in transient component state. */
-function OneTimeCredentialModal({ kind, token, connectorName, regExpiresAt, wsUrl, onClose }: {
+function OneTimeCredentialModal({ kind, token, connectorName, regExpiresAt, wsUrl, onClose, ports }: {
   kind: 'register' | 'rotate';
   token: string;
   connectorName: string;
   regExpiresAt?: number | null;
   wsUrl?: string;
   onClose: () => void;
+  ports: LocalAiPorts;
 }) {
   const [copied, setCopied] = useState(false);
   const [copiedCmd, setCopiedCmd] = useState(false);
+  const { t, ui } = { t: ports.i18n.t, ui: ports.ui };
   const origin = typeof location !== 'undefined' ? location.origin : '';
   const runCommand = kind === 'register' && wsUrl ? buildRunCommand(token, wsUrl, origin) : null;
 
@@ -80,12 +84,12 @@ function OneTimeCredentialModal({ kind, token, connectorName, regExpiresAt, wsUr
       mark(true);
       setTimeout(() => mark(false), 1800);
     } catch (_) {
-      toast(t('worker_copy_failed'));
+      ui.toast(t('worker_copy_failed'));
     }
   }, []);
 
   return (
-    <Modal
+    <ui.Modal
       title={kind === 'register' ? t('local_ai_reg_title') : `${t('worker_rotate')} — ${connectorName}`}
       onClose={onClose}
     >
@@ -132,11 +136,12 @@ function OneTimeCredentialModal({ kind, token, connectorName, regExpiresAt, wsUr
           <button class="btn" onClick={onClose}>{t('worker_done')}</button>
         </div>
       </>
-    </Modal>
+    </ui.Modal>
   );
 }
 
-export function LocalAISection() {
+export function LocalAISection({ ports }: { ports: LocalAiPorts }) {
+  const { api, t, tf, ui } = { api: ports.api, t: ports.i18n.t, tf: ports.i18n.tf, ui: ports.ui };
   const [connectors, setConnectors] = useState<AiConnectorStatus[] | null>(null);
   const [modelsBy, setModelsBy] = useState<Record<string, string[]>>({});
   const [provider, setProvider] = useState<LocalProviderMeta | null>(null);
@@ -174,12 +179,12 @@ export function LocalAISection() {
     pollInFlight.current = true;
     try {
       const [st, models, prov, eps] = await Promise.all([
-        getJson<{ connectors: AiConnectorStatus[] }>('/ai-connector/status'),
-        getJson<{ connectors: AiConnectorModels[] }>('/ai-connector/models'),
-        getJson<ProviderRead>('/settings/ai/provider'),
+        api.getJson<{ connectors: AiConnectorStatus[] }>('/ai-connector/status'),
+        api.getJson<{ connectors: AiConnectorModels[] }>('/ai-connector/models'),
+        api.getJson<ProviderRead>('/settings/ai/provider'),
         // LLM Sharing Phase 1: owner's endpoint rows (401/404 silently
         // ignored — an account without endpoints sees none).
-        getJson<{ endpoints: AiEndpoint[] }>('/ai-endpoints').catch(() => ({ endpoints: [] as AiEndpoint[] })),
+        api.getJson<{ endpoints: AiEndpoint[] }>('/ai-endpoints').catch(() => ({ endpoints: [] as AiEndpoint[] })),
       ]);
       setConnectors(st.connectors);
       const by: Record<string, string[]> = {};
@@ -222,10 +227,10 @@ export function LocalAISection() {
   const onCreate = async () => {
     if (creating) return;
     const v = validateCreateInput(name, runtimeType);
-    if (!v.ok) { setError(t(v.error as StrKey)); return; }
+    if (!v.ok) { setError(t(v.error)); return; }
     setCreating(true); setError(''); setNotice(''); setTestOk(null);
     try {
-      const res = await postJson<RegistrationResponse>('/ai-connector/registrations', {
+      const res = await api.postJson<RegistrationResponse>('/ai-connector/registrations', {
         name: v.name,
         runtime_type: v.runtime_type,
       });
@@ -242,7 +247,7 @@ export function LocalAISection() {
       setName('');
       await loadStatus();
     } catch (e) {
-      setError(humanError(e));
+      setError(humanError(ports, e));
     } finally {
       setCreating(false);
     }
@@ -252,7 +257,7 @@ export function LocalAISection() {
     if (busy) return;
     setBusy(true); setError(''); setNotice(''); setTestOk(null);
     try {
-      const res = await getJson<RegistrationResponse>(
+      const res = await api.getJson<RegistrationResponse>(
         `/ai-connector/registrations/${encodeURIComponent(c.connector_id)}/token`
       );
       if (looksLikeRegToken(res.reg_token)) {
@@ -265,7 +270,7 @@ export function LocalAISection() {
         });
       }
     } catch (e) {
-      setError(humanError(e));
+      setError(humanError(ports, e));
     } finally {
       setBusy(false);
     }
@@ -275,17 +280,17 @@ export function LocalAISection() {
     if (refreshingId) return;
     setRefreshingId(c.connector_id); setError(''); setNotice(''); setTestOk(null);
     try {
-      const res = await postJson<RefreshModelsResponse>(
+      const res = await api.postJson<RefreshModelsResponse>(
         `/ai-connector/connectors/${encodeURIComponent(c.connector_id)}/models/refresh`
       );
       if (res.ok && res.models) {
         setModelsBy((m) => ({ ...m, [c.connector_id]: res.models! }));
         setNotice(tf('local_ai_models_refreshed', String(res.models.length)));
       } else {
-        setError(t(connectorErrorKey(res.code || '') as StrKey));
+        setError(t(connectorErrorKey(res.code || '') as LocalAiI18nKey));
       }
     } catch (e) {
-      setError(humanError(e));
+      setError(humanError(ports, e));
     } finally {
       setRefreshingId(null);
     }
@@ -300,7 +305,7 @@ export function LocalAISection() {
     }
     setBusy(true); setError(''); setNotice(''); setTestOk(null);
     try {
-      await putJson<ProviderRead>('/settings/ai/provider', {
+      await api.putJson<ProviderRead>('/settings/ai/provider', {
         provider_type: 'local-ai',
         connector_id: c.connector_id,
         model,
@@ -308,7 +313,7 @@ export function LocalAISection() {
       setNotice(tf('local_ai_bound', c.name));
       await loadStatus();
     } catch (e) {
-      setError(humanError(e));
+      setError(humanError(ports, e));
     } finally {
       setBusy(false);
     }
@@ -318,11 +323,11 @@ export function LocalAISection() {
     if (busy) return;
     setBusy(true); setError(''); setNotice('');
     try {
-      await deleteJson('/settings/ai/provider');
+      await api.deleteJson('/settings/ai/provider');
       setProvider(null);
       setNotice(t('local_ai_unbound'));
     } catch (e) {
-      setError(humanError(e));
+      setError(humanError(ports, e));
     } finally {
       setBusy(false);
     }
@@ -335,15 +340,15 @@ export function LocalAISection() {
       const body: Record<string, unknown> = { provider_type: 'local-ai', connector_id: c.connector_id };
       const model = (bindingModel[c.connector_id] ?? '').trim();
       if (model) body.model = model;
-      const res = await postJson<ConnectorTestResponse>('/settings/ai/test', body);
+      const res = await api.postJson<ConnectorTestResponse>('/settings/ai/test', body);
       if (res.ok) {
         setTestOk(res.model || c.name);
       } else {
-        setError(tf('local_ai_test_fail', t(connectorErrorKey(res.code || '') as StrKey)));
+        setError(tf('local_ai_test_fail', t(connectorErrorKey(res.code || '') as LocalAiI18nKey)));
       }
       await loadStatus(); // status pill reflects the persisted test outcome
     } catch (e) {
-      setError(tf('local_ai_test_fail', humanError(e)));
+      setError(tf('local_ai_test_fail', humanError(ports, e)));
     } finally {
       setTestingId(null);
     }
@@ -353,14 +358,14 @@ export function LocalAISection() {
     if (busy) return;
     setBusy(true); setError(''); setNotice(''); setTestOk(null);
     try {
-      const res = await postJson<RotateResponse>(
+      const res = await api.postJson<RotateResponse>(
         `/ai-connector/connectors/${encodeURIComponent(c.connector_id)}/rotate`
       );
       if (looksLikeConnectorCredential(res.token)) {
         setDisclosure({ kind: 'rotate', token: res.token, connectorName: c.name });
       }
     } catch (e) {
-      setError(humanError(e));
+      setError(humanError(ports, e));
     } finally {
       setBusy(false);
     }
@@ -370,12 +375,12 @@ export function LocalAISection() {
     if (busy) return;
     setBusy(true); setError(''); setNotice(''); setTestOk(null);
     try {
-      await deleteJson(`/ai-connector/connectors/${encodeURIComponent(c.connector_id)}`);
+      await api.deleteJson(`/ai-connector/connectors/${encodeURIComponent(c.connector_id)}`);
       setConfirmRevoke(null);
       setNotice(tf('local_ai_revoked', c.name));
       await loadStatus();
     } catch (e) {
-      setError(humanError(e));
+      setError(humanError(ports, e));
     } finally {
       setBusy(false);
     }
@@ -390,7 +395,7 @@ export function LocalAISection() {
     if (busy) return;
     setBusy(true); setError(''); setNotice(''); setTestOk(null);
     try {
-      const res = await postJson<{ endpoint: AiEndpoint }>('/ai-endpoints', {
+      const res = await api.postJson<{ endpoint: AiEndpoint }>('/ai-endpoints', {
         name: `${c.name} endpoint`,
         connector_id: c.connector_id,
         runtime_type: c.runtime_type,
@@ -398,7 +403,7 @@ export function LocalAISection() {
       setNotice(tf('share_ai_endpoint_created', res.endpoint.name));
       await loadStatus();
     } catch (e) {
-      setError(humanError(e));
+      setError(humanError(ports, e));
     } finally {
       setBusy(false);
     }
@@ -408,14 +413,14 @@ export function LocalAISection() {
     if (busy) return;
     setBusy(true); setError(''); setNotice(''); setTestOk(null);
     try {
-      await postJson(`/ai-endpoints/${encodeURIComponent(e.endpoint_id)}/share`, {
+      await api.postJson(`/ai-endpoints/${encodeURIComponent(e.endpoint_id)}/share`, {
         confirm_share: true,
       });
       setConfirmShare(null);
       setNotice(t('share_ai_enabled_notice'));
       await loadStatus();
     } catch (err) {
-      setError(humanError(err));
+      setError(humanError(ports, err));
     } finally {
       setBusy(false);
     }
@@ -425,11 +430,11 @@ export function LocalAISection() {
     if (busy) return;
     setBusy(true); setError(''); setNotice(''); setTestOk(null);
     try {
-      await deleteJson(`/ai-endpoints/${encodeURIComponent(e.endpoint_id)}/share`);
+      await api.deleteJson(`/ai-endpoints/${encodeURIComponent(e.endpoint_id)}/share`);
       setNotice(t('share_ai_disabled_notice'));
       await loadStatus();
     } catch (err) {
-      setError(humanError(err));
+      setError(humanError(ports, err));
     } finally {
       setBusy(false);
     }
@@ -439,11 +444,11 @@ export function LocalAISection() {
     if (busy) return;
     setBusy(true); setError(''); setNotice(''); setTestOk(null);
     try {
-      await deleteJson(`/ai-endpoints/${encodeURIComponent(e.endpoint_id)}`);
+      await api.deleteJson(`/ai-endpoints/${encodeURIComponent(e.endpoint_id)}`);
       setNotice(t('share_ai_endpoint_deleted'));
       await loadStatus();
     } catch (err) {
-      setError(humanError(err));
+      setError(humanError(ports, err));
     } finally {
       setBusy(false);
     }
@@ -586,7 +591,7 @@ export function LocalAISection() {
                           <div class="worker__row-meta" key={ep.endpoint_id}>
                             <span>{ep.name}</span>
                             <span>·</span>
-                            <span class={'worker__status ' + shareStatusClass(ss)}>{t(shareStatusKey(ss) as StrKey)}</span>
+                            <span class={'worker__status ' + shareStatusClass(ss)}>{t(shareStatusKey(ss) as LocalAiI18nKey)}</span>
                             <span>·</span>
                             <span>{tf('share_ai_concurrency_label', String(ep.concurrency_limit))}</span>
                             <span>·</span>
@@ -717,12 +722,13 @@ export function LocalAISection() {
           regExpiresAt={disclosure.regExpiresAt}
           wsUrl={disclosure.wsUrl}
           onClose={() => setDisclosure(null)}
+          ports={ports}
         />
       )}
 
       {/* Revoke confirmation */}
       {confirmRevoke && (
-        <Modal
+        <ui.Modal
           title={t('worker_revoke')}
           onClose={() => { if (!busy) setConfirmRevoke(null); }}
         >
@@ -738,12 +744,12 @@ export function LocalAISection() {
               </button>
             </div>
           </>
-        </Modal>
+        </ui.Modal>
       )}
 
       {/* Share confirmation (LLM Sharing Phase 1 — explicit owner consent) */}
       {confirmShare && (
-        <Modal
+        <ui.Modal
           title={t('share_ai_share_button')}
           onClose={() => { if (!busy) setConfirmShare(null); }}
         >
@@ -759,15 +765,16 @@ export function LocalAISection() {
               </button>
             </div>
           </>
-        </Modal>
+        </ui.Modal>
       )}
     </section>
   );
 }
 
 /** Sanitized error surface: no raw stack traces, no URLs, no secrets. */
-function humanError(e: unknown): string {
-  if (e instanceof ApiError) {
+function humanError(ports: LocalAiPorts, e: unknown): string {
+  const { t } = ports.i18n;
+  if (e instanceof ports.api.ApiError) {
     if (e.status === 404) return t('local_ai_err_not_found');
     if (e.status === 401) return t('local_ai_err_auth');
     if (e.status === 403) return t('local_ai_err_forbidden');

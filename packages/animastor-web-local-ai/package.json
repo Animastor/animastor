@@ -1,0 +1,68 @@
+{
+  "name": "@animastor/web-local-ai",
+  "version": "0.1.0",
+  "description": "Local AI Connector section UI for Animastor web frontend — connector lifecycle (create/rotate/revoke), one-time token disclosure, model refresh, provider binding, test probe, and Share-this-AI endpoints. Host capabilities (api, i18n, ui) arrive via the injected LocalAiPorts contract; the package never imports host stores, api/client, or app-level UI directly. Domain logic is consumed from @animastor/web-settings (pure, side-effect-free) — the first package→package dependency in the web layer.",
+  "keywords": [
+    "animastor",
+    "local-ai",
+    "ai-connector",
+    "ollama",
+    "vllm",
+    "preact",
+    "web-ui",
+    "frontend",
+    "ports-and-adapters"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+  },
+  "peerDependencies": {
+    "preact": ">=10.5.0"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/preact": "^3.2.4",
+    "happy-dom": "^20.14.0",
+    "preact": "^10.24.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.0",
+    "vitest": "4.1.11"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Animastor/animastor.git",
+    "directory": "packages/animastor-web-local-ai"
+  },
+  "homepage": "https://github.com/Animastor/animastor/tree/main/packages/animastor-web-local-ai#readme",
+  "bugs": {
+    "url": "https://github.com/Animastor/animastor/issues"
+  },
+  "dependencies": {
+    "@animastor/web-settings": "file:../animastor-web-settings"
+  }
+}

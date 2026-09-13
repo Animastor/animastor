@@ -15,6 +15,7 @@
     "@animastor/web-ai-chat": "file:../../packages/animastor-web-ai-chat",
     "@animastor/web-editor": "file:../../packages/animastor-web-editor",
     "@animastor/web-file": "file:../../packages/animastor-web-file",
+    "@animastor/web-local-ai": "file:../../packages/animastor-web-local-ai",
     "@animastor/web-navigator": "file:../../packages/animastor-web-navigator",
     "@animastor/web-player": "file:../../packages/animastor-web-player",
     "@animastor/web-settings": "file:../../packages/animastor-web-settings",

@@ -13,7 +13,8 @@ import { navigate } from '../app/router';
 import type { Route } from '../app/router';
 import { PrivateWorkersSection } from '@animastor/web-workers';
 import { workerPorts } from '../app/workerAdapters';
-import { LocalAISection } from '../features/localAi/LocalAISection';
+import { LocalAISection } from '@animastor/web-local-ai';
+import { localAiPorts } from '../app/localAiAdapters';
 import {
   PROVIDER_TYPE_OPTIONS,
   OPENROUTER_DEFAULT_ENDPOINT,
@@ -34,7 +35,7 @@ export function SettingsPage(props: { section?: string; path?: string }) {
   if (section === 'worker') return <WorkerSection />;
   if (section === 'ai') return <AIProviderSection />;
   if (section === 'private-workers') return <PrivateWorkersSection ports={workerPorts} />;
-  if (section === 'local-ai') return <LocalAISection />;
+  if (section === 'local-ai') return <LocalAISection ports={localAiPorts} />;
   return <GeneralSection />;
 }
 
