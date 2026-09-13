@@ -272,3 +272,30 @@ All checks pass:
 contracts: Phase 10F — release readiness audit (READY FOR PUBLISH)
 docs(arch): Phase 10F — contracts release readiness audit
 ```
+
+---
+
+## 11. Addendum — 0.1.1 release preparation (runtimeResult blocker closure, 2026-09-13)
+
+**Baseline:** branch `c21.4-physically-extract-analysis-from-backend`, audit SHA `fc6ba0fc3c14acf82cff3fc52044c3d3a73961fe` (docs/architecture/orchestration-npm-release-audit.md, blocker B-1).
+
+**Root cause.** The published `@animastor/contracts@0.1.0` (registry, published 2026-09-06) predates the §32.30 orchestration physical extraction commit `066ddaae` (2026-09-13), which added `src/runtime-result.js` + the root `runtimeResult` export to the workspace package. Every dependent resolving the `^0.1.0` range from the registry therefore got a copy without `runtimeResult`; `@animastor/orchestration`'s `src/runtime/runtime-result-emitter.js:24` destructures `require('@animastor/contracts').runtimeResult` at load time → `TypeError: Cannot destructure property 'createRuntimeResult' …` on any clean install. Divergence class: **workspace moved ahead of the registry** — same root version, different content. The content delta is exactly the already-accepted Phase 5 Runtime Result contract (canonical per §32.30; backend keeps only a re-export facade at `backend/src/contracts/runtime-result.js:23`) plus metadata — no API/semantics change, Job Protocol v2 byte-identical (canonical sha256 `b005fafc…b5a84` unchanged).
+
+**Version chosen: 0.1.1 (additive patch, not 0.2.0).** All dependents (`@animastor/gpu-hub`, `@animastor/generation`, `@animastor/orchestration`) declare `"@animastor/contracts": "^0.1.0"`, and the phase10d guard freezes gpu-hub's manifest at `"^0.1.0"` (backend/tests/architecture/phase10d-gpu-hub-package-boundary.test.js:88,113,116). A 0.2.0 would leave every `^0.1.0` range unresolved to the fix; a re-publish of 0.1.0 is forbidden (npm immutability). 0.1.1 satisfies every existing range, keeps the guards green, and follows semver: additive export + metadata only.
+
+**What changed (release metadata only; zero production code edits):**
+- `packages/animastor-contracts/package.json` — version `0.1.0 → 0.1.1`; added root-only `exports: { ".": "./src/index.js" }` (deep-import blocking, same posture as every extracted Animastor package; repo-wide scan: zero `@animastor/contracts/<path>` deep imports in all consumers, so this hardens without breaking); added `publishConfig: { access: "public" }` (repo convention for the `@animastor` scope); description now names both contracts.
+- `packages/animastor-contracts/package-lock.json` — version fields synced to 0.1.1 (lock has no dependency entries; package is dependency-free).
+- `packages/animastor-contracts/README.md` — documented the Runtime Result contract (export table, consumers incl. orchestration, usage snippet).
+- `packages/animastor-worker/worker/job-protocol-v2.cjs` — regenerated via the sanctioned generator (`node packages/animastor-worker/tools/sync-protocol.cjs`); exactly one header line changed (`generated: 0.1.0 snapshot → 0.1.1 snapshot`); protocol body byte-identical, sha256 stamp unchanged (`b005fafc01614e643e325b3433f657c6bd197ee6f76dca4d36eb1bf7de2b5a84`), verified by the phase9d parity guard.
+
+**Tarball (0.1.1, `animastor-contracts-0.1.1.tgz`)** — exactly 6 files: `package/package.json`, `package/README.md`, `package/LICENSE`, `package/src/index.js`, `package/src/job-protocol-v2.js`, `package/src/runtime-result.js`. Contains `runtime-result.js` and exposes the root `runtimeResult` export. No node_modules, no tests, no repo debris, no workspace/file dependencies.
+
+**Verification (executed on this commit):**
+- contracts package tests: **37 pass / 0 fail**; worker package tests: **45 pass / 0 fail**; backend `test:arch`: **949 passing / 0 failing** (incl. phase9c, phase9d, phase10d guards); PM-G suite green.
+- Clean install of the tarball into an empty temp project: install OK, `require('@animastor/contracts')` OK, `runtimeResult` present (`createRuntimeResult`/`statusFromOutcome` functions), factory roundtrip frozen, `jobProtocolV2.PROTOCOL_VERSION === 2`, top-level spread parity intact; deep import `@animastor/contracts/src/runtime-result` correctly rejected (`ERR_PACKAGE_PATH_NOT_EXPORTED`).
+- **`@animastor/orchestration` compatibility:** installed the orchestration tarball (unmodified, `0.1.0`, dep range `^0.1.0`) together with the contracts 0.1.1 tarball into an empty project → npm resolves `@animastor/contracts@0.1.1`, orchestration root require succeeds (21 facade ops, 11 runtime-ns members, 8 ports, bindHostModules), runtimeResult reachable. Blocker B-1 of docs/architecture/orchestration-npm-release-audit.md is closed at the artifact level.
+
+**Verdict: READY FOR PUBLISH** (`@animastor/contracts@0.1.1` — `npm publish` itself remains out of scope by mandate; after it lands on the registry, the orchestration clean-install path resolves the fix through the existing `^0.1.0` range with no further repo changes).
+
+**Remaining (recorded, untouched by this change):** orchestration package hygiene items from the release audit — missing `README.md` (B-3) and the stale host barrel `backend/src/runtime/index.js` (B-4, zero consumers today).

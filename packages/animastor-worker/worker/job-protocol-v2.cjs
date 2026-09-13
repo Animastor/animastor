@@ -5,7 +5,7 @@
 //   package:   @animastor/contracts
 //   source:    packages/animastor-contracts/src/job-protocol-v2.js
 //   sha256:    b005fafc01614e643e325b3433f657c6bd197ee6f76dca4d36eb1bf7de2b5a84
-//   generated: 0.1.0 snapshot
+//   generated: 0.1.1 snapshot
 // Generator:  packages/animastor-worker/tools/sync-protocol.cjs (Phase 9D — blocker B2, option B)
 //
 // The worker bundle ships with zero runtime npm dependencies (Phase 9B

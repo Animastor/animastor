@@ -4,7 +4,7 @@
 
 **Scope:** AUDIT ONLY of the physically extracted package (`packages/animastor-orchestration`) ahead of npm release. No production refactor, no API change, no publish, no version bump. All findings below are measured on the exact baseline tree (command output captured during the audit session, 2026-09-13).
 
-**Verdict: BLOCKED** — one release blocker (B-1: published `@animastor/contracts@0.1.0` is stale, missing `runtimeResult`, so a clean install of this package cannot load). Details in §8. Everything else is release-clean.
+**Verdict: BLOCKED** — one release blocker (B-1: published `@animastor/contracts@0.1.0` is stale, missing `runtimeResult`, so a clean install of this package cannot load). Details in §8. Everything else is release-clean. **Status update (2026-09-13, same day):** B-1 is closed at the artifact level by the `@animastor/contracts@0.1.1` release preparation (docs/architecture/PHASE_10F_CONTRACTS_RELEASE_READINESS_AUDIT.md §11 — verified: orchestration tarball + contracts 0.1.1 tarball clean-install and load together); B-1 fully lifts once 0.1.1 is published to the registry.
 
 ---
 
