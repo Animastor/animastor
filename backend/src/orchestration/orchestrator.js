@@ -517,7 +517,10 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
     const cancellation = await dispatchEngine.clearLeasesForScenes(redis, bookId, leaseResetScenes);
 
     // 5. Clear only jobs belonging to the cancelled dispatches.
-    await dispatchEngine.clearHubDispatches(cancellation.dispatchIds, {
+    // O-9: hub-queue cleanup goes through the HubCancelPort (the tier must
+    // not own hub HTTP); lease clearing above stays a direct dispatch-engine
+    // call (Redis domain operation).
+    await require('../runtime/hub-cancel-port').hubCancelOp('clearHubDispatches')(cancellation.dispatchIds, {
         context: 'RESET-SCENES',
         warn,
     });

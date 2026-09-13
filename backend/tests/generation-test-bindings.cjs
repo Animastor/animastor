@@ -85,3 +85,11 @@ require('../src/runtime/audio-fsm-port').setAudioFsmPort(
 require('../src/runtime/video-fsm-port').setVideoFsmPort(
     require('../src/storage/video-fsm-adapter')
 );
+// O-9: HubCancelPort — same convention: binds the host hub-cancel adapter
+// so tier consumers resolve clearHubDispatches at call time through the
+// '../src/runtime/dispatch-engine' channel (stubbing it keeps working —
+// the gpu-hub-cleanup and reconciliation harnesses replace exactly that
+// module).
+require('../src/runtime/hub-cancel-port').setHubCancelPort(
+    require('../src/storage/hub-cancel-adapter')
+);

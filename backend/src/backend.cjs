@@ -94,6 +94,19 @@ require('./runtime/audio-fsm-port').setAudioFsmPort(
 require('./runtime/video-fsm-port').setVideoFsmPort(
     require('./storage/video-fsm-adapter')
 );
+// O-9: HUB CANCEL PORT — runtime/orchestration hub-queue-cleanup
+// composition. The two tiers purge cancelled dispatches from the GPU Hub
+// queue ONLY through runtime/hub-cancel-port; the host adapter
+// (storage/hub-cancel-adapter) owns the hub-HTTP cleanup channel
+// (dispatch-engine clearHubDispatches — hub URL/API-key resolution, the
+// DELETE /queue/clear endpoint shape, per-id best-effort accounting) and
+// is bound here, before any runtime/orchestration module loads. Lease
+// cancellation itself stays a direct dispatch-engine call (Redis domain,
+// not hub HTTP).
+// Docs: docs/architecture/generation-module-extraction-reconnaissance.md §32.26
+require('./runtime/hub-cancel-port').setHubCancelPort(
+    require('./storage/hub-cancel-adapter')
+);
 
 // ======================================================
 // MODULE IMPORTS

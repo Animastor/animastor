@@ -1240,10 +1240,13 @@ async function applyFix(redis, fix) {
                 // queue/running copies owned by the cancelled dispatch(es) so a
                 // recovered scene cannot accumulate duplicate job copies that a
                 // worker would later drain. Best-effort — hub unavailability
-                // must not block state recovery.
+                // must not block state recovery. O-9: the hub call goes
+                // through the HubCancelPort (hub HTTP stays host-side; the
+                // cancelActiveDispatch loop above stays a direct
+                // dispatch-engine call — Redis domain operation).
                 if (clearedDispatchIds.length > 0) {
                     try {
-                        await dispatchEngine.clearHubDispatches(clearedDispatchIds, { context: 'STALE_LEASE_RECOVERY' });
+                        await require('./hub-cancel-port').hubCancelOp('clearHubDispatches')(clearedDispatchIds, { context: 'STALE_LEASE_RECOVERY' });
                     } catch (hubErr) {
                         warn(`RELEASE_STALE_LEASE hub cleanup failed (non-fatal): ${hubErr.message}`);
                     }
