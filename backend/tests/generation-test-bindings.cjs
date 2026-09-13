@@ -93,3 +93,12 @@ require('../src/runtime/video-fsm-port').setVideoFsmPort(
 require('../src/runtime/hub-cancel-port').setHubCancelPort(
     require('../src/storage/hub-cancel-adapter')
 );
+// O-10: LayerConfigPort — same convention: binds the host layer-config
+// adapter so tier consumers resolve get/restoreFromBooks at call time
+// through the '../src/services/layer-config' channel (stubbing it keeps
+// working — the worklist-rebuild purge list replaces exactly that
+// module; the purge empties require.cache so call-time resolution
+// reloads the real service, identical to the pre-O-10 lazy requires).
+require('../src/runtime/layer-config-port').setLayerConfigPort(
+    require('../src/storage/layer-config-adapter')
+);

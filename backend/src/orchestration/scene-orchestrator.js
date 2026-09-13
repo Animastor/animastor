@@ -21,7 +21,10 @@ const sceneDataPort = require('../runtime/scene-data-port').sceneDataOp;
 // its own seam step.
 const audioFsmOp = require('../runtime/audio-fsm-port').audioFsmOp;
 const audioFsmPhases = require('../runtime/audio-fsm-port').audioFsmPhases;
-const layerConfig = require('../services/layer-config');
+// O-10: per-book layer config arrives ONLY through the LayerConfigPort
+// (host adapter: storage/layer-config-adapter) — the layer-config host
+// service (../services/layer-config) left this file.
+const layerConfigOp = require('../runtime/layer-config-port').layerConfigOp;
 const { log, warn, logEvent } = require('./scene-utils');
 const { handleAudioCompleted, handleImageCompleted, handleVideoCompleted } = require('./scene-callbacks');
 const { restoreSceneChunkStatus } = require('./scene-restoration');
@@ -357,9 +360,13 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchI
     }
 
     // Read per-type timeout from layer-config
+    // O-10: through the LayerConfigPort (host adapter:
+    // storage/layer-config-adapter). The leg's pre-O-10 try/catch
+    // tolerance is preserved exactly — the port call replaces the
+    // direct service call inside the same `try { … } catch (_) {}`.
     let videoTimeoutMs;
     try {
-        const cfg = await layerConfig.get(redis, bookId);
+        const cfg = await layerConfigOp('get')(redis, bookId);
         if (cfg && cfg.video_timeout_minutes > 0) {
             videoTimeoutMs = cfg.video_timeout_minutes * 60 * 1000;
             log(`VIDEO_DISPATCH: ${bookId}/${chapterId}/${sceneId}: using timeout=${cfg.video_timeout_minutes} min from layer-config`);

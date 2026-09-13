@@ -1666,13 +1666,20 @@ async function reconcileCycle(redis, deps = {}, options = {}) {
         // книга существует — конфиг не пропадает из Redis до рестарта.
 
         if (!scope) {
+            // O-10: through the LayerConfigPort (host adapter:
+            // storage/layer-config-adapter). The pre-O-10 optional-load
+            // semantics are preserved EXACTLY: when the host service
+            // cannot be loaded, this phase is skipped with a warn (a
+            // missing module ≠ failed recovery). The outer try/catch
+            // wraps the PORT call — the adapter's lazy call-time
+            // resolver throws at the same point the pre-O-10 inner
+            // require did, and the caller's catch handles it
+            // identically (the pre-O-10 inner try set layerConfig to
+            // null and skipped silently; the C6 error path below is
+            // reached only when the CALL fails, same as before).
             try {
-                let layerConfig;
-                try { layerConfig = require('../services/layer-config'); } catch (_) { layerConfig = null; }
-                if (layerConfig && typeof layerConfig.restoreFromBooks === 'function') {
-                    const c6Count = await layerConfig.restoreFromBooks(redis);
-                    if (c6Count > 0) phases.push(`layer_config_restore:${c6Count}`);
-                }
+                const c6Count = await require('./layer-config-port').layerConfigOp('restoreFromBooks')(redis);
+                if (c6Count > 0) phases.push(`layer_config_restore:${c6Count}`);
             } catch (err) {
                 warn(`Phase C6 failed: ${err.message}`);
                 summary.errors.push(`layer_config_restore: ${err.message}`);
@@ -2172,7 +2179,10 @@ async function rebuildWorkList(redis) {
     // barrel queries) via the PersistencePort; the storage barrel require
     // left this function.
     const persist = require('./persistence-port').persist;
-    const layerConfig = require('../services/layer-config');
+    // O-10: per-book layer config arrives ONLY through the LayerConfigPort
+    // (host adapter: storage/layer-config-adapter) — the layer-config host
+    // service (../services/layer-config) left this function.
+    const layerConfigOp = require('./layer-config-port').layerConfigOp;
     // O-4: placeholder audio arrives ONLY through the PlaceholderAudioPort
     // (host adapter: storage/placeholder-audio-adapter) — the ffmpeg/fs
     // host service left this function.
@@ -2212,7 +2222,7 @@ async function rebuildWorkList(redis) {
 
             const buildId = loadedBook?.manifest?.build_id || 'default';
             const buildDir = syncPath.join(config.OUTPUT_DIR, buildId);
-            const layerCfg = await layerConfig.get(redis, bookId);
+            const layerCfg = await layerConfigOp('get')(redis, bookId);
             const enabled = Object.fromEntries(
                 mediaRegistry.listMediaTypes().map(t => [t, layerCfg[t + '_enabled'] !== false])
             );
