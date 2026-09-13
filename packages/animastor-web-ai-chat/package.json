@@ -1,0 +1,58 @@
+{
+  "name": "@animastor/web-ai-chat",
+  "version": "0.1.0",
+  "description": "Pure AI chat streaming UX helpers for Animastor web frontend — SSE frame mapping, source badge logic, error code translation, and cancel detection. Zero host dependencies; pure functions and types only.",
+  "keywords": [
+    "animastor",
+    "ai",
+    "chat",
+    "streaming",
+    "sse",
+    "preact",
+    "web-ui",
+    "frontend",
+    "pure-functions"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Animastor/animastor.git",
+    "directory": "packages/animastor-web-ai-chat"
+  },
+  "homepage": "https://github.com/Animastor/animastor/tree/main/packages/animastor-web-ai-chat#readme",
+  "bugs": {
+    "url": "https://github.com/Animastor/animastor/issues"
+  }
+}

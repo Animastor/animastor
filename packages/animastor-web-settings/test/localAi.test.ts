@@ -21,7 +21,7 @@ import {
   shareStatus,
   shareStatusKey,
   shareStatusClass,
-} from './localAi';
+} from '../src/localAi';
 
 describe('localAi runtime types', () => {
   it('covers exactly the backend RUNTIME_TYPES allowlist (ollama/vllm/llamacpp/lmstudio/openai-compatible)', () => {

@@ -20,8 +20,8 @@ import {
   describeTestResult,
   statusLabel,
   formatLastTested,
-} from '../features/aiProviders/aiProviders';
-import type { ProviderType, ProviderStatus } from '../features/aiProviders/aiProviders';
+} from '@animastor/web-settings';
+import type { ProviderType, ProviderStatus } from '@animastor/web-settings';
 
 // SettingsPage covers: /settings (general), /settings/vbook (section="vbook"),
 // /settings/worker (section="worker"), /settings/ai (section="ai"),

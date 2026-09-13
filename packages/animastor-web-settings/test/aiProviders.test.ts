@@ -13,7 +13,7 @@ import {
   statusLabel,
   formatLastTested,
   canSave,
-} from './aiProviders';
+} from '../src/aiProviders';
 
 describe('VALID_PROVIDER_TYPES', () => {
   it('exposes the spec §3 / §14 allowed values', () => {

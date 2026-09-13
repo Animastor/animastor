@@ -12,7 +12,7 @@ import { setSecondaryTitle } from '../app/titleStore';
 import { Modal, toast } from '../lib/ui';
 import { IconMic, IconMicOff, IconSend, IconMenu, IconAdd, IconSparkle, IconDownload, IconEdit, IconMap, IconFile, IconCheck, IconCopy, IconClose, IconStop } from '../app/icons';
 import type { IconProps } from '../app/icons';
-import { sourceBadgeKey, streamErrorKey, isUserCancelled } from '../features/aiChat/chatStream';
+import { sourceBadgeKey, streamErrorKey, isUserCancelled } from '@animastor/web-ai-chat';
 
 // AiAssistantPage — 1:1 with AiAssistantFragment. Chat with AI: session history
 // (/ai/sessions), mode chips (AssistantMode), typing indicator, position context

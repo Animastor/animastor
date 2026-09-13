@@ -26,7 +26,7 @@ import { t, tf } from '../../app/i18n';
 import type { StrKey } from '../../app/i18n';
 import { getJson, postJson, putJson, deleteJson, ApiError } from '../../api/client';
 import { Modal, toast } from '../../lib/ui';
-import { formatLastTested } from '../aiProviders/aiProviders';
+import { formatLastTested } from '@animastor/web-settings';
 import {
   RUNTIME_TYPE_OPTIONS,
   validateCreateInput,
@@ -45,7 +45,7 @@ import {
   shareStatus,
   shareStatusKey,
   shareStatusClass,
-} from './localAi';
+} from '@animastor/web-settings';
 import type {
   AiConnectorStatus,
   AiConnectorModels,
@@ -55,7 +55,7 @@ import type {
   ConnectorTestResponse,
   LocalProviderMeta,
   AiEndpoint,
-} from './localAi';
+} from '@animastor/web-settings';
 
 interface ProviderRead { provider: LocalProviderMeta | null; has_workspace_provider: boolean }
 
