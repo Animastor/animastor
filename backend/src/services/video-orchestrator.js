@@ -258,7 +258,7 @@ async function completeGroup(redis, bookId, chapterId, sceneId, groupSuffix, bui
         // Принимаем как есть: файл уже записан task-handler'ом.
         log(`completeGroup: no video-orch state for ${bookId}/${chapterId}/${sceneId} — legacy single-group path`);
         if (orchestrator) {
-            const meta = await require('../runtime/dispatch-engine').getDispatchMetadata(redis, bookId, chapterId, sceneId, 'video');
+            const meta = await require('@animastor/orchestration').runtime.dispatch.getDispatchMetadata(redis, bookId, chapterId, sceneId, 'video');
             await orchestrator.completeStage(redis, bookId, chapterId, sceneId, 'video', buildId, meta?.dispatch_id || dispatchId);
         }
         return { completed: false, reason: 'no_state_legacy' };
@@ -410,7 +410,7 @@ async function completeGroup(redis, bookId, chapterId, sceneId, groupSuffix, bui
             // результата): поздние группы могут прийти со stale-dispatch
             // (WAITING_CHUNKS stale-accept), но completeStage обязан пройти
             // verifyDispatchIdentity по активному dispatch.
-            const meta = await require('../runtime/dispatch-engine').getDispatchMetadata(redis, bookId, chapterId, sceneId, 'video');
+            const meta = await require('@animastor/orchestration').runtime.dispatch.getDispatchMetadata(redis, bookId, chapterId, sceneId, 'video');
             await orchestrator.completeStage(redis, bookId, chapterId, sceneId, 'video', buildId, meta?.dispatch_id || dispatchId);
         }
         return { completed: true, reason: 'merged' };
@@ -456,7 +456,7 @@ async function failWaitingScene(redis, bookId, chapterId, sceneId, buildId, reas
 
     if (orchestrator) {
         try {
-            const meta = await require('../runtime/dispatch-engine').getDispatchMetadata(redis, bookId, chapterId, sceneId, 'video');
+            const meta = await require('@animastor/orchestration').runtime.dispatch.getDispatchMetadata(redis, bookId, chapterId, sceneId, 'video');
             await orchestrator.failStage(redis, bookId, chapterId, sceneId, 'video', buildId,
                 reason, { dispatchId: meta?.dispatch_id || dispatchId });
             log(`Video FAILED→PENDING via failStage for ${bookId}/${chapterId}/${sceneId}`);

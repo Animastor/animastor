@@ -2,7 +2,7 @@ const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
 
-const dispatchEngine = require('../src/runtime/dispatch-engine');
+const dispatchEngine = require('../node_modules/@animastor/orchestration/src/runtime/dispatch-engine');
 const gpuDispatcher = require('../src/runtime/gpu-dispatcher');
 const jobSchema = require('../src/runtime/job-schema');
 const { createMockRedis } = require('./mocks/redis-mock');
@@ -194,18 +194,18 @@ describe('orchestration stabilization: protocol contract', () => {
 
 describe('orchestration stabilization: executor acceptance', () => {
     const modulePaths = [
-        '../src/orchestration/scene-orchestrator',
+        '../node_modules/@animastor/orchestration/src/orchestration/scene-orchestrator',
         '../src/state',
         '../src/audio',
         '../src/image',
         '../src/video',
         '../src/runtime/gpu-dispatcher',
-        '../src/runtime/runtime-scheduler',
+        '../node_modules/@animastor/orchestration/src/runtime/runtime-scheduler',
         '../src/book',
-        '../src/orchestration/scene-utils',
-        '../src/orchestration/scene-callbacks',
-        '../src/orchestration/scene-restoration',
-        '../src/orchestration/orchestrator',
+        '../node_modules/@animastor/orchestration/src/orchestration/scene-utils',
+        '../node_modules/@animastor/orchestration/src/orchestration/scene-callbacks',
+        '../node_modules/@animastor/orchestration/src/orchestration/scene-restoration',
+        '../node_modules/@animastor/orchestration/src/orchestration/orchestrator',
         '../src/storage/postgres/repositories/scene-assets-repo',
         'animastor-comfyui-workflow-connector',
         '../src/services/video-orchestrator',
@@ -263,25 +263,25 @@ describe('orchestration stabilization: executor acceptance', () => {
         stub('../src/image', overrides.image || {});
         stub('../src/video', overrides.video || {});
         stub('../src/runtime/gpu-dispatcher', overrides.gpu || {});
-        stub('../src/runtime/runtime-scheduler', { addSceneToActiveIndex: async () => {} });
+        stub('../node_modules/@animastor/orchestration/src/runtime/runtime-scheduler', { addSceneToActiveIndex: async () => {} });
         stub('../src/book', {
             loadBook: () => loadedBook,
             findSceneRuntimeData: () => sceneData,
         });
-        stub('../src/orchestration/scene-utils', {
+        stub('../node_modules/@animastor/orchestration/src/orchestration/scene-utils', {
             log: () => {},
             warn: () => {},
             logEvent: async () => {},
         });
-        stub('../src/orchestration/scene-callbacks', {
+        stub('../node_modules/@animastor/orchestration/src/orchestration/scene-callbacks', {
             handleAudioCompleted: async () => {},
             handleImageCompleted: async () => {},
             handleVideoCompleted: async () => {},
         });
-        stub('../src/orchestration/scene-restoration', {
+        stub('../node_modules/@animastor/orchestration/src/orchestration/scene-restoration', {
             restoreSceneChunkStatus: async () => {},
         });
-        stub('../src/orchestration/orchestrator', {
+        stub('../node_modules/@animastor/orchestration/src/orchestration/orchestrator', {
             completeStage: async () => ({ completed: true }),
             failStage: async () => {},
             setScenePending: async (...args) => { calls.pending.push(args); return { changed: true }; },
@@ -291,9 +291,9 @@ describe('orchestration stabilization: executor acceptance', () => {
         // S-5: mirror the composition-root seam wiring with the stub facade —
         // runtime modules resolve orchestration behavior via seams.
         const orchestrationSeams = require('../src/runtime/orchestration-seams');
-        const orchStubModule = require('../src/orchestration/orchestrator');
+        const orchStubModule = require('../node_modules/@animastor/orchestration/src/orchestration/orchestrator');
         orchestrationSeams.registerOrchestrationSeams({
-            dispatchStage: require('../src/orchestration/scene-orchestrator').dispatchStage,
+            dispatchStage: require('../node_modules/@animastor/orchestration/src/orchestration/scene-orchestrator').dispatchStage,
             rollbackStageToPending: orchStubModule.rollbackStageToPending,
             markDirtyScene: orchStubModule.markDirtyScene || (async () => {}),
             setScenePending: orchStubModule.setScenePending,
@@ -318,7 +318,7 @@ describe('orchestration stabilization: executor acceptance', () => {
                 },
             },
         });
-        const sceneOrchestrator = require('../src/orchestration/scene-orchestrator');
+        const sceneOrchestrator = require('../node_modules/@animastor/orchestration/src/orchestration/scene-orchestrator');
 
         const result = await sceneOrchestrator.dispatchStage(
             {}, sceneData, loadedBook, 'build-1', 'image', 'dispatch-image'
@@ -350,7 +350,7 @@ describe('orchestration stabilization: executor acceptance', () => {
                 sendUnified: async () => ({ sent: false, error: 'hub_unavailable' }),
             },
         });
-        const sceneOrchestrator = require('../src/orchestration/scene-orchestrator');
+        const sceneOrchestrator = require('../node_modules/@animastor/orchestration/src/orchestration/scene-orchestrator');
 
         const result = await sceneOrchestrator.dispatchStage(
             redis, sceneData, loadedBook, 'build-1', 'video', 'dispatch-video'
@@ -371,13 +371,13 @@ describe('orchestration stabilization: executor acceptance', () => {
 
 describe('audio-orch invariant (R6)', () => {
     const modulePaths = [
-        '../src/orchestration/orchestrator',
+        '../node_modules/@animastor/orchestration/src/orchestration/orchestrator',
         '../src/state',
-        '../src/orchestration/scene-callbacks',
-        '../src/orchestration/scene-utils',
+        '../node_modules/@animastor/orchestration/src/orchestration/scene-callbacks',
+        '../node_modules/@animastor/orchestration/src/orchestration/scene-utils',
         '../src/state/event-journal',
-        '../src/runtime/dispatch-engine',
-        '../src/runtime/failure-taxonomy',
+        '../node_modules/@animastor/orchestration/src/runtime/dispatch-engine',
+        '../node_modules/@animastor/orchestration/src/runtime/failure-taxonomy',
         '../src/storage/postgres/repositories/scene-assets-repo',
         '../src/storage/postgres/database',
     ];
@@ -427,23 +427,23 @@ describe('audio-orch invariant (R6)', () => {
             unsafeRestoreAssetStates: async () => {},
             validateAssetTransition: () => ({ valid: true, reason: 'valid' }),
         });
-        stub('../src/orchestration/scene-callbacks', {
+        stub('../node_modules/@animastor/orchestration/src/orchestration/scene-callbacks', {
             handleAudioCompleted: async () => ({ ok: true, artifact: { path: '/tmp/test.mp3' } }),
             handleImageCompleted: async () => ({ ok: true }),
             handleVideoCompleted: async () => ({ ok: true }),
         });
-        stub('../src/orchestration/scene-utils', { log: () => {}, warn: () => {}, error: () => {} });
+        stub('../node_modules/@animastor/orchestration/src/orchestration/scene-utils', { log: () => {}, warn: () => {}, error: () => {} });
         stub('../src/state/event-journal', {
             EventType: { AUDIO_COMPLETED: 'AUDIO_COMPLETED' },
             appendSceneEvent: async () => ({ success: true }),
         });
-        stub('../src/runtime/dispatch-engine', {
+        stub('../node_modules/@animastor/orchestration/src/runtime/dispatch-engine', {
             verifyDispatchIdentity: async () => ({ valid: true }),
             finalizeDispatch: async (r, bid, cid, sid, stage, opts) => {
                 dispatchFinalizedCalls.push({ stage, opts });
             },
         });
-        stub('../src/runtime/failure-taxonomy', {
+        stub('../node_modules/@animastor/orchestration/src/runtime/failure-taxonomy', {
             classifyFailure: () => ({ type: 'unknown' }),
         });
         stub('../src/storage/postgres/repositories/scene-assets-repo', {
@@ -462,7 +462,7 @@ describe('audio-orch invariant (R6)', () => {
             }),
         });
 
-        const orchestrator = require('../src/orchestration/orchestrator');
+        const orchestrator = require('../node_modules/@animastor/orchestration/src/orchestration/orchestrator');
         const result = await orchestrator.completeStage(
             redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'build-1', 'dispatch-ok'
         );
@@ -493,22 +493,22 @@ describe('audio-orch invariant (R6)', () => {
             unsafeRestoreAssetStates: async () => {},
             validateAssetTransition: (from, to) => ({ valid: true, reason: 'valid' }),
         });
-        stub('../src/orchestration/scene-utils', { log: () => {}, warn: () => {} });
+        stub('../node_modules/@animastor/orchestration/src/orchestration/scene-utils', { log: () => {}, warn: () => {} });
         stub('../src/state/event-journal', {
             EventType: { AUDIO_FAILED: 'AUDIO_FAILED', IMAGE_FAILED: 'IMAGE_FAILED', VIDEO_FAILED: 'VIDEO_FAILED' },
             appendSceneEvent: async () => ({ success: true }),
         });
-        stub('../src/runtime/dispatch-engine', {
+        stub('../node_modules/@animastor/orchestration/src/runtime/dispatch-engine', {
             verifyDispatchIdentity: async () => ({ valid: true }),
             finalizeDispatch: async (r, bid, cid, sid, stage, opts) => {
                 dispatchFinalizedCalls.push({ stage, opts });
             },
         });
-        stub('../src/runtime/failure-taxonomy', {
+        stub('../node_modules/@animastor/orchestration/src/runtime/failure-taxonomy', {
             classifyFailure: () => ({ type: 'transient' }),
         });
 
-        const orchestrator = require('../src/orchestration/orchestrator');
+        const orchestrator = require('../node_modules/@animastor/orchestration/src/orchestration/orchestrator');
         const result = await orchestrator.failStage(
             redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'build-1', 'test_error'
         );
@@ -539,23 +539,23 @@ describe('audio-orch invariant (R6)', () => {
             unsafeRestoreAssetStates: async () => {},
             validateAssetTransition: () => ({ valid: true, reason: 'valid' }),
         });
-        stub('../src/orchestration/scene-callbacks', {
+        stub('../node_modules/@animastor/orchestration/src/orchestration/scene-callbacks', {
             handleAudioCompleted: async () => ({ ok: false, reason: 'merge_failed' }),
             handleImageCompleted: async () => ({ ok: true }),
             handleVideoCompleted: async () => ({ ok: true }),
         });
-        stub('../src/orchestration/scene-utils', { log: () => {}, warn: () => {}, error: () => {} });
+        stub('../node_modules/@animastor/orchestration/src/orchestration/scene-utils', { log: () => {}, warn: () => {}, error: () => {} });
         stub('../src/state/event-journal', {
             EventType: { AUDIO_COMPLETED: 'AUDIO_COMPLETED' },
             appendSceneEvent: async () => ({ success: true }),
         });
-        stub('../src/runtime/dispatch-engine', {
+        stub('../node_modules/@animastor/orchestration/src/runtime/dispatch-engine', {
             verifyDispatchIdentity: async () => ({ valid: true }),
             finalizeDispatch: async (r, bid, cid, sid, stage, opts) => {
                 dispatchFinalizedCalls.push({ stage, opts });
             },
         });
-        stub('../src/runtime/failure-taxonomy', {
+        stub('../node_modules/@animastor/orchestration/src/runtime/failure-taxonomy', {
             classifyFailure: () => ({ type: 'unknown' }),
         });
         stub('../src/storage/postgres/repositories/scene-assets-repo', {
@@ -566,7 +566,7 @@ describe('audio-orch invariant (R6)', () => {
             query: async () => ({ rows: [] }),
         });
 
-        const orchestrator = require('../src/orchestration/orchestrator');
+        const orchestrator = require('../node_modules/@animastor/orchestration/src/orchestration/orchestrator');
         const result = await orchestrator.completeStage(
             redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'build-1', 'dispatch-reject'
         );

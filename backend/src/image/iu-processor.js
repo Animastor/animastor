@@ -52,7 +52,7 @@ async function checkInFlightMarker(redis, inFlightKey, bookId, chapterId, sceneI
     try {
         // Lazy require: dispatch-engine лениво требует orchestration,
         // избегаем циклического require на верхнем уровне модуля.
-        const dispatchEngine = require('../runtime/dispatch-engine');
+        const dispatchEngine = require('@animastor/orchestration').runtime.dispatch;
         const metadata = await dispatchEngine.getDispatchMetadata(redis, bookId, chapterId, sceneId, 'image');
         activeDispatchId = metadata?.dispatch_id || null;
     } catch (e) {
@@ -69,7 +69,7 @@ async function checkInFlightMarker(redis, inFlightKey, bookId, chapterId, sceneI
     // новым dispatch'ем — чужой маркер удалять нельзя.
     let cas = { deleted: false, reason: 'missing' };
     try {
-        const dispatchEngine = require('../runtime/dispatch-engine');
+        const dispatchEngine = require('@animastor/orchestration').runtime.dispatch;
         cas = await dispatchEngine.compareAndDeleteMarker(redis, inFlightKey, owner);
     } catch (e) {
         helpers.warn(`[IU-IN-FLIGHT-STALE] Failed to clear stale marker ${inFlightKey}: ${e.message}`);
@@ -81,7 +81,7 @@ async function checkInFlightMarker(redis, inFlightKey, bookId, chapterId, sceneI
     }
     if (cas.deleted) {
         try {
-            const runtimeMetrics = require('../runtime/runtime-metrics');
+            const runtimeMetrics = require('@animastor/orchestration').runtime.metrics;
             await runtimeMetrics.incrementCounter(redis, 'iuInFlightStaleCleared');
         } catch (_) {}
         helpers.log(`[IU-IN-FLIGHT-STALE] Cleared stale marker ${inFlightKey} (owner=${owner}, active_dispatch=${activeDispatchId || 'none'})`);
@@ -265,7 +265,7 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
         // маркеры НЕотправленных jobs при cancellation/failure, а следующий
         // dispatch отличает stale-маркер мёртвого dispatch от живого.
         await redis.set(inFlightKey, dispatchId || 'unknown', 'EX', IU_IN_FLIGHT_TTL_S);
-        const dispatchEngine = require('../runtime/dispatch-engine');
+        const dispatchEngine = require('@animastor/orchestration').runtime.dispatch;
         await dispatchEngine.registerInFlightMarker(redis, dispatchId, inFlightKey);
     } catch (e) {
         helpers.warn(`[IU-IN-FLIGHT] Failed to set marker for ${imageIUId}: ${e.message}`);
@@ -287,7 +287,7 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
         dispatchId
     });
     try {
-        const dispatchEngine = require('../runtime/dispatch-engine');
+        const dispatchEngine = require('@animastor/orchestration').runtime.dispatch;
         // Маркер снимается с dispatch-индекса в обоих случаях:
         //  - sent:true  → job реально выполняется, маркер больше не входит в
         //                 abort-scope dispatch'а (его очистит completion

@@ -33,7 +33,7 @@
 // Lazy call-time resolver — the canonical dispatch cancellation channel
 // (`require.resolve('../src/runtime/dispatch-engine')` — the module every
 // pre-O-9 hub-cleanup harness stubs, incl. the gpu-hub-cleanup suite).
-const dispatchEngine = () => require('../runtime/dispatch-engine');
+const dispatchEngine = () => require('@animastor/orchestration').runtime.dispatch;
 
 function clearHubDispatches(dispatchIds, options) {
     return dispatchEngine().clearHubDispatches(dispatchIds, options);

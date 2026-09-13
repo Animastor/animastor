@@ -38,11 +38,22 @@ const {
     readSource,
     requireSpecifiers,
     rel,
+    ORCH_PKG_RUNTIME_DIR,
+    ORCH_PKG_ORCH_DIR,
+    ORCH_PKG_REL,
+    ORCH_PKG_RUNTIME_REL,
+    tierFiles,
 } = require('./helpers');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
-const RUNTIME_DIR = path.join(BACKEND_SRC, 'runtime');
-const ORCH_DIR = path.join(BACKEND_SRC, 'orchestration');
+// §32.30: the tier contour moved to the package — tier scans resolve at its
+// CURRENT physical location (host-stays keep using backend/src/runtime).
+const RUNTIME_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? ORCH_PKG_RUNTIME_DIR
+    : path.join(BACKEND_SRC, 'runtime');
+const ORCH_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? ORCH_PKG_ORCH_DIR
+    : path.join(BACKEND_SRC, 'orchestration');
 const GENERATION_PKG_SRC = path.join(REPO_ROOT, 'packages', 'animastor-generation', 'src');
 
 function allTierFiles() {
@@ -144,34 +155,50 @@ describe('§32 runtime/orchestration extraction reconnaissance guards', () => {
         expect(offenders, 'Generation → orchestration/runtime must not exist (G7-B/G7-C parity)').to.deep.equal([]);
     });
 
-    it('O-G8: both tiers are still physically inside backend/src (no extraction has happened)', () => {
-        expect(fs.existsSync(RUNTIME_DIR), 'runtime/** still in backend').to.equal(true);
-        expect(fs.existsSync(ORCH_DIR), 'orchestration/** still in backend').to.equal(true);
-        expect(fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration')),
-            'packages/animastor-orchestration must not exist until O-8 (recon says READY FOR SEAM WORK, not extraction)')
+    it('O-G8: the extracted tiers live in packages/animastor-orchestration and are gone from backend/src (§32.30 physical move landed)', () => {
+        // §32.30: this guard inverts its pre-move form. The physical move has
+        // happened — pin the POST-move layout instead of the pre-move one.
+        const pkgDir = path.join(REPO_ROOT, 'packages', 'animastor-orchestration');
+        expect(fs.existsSync(pkgDir), 'the orchestration package must exist (§32.30)')
+            .to.equal(true);
+        expect(fs.existsSync(path.join(pkgDir, 'src', 'runtime', 'dispatch-engine.js')),
+            'runtime/** moved into the package')
+            .to.equal(true);
+        expect(fs.existsSync(path.join(pkgDir, 'src', 'orchestration', 'scene-orchestrator.js')),
+            'orchestration/** moved into the package')
+            .to.equal(true);
+        expect(fs.existsSync(path.join(BACKEND_SRC, 'orchestration')),
+            'backend/src/orchestration must be GONE (no shims left behind)')
             .to.equal(false);
+        // host-stays must remain host-side (§32.29 frozen list)
+        for (const stay of ['gpu-dispatcher.js', 'runtime-loop.js', 'index.js', 'orchestration-seams.js', 'job-schema.js']) {
+            expect(fs.existsSync(path.join(BACKEND_SRC, 'runtime', stay)),
+                `host-stay runtime/${stay} must remain in backend/src`)
+                .to.equal(true);
+        }
     });
 
     it('O-G9: hidden env access — runtime/** has ZERO process.env reads; orchestration OUTPUT_DIR sites pinned', () => {
+        const codeOf = (src) => src.split('\n')
+            .map((line) => line.replace(/(^|\s)\/\/.*$/, '').replace(/^\s*\*.*$/, ''))
+            .join('\n');
         const runtimeOffenders = [];
         for (const file of listSourceFiles(RUNTIME_DIR)) {
-            if (/process\.env/.test(readSource(file))) runtimeOffenders.push(rel(file));
+            if (/process\.env/.test(codeOf(readSource(file)))) runtimeOffenders.push(rel(file));
         }
         expect(runtimeOffenders, 'runtime env must come only from config/runtime-config (O-P5)').to.deep.equal([]);
 
-        // Measured baseline (§32.2): 3 OUTPUT_DIR sites in orchestration.
-        // These are the sanctioned leak inventory — they must not GROW and are
-        // expected to shrink to 0 at step O-5 (update this pin then).
+        // §32.30 update: the OUTPUT_DIR reads were CLOSED at the physical
+        // move (artifact root now arrives through the host-bindings seam).
+        // The measured baseline shrank to ZERO code sites — this pin holds
+        // the closure: any process.env read returning to the moved tiers is
+        // a regression.
         const orchSites = [];
-        for (const file of listSourceFiles(ORCH_DIR)) {
-            const src = readSource(file);
-            const count = (src.match(/process\.env/g) || []).length;
+        for (const file of [...listSourceFiles(ORCH_DIR), ...listSourceFiles(RUNTIME_DIR)]) {
+            const count = (codeOf(readSource(file)).match(/process\.env/g) || []).length;
             if (count > 0) orchSites.push(`${rel(file)} x${count}`);
         }
-        expect(orchSites).to.deep.equal([
-            'backend/src/orchestration/scene-callbacks.js x2',
-            'backend/src/orchestration/scene-restoration.js x1',
-        ]);
+        expect(orchSites, 'OUTPUT_DIR closure must hold — no process.env in the moved tiers').to.deep.equal([]);
     });
 
     it('O-G10: cycle safety — no dynamic require may re-introduce runtime→orchestration; the O-1 shim stays deleted', () => {

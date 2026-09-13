@@ -46,7 +46,9 @@
 // longer writes scope-less heartbeats, and this module refuses to count
 // them as defense-in-depth.
 
-const config = require('../config/runtime-config');
+const { lazyHostBinding } = require('../host/host-bindings');
+// §32.30: former host requires resolve lazily through the host-bindings seam.
+const config = lazyHostBinding('config');
 
 const logPrefix = '[WORKER]';
 

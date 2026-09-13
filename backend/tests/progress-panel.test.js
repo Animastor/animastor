@@ -1,7 +1,7 @@
 const { expect } = require('chai');
 const { createMockRedis } = require('./mocks/redis-mock');
 const sceneState = require('../src/state/scene-state');
-const activeScenes = require('../src/runtime/active-scenes-index');
+const activeScenes = require('../node_modules/@animastor/orchestration/src/runtime/active-scenes-index');
 const generationProgress = require('../src/services/generation-progress');
 
 function createResponse() {

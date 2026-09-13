@@ -5,15 +5,17 @@
 // Implements leases for determinism, quotas for backpressure.
 // Supports renewable leases and drift detection.
 
-const state = require('../state');
+const { lazyHostBinding } = require('../host/host-bindings');
+// §32.30: former host requires resolve lazily through the host-bindings seam.
+const state = lazyHostBinding('state');
 // S-5: the event journal is an append-only observability sink (zero requires,
 // no orchestration policy) — the ONLY runtime→Generation dependency allowed
 // without a seam (s5-runtime-orchestration-cycle.test.js S5-A).
-const journal = require('../state/event-journal');
+const journal = lazyHostBinding('journal');
 // S-5: orchestration-owned behavior (stage executor, FSM-safe rollbacks)
 // reaches runtime ONLY through the composition-root-injected seam registry.
 // No orchestration module is imported from this file (S-5).
-const orchestrationSeams = require('./orchestration-seams');
+const orchestrationSeams = lazyHostBinding('seams');
 const leaseManager = require('./lease-manager');
 const counterReconciliation = require('./counter-reconciliation');
 const runtimeMetrics = require('./runtime-metrics');
@@ -55,7 +57,7 @@ function error(msg) {
 // second source of truth: property access resolves through the registry on
 // every read, so registry/config changes are reflected immediately.
 const mediaRegistry = require('@animastor/generation').mediaRegistry;
-const runtimeConfig = require('../config/runtime-config');
+const runtimeConfig = lazyHostBinding('config');
 
 // S-2: resolve all registered stages dynamically
 function _allStages() { return mediaRegistry.listMediaTypes(); }
@@ -109,7 +111,13 @@ const ACTIVE_STAGE_PREFIX = 'animastor:runtime:active';
 // 6929ba5: stale маркеры сорванного dispatch блокировали следующий dispatch
 // → no_jobs_sent → ghost GENERATING).
 const IU_IN_FLIGHT_INDEX_PREFIX = 'animastor:iu-in-flight-index';
-const IU_IN_FLIGHT_MARKER_TTL_S = runtimeConfig.TIMEOUTS.IU_IN_FLIGHT_TTL_S;
+// §32.30: module-level config read deferred — the config module arrives
+// through the host-bindings seam and is resolved on first use.
+let IU_IN_FLIGHT_MARKER_TTL_S_ = null;
+function IU_IN_FLIGHT_MARKER_TTL_S() {
+    if (IU_IN_FLIGHT_MARKER_TTL_S_ === null) IU_IN_FLIGHT_MARKER_TTL_S_ = runtimeConfig.TIMEOUTS.IU_IN_FLIGHT_TTL_S;
+    return IU_IN_FLIGHT_MARKER_TTL_S_;
+}
 
 const SCHEDULER_TICK_LOCK = 'animastor:runtime:scheduler-lock';
 const SCHEDULER_TICK_LOCK_TTL = 30; // 30 seconds
@@ -323,7 +331,7 @@ async function registerInFlightMarker(redis, dispatchId, markerKey) {
     if (!dispatchId || typeof dispatchId !== 'string') return;
     const indexKey = getInFlightIndexKey(dispatchId);
     await redis.sadd(indexKey, markerKey);
-    await redis.expire(indexKey, IU_IN_FLIGHT_MARKER_TTL_S);
+    await redis.expire(indexKey, IU_IN_FLIGHT_MARKER_TTL_S());
 }
 
 /**
@@ -491,7 +499,7 @@ async function getDispatchEvidence(redis, bookId, chapterId, sceneId, stage) {
  * @returns {Promise<{repaired: Array<{chapterId, sceneId, stage, path}>}>}
  */
 async function repairOrphanGeneratingStates(redis, bookId, opts = {}) {
-    const stateModule = require('../state');
+    const stateModule = lazyHostBinding('state');
     // S-5: FSM-safe rollback via the injected orchestration seam
     const rollbackStageToPending = orchestrationSeams.getOrchestrationSeam('rollbackStageToPending');
     const reason = opts.reason || 'orphan_generating_repair';
@@ -1704,7 +1712,7 @@ module.exports = {
     releaseDispatchInFlightMarkers,
     compareAndDeleteMarker,
     IU_IN_FLIGHT_INDEX_PREFIX,
-    IU_IN_FLIGHT_MARKER_TTL_S,
+    get IU_IN_FLIGHT_MARKER_TTL_S() { return IU_IN_FLIGHT_MARKER_TTL_S(); },
 
     // Orphan GENERATING detection & repair (audit d9d67a3)
     getDispatchEvidence,

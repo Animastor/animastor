@@ -36,16 +36,29 @@
 const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
+const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
+
 const {
     BACKEND_SRC,
     listSourceFiles,
     readSource,
     requireSpecifiers,
     rel,
+    ORCH_PKG_RUNTIME_DIR,
+    ORCH_PKG_ORCH_DIR,
+    ORCH_PKG_REL,
+    ORCH_PKG_RUNTIME_REL,
+    tierFiles,
 } = require('./helpers');
 
-const RUNTIME_DIR = path.join(BACKEND_SRC, 'runtime');
-const ORCH_DIR = path.join(BACKEND_SRC, 'orchestration');
+// §32.30: the tier contour moved to the package — tier scans resolve at its
+// CURRENT physical location (host-stays keep using backend/src/runtime).
+const RUNTIME_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? ORCH_PKG_RUNTIME_DIR
+    : path.join(BACKEND_SRC, 'runtime');
+const ORCH_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? ORCH_PKG_ORCH_DIR
+    : path.join(BACKEND_SRC, 'orchestration');
 const SERVICES_DIR = path.join(BACKEND_SRC, 'services');
 const PORT_FILE = path.join(RUNTIME_DIR, 'scene-data-port.js');
 const ADAPTER_FILE = path.join(BACKEND_SRC, 'storage', 'scene-data-adapter.js');
@@ -135,7 +148,7 @@ describe('§32.14 O-3 guards: scene content arrives only via the SceneDataPort',
         );
         const usedOps = new Set();
         for (const file of allTierFiles()) {
-            if (rel(file) === 'backend/src/runtime/scene-data-port.js') continue;
+            if (rel(file) === 'packages/animastor-orchestration/src/runtime/scene-data-port.js') continue;
             const src = codeOnly(readSource(file));
             // Consumers bind the resolver under either local name:
             // sceneData(...) (scene-callbacks, scene-window,

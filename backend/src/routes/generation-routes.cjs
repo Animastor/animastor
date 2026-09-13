@@ -151,12 +151,12 @@ module.exports = function(app, redis, deps) {
                         await redis.set(config.BOOK_SCENE_NEXT(bookId), recovered.length);
                         if (recovered.length < scenes.length) {
                             log(`Sliding window to process remaining ${scenes.length - recovered.length} scenes`);
-                            const windowModule = require('../runtime/scene-window');
+                            const windowModule = require('@animastor/orchestration').runtime.sceneWindow;
                             await windowModule.slideWindow(redis, bookId, existingBook, buildId);
                         }
                     } else {
                         log(`No files on disk — starting pipeline for ${scenes.length} scenes`);
-                        const windowModule = require('../runtime/scene-window');
+                        const windowModule = require('@animastor/orchestration').runtime.sceneWindow;
                         const started = await windowModule.initSceneWindow(redis, scenes, existingBook, buildId, bookId);
                         log(`Window init: ${started}/${scenes.length} scenes started`);
                         const newIds = await getAllChunks(bookId);
@@ -202,12 +202,12 @@ module.exports = function(app, redis, deps) {
                     await redis.set(config.BOOK_SCENE_NEXT(bookId), recovered.length);
                     if (recovered.length < scenes.length) {
                         log(`Sliding window to process remaining ${scenes.length - recovered.length} scenes`);
-                        const windowModule = require('../runtime/scene-window');
+                        const windowModule = require('@animastor/orchestration').runtime.sceneWindow;
                         await windowModule.slideWindow(redis, bookId, loadedBook, buildId);
                     }
                 } else {
                     log(`No files on disk — starting pipeline for ${scenes.length} scenes`);
-                    const windowModule = require('../runtime/scene-window');
+                    const windowModule = require('@animastor/orchestration').runtime.sceneWindow;
                     const started = await windowModule.initSceneWindow(redis, scenes, loadedBook, buildId, bookId);
                     log(`Window init: ${started}/${scenes.length} scenes started`);
                     const newIds = await getAllChunks(bookId);
@@ -219,7 +219,7 @@ module.exports = function(app, redis, deps) {
                 await redis.set(config.BOOK_SCENE_NEXT(bookId), ids.length);
                 if (ids.length < scenes.length) {
                     log(`Sliding window to process remaining ${scenes.length - ids.length} scenes`);
-                    const windowModule = require('../runtime/scene-window');
+                    const windowModule = require('@animastor/orchestration').runtime.sceneWindow;
                     await windowModule.slideWindow(redis, bookId, loadedBook, buildId);
                 }
             }
@@ -247,7 +247,7 @@ module.exports = function(app, redis, deps) {
     // classifies heartbeats by the hub-authored scope fields).
     app.get('/api/v1/worker/status', async (req, res) => {
         try {
-            const workerHealth = require('../runtime/worker-health');
+            const workerHealth = require('@animastor/orchestration').runtime.workerHealth;
             const status = await workerHealth.getStatus(redis);
             res.json({ workers: status, heartbeat_ttl_sec: config.WORKER_HEARTBEAT_TTL });
         } catch (err) {
@@ -257,7 +257,7 @@ module.exports = function(app, redis, deps) {
 
     app.get('/api/v1/worker/counts', async (req, res) => {
         try {
-            const workerHealth = require('../runtime/worker-health');
+            const workerHealth = require('@animastor/orchestration').runtime.workerHealth;
 
             // VISIBILITY: availability = liveness ∧ scope. The global fields
             // carry the SYSTEM/shared pool ONLY; the caller's OWN private
@@ -452,7 +452,7 @@ module.exports = function(app, redis, deps) {
             }
             await persistTaskClaim(parsed.bookId, parsed.chapterId, parsed.sceneId, stage, worker_id || null, wsCheck.workspaceId);
 
-            const dispatchEngine = require('../runtime/dispatch-engine');
+            const dispatchEngine = require('@animastor/orchestration').runtime.dispatch;
             const identity = await dispatchEngine.verifyDispatchIdentity(
                 redis,
                 parsed.bookId,
@@ -550,7 +550,7 @@ module.exports = function(app, redis, deps) {
             }
             await persistTaskClaim(bookId, chapterId, sceneId, stage, worker_id || null, wsCheck.workspaceId);
 
-            const dispatchEngine = require('../runtime/dispatch-engine');
+            const dispatchEngine = require('@animastor/orchestration').runtime.dispatch;
             const identity = await dispatchEngine.verifyDispatchIdentity(
                 redis,
                 bookId,

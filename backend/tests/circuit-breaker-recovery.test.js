@@ -1,5 +1,5 @@
 const { expect } = require('chai');
-const cb = require('../src/runtime/circuit-breaker');
+const cb = require('../node_modules/@animastor/orchestration/src/runtime/circuit-breaker');
 const { createMockRedis } = require('./mocks/redis-mock');
 
 describe('Circuit breaker automatic recovery (tryRecover wiring)', () => {
@@ -177,7 +177,7 @@ describe('Circuit breaker automatic recovery (tryRecover wiring)', () => {
         });
 
         it('dispatchStage aborted by retry-budget releases the test permit (incident path)', async () => {
-            const dispatchEngine = require('../src/runtime/dispatch-engine');
+            const dispatchEngine = require('../node_modules/@animastor/orchestration/src/runtime/dispatch-engine');
             const B = 'b-incident', C = 'ch', S = 'sc';
 
             await reachHalfOpen();

@@ -14,11 +14,27 @@
 // directly as deps.orchestrator.markDirtyScene() without the .orchestrator
 // indirection. When names overlap (completeStage, failStage), the orchestrator
 // facade version wins (it's the newer canonical implementation).
+//
+// §32.30: the FSM-writer re-exports in orchestrator.js are LAZY getters
+// (they resolve the stateOps host binding on access). A literal object
+// spread would fire them at require time — before the composition root
+// binds host modules. Enumerate + defineProperties keeps every accessor
+// lazy while preserving the exact surface and the facade-wins precedence.
 const sceneOrchestrator = require('./scene-orchestrator');
 const orchestratorFacade = require('./orchestrator');
 
-module.exports = {
-    ...sceneOrchestrator,
-    ...orchestratorFacade,
-    orchestrator: orchestratorFacade,
-};
+const FACADE_KEYS = [
+    ...new Set([...Object.keys(sceneOrchestrator), ...Object.keys(orchestratorFacade)]),
+];
+
+const LAZY_FACADE_PROPS = Object.fromEntries(FACADE_KEYS.map((key) => [key, {
+    enumerable: true,
+    get() {
+        return key in orchestratorFacade ? orchestratorFacade[key] : sceneOrchestrator[key];
+    },
+}]));
+
+module.exports = Object.defineProperties(
+    { orchestrator: orchestratorFacade },
+    LAZY_FACADE_PROPS,
+);

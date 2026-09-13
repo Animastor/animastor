@@ -18,6 +18,8 @@ const { expect } = require('chai');
 const path = require('path');
 const {
     BACKEND_SRC, listSourceFiles, readSource, rel, requireSpecifiers,
+    ORCH_PKG_RUNTIME_DIR,
+    ORCH_PKG_ORCH_DIR,
 } = require('./helpers');
 
 // S-7: the media registry + default registrations are package-owned.
@@ -295,7 +297,8 @@ describe('architecture: Generation media registry (S-2)', () => {
             // runtime-metrics quotas {3,2,1}. Guard against reintroduction.
             const files = [
                 path.join(BACKEND_SRC, 'metrics', 'prometheus.js'),
-                path.join(BACKEND_SRC, 'runtime', 'runtime-metrics.js'),
+                // §32.30: runtime-metrics moved into the orchestration package
+                path.join(ORCH_PKG_RUNTIME_DIR, 'runtime-metrics.js'),
             ];
             for (const file of files) {
                 const code = codeOf(readSource(file));
@@ -418,7 +421,8 @@ describe('architecture: Generation media registry (S-2)', () => {
         });
 
         it('scene-orchestrator refuses to dispatch an unregistered stage', async () => {
-            const sceneOrch = require(path.join(BACKEND_SRC, 'orchestration', 'scene-orchestrator'));
+            // §32.30: scene-orchestrator moved into the orchestration package
+            const sceneOrch = require(path.join(ORCH_PKG_ORCH_DIR, 'scene-orchestrator'));
             let err;
             try {
                 await sceneOrch.dispatchSceneStage({}, 'b1', 'c1', 's1', 'hologram', {});

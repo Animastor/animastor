@@ -217,7 +217,7 @@ function loadSceneWindowWithStubs({ redis, startedStateByScene = new Set(), addA
     };
     require.cache[statePath] = { exports: stateStub, id: statePath, loaded: true, filename: statePath, children: [], paths: [] };
 
-    const activeScenesPath = path.join(cwd, 'src/runtime/active-scenes-index.js');
+    const activeScenesPath = path.join(cwd, 'node_modules/@animastor/orchestration/src/runtime/active-scenes-index.js');
     const activeScenesStub = {
         addActiveScene: async (_redis, bookId, chapterId, sceneId) => ({
             added: addActiveSceneResult,
@@ -239,7 +239,7 @@ function loadSceneWindowWithStubs({ redis, startedStateByScene = new Set(), addA
 
     // Mock orchestrator — active stub that writes asset-state via the already-stubbed state module.
     // This must come AFTER the state mock is set up, because we reference it here.
-    const orchPath = path.join(cwd, 'src/orchestration/orchestrator.js');
+    const orchPath = path.join(cwd, 'node_modules/@animastor/orchestration/src/orchestration/orchestrator.js');
     delete require.cache[orchPath]; // clear pollution from other test files
     const orchStub = {
         setScenePending: async (r, bookId, chapterId, sceneId, asset, buildId) => {
@@ -287,7 +287,7 @@ function loadSceneWindowWithStubs({ redis, startedStateByScene = new Set(), addA
         redis.store.set(`animastor:scene-state:book-1:${key.chapter_id}:${key.scene_id}`, makeStartedState());
     }
 
-    const sceneWindowPath = path.join(cwd, 'src/runtime/scene-window.js');
+    const sceneWindowPath = path.join(cwd, 'node_modules/@animastor/orchestration/src/runtime/scene-window.js');
     delete require.cache[sceneWindowPath];
     return require(sceneWindowPath);
 }
@@ -305,10 +305,10 @@ describe('scope-aware slideWindow', () => {
         for (const p of [
             path.join(cwd, 'src/book/index.js'),
             path.join(cwd, 'src/state/index.js'),
-            path.join(cwd, 'src/runtime/active-scenes-index.js'),
+            path.join(cwd, 'node_modules/@animastor/orchestration/src/runtime/active-scenes-index.js'),
             path.join(cwd, 'src/audio/audio-service.js'),
-            path.join(cwd, 'src/runtime/scene-window.js'),
-            path.join(cwd, 'src/orchestration/orchestrator.js'),
+            path.join(cwd, 'node_modules/@animastor/orchestration/src/runtime/scene-window.js'),
+            path.join(cwd, 'node_modules/@animastor/orchestration/src/orchestration/orchestrator.js'),
         ]) {
             delete require.cache[p];
         }
@@ -476,9 +476,9 @@ describe('cancel-generation flag', () => {
         for (const p of [
             path.join(cwd, 'src/book/index.js'),
             path.join(cwd, 'src/state/index.js'),
-            path.join(cwd, 'src/runtime/active-scenes-index.js'),
+            path.join(cwd, 'node_modules/@animastor/orchestration/src/runtime/active-scenes-index.js'),
             path.join(cwd, 'src/audio/audio-service.js'),
-            path.join(cwd, 'src/runtime/scene-window.js'),
+            path.join(cwd, 'node_modules/@animastor/orchestration/src/runtime/scene-window.js'),
         ]) {
             delete require.cache[p];
         }
@@ -569,9 +569,9 @@ describe('scene cache-skip (content on disk)', () => {
         for (const p of [
             path.join(cwd, 'src/book/index.js'),
             path.join(cwd, 'src/state/index.js'),
-            path.join(cwd, 'src/runtime/active-scenes-index.js'),
+            path.join(cwd, 'node_modules/@animastor/orchestration/src/runtime/active-scenes-index.js'),
             path.join(cwd, 'src/audio/audio-service.js'),
-            path.join(cwd, 'src/runtime/scene-window.js'),
+            path.join(cwd, 'node_modules/@animastor/orchestration/src/runtime/scene-window.js'),
             path.join(cwd, 'src/config/runtime-config.js'),
         ]) {
             delete require.cache[p];

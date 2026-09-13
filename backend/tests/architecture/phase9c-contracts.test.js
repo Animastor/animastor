@@ -211,10 +211,18 @@ describe('Phase 9C: dependency direction into contracts', () => {
     });
 
     it('no backend/src file bypasses the facade via the bare npm specifier (facade is the single choke point)', () => {
+        // §32.30: the runtime-result contract leaf moved into
+        // @animastor/contracts; backend/src/contracts/runtime-result.js is
+        // now a second sanctioned facade (re-export only, same pattern as
+        // runtime/job-schema.js).
+        const sanctionedFacades = [
+            'runtime/job-schema.js',
+            'contracts/runtime-result.js',
+        ];
         const offenders = [];
         for (const file of listSourceFiles(BACKEND_SRC)) {
             for (const spec of requireSpecifiers(readSource(file))) {
-                if (spec.includes('@animastor/contracts') && !rel(file).endsWith('runtime/job-schema.js')) {
+                if (spec.includes('@animastor/contracts') && !sanctionedFacades.some((f) => rel(file).endsWith(f))) {
                     offenders.push(`${rel(file)}: ${spec}`);
                 }
             }

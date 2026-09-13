@@ -37,7 +37,7 @@ require('@animastor/generation').ports.bookData.setBookData({
 // persistence-adapter) owns every repository, SQL string and table and is
 // bound here, before any runtime module loads.
 // Docs: docs/architecture/generation-module-extraction-reconnaissance.md §32.9
-require('./runtime/persistence-port').setPersistencePort(
+require('@animastor/orchestration').ports.persistence.setPersistencePort(
     require('./storage/runtime-persistence-adapter')
 );
 // O-3: SCENE DATA PORT — runtime/orchestration scene-content composition.
@@ -46,7 +46,7 @@ require('./runtime/persistence-port').setPersistencePort(
 // (backend/src/book → @animastor/vbook-runtime) and is bound here, before any
 // runtime module loads.
 // Docs: docs/architecture/generation-module-extraction-reconnaissance.md §32.11
-require('./runtime/scene-data-port').setSceneDataPort(
+require('@animastor/orchestration').ports.sceneData.setSceneDataPort(
     require('./storage/scene-data-adapter')
 );
 // O-4: PLACEHOLDER AUDIO PORT — runtime/orchestration placeholder-audio
@@ -56,7 +56,7 @@ require('./runtime/scene-data-port').setSceneDataPort(
 // service (services/placeholder-audio) and is bound here, before any
 // runtime/orchestration module loads.
 // Docs: docs/architecture/generation-module-extraction-reconnaissance.md §32.7 (O-P7)
-require('./runtime/placeholder-audio-port').setPlaceholderAudioPort(
+require('@animastor/orchestration').ports.placeholderAudio.setPlaceholderAudioPort(
     require('./storage/placeholder-audio-adapter')
 );
 // O-5: PROGRESS EVENTS PORT — runtime/orchestration progress-observer
@@ -67,7 +67,7 @@ require('./runtime/placeholder-audio-port').setPlaceholderAudioPort(
 // progress) and is bound here, before any runtime/orchestration module
 // loads.
 // Docs: docs/architecture/generation-module-extraction-reconnaissance.md §32.7 (O-P4)
-require('./runtime/progress-events-port').setProgressEventsPort(
+require('@animastor/orchestration').ports.progressEvents.setProgressEventsPort(
     require('./storage/progress-events-adapter')
 );
 // O-7: AUDIO FSM PORT — runtime/orchestration audio-FSM composition. The
@@ -79,7 +79,7 @@ require('./runtime/progress-events-port').setProgressEventsPort(
 // before any runtime/orchestration module loads. The video FSM stays a
 // separate seam (O-8 below — never merged into this port).
 // Docs: docs/architecture/generation-module-extraction-reconnaissance.md §32.24
-require('./runtime/audio-fsm-port').setAudioFsmPort(
+require('@animastor/orchestration').ports.audioFsm.setAudioFsmPort(
     require('./storage/audio-fsm-adapter')
 );
 // O-8: VIDEO FSM PORT — runtime/orchestration video-FSM composition. The
@@ -91,7 +91,7 @@ require('./runtime/audio-fsm-port').setAudioFsmPort(
 // pipeline, hub-dedup cleanup) and is bound here, before any
 // runtime/orchestration module loads. Never merged with the audio FSM.
 // Docs: docs/architecture/generation-module-extraction-reconnaissance.md §32.25
-require('./runtime/video-fsm-port').setVideoFsmPort(
+require('@animastor/orchestration').ports.videoFsm.setVideoFsmPort(
     require('./storage/video-fsm-adapter')
 );
 // O-9: HUB CANCEL PORT — runtime/orchestration hub-queue-cleanup
@@ -104,7 +104,7 @@ require('./runtime/video-fsm-port').setVideoFsmPort(
 // cancellation itself stays a direct dispatch-engine call (Redis domain,
 // not hub HTTP).
 // Docs: docs/architecture/generation-module-extraction-reconnaissance.md §32.26
-require('./runtime/hub-cancel-port').setHubCancelPort(
+require('@animastor/orchestration').ports.hubCancel.setHubCancelPort(
     require('./storage/hub-cancel-adapter')
 );
 // O-10: LAYER CONFIG PORT — runtime/orchestration per-book layer-config
@@ -117,7 +117,7 @@ require('./runtime/hub-cancel-port').setHubCancelPort(
 // same key (bespoke fallback semantics) and the routes/agent host
 // consumers keep calling the service directly — host-side by design.
 // Docs: docs/architecture/generation-module-extraction-reconnaissance.md §32.27
-require('./runtime/layer-config-port').setLayerConfigPort(
+require('@animastor/orchestration').ports.layerConfig.setLayerConfigPort(
     require('./storage/layer-config-adapter')
 );
 
@@ -135,7 +135,41 @@ const video = require('./video');
 // eager startup entry; the registry also self-bootstraps lazily on first access).
 require('@animastor/generation').bootstrap();
 const { resumeIncompleteSessions } = require('./startup-resume');
-const orchestrator = require('./orchestration');
+// §32.30: orchestration contour physically extracted to @animastor/orchestration
+// (packages/animastor-orchestration). The host consumes ONLY the package root.
+const orchestrationPkg = require('@animastor/orchestration');
+const orchestrator = orchestrationPkg;
+// §32.30: HOST BINDINGS — the package reaches the host-owned modules it is
+// allowed to touch (§32.29 host-stays: config/state/media/gen-scope/seams
+// registry/artifact root/PW-2 resolver) ONLY through this composition-root
+// seam. Bound here, before any orchestration function runs.
+orchestrationPkg.bindHostModules({
+    // RESOLVER semantics (§32.30): every binding is a zero-arg function
+    // resolved at CALL time — the same deferral the former lazy requires had,
+    // so require.cache stubs stay visible to the package.
+    config: () => require('./config/runtime-config'),
+    state: () => require('./state'),
+    stateOps: () => require('./state/scene-state-ops'),
+    journal: () => require('./state/event-journal'),
+    media: () => ({
+        audio: require('./audio'),
+        image: require('./image'),
+        video: require('./video'),
+    }),
+    genScope: () => require('./services/gen-scope'),
+    seams: () => require('./runtime/orchestration-seams'),
+    // §32.29 step 4a — OUTPUT_DIR injection: the package no longer reads
+    // process.env; the host passes the artifact root (same value/fallback).
+    artifactRoot: () => config.OUTPUT_DIR || '/data/output',
+    // §32.29 step 4b — PW-2 workspace routing: scene-window's former lazy
+    // gpu-dispatcher call, injected as an optional-load resolver — the host
+    // wrapper preserves the exact optional-load/system-pool-fallback semantics.
+    resolveWorkspaceForBook: () => async (bookId) => {
+        try {
+            return await require('./runtime/gpu-dispatcher').resolveWorkspaceForBook(bookId);
+        } catch (_) { return null; } /* system pool availability only */
+    },
+});
 // S-5: runtime receives orchestration behavior (stage executor + FSM facade
 // writers) ONLY through the seam registry — dependency direction is outward
 // through the composition root, never a runtime→orchestration import.
@@ -151,8 +185,15 @@ require('./runtime/orchestration-seams').registerOrchestrationSeams({
 const wfManager = require('./services/workflow-manager');
 const journal = require('./state/event-journal');
 const storage = require('./storage');
-const runtime = require('./runtime');
-const activeScenes = require('./runtime/active-scenes-index');
+// §32.30: the runtime barrel re-points into the package (host-stay members
+// loop/gpuDispatcher stay on ./runtime/* paths and are exposed below).
+const orchestrationRuntime = orchestrationPkg.runtime;
+const runtime = {
+    ...orchestrationRuntime,
+    loop: require('./runtime/runtime-loop'),
+    gpuDispatcher: require('./runtime/gpu-dispatcher'),
+};
+const activeScenes = orchestrationRuntime.activeScenes;
 const book = require('./book');
 const config = require('./config/runtime-config');
 
@@ -225,8 +266,8 @@ const genScope = storage.genScope;
 // seam; orchestration consumes them via this injected callback. Runtime never
 // imports orchestration for result reporting.
 // Docs: docs/architecture/PHASE_5_ORCHESTRATION_RUNTIME.md
-const runtimeResultEmitter = require('./runtime/runtime-result-emitter');
-const { createRuntimeResultConsumer } = require('./orchestration/runtime-result-consumer');
+const runtimeResultEmitter = orchestrationRuntime.runtimeResultEmitter;
+const { createRuntimeResultConsumer } = orchestrationPkg;
 runtimeResultEmitter.setConsumer(createRuntimeResultConsumer());
 
 
@@ -416,7 +457,7 @@ const routeDeps = {
         book, redis, config, storage,
         getAllChunks, getChunk, cleanBookRedisKeys,
         log: utils.log,
-        setCancelFlag: (redisClient, id) => require('./runtime/scene-window').setCancelFlag(redisClient, id),
+        setCancelFlag: (redisClient, id) => require('@animastor/orchestration').runtime.sceneWindow.setCancelFlag(redisClient, id),
         // Agent-session cancel port: the cascade delivers the cancellation
         // signal through the same frozen VBook session port as cancel-worker
         // (single owner of the agent_sessions cancel SQL).
@@ -771,7 +812,7 @@ async function startServer() {
         // T6: Единый reconciliation-цикл (заменяет startup-recovery, audio-recovery, cleanup-service)
         setImmediate(async () => {
             try {
-                const reconcileEngine = require('./runtime/reconciliation-engine');
+                const reconcileEngine = require('@animastor/orchestration').runtime.reconciliation;
                 // O-2: the raw postgres handle left reconcileDeps — C2/C4 read
                 // PG through the PersistencePort (wired above).
                 const reconcileDeps = {
@@ -837,7 +878,7 @@ async function startServer() {
                     warn(`[STARTUP] Failed to clear stale leases: ${leaseErr.message}`);
                 }
 
-                const reconcileCounters = require('./runtime/counter-reconciliation');
+                const reconcileCounters = require('@animastor/orchestration').runtime.counterReconciliation;
                 await reconcileCounters.reconcileCounters(redis);
                 log('[STARTUP] Counter reconciliation complete');
 
@@ -887,7 +928,7 @@ async function startServer() {
             // (instead of waiting for TTL). Stale callbacks after this will be
             // rejected by verifyDispatchIdentity.
             try {
-                const dispatchEngine = require('./runtime/dispatch-engine');
+                const dispatchEngine = require('@animastor/orchestration').runtime.dispatch;
                 const leases = await dispatchEngine.getActiveLeases(redis);
                 for (const l of leases) {
                     if (!l.scene) continue;

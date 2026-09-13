@@ -37,7 +37,7 @@ const CROSS_OWNER_WRITE_BASELINE = [
         note: 'purge route deletes a hub-authored heartbeat key (TTL makes it benign)',
     },
     {
-        file: 'backend/src/runtime/worker-health.js',
+        file: 'packages/animastor-orchestration/src/runtime/worker-health.js',
         family: 'animastor:worker:heartbeat:*',
         op: 'set',
         note: 'reportHeartbeat() legacy write (kept for completeness; hub is the production author)',
@@ -46,7 +46,7 @@ const CROSS_OWNER_WRITE_BASELINE = [
     // animastor:job:*): the backend must be able to free its own jobs from the
     // hub enqueue-dedup so a re-dispatch is not rejected as duplicate.
     { file: 'backend/src/image/iu-processor.js', family: 'animastor:job:*', op: 'del', note: 'clear hub dedup before IU re-send' },
-    { file: 'backend/src/orchestration/scene-restoration.js', family: 'animastor:job:*', op: 'del', note: 'clear hub dedup before restore re-send' },
+    { file: 'packages/animastor-orchestration/src/orchestration/scene-restoration.js', family: 'animastor:job:*', op: 'del', note: 'clear hub dedup before restore re-send' },
     { file: 'backend/src/services/audio-orchestrator.js', family: 'animastor:job:*', op: 'del', note: 'clear hub dedup before audio re-dispatch' },
     { file: 'backend/src/services/video-orchestrator.js', family: 'animastor:job:*', op: 'del (via scan+del)', note: 'clear hub dedup before video re-dispatch' },
     { file: 'backend/src/services/entity-cleanup.cjs', family: 'animastor:job:*', op: 'del', note: 'purge removes dedup remnants' },

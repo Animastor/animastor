@@ -136,7 +136,7 @@ module.exports = function(redis) {
     }
 
     async function detectAvailableMode(redis, bookId) {
-        const workerHealth = require('../runtime/worker-health');
+        const workerHealth = require('@animastor/orchestration').runtime.workerHealth;
         // VISIBILITY: availability is workspace-aware. The book's own workspace
         // private workers count for it; a FOREIGN workspace's private worker
         // must NOT make this book look servicable (ONLINE ≠ available to all).
@@ -404,8 +404,8 @@ module.exports = function(redis) {
 
             // ── Active scenes set (T8: через active-scenes-index API) ──
             try {
-                const runtimeScheduler = require('../runtime/runtime-scheduler');
-                const activeScenesIndex = require('../runtime/active-scenes-index');
+                const runtimeScheduler = require('@animastor/orchestration').runtime.scheduler;
+                const activeScenesIndex = require('@animastor/orchestration').runtime.activeScenes;
                 let removedActive = 0;
                 const allActive = await redis.smembers('animastor:active-scenes');
                 for (const sceneKey of allActive) {

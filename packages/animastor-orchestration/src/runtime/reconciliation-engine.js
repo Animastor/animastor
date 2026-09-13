@@ -15,7 +15,9 @@ const fs = require('fs').promises;
 const syncFs = require('fs');
 const syncPath = require('path');
 
-const state = require('../state');
+const { lazyHostBinding } = require('../host/host-bindings');
+// §32.30: former host requires resolve lazily through the host-bindings seam.
+const state = lazyHostBinding('state');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
 const artifactNaming = require('@animastor/generation').artifactNaming;
 // S-2: registered stage list resolved from media registry
@@ -26,11 +28,11 @@ const mediaRegistry = require('@animastor/generation').mediaRegistry;
 // audio-path composition are consumed as persistence OPERATIONS through the
 // same port (their implementations stay host-side).
 const persist = require('./persistence-port').persist;
-const config = require('../config/runtime-config');
+const config = lazyHostBinding('config');
 // S-5: the event journal is an append-only observability sink (zero requires,
 // no orchestration policy) — the ONLY runtime→Generation dependency allowed
 // without a seam (s5-runtime-orchestration-cycle.test.js S5-A).
-const journal = require('../state/event-journal');
+const journal = lazyHostBinding('journal');
 const runtimeScheduler = require('./runtime-scheduler');
 const counterReconciliation = require('./counter-reconciliation');
 const dispatchEngine = require('./dispatch-engine');
@@ -38,7 +40,7 @@ const leaseManager = require('./lease-manager');
 // S-5: orchestration-owned behavior (FSM-safe facade writers, rollbacks)
 // reaches runtime ONLY through the composition-root-injected seam registry.
 // No orchestration module is imported from this file (S-5).
-const orchestrationSeams = require('./orchestration-seams');
+const orchestrationSeams = lazyHostBinding('seams');
 
 const logPrefix = '[RECONCILE]';
 
@@ -151,7 +153,7 @@ async function checkOrphanImageState(redis, bookId, chapterId, sceneId) {
     // Note: build_id is read from manifest, not from scene-state (which no longer exists after T8).
     // Orphan-check uses the canonical book build identity (audit d9d67a3).
     const buildId = resolveBookBuildId(bookId);
-    const imageModule = require('../image');
+    const imageModule = lazyHostBinding('media.image');
     const imageInfo = imageModule.resolveCanonicalSceneImage(
         '/data/output',
         buildId,
@@ -457,7 +459,7 @@ async function checkStalledAudioScenes(redis, deps) {
                 log(`[STALLED-AUDIO] ${bookId}/${chapterId}/${sceneId} — ALL ${presentCount} chunks on disk, no last_chunk_at. Calling completeChunk to trigger merge.`);
                 try {
                     await audioOrch.completeChunk(redis, bookId, chapterId, sceneId, 'recovery', buildId, {
-                        audio: deps.audio || require('../audio'),
+                        audio: deps.audio || lazyHostBinding('media.audio'),
                         orchestrator: deps.orchestrator,
                         dispatchId: 'recovery-reconcile',
                     });
@@ -1868,7 +1870,7 @@ async function recoverResultKeys(redis, deps, scope) {
                 if (scope && !job_id.startsWith(scope)) continue;
 
                 // Parse job_id to get stage and scene info
-                const jobSchema = require('./job-schema');
+                const jobSchema = require('@animastor/contracts').jobProtocolV2;
                 const parsed = jobSchema.parseJobId(job_id);
                 if (parsed) {
                     const stageMap = { audio_chunk: 'audio', iu_image: 'image', scene_image: 'image', scene_video: 'video' };
@@ -1924,7 +1926,7 @@ async function recoverAudioOrchStates(redis, deps) {
                 // Если все чанки на месте — доигрываем merge, не FAIL'им.
                 // Иначе FAILED → re-dispatch.
                 const expectedChunkCount = parseInt(orchState.expected_count || '0', 10);
-                const chunks = require('../audio/chunks');
+                const chunks = lazyHostBinding('media.audio.chunks');
                 const presentChunks = chunks.findExistingSceneChunks(bookId, chapterId, sceneId, buildId, expectedChunkCount > 0 ? expectedChunkCount : null);
                 if (presentChunks.length > 0) {
                     const actualCount = expectedChunkCount > 0 ? expectedChunkCount : presentChunks.length;
@@ -1936,7 +1938,7 @@ async function recoverAudioOrchStates(redis, deps) {
                     }
                     try {
                         await audioOrch.completeChunk(redis, bookId, chapterId, sceneId, 'recovery', buildId, {
-                            audio: deps.audio || require('../audio'),
+                            audio: deps.audio || lazyHostBinding('media.audio'),
                             orchestrator: deps.orchestrator,
                             dispatchId: 'startup-recovery',
                         });
@@ -2170,7 +2172,9 @@ async function rebuildWorkList(redis) {
     // самодостаточной (не зависит от того, с какими зависимостями был
     // загружен reconciliation-engine) и чтобы unit-тесты не могли подменить
     // storage/state через require.cache.
-    const state = require('../state');
+
+// §32.30: former host requires resolve lazily through the host-bindings seam.
+const state = lazyHostBinding('state');
     // O-3: scene content via the SceneDataPort (host adapter:
     // storage/scene-data-adapter) — the Book Model facade require left this
     // function. loadBook/collectScenes consumed as `sceneData(op)(...)`.

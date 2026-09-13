@@ -47,7 +47,7 @@ const MEDIA_EXECUTORS = [
     'backend/src/image/image-service.js',
     'backend/src/video/video-service.js',
     'backend/src/workflows/video/video-workflows.js',
-    'backend/src/orchestration/scene-orchestrator.js',
+    'packages/animastor-orchestration/src/orchestration/scene-orchestrator.js',
 ];
 
 // S-7: the provider seam is package-owned (packages/animastor-generation).
@@ -99,7 +99,7 @@ describe('architecture: S-3 provider seam (executor bans)', () => {
         for (const file of [
             'backend/src/audio/generation.js',
             'backend/src/image/iu-processor.js',
-            'backend/src/orchestration/scene-orchestrator.js',
+            'packages/animastor-orchestration/src/orchestration/scene-orchestrator.js',
         ]) {
             // S-7: executors consume the provider through the package root
             expect(readSrc(file), `${file} must require the provider seam`)
@@ -114,10 +114,10 @@ describe('architecture: S-3 provider seam (executor bans)', () => {
         // bare literal usage in workflow patching context.
         const scanTargets = [
             ...MEDIA_EXECUTORS,
-            'backend/src/orchestration/orchestrator.js',
-            'backend/src/orchestration/scene-callbacks.js',
-            'backend/src/runtime/runtime-scheduler.js',
-            'backend/src/runtime/dispatch-engine.js',
+            'packages/animastor-orchestration/src/orchestration/orchestrator.js',
+            'packages/animastor-orchestration/src/orchestration/scene-callbacks.js',
+            'packages/animastor-orchestration/src/runtime/runtime-scheduler.js',
+            'packages/animastor-orchestration/src/runtime/dispatch-engine.js',
             'backend/src/runtime/gpu-dispatcher.js',
         ];
         const NODE_ID_RE = /\[\s*['"](108|71|73|74|80|81|82|83|202|203)['"]\s*\]/;
@@ -202,7 +202,7 @@ describe('architecture: S-3 provider seam (single dispatch path)', () => {
     const DISPATCH_SEAM_BASELINE = [
         'backend/src/backend.cjs',
         'backend/src/services/provider-gateway.js',
-        'backend/src/runtime/scene-window.js',
+        'packages/animastor-orchestration/src/runtime/scene-window.js',
         'backend/src/helpers/redis-helpers.cjs',
     ];
 
@@ -222,7 +222,7 @@ describe('architecture: S-3 provider seam (single dispatch path)', () => {
     });
 
     it('S3-F: the routing/availability consumers never dispatch jobs', () => {
-        for (const file of ['backend/src/runtime/scene-window.js', 'backend/src/helpers/redis-helpers.cjs']) {
+        for (const file of ['packages/animastor-orchestration/src/runtime/scene-window.js', 'backend/src/helpers/redis-helpers.cjs']) {
             const src = readSrc(file);
             expect(src, `${file}: availability reads only, no send/sendUnified calls`)
                 .to.not.match(/\.send\(|sendUnified\(/);

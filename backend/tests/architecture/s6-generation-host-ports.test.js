@@ -47,12 +47,20 @@
 const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
-const { BACKEND_SRC, listSourceFiles, readSource, requireSpecifiers, rel } = require('./helpers');
+const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
+
+const { BACKEND_SRC, listSourceFiles, readSource, requireSpecifiers, rel, ORCH_PKG_RUNTIME_DIR, ORCH_PKG_ORCH_DIR, tierFiles } = require('./helpers');
 
 const PKG_SRC = path.join(BACKEND_SRC, '..', '..', 'packages', 'animastor-generation', 'src');
 const GENERATION_DIR = PKG_SRC; // the Generation Core contour (S-7: the package)
-const RUNTIME_DIR = path.join(BACKEND_SRC, 'runtime');
-const ORCH_DIR = path.join(BACKEND_SRC, 'orchestration');
+// §32.30: the tier contour moved to the package — tier scans resolve at its
+// CURRENT physical location (host-stays keep using backend/src/runtime).
+const RUNTIME_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? ORCH_PKG_RUNTIME_DIR
+    : path.join(BACKEND_SRC, 'runtime');
+const ORCH_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? ORCH_PKG_ORCH_DIR
+    : path.join(BACKEND_SRC, 'orchestration');
 
 // The frozen S-6 port set — the surface cannot grow silently (S6-E).
 // Paths are relative to the package src/ (S-7: package-owned ports).

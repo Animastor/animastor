@@ -41,16 +41,29 @@
 const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
+const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
+
 const {
     BACKEND_SRC,
     listSourceFiles,
     readSource,
     requireSpecifiers,
     rel,
+    ORCH_PKG_RUNTIME_DIR,
+    ORCH_PKG_ORCH_DIR,
+    ORCH_PKG_REL,
+    ORCH_PKG_RUNTIME_REL,
+    tierFiles,
 } = require('./helpers');
 
-const RUNTIME_DIR = path.join(BACKEND_SRC, 'runtime');
-const ORCH_DIR = path.join(BACKEND_SRC, 'orchestration');
+// §32.30: the tier contour moved to the package — tier scans resolve at its
+// CURRENT physical location (host-stays keep using backend/src/runtime).
+const RUNTIME_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? ORCH_PKG_RUNTIME_DIR
+    : path.join(BACKEND_SRC, 'runtime');
+const ORCH_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? ORCH_PKG_ORCH_DIR
+    : path.join(BACKEND_SRC, 'orchestration');
 const PORT_FILE = path.join(RUNTIME_DIR, 'placeholder-audio-port.js');
 const ADAPTER_FILE = path.join(BACKEND_SRC, 'storage', 'placeholder-audio-adapter.js');
 const SERVICE_FILE = path.join(BACKEND_SRC, 'services', 'placeholder-audio.js');
@@ -100,7 +113,7 @@ describe('§32.7 O-4 guards: placeholder audio arrives only via the PlaceholderA
     it('O4-G1: the two tiers require ZERO placeholder-audio service modules (static scan)', () => {
         const offenders = [];
         for (const file of allTierFiles()) {
-            if (rel(file) === 'backend/src/runtime/placeholder-audio-port.js') continue;
+            if (rel(file) === 'packages/animastor-orchestration/src/runtime/placeholder-audio-port.js') continue;
             for (const s of staticPlaceholderRequires(file)) {
                 offenders.push(`${rel(file)} -> ${s}`);
             }
@@ -128,7 +141,7 @@ describe('§32.7 O-4 guards: placeholder audio arrives only via the PlaceholderA
         );
         const usedOps = new Set();
         for (const file of allTierFiles()) {
-            if (rel(file) === 'backend/src/runtime/placeholder-audio-port.js') continue;
+            if (rel(file) === 'packages/animastor-orchestration/src/runtime/placeholder-audio-port.js') continue;
             const src = codeOnly(readSource(file));
             for (const m of src.match(/placeholderAudioOp\('([^']+)'\)/g) || []) {
                 usedOps.add(m.slice("placeholderAudioOp('".length, -2));
@@ -212,7 +225,7 @@ describe('§32.7 O-4 guards: placeholder audio arrives only via the PlaceholderA
         // service by any channel except the port.
         const offenders = [];
         for (const file of allTierFiles()) {
-            if (rel(file) === 'backend/src/runtime/placeholder-audio-port.js') continue;
+            if (rel(file) === 'packages/animastor-orchestration/src/runtime/placeholder-audio-port.js') continue;
             for (const d of dynamicPlaceholderRequires(file)) {
                 offenders.push(`${rel(file)} -> dynamic ${d}`);
             }

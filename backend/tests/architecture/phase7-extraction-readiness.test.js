@@ -383,13 +383,17 @@ describe('P7-T8: the Provider Gateway generation seam bypass set stays frozen', 
     //     adapter; comfyui-provider itself left the set — it consumes the
     //     Generation-owned port generation/ports/dispatch-transport.js)
     //   - services/provider-gateway.js — Phase 3 facade delegation
-    //   - runtime/scene-window.js / helpers/redis-helpers.cjs — routing/
-    //     availability reads (resolveWorkspaceForBook), not job dispatch
-    //     (documented residual — routing policy stays host-side, §24.6)
+    //   - helpers/redis-helpers.cjs — routing/availability reads
+    //     (resolveWorkspaceForBook), not job dispatch (documented residual
+    //     — routing policy stays host-side, §24.6)
+    // §32.30: scene-window moved into the orchestration package and its
+    // direct './gpu-dispatcher' edge was CLOSED by the composition-root
+    // injected resolver (the pre-approved §32.29 PW-2 exception) — the
+    // package-side edge now only exists behind that injection and is
+    // pinned by the post-move PM-G suite.
     const BYPASS_BASELINE = [
         'backend/src/backend.cjs: ./runtime/gpu-dispatcher',
         'backend/src/helpers/redis-helpers.cjs: ../runtime/gpu-dispatcher',
-        'backend/src/runtime/scene-window.js: ./gpu-dispatcher',
         'backend/src/services/provider-gateway.js: ../runtime/gpu-dispatcher',
     ];
 

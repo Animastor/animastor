@@ -1,43 +1,41 @@
-// =====================================================
-// §32.29 PHYSICAL MOVE GATE — closure guards for packages/animastor-orchestration
-// =====================================================
-// Read-only guards that make the physical move of runtime/orchestration into
-// packages/animastor-orchestration provably safe. They pin the two sets the
-// move is defined by:
+// ======================================================
+// §32.30 POST-MOVE BOUNDARY GUARDS — packages/animastor-orchestration
+// ======================================================
+// Adapted from the §32.29 pre-move physical-move-gate suite (that gate's
+// verdict was READY FOR PHYSICAL MOVE; the move has now LANDED). This suite
+// freezes the post-move reality (PM-G1..PM-G10):
 //
-//   MOVE_SET  — files that physically move into the package (§32.29 inventory;
-//               runtime/** minus the two pinned host transport/shell files,
-//               plus orchestration/** in full)
-//   HOST_STAYS — host-owned files the moved set is allowed to reach through
-//               exactly the frozen, measured edges (ports + adapters + the
-//               single seam channel + host-owned infra leaves)
+//   PM-G1  backend/src/orchestration is gone
+//   PM-G2  the moved runtime files are gone from backend/src/runtime
+//   PM-G3  the package root API is frozen (measured host consumption surface)
+//   PM-G4  no deep imports of @animastor/orchestration from backend/src
+//   PM-G5  no backend-relative requires inside the package
+//   PM-G6  no forbidden host dependencies from the package (storage/book/
+//          routes/services/PG/Redis/Express, no host transport internals)
+//   PM-G7  the host-stays remain host-side (incl. the S-5 seam registry and
+//          the pinned gpu-dispatcher transport)
+//   PM-G8  no reverse dependency / no new SCC spanning host and package
+//   PM-G9  composition-root wiring preserved (ports + host bindings + seams
+//          registered from backend.cjs; result consumer injected)
+//   PM-G10 the §32.29 pre-move contract still holds post-move: move-set
+//          closure at the package location (every require of every package
+//          file resolves in-package, to a builtin/external, or to the
+//          host-binding seam), zero Generation deep imports, no
+//          __dirname/require.cache in the package, no dynamic bypass
 //
-//   MG-A  move-set closure (static + lazy): every require of every moved file
-//         resolves inside the move set, to a declared external/builtin, or to
-//         the HOST_STAYS allowlist — no other host module is reachable, so
-//         after `git mv` the package graph still resolves.
-//   MG-B  no computed require may smuggle a host edge into the package
-//         (proximity scan over the move set; S5-A convention).
-//   MG-C  the pinned host stays are still host-side and still own their
-//         inbound edges: gpu-dispatcher (transport, PG repos) + runtime-loop
-//         (timer shell) stay; runtime/index stays with the documented lazy
-//         facade; orchestration-seams stays the single inbound channel.
-//   MG-D  zero deep imports into @animastor/generation from the move set
-//         (root specifier only — the post-move package guard inherits this).
-//
-// The exhaustive inventory tables, the public-API freeze and the step plan
-// live in §32.29 of the recon doc. This suite must stay green BEFORE and
-// AFTER the move (after the move the paths change — re-point the two dir
-// constants in the same commit; the assertions themselves are path-shape
-// only and need no rewrites).
-//
-// Docs: docs/architecture/generation-module-extraction-reconnaissance.md §32.29
+// Docs: docs/architecture/generation-module-extraction-reconnaissance.md
+//       §32.29 (pre-move gate) · §32.30 (physical extraction landed)
 
 const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
 const {
     BACKEND_SRC,
+    REPO_ROOT,
+    ORCH_PKG_DIR,
+    ORCH_PKG_SRC,
+    ORCH_PKG_RUNTIME_DIR,
+    ORCH_PKG_ORCH_DIR,
     listSourceFiles,
     readSource,
     requireSpecifiers,
@@ -45,262 +43,252 @@ const {
     rel,
 } = require('./helpers');
 
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 const RUNTIME_DIR = path.join(BACKEND_SRC, 'runtime');
-const ORCH_DIR = path.join(BACKEND_SRC, 'orchestration');
+const ORCH_HOST_DIR = path.join(BACKEND_SRC, 'orchestration');
+const PKG_ROOT_FILE = path.join(ORCH_PKG_SRC, 'index.js');
+const PKG_HOST_BINDINGS = path.join(ORCH_PKG_SRC, 'host', 'host-bindings.js');
 
-// ── The move set (measured §32.29; §32.13 tree minus the final corrections) ──
-// runtime/**: everything EXCEPT the seven classified files below.
-// orchestration/**: the whole directory (all 7 files).
-const RUNTIME_FILES_STAYING_HOSTSIDE = {
-    // pinned host transport: Job Protocol v2 send + PW-2 routing caches + the
-    // 3 PG routing repos (§32.19 pin). Host implements ports.dispatchTransport.
+// ── The moved set: 28 files (21 runtime + 7 orchestration), §32.29 §32.30 ──
+const MOVED_RUNTIME = [
+    'active-scenes-index.js', 'audio-fsm-port.js', 'circuit-breaker.js',
+    'counter-reconciliation.js', 'dispatch-engine.js', 'failure-taxonomy.js',
+    'hub-cancel-port.js', 'layer-config-port.js', 'lease-manager.js',
+    'persistence-port.js', 'placeholder-audio-port.js',
+    'progress-events-port.js', 'reconciliation-engine.js',
+    'retry-budget-manager.js', 'runtime-metrics.js',
+    'runtime-result-emitter.js', 'runtime-scheduler.js',
+    'scene-data-port.js', 'scene-window.js', 'video-fsm-port.js',
+    'worker-health.js',
+];
+const MOVED_ORCHESTRATION = [
+    'index.js', 'orchestrator.js', 'runtime-result-consumer.js',
+    'scene-callbacks.js', 'scene-orchestrator.js', 'scene-restoration.js',
+    'scene-utils.js',
+];
+
+// ── The seven classified host stays (§32.29) ──
+const HOST_STAYS_RUNTIME = {
     'gpu-dispatcher.js': 'pinned host transport (§32.19)',
-    // pinned host timer shell: the recursive setTimeout tick/reconcile loops
-    // (host-owned lifecycle per §32.13). Package-internal timers (lease-manager)
-    // move with their module.
     'runtime-loop.js': 'pinned host timer shell (§32.13)',
-    // host facade barrel over the runtime pipeline — its ONLY consumer is the
-    // composition root (backend.cjs); re-points to the package root at the move.
-    'index.js': 'host facade barrel (single consumer: backend.cjs)',
-    // the S-5 seam registry — the single inbound orchestration channel; stays
-    // host-side and binds the package's public API at the composition root.
+    'index.js': 'host facade barrel (composition root)',
     'orchestration-seams.js': 'S-5 seam registry (inbound channel)',
-    // Phase 9C contracts facade — the moved scene-orchestrator switches to
-    // '@animastor/contracts' directly at the move (§32.13 tree note).
     'job-schema.js': 'contracts facade (Phase 9C choke point)',
-    // dead code — NOT moved: deleted in the post-move cleanup commit (§32.13).
     'runtime-persistence.js': 'dead — deleted at cleanup (§32.13)',
     'retention-manager.js': 'orphaned — deleted at cleanup (§32.13)',
 };
+const ALIVE_HOST_STAYS = ['gpu-dispatcher.js', 'runtime-loop.js', 'index.js', 'orchestration-seams.js', 'job-schema.js'];
 
-function moveSetFiles() {
-    const runtime = listSourceFiles(RUNTIME_DIR)
-        .filter((f) => !RUNTIME_FILES_STAYING_HOSTSIDE[path.basename(f)]);
-    return [...runtime, ...listSourceFiles(ORCH_DIR)];
-}
+// ── Frozen package root API (§32.29 §32.30: the measured host surface) ──
+const ROOT_FACADE_EXPORTS = [
+    'ensureStageDispatchable', 'dispatchStage', 'restoreSceneChunkStatus',
+    'handleAudioCompleted', 'handleImageCompleted', 'handleVideoCompleted',
+    'completeStage', 'failStage', 'markDirty', 'markDirtyScene', 'planScene',
+    'beginStage', 'completeStageWithoutVideo', 'completeStageWithoutImage',
+    'setScenePending', 'setSceneGenerating', 'setSceneAllReady',
+    'setScenePlaceholder', 'rollbackStageToPending', 'reconcile', 'resetScenes',
+    'orchestrator', 'createRuntimeResultConsumer',
+];
+const ROOT_PORT_EXPORTS = ['persistence', 'sceneData', 'placeholderAudio', 'progressEvents', 'audioFsm', 'videoFsm', 'hubCancel', 'layerConfig'];
+const ROOT_BINDING_EXPORTS = ['bindHostModules', 'clearHostBindings', 'hostBinding', 'isHostBindingWired', 'lazyHostBinding', 'requiredHostBindings', 'BINDING_NAMES'];
+const ROOT_RUNTIME_NS = ['scheduler', 'activeScenes', 'reconciliation', 'dispatch', 'leaseManager', 'counterReconciliation', 'metrics', 'workerHealth', 'sceneWindow', 'failureTaxonomy', 'runtimeResultEmitter'];
 
-// ── Host stays the moved set may reach, per file kind (measured edges) ──
-// Keyed by target path relative to backend/src. Values: reason (docs anchor).
-const HOST_STAYS_TARGETS = new Set([
-    // O-2..O-10 port CONTRACTS (tier-owned today, move into the package as
-    // ports/ — they are part of the move set at the step AFTER the move; at
-    // the move they are still resolved inside the move set itself, listed
-    // here only for the interim shim phase — see §32.29 step 5).
+describe('§32.30 post-move boundary guards — packages/animastor-orchestration', () => {
 
-    // host adapter implementations (the ^ side of every port)
-    'storage/index.js',
-    'storage/runtime-persistence-adapter.js',
-    'storage/scene-data-adapter.js',
-    'storage/placeholder-audio-adapter.js',
-    'storage/progress-events-adapter.js',
-    'storage/audio-fsm-adapter.js',
-    'storage/video-fsm-adapter.js',
-    'storage/hub-cancel-adapter.js',
-    'storage/layer-config-adapter.js',
+    it('PM-G1: backend/src/orchestration is gone (the package is the single home)', () => {
+        expect(fs.existsSync(ORCH_HOST_DIR), 'backend/src/orchestration must not exist after the move').to.equal(false);
+    });
 
-    // config slice (§32.23 rejection STANDS: no port; host keeps runtime-config)
-    'config/runtime-config.js',
-    'config/generation-config-adapter.js',
+    it('PM-G2: the moved runtime files are gone from backend/src/runtime; exactly the classified stays remain', () => {
+        for (const name of MOVED_RUNTIME) {
+            expect(fs.existsSync(path.join(RUNTIME_DIR, name)), `${name} must live in the package now`).to.equal(false);
+        }
+        for (const name of MOVED_RUNTIME) {
+            expect(fs.existsSync(path.join(ORCH_PKG_RUNTIME_DIR, name)), `${name} must exist in the package`).to.equal(true);
+        }
+        for (const name of MOVED_ORCHESTRATION) {
+            expect(fs.existsSync(path.join(ORCH_PKG_ORCH_DIR, name)), `${name} must exist in the package`).to.equal(true);
+        }
+        // the classified stays are exactly the runtime files left behind
+        const remaining = listSourceFiles(RUNTIME_DIR).map((f) => path.basename(f)).sort();
+        expect(remaining, 'backend/src/runtime keeps exactly the classified host stays').to.deep.equal([...ALIVE_HOST_STAYS].sort());
+    });
 
-    // host state adapters over Generation primitives (Redis domain sinks)
-    'state/index.js',
-    'state/scene-state.js',
-    'state/asset-state-store.js',
-    'state/scene-state-ops.js',
-    'state/event-journal.js',
+    it('PM-G3: the package root API is frozen to the measured host consumption surface', () => {
+        // The root re-exports the moved facade verbatim (lazy accessors), so the
+        // FACADE module is the surface carrier; the root adds the eager parts.
+        const facadeSrc = readSource(path.join(ORCH_PKG_ORCH_DIR, 'index.js'));
+        expect(facadeSrc).to.include("require('./scene-orchestrator')");
+        expect(facadeSrc).to.include("require('./orchestrator')");
+        const rootSrc = readSource(PKG_ROOT_FILE);
+        for (const name of ROOT_PORT_EXPORTS) {
+            expect(rootSrc, `root ports must include '${name}'`).to.include(`${name}:`);
+        }
+        for (const name of ROOT_BINDING_EXPORTS) {
+            expect(rootSrc, `root must expose binding surface '${name}'`).to.include(name);
+        }
+        for (const name of ROOT_RUNTIME_NS) {
+            expect(rootSrc, `root runtime namespace must include '${name}'`).to.include(name);
+        }
+        // behavioral freeze: the ACTUAL export object carries the full frozen
+        // facade surface (evaluated, not source-grepped)
+        delete require.cache[require.resolve(PKG_ROOT_FILE)];
+        const pkg = require(PKG_ROOT_FILE);
+        for (const name of ROOT_FACADE_EXPORTS) {
+            expect(pkg[name], `root export '${name}' must exist`).to.not.equal(undefined);
+        }
+        // exports map: root-only — no subpath exports (deep-import blocking)
+        const pkgJson = JSON.parse(fs.readFileSync(path.join(ORCH_PKG_DIR, 'package.json'), 'utf8'));
+        expect(pkgJson.name).to.equal('@animastor/orchestration');
+        expect(Object.keys(pkgJson.exports || {}), 'exports must be root-only (deep-import blocking)').to.deep.equal(['.']);
+    });
 
-    // S-5 seam registry: the single inbound orchestration channel
-    'runtime/orchestration-seams.js',
-
-    // contracts leaf (Phase 5; moves to @animastor/contracts later)
-    'contracts/runtime-result.js',
-
-    // host-owned media facades (O-P6 business-logic rejection stands)
-    'audio/index.js',
-    'audio/audio-service.js',
-    'audio/segments.js',
-    'audio/chunks.js',
-    'image/index.js',
-    'image/image-service.js',
-    'image/iu-processor.js',
-    'video/index.js',
-    'video/video-service.js',
-
-    // host services reached by the move set (measured single edges, §32.28
-    // inventory): scene-window → gen-scope (getScope/scopeBounds, 1 consumer)
-    'services/gen-scope.js',
-
-    // runtime/job-schema facade (Phase 9C): consumed by scene-orchestrator; at
-    // the move that require switches to '@animastor/contracts' directly
-    'runtime/job-schema.js',
-
-    // DECLARED PRE-MOVE EXCEPTION (dead code, §32.13/§32.14 plan): the moved
-    // scheduler DROPS the dead initializeRuntime export (and with it this
-    // require) AT the move; the file itself is deleted in the post-move
-    // cleanup commit. MG-G below freezes the dead surface at exactly one
-    // require site + one dead export so it cannot grow before the move.
-    'runtime/runtime-persistence.js',
-
-    // DECLARED PRE-MOVE EXCEPTION (the §32.29 corrective step): scene-window
-    // resolves the book's workspace via the PW-2 routing cache
-    // (gpuDispatcher.resolveWorkspaceForBook, 1 lazy call site, optional-load
-    // try/catch degrading to system-pool availability). At the move this edge
-    // becomes a composition-root-injected resolver — see §32.29 step 4b. The
-    // dedicated MG-F assertion below freezes it at exactly one call site.
-    'runtime/gpu-dispatcher.js',
-]);
-
-describe('§32.29 physical move gate — package closure guards', () => {
-
-    it('MG-A: move-set closure — every static+lazy require of a moved file stays in the set, a builtin/external, or the host-stays allowlist', () => {
-        const moveSet = new Set(moveSetFiles());
+    it('PM-G4: backend/src never deep-imports the package (root specifier only)', () => {
         const offenders = [];
-        for (const file of moveSet) {
-            const src = readSource(file);
-            for (const spec of requireSpecifiers(src)) {
-                if (!spec.startsWith('.')) continue; // builtin / external package — fine
-                const target = resolveSpecifier(file, spec);
-                if (!target) continue; // unresolved relative — not a graph edge
-                if (moveSet.has(target)) continue;
-                const targetRel = path.relative(BACKEND_SRC, target).split(path.sep).join('/');
-                if (HOST_STAYS_TARGETS.has(targetRel)) continue;
-                offenders.push(`${rel(file)} -> ${targetRel}`);
+        for (const file of listSourceFiles(BACKEND_SRC)) {
+            for (const spec of requireSpecifiers(readSource(file))) {
+                if (spec.startsWith('@animastor/orchestration/')) {
+                    offenders.push(`${rel(file)} -> ${spec}`);
+                }
             }
         }
-        expect(offenders, 'a moved file reaches a host module outside the frozen §32.29 allowlist').to.deep.equal([]);
+        expect(offenders, 'deep package imports from host source are forbidden').to.deep.equal([]);
     });
 
-    it('MG-A2: exactly the seven classified runtime files stay host-side at the move', () => {
-        const runtimeFiles = listSourceFiles(RUNTIME_DIR).map((f) => path.basename(f));
-        const classified = Object.keys(RUNTIME_FILES_STAYING_HOSTSIDE);
-        // every classified file exists
-        for (const name of classified) {
-            expect(fs.existsSync(path.join(RUNTIME_DIR, name)), `${name} must exist to be classified`)
-                .to.equal(true);
-        }
-        // every unclassified runtime file is in the move set — a NEW runtime
-        // file must enter the §32.29 inventory, not silently join the package
-        const moveRuntime = runtimeFiles.filter((f) => !RUNTIME_FILES_STAYING_HOSTSIDE[f]);
-        expect(moveRuntime.length, 'runtime files classified as moving').to.be.greaterThan(0);
-        // the two pinned files are exactly the documented ones (sanity)
-        expect(RUNTIME_FILES_STAYING_HOSTSIDE['gpu-dispatcher.js']).to.equal('pinned host transport (§32.19)');
-        expect(RUNTIME_FILES_STAYING_HOSTSIDE['runtime-loop.js']).to.equal('pinned host timer shell (§32.13)');
-    });
-
-    it('MG-B: no computed/dynamic require in the move set may reach outside the package (proximity scan)', () => {
+    it('PM-G5: no backend-relative requires inside the package', () => {
         const offenders = [];
-        for (const file of moveSetFiles()) {
+        for (const file of [...listSourceFiles(ORCH_PKG_SRC)]) {
+            for (const spec of requireSpecifiers(readSource(file))) {
+                if (spec.includes('backend/src') || spec.startsWith('../../backend')) {
+                    offenders.push(`${rel(file)} -> ${spec}`);
+                }
+            }
+        }
+        expect(offenders, 'the package must never require backend/src').to.deep.equal([]);
+    });
+
+    it('PM-G6: no forbidden host dependencies from the package (storage/book/routes/services/PG/Redis/Express)', () => {
+        const offenders = [];
+        const FORBIDDEN_HOST_SPEC = /(^|[\\/])(storage|book|routes|services|config|state|media|helpers|middleware)([\\/]|['"])/;
+        for (const file of listSourceFiles(ORCH_PKG_SRC)) {
+            const src = readSource(file);
+            for (const spec of requireSpecifiers(src)) {
+                if (FORBIDDEN_HOST_SPEC.test(spec)) offenders.push(`${rel(file)} -> ${spec}`);
+                if (spec === 'pg' || spec.startsWith('pg/') || spec === 'ioredis' || spec === 'express') offenders.push(`${rel(file)} -> ${spec}`);
+            }
+            // host transports are reached ONLY through the injected resolver
+            if (src.includes("require('./gpu-dispatcher')") || src.includes("require('../runtime/gpu-dispatcher')")) {
+                offenders.push(`${rel(file)} -> gpu-dispatcher require (must go through host-bindings)`);
+            }
+        }
+        expect(offenders, 'forbidden host dependency from the orchestration package').to.deep.equal([]);
+    });
+
+    it('PM-G7: the host-stays remain host-side and own their inbound edges', () => {
+        for (const name of ALIVE_HOST_STAYS) {
+            expect(fs.existsSync(path.join(RUNTIME_DIR, name)), `${name} must stay host-side`).to.equal(true);
+        }
+        // the pinned transport keeps its PG routing repos (§32.19 pin)
+        const gpu = readSource(path.join(RUNTIME_DIR, 'gpu-dispatcher.js'));
+        expect(gpu).to.include("require('../storage/postgres/repositories/book-repo')");
+        expect(gpu).to.include("require('../storage/postgres/repositories/worker-repo')");
+        // the S-5 registry stays hollow and is the single inbound channel
+        const seams = readSource(path.join(RUNTIME_DIR, 'orchestration-seams.js'));
+        expect(requireSpecifiers(seams), 'the seams registry stays a zero-require hollow registry').to.deep.equal([]);
+        // the package never requires the seams registry by path — only via the binding
+        // (mentioning the name in the binding DOC comment is fine; a require is not)
+        for (const file of listSourceFiles(ORCH_PKG_SRC)) {
+            expect(requireSpecifiers(readSource(file)).filter((s) => s.includes('orchestration-seams')),
+                `${rel(file)} must not require orchestration-seams by path`).to.deep.equal([]);
+        }
+    });
+
+    it('PM-G8: no reverse dependency and no new SCC spanning host and package', () => {
+        // package → package root specifier (self-import) is forbidden
+        for (const file of listSourceFiles(ORCH_PKG_SRC)) {
+            for (const spec of requireSpecifiers(readSource(file))) {
+                expect(spec.startsWith('@animastor/orchestration'), `${rel(file)} must not self-import the package specifier`).to.equal(false);
+            }
+        }
+        // host → package edges are one-directional: the package contains zero
+        // requires of any backend/src module (PM-G5 covers paths; this covers
+        // the builtins check: nothing in the package resolves into backend/src)
+        const resolveIntoBackend = [];
+        for (const file of listSourceFiles(ORCH_PKG_SRC)) {
+            for (const spec of requireSpecifiers(readSource(file))) {
+                if (!spec.startsWith('.')) continue;
+                const target = resolveSpecifier(file, spec);
+                if (target && target.startsWith(BACKEND_SRC)) resolveIntoBackend.push(`${rel(file)} -> ${rel(target)}`);
+            }
+        }
+        expect(resolveIntoBackend, 'a package file resolves into backend/src — reverse dependency').to.deep.equal([]);
+    });
+
+    it('PM-G9: composition-root wiring preserved (ports + host bindings + seams + result consumer)', () => {
+        const rootSrc = readSource(path.join(BACKEND_SRC, 'backend.cjs'));
+        expect(rootSrc).to.include("require('@animastor/orchestration')");
+        expect(rootSrc).to.include('bindHostModules({');
+        // all nine bindings wired by name
+        for (const name of ['config', 'state', 'stateOps', 'journal', 'media', 'genScope', 'seams', 'artifactRoot', 'resolveWorkspaceForBook']) {
+            expect(rootSrc, `backend.cjs must bind '${name}'`).to.include(`${name}:`);
+        }
+        // seams still registered from the composition root
+        expect(rootSrc).to.include('registerOrchestrationSeams({');
+        // result consumer still injected, never required by runtime modules
+        expect(rootSrc).to.include('createRuntimeResultConsumer(');
+        expect(rootSrc).to.include('setConsumer(');
+        // the eight ports still bound to the host adapters
+        for (const port of ROOT_PORT_EXPORTS) {
+            expect(rootSrc, `backend.cjs must bind the ${port} port`).to.match(new RegExp(`ports\\.${port}`));
+        }
+    });
+
+    it('PM-G10: the §32.29 move-set contract holds post-move — closure, Generation root-only, no hidden host access, no dynamic bypass', () => {
+        const pkgFiles = [...listSourceFiles(ORCH_PKG_RUNTIME_DIR), ...listSourceFiles(ORCH_PKG_ORCH_DIR), PKG_ROOT_FILE, PKG_HOST_BINDINGS];
+        // closure: every relative require of every package file resolves
+        // inside the package (host modules arrive via the host-bindings seam)
+        const outside = [];
+        for (const file of pkgFiles) {
+            for (const spec of requireSpecifiers(readSource(file))) {
+                if (!spec.startsWith('.')) continue;
+                const target = resolveSpecifier(file, spec);
+                if (!target) { outside.push(`${rel(file)} -> unresolved ${spec}`); continue; }
+                if (!target.startsWith(ORCH_PKG_DIR)) outside.push(`${rel(file)} -> ${rel(target)}`);
+            }
+        }
+        expect(outside, 'package closure broken — a relative require escapes the package').to.deep.equal([]);
+
+        // Generation root-only (§32.29 MG-D parity)
+        const deep = [];
+        for (const file of pkgFiles) {
+            for (const spec of requireSpecifiers(readSource(file))) {
+                if (spec.startsWith('@animastor/generation/')) deep.push(`${rel(file)} -> ${spec}`);
+            }
+        }
+        expect(deep, 'deep Generation import in the package').to.deep.equal([]);
+
+        // no __dirname / require.cache / process.env in the package source
+        const stripComments = (src) => src
+            .replace(/\/\*[\s\S]*?\*\//g, ' ')
+            .replace(/\/\/[^\n]*/g, ' ');
+        const hidden = [];
+        for (const file of pkgFiles) {
+            const code = stripComments(readSource(file));
+            if (code.includes('__dirname') || code.includes('require.cache') || code.includes('process.env')) hidden.push(rel(file));
+        }
+        expect(hidden, 'hidden host access (__dirname/require.cache/process.env) in the package').to.deep.equal([]);
+
+        // no computed require near host path text (dynamic bypass parity)
+        const bypass = [];
+        for (const file of pkgFiles) {
             const src = readSource(file);
             const dyn = src.match(/require\(\s*[A-Za-z_$][\w$.]*\s*\)/g) || [];
             for (const call of dyn) {
                 const idx = src.indexOf(call);
                 const near = src.slice(Math.max(0, idx - 400), idx);
-                if (/\.\.\/(storage|routes|services|book|config|audio|image|video|contracts)\//.test(near)
-                    || /backend\/src/.test(near)) {
-                    offenders.push(`${rel(file)}: dynamic require near a host path literal`);
-                }
+                if (/backend\/src|storage\/|routes\/|services\//.test(near)) bypass.push(rel(file));
             }
         }
-        expect(offenders, 'a dynamic require is assembled near host path text — potential boundary bypass').to.deep.equal([]);
-    });
-
-    it('MG-C: host composition edges stay host-owned (seam registry + result consumer injection + transport pin)', () => {
-        // the seam registry stays host-side and is the only orchestration-facing inbound channel
-        expect(fs.existsSync(path.join(BACKEND_SRC, 'runtime', 'orchestration-seams.js'))).to.equal(true);
-        // gpu-dispatcher stays host-side with its PG routing repos (§32.19 pin)
-        const gpu = readSource(path.join(RUNTIME_DIR, 'gpu-dispatcher.js'));
-        expect(gpu).to.include("require('../storage/postgres/repositories/book-repo')");
-        expect(gpu).to.include("require('../storage/postgres/repositories/worker-repo')");
-        // runtime-loop stays host-side (timer shell)
-        expect(fs.existsSync(path.join(RUNTIME_DIR, 'runtime-loop.js'))).to.equal(true);
-        // the result consumer stays injected — runtime never requires it
-        for (const file of listSourceFiles(RUNTIME_DIR)) {
-            expect(readSource(file), `${rel(file)} must not require the orchestration result consumer`).to.not.include("require('../orchestration/runtime-result-consumer')");
-        }
-    });
-
-    it('MG-F: the declared pre-move exception is frozen — scene-window reaches the PW-2 workspace routing at exactly one lazy call site', () => {
-        const src = readSource(path.join(RUNTIME_DIR, 'scene-window.js'));
-        const sites = src.split('\n').map((line, i) => ({ line, i }))
-            .filter(({ line }) => line.includes("require('./gpu-dispatcher')"));
-        expect(sites.length, 'scene-window → gpu-dispatcher require sites').to.equal(1);
-        // the only op consumed is resolveWorkspaceForBook, and the load stays
-        // optional (try/catch degradation to system-pool availability)
-        expect(src).to.include('resolveWorkspaceForBook');
-        expect(src.match(/resolveWorkspaceForBook/g).length).to.equal(1);
-        const requireLine = sites[0].i;
-        const window = src.split('\n').slice(Math.max(0, requireLine - 3), requireLine + 5).join('\n');
-        expect(window).to.include('try {');
-        // no OTHER move-set file may reach the pinned transport
-        const others = moveSetFiles()
-            .filter((f) => path.basename(f) !== 'scene-window.js')
-            .filter((f) => readSource(f).includes("require('./gpu-dispatcher'") || readSource(f).includes("require('../runtime/gpu-dispatcher')"));
-        expect(others.map(rel), 'only scene-window may touch the pinned transport pre-move').to.deep.equal([]);
-    });
-
-    it('MG-G: the dead runtime-persistence surface is frozen — exactly one require site, only feeding the dead initializeRuntime export', () => {
-        // §32.13: "runtime/runtime-persistence.js DELETE (dead)"; §32.13 tree:
-        // runtime-scheduler "initializeRuntime DROPPED". No production caller
-        // exists (backend.cjs uses reconcileCycle; the test suite references
-        // initializeRuntime only in a comment). Freeze: one require site, one
-        // consumer function, zero external callers — so the pre-move cleanup
-        // (drop the export at the move, delete the file at cleanup) stays a
-        // mechanical step and the dead surface cannot grow.
-        const schedulerPath = path.join(RUNTIME_DIR, 'runtime-scheduler.js');
-        const src = readSource(schedulerPath);
-        const requirers = moveSetFiles()
-            .filter((f) => readSource(f).includes("require('./runtime-persistence')") || readSource(f).includes("require('../runtime/runtime-persistence')"));
-        expect(requirers.map(rel), 'only the scheduler may require the dead runtime-persistence').to.deep.equal([rel(schedulerPath)]);
-        // its only use inside the scheduler is the dead initializeRuntime body
-        const uses = [...src.matchAll(/runtimePersistence\.(\w+)/g)].map((m) => m[1]);
-        expect(uses.length).to.be.greaterThan(0);
-        const initFn = src.match(/async function initializeRuntime[\s\S]*?\n}/);
-        expect(initFn, 'initializeRuntime must exist to be dropped').to.not.equal(null);
-        expect(initFn[0]).to.include('runtimePersistence.');
-        // and nothing anywhere in backend/src CALLS it
-        const callers = [];
-        for (const file of listSourceFiles(BACKEND_SRC)) {
-            const s = readSource(file);
-            if (rel(file) === rel(schedulerPath)) continue; // the export site
-            if (/\.initializeRuntime\s*\(/.test(s)) callers.push(rel(file));
-        }
-        expect(callers, 'dead initializeRuntime gained a caller — remove it from the move plan').to.deep.equal([]);
-    });
-
-    it('MG-D: zero deep imports into @animastor/generation from the move set (root specifier only — O-G6 parity for the future package)', () => {
-        const offenders = [];
-        for (const file of moveSetFiles()) {
-            for (const spec of requireSpecifiers(readSource(file))) {
-                if (spec.startsWith('@animastor/generation/') || spec.startsWith('@animastor/generation"')) {
-                    offenders.push(`${rel(file)} -> ${spec}`);
-                }
-            }
-        }
-        expect(offenders, 'deep Generation import found — post-move package must consume the root API only').to.deep.equal([]);
-    });
-
-    it('MG-E: fs usage in the moved set stays artifact-IO scoped (no new filesystem surfaces since the O-G9 pin)', () => {
-        // The package boundary plan allows fs ONLY for artifact path IO in
-        // orchestration (OUTPUT_DIR-scoped) and scene-window's disk status
-        // reads. Anything else (network fs, config files, __dirname-relative
-        // loads) would break under the package's new physical root.
-        // Comments are stripped first: a docs mention of require.cache must
-        // not trip the scan (measured: reconciliation-engine.js:2172).
-        const stripComments = (src) => src
-            .replace(/\/\*[\s\S]*?\*\//g, ' ')
-            .replace(/\/\/[^\n]*/g, ' ');
-        const offenders = [];
-        for (const file of listSourceFiles(ORCH_DIR)) {
-            const code = stripComments(readSource(file));
-            if (code.includes('__dirname') || code.includes('require.cache')) offenders.push(rel(file));
-        }
-        for (const file of listSourceFiles(RUNTIME_DIR)) {
-            if (RUNTIME_FILES_STAYING_HOSTSIDE[path.basename(file)]) continue; // host stays, may use host paths
-            const code = stripComments(readSource(file));
-            if (code.includes('__dirname') || code.includes('require.cache')) offenders.push(rel(file));
-        }
-        expect(offenders, '__dirname/require.cache in the move set would break at the new physical root').to.deep.equal([]);
+        expect(bypass, 'dynamic require near host path text — boundary bypass').to.deep.equal([]);
     });
 
 });

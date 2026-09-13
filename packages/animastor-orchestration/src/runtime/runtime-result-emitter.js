@@ -20,7 +20,8 @@
 
 'use strict';
 
-const { createRuntimeResult, statusFromOutcome } = require('../contracts/runtime-result');
+// §32.30: the Runtime Result Contract leaf moved to @animastor/contracts.
+const { createRuntimeResult, statusFromOutcome } = require('@animastor/contracts').runtimeResult;
 
 const logPrefix = '[RUNTIME-RESULT]';
 

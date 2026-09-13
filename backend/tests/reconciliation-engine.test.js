@@ -6,7 +6,7 @@ const { expect } = require('chai');
 const path = require('path');
 const { createMockRedis } = require('./mocks/redis-mock');
 
-const RECONCILE_PATH = path.resolve(__dirname, '../src/runtime/reconciliation-engine');
+const RECONCILE_PATH = path.resolve(__dirname, '../node_modules/@animastor/orchestration/src/runtime/reconciliation-engine');
 
 // ======================================================
 // HELPERS
@@ -41,7 +41,7 @@ const STATE_PATH = path.join(CWD, 'src/state/index.js');
 const STORAGE_PATH = path.join(CWD, 'src/storage/index.js');
 const IMAGE_PATH = path.join(CWD, 'src/image/index.js');
 const AUDIO_ORCH_PATH = path.join(CWD, 'src/services/audio-orchestrator.js');
-const ORCH_PATH = path.join(CWD, 'src/orchestration/orchestrator.js');
+const ORCH_PATH = path.join(CWD, 'node_modules/@animastor/orchestration/src/orchestration/orchestrator.js');
 const JOURNAL_PATH = path.join(CWD, 'src/state/event-journal.js');
 
 function mockDeps(redis, overrides = {}) {
@@ -557,8 +557,8 @@ describe('checkStaleDispatchLeases (audit c8b79f6: TTL-based liveness)', () => {
     let redis;
     afterEach(() => { delete require.cache[RECONCILE_PATH]; });
 
-    const dispatchEngine = require('../src/runtime/dispatch-engine');
-    const leaseManager = require('../src/runtime/lease-manager');
+    const dispatchEngine = require('../node_modules/@animastor/orchestration/src/runtime/dispatch-engine');
+    const leaseManager = require('../node_modules/@animastor/orchestration/src/runtime/lease-manager');
 
     // Seed lease + metadata like dispatchStage does, with a controllable started_at.
     async function seedDispatch(stage, dispatchId, startedAtAgoMs) {
@@ -701,8 +701,8 @@ describe('applyFix — RELEASE_STALE_LEASE (audit c8b79f6 recovery)', () => {
     let redis;
     afterEach(() => { delete require.cache[RECONCILE_PATH]; });
 
-    const dispatchEngine = require('../src/runtime/dispatch-engine');
-    const leaseManager = require('../src/runtime/lease-manager');
+    const dispatchEngine = require('../node_modules/@animastor/orchestration/src/runtime/dispatch-engine');
+    const leaseManager = require('../node_modules/@animastor/orchestration/src/runtime/lease-manager');
 
     it('releases a truly stale lease, frees quota, marks scene dirty, re-activates it', async () => {
         redis = createMockRedis();

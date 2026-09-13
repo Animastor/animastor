@@ -2871,3 +2871,69 @@ MG-A move-set closure (static+lazy, zero edges outside the 31-target allowlist) 
 #### Verdict: **READY FOR PHYSICAL MOVE**
 
 Hidden dependencies: closed (0 `__dirname`/`require.cache`/unexpected env in the move set; OUTPUT_DIR leak O-G9-pinned with a planned injection). Dependency direction: proven by exhaustive closure (0 edges outside the allowlist), no new SCC possible. Public API: frozen to today's measured consumption surface. Host adapters: enumerated (8 storage adapters + config + state + media + gen-scope + the two frozen exceptions with their one-step corrective actions pre-planned: 4a OUTPUT_DIR injection, 4b workspace-resolver injection). Test strategy: move 2 pure-policy suites, keep host-integration suites, re-point path constants. O-1..O-10 guards: green (947/0). The move is executable in one controlled `git mv` + mechanical re-point sequence with clean `git revert` rollback.
+
+### 32.30 Physical Extraction Landed — `packages/animastor-orchestration` (DONE)
+
+**Date:** 2026-09-13 · **Baseline:** `37362f22` (`arch(orchestration): complete physical move gate`) · Branch `c21.4-physically-extract-analysis-from-backend`.
+
+**This is the execution of the §32.29 gate.** §32.29 concluded **READY FOR PHYSICAL MOVE**; §32.30 records the move actually performed: the 28-file MOVE_SET now lives in `packages/animastor-orchestration/`, `backend/src/orchestration/**` is deleted, and the moved runtime files are gone from `backend/src/runtime/**`.
+
+#### Package & moved files (28)
+
+`packages/animastor-orchestration/` (`package.json` with root-only `exports` map `"." → "./src/index.js"`, `main`, `files`, real deps only: `@animastor/contracts`, `@animastor/generation`, `music-metadata`):
+- **orchestration tier (7):** `orchestrator.js, index.js, scene-orchestrator.js, scene-callbacks.js, scene-restoration.js, scene-utils.js, runtime-result-consumer.js` → `src/orchestration/`;
+- **runtime tier (21):** `dispatch-engine, reconciliation-engine, scene-window, runtime-scheduler, runtime-metrics, lease-manager, worker-health, counter-reconciliation, circuit-breaker, retry-budget-manager, runtime-result-emitter, persistence-port, scene-data-port, placeholder-audio-port, progress-events-port, audio-fsm-port, video-fsm-port, hub-cancel-port, layer-config-port + package-internal glue` → `src/runtime/`;
+- **in-package host seam (1 new file):** `src/host/host-bindings.js` — the zero-require fail-fast binding surface (below).
+
+**Host-stays untouched in `backend/src/runtime/`:** `gpu-dispatcher.js, runtime-loop.js, index.js (facade), orchestration-seams.js, job-schema.js` (Phase-9C facade). **Deleted per §32.13/§32.29:** `runtime-persistence.js`, `retention-manager.js` (dead, zero callers). `backend/src/orchestration/` directory removed — no compatibility shims anywhere.
+
+#### Public API (frozen, §32.29 verbatim)
+
+Root `src/index.js` exports exactly the measured consumption surface: the 21 facade ops (`ensureStageDispatchable, dispatchStage, restoreSceneChunkStatus, handleAudioCompleted, handleImageCompleted, handleVideoCompleted, completeStage, failStage, markDirty, markDirtyScene, planScene, beginStage, completeStageWithoutVideo, completeStageWithoutImage, setScenePending, setSceneGenerating, setSceneAllReady, setScenePlaceholder, rollbackStageToPending, reconcile, resetScenes`), `createRuntimeResultConsumer`, `bindHostModules`/`clearHostBindings`/`hostBinding`/`isHostBindingWired`/`lazyHostBinding`/`requiredHostBindings`/`BINDING_NAMES` (composition surface), the `runtime` namespace (`scheduler, reconciliation, dispatch, metrics, counterReconciliation, workerHealth, sceneWindow` — the old host-barrel members minus host-stays), and the `ports` namespace with the 8 O-2..O-10 port contracts. All 38 host require sites use ONLY the bare root specifier — zero deep imports (measured).
+
+#### The package↔host boundary: host-bindings
+
+The moved files reach the §32.29 host-stays ONLY through `src/host/host-bindings.js`: 9 named bindings (`config, state, stateOps, journal, media, genScope, seams, artifactRoot, resolveWorkspaceForBook`), zero-require, resolver semantics (zero-arg fns invoked at CALL time — require.cache test stubs stay visible exactly as with the former lazy requires), fail-fast on unwired resolution, unknown names rejected. `backend.cjs` (composition root) wires all 9 + the 8 ports + the S-5 seams in the existing startup order. This closes **both §32.29 pre-move exceptions**: PW-2 (`scene-window → gpu-dispatcher` direct require → injected `resolveWorkspaceForBook` resolver, optional-load/system-pool fallback semantics preserved host-side in the injected wrapper) and step-4a OUTPUT_DIR (env read → `artifactRoot` binding; the O-G9 leak inventory shrank 3 → 0). Dead `initializeRuntime` dropped with no shim.
+
+#### Post-move graph (measured, full static+lazy, combined host+package)
+
+| metric | BEFORE (§32.29) | AFTER (§32.30) |
+|---|---|---|
+| nodes (backend+pkg) | 253 | 253 |
+| host→package edges | n/a (same tree) | 38 require sites, all root specifier |
+| **package→host requires** | move-set had host legs | **0** (everything via host-bindings seam) |
+| package→`@animastor/generation` | 13 files | 17 sites / 13 files, **root-only, 0 deep** |
+| `runtime→orchestration` | 0 | 0 |
+| SCCs >1 node | 1 (workspace-ai-provider↔system-ai) | **1 — the same pre-existing pair**; no new SCC |
+
+Dependency direction proven: `backend host → @animastor/orchestration → @animastor/generation / @animastor/contracts / node builtins` and nothing else. The package contains no require of `backend/src`, storage, book, routes, services, PG, Redis, or Express. The single dead require audit over `backend/src` returned ALL RESOLVED (only comment-line false positives).
+
+#### One dependency found during the move (declared, not bypassed)
+
+`scene-callbacks.js` uses the bare npm dep `music-metadata` (audio duration probe). From `backend/src` it resolved through the host `node_modules`; from the package it MODULE_NOT_FOUNDs. Resolved per §32.30 rules: declared as a real package dependency (`^11.12.3`, same version as backend) — no shim, no host fallback require.
+
+#### Test layout
+
+- **Package tests** (`packages/animastor-orchestration/test/`): `counter-reconciliation.test.js` moved here via `git mv` (pure policy, zero host deps) + `test/mocks/redis-mock.js` copy + `test-bindings.js` fixture (binds GenerationConfig port with frozen canonical slice values + fail-fast host-bindings stubs). **13 passing / 0 failing.**
+- **Host integration tests** stay in `backend/tests/**` (dispatch/lease/reconciliation/stage lifecycles, happy-path, fail-stage, etc.) — they exercise the composition root; `generation-test-bindings.cjs` gained the §32.30 `bindHostModules` mirror block (resolver semantics).
+- **Stale physical-layout pins adapted (12 suites, guard-semantic fixes only, no assertion weakened):** S-5 (journal now via seam — allowed require-edge set frozen at ZERO, package scanned too), S-2 (`runtime-metrics`/`scene-orchestrator` package paths), G7-D (Generation consumer count = host + package files), O-9 G4/G6/G10 (adapter channel = package root `.runtime.dispatch`; host consumer set frozen at 8), P7-T8 (gpu-dispatcher bypass baseline 4 → 3 — the package edge closed by injection), Phase 9C (second sanctioned contracts facade: `contracts/runtime-result.js`), §32 recon O-G8 (inverted to post-move layout pin) + O-G9 (OUTPUT_DIR inventory 3 → 0, comments stripped), dependency-guardrails (event-journal via host-binding, shim absence pinned in both trees).
+- **PM-G suite:** `backend/tests/architecture/physical-move-gate.test.js` rewritten as the post-move boundary guard (PM-G1..PM-G10: package exists / move-set physically inside / old paths gone / host-stays remain / root-only API frozen / no deep imports / no backend-relative package imports / no forbidden host deps / no reverse edges or new SCC / composition-root wiring pins / §32.29 contract still satisfied post-move).
+
+#### Tests (exact numbers)
+
+- `test:arch`: **949 passing / 0 failing** (§32.29: 947 — +2 net from the PM-G rewrite);
+- package tests: **13/0**; Generation package: **11/0**;
+- orchestration-adjacent host suites (reconciliation, dispatch-meta-lease, stabilization, stage-dispatch, hub-cancel, fail-stage, stale-lease, startup-resume): **139/0** in canonical order; happy-path **75/0** after the music-metadata fix;
+- full suite (`tests/*.test.js` + architecture): **3382 passing / 13 failing — exactly the §32.29 documented environment-dependent set** (LLM Sharing ×2, PW-4 ×4, private-worker/share ×7; all network/infra-class, each green in isolation). No new functional regression.
+
+#### Runtime smoke (deterministic, no external infra)
+
+Full composition-root chain executed in-process: `bindGenerationConfig` → package load → `bindHostModules` (9 resolvers) → 8 port adapters → seam registration → real ops on mock Redis (`planScene` + `markDirtyScene` → asset states `{audio:dirty,image:dirty,video:dirty}`) → `runtime` namespace resolution. **SMOKE: ALL PASS.** No MODULE_NOT_FOUND anywhere. (Full backend HTTP startup requires Redis/PG — environment limitation; the deterministic chain above covers load, wiring, registration, and orchestration-path execution.)
+
+#### Rollback
+
+The move is `git mv` + mechanical specifier re-points — `git revert` of the extraction commit restores `backend/src` exactly. No data, schema, protocol, or Redis-key change is involved. §32.29 remains the historical pre-move baseline.
+
+#### Verdict: **PHYSICAL EXTRACTION LANDED**
+
+All §32.30 acceptance criteria hold: package exists; MOVE_SET physically moved; old paths gone without shims; host-stays host-side; root API frozen; deep imports blocked by `exports`; package→host = 0; Generation root-only; both pre-move exceptions closed per plan; composition root working (smoke ALL PASS); no forbidden reverse edges; no new SCC; PM-G1..G10 green; O-1..O-11 guards green; `test:arch` 949/0; failure set = the documented env-dependent baseline. Not npm-published (out of scope).

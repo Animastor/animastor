@@ -6,10 +6,12 @@ const mediaRegistry = require('@animastor/generation').mediaRegistry;
 // Decides WHEN to start stages, NOT HOW.
 // Callbacks only register results - scheduler owns progression.
 
-const state = require('../state');
+const { lazyHostBinding } = require('../host/host-bindings');
+// §32.30: former host requires resolve lazily through the host-bindings seam.
+const state = lazyHostBinding('state');
 const dispatchEngine = require('./dispatch-engine');
 // S-5: orchestration-owned behavior reaches runtime only via the injected seams
-const orchestrationSeams = require('./orchestration-seams');
+const orchestrationSeams = lazyHostBinding('seams');
 // O-5: progress events (selective-task reads + completion reconciliation)
 // arrive ONLY through the ProgressEventsPort (host adapter:
 // storage/progress-events-adapter) — the Redis task-registry host service
@@ -594,49 +596,6 @@ async function attemptDispatch(redis, bookId, chapterId, sceneId, loadedBook, fo
 }
 
 // ======================================================
-// RESTART RECOVERY (Phase 11)
-// ======================================================
-
-const runtimePersistence = require('./runtime-persistence');
-
-/**
- * Initialize runtime on startup.
- * Performs recovery from persisted state.
- */
-async function initializeRuntime(redis) {
-    log('INITIALIZING_RUNTIME');
-
-    // 1. Initiate recovery
-    const recovery = await runtimePersistence.initiateRecovery(redis);
-    if (!recovery.success) {
-        warn(`INITialization skipped: ${recovery.reason}`);
-        return recovery;
-    }
-
-    // 2. Try to restore from snapshot
-    const restoreResult = await runtimePersistence.restoreFromSnapshot(redis);
-    if (restoreResult.success) {
-        log(`RESTORED_RUNTIME: from snapshot timestamp=${restoreResult.snapshot.timestamp}`);
-    } else {
-        log('STARTUP: No snapshot available, starting fresh');
-    }
-
-    // 3. Verify recovery
-    const verification = await runtimePersistence.verifyRecovery(redis);
-
-    // 4. Finalize recovery
-    await runtimePersistence.finalizeRecovery(redis, recovery.recoveryId);
-
-    log(`RUNTIME_INITIALIZED: ${verification.activeSceneCount} active scenes restored`);
-
-    return {
-        success: true,
-        recoveryId: recovery.recoveryId,
-        verified: verification
-    };
-}
-
-// ======================================================
 // EXPORTS
 // ======================================================
 
@@ -663,10 +622,8 @@ module.exports = {
     getMetrics,
 
     // Re-exports
-    AssetState: state.AssetState,
+    get AssetState() { return state.AssetState; },
     STATE_TO_STAGE,
     STAGE_TO_STATE,
 
-    // Phase 11: Runtime initialization
-    initializeRuntime
 };

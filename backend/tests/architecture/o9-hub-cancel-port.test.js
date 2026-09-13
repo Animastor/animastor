@@ -56,16 +56,29 @@
 const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
+const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
+
 const {
     BACKEND_SRC,
     listSourceFiles,
     readSource,
     requireSpecifiers,
     rel,
+    ORCH_PKG_RUNTIME_DIR,
+    ORCH_PKG_ORCH_DIR,
+    ORCH_PKG_REL,
+    ORCH_PKG_RUNTIME_REL,
+    tierFiles,
 } = require('./helpers');
 
-const RUNTIME_DIR = path.join(BACKEND_SRC, 'runtime');
-const ORCH_DIR = path.join(BACKEND_SRC, 'orchestration');
+// §32.30: the tier contour moved to the package — tier scans resolve at its
+// CURRENT physical location (host-stays keep using backend/src/runtime).
+const RUNTIME_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? ORCH_PKG_RUNTIME_DIR
+    : path.join(BACKEND_SRC, 'runtime');
+const ORCH_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? ORCH_PKG_ORCH_DIR
+    : path.join(BACKEND_SRC, 'orchestration');
 const PORT_FILE = path.join(RUNTIME_DIR, 'hub-cancel-port.js');
 const ADAPTER_FILE = path.join(BACKEND_SRC, 'storage', 'hub-cancel-adapter.js');
 const ENGINE_FILE = path.join(RUNTIME_DIR, 'dispatch-engine.js');
@@ -120,15 +133,15 @@ describe('§32.26 O-9 guards: hub-queue cleanup happens only via the HubCancelPo
         // through the port resolver.
         const consumers = [];
         for (const file of allTierFiles()) {
-            if (rel(file) === 'backend/src/runtime/hub-cancel-port.js') continue;
+            if (rel(file) === 'packages/animastor-orchestration/src/runtime/hub-cancel-port.js') continue;
             const src = codeOnly(readSource(file));
             if (/hubCancelOp\(\s*'clearHubDispatches'\s*\)/.test(src)) {
                 consumers.push(rel(file));
             }
         }
         expect(consumers.sort(), 'the port op must have live tier consumers').to.deep.equal([
-            'backend/src/orchestration/orchestrator.js',
-            'backend/src/runtime/reconciliation-engine.js',
+            'packages/animastor-orchestration/src/orchestration/orchestrator.js',
+            'packages/animastor-orchestration/src/runtime/reconciliation-engine.js',
         ]);
         // And no undeclared op may be resolved through the port.
         const offenders = [];
@@ -162,9 +175,11 @@ describe('§32.26 O-9 guards: hub-queue cleanup happens only via the HubCancelPo
         }
         expect(exportedOps.sort(), 'the frozen O-9 adapter surface').to.deep.equal(['clearHubDispatches']);
         // The adapter delegates to dispatch-engine ONLY (no gpu-dispatcher,
-        // no direct fetch/HTTP in the adapter).
+        // no direct fetch/HTTP in the adapter). §32.30: dispatch-engine moved
+        // into the orchestration package — the host adapter now reaches it
+        // through the frozen package public API root (`.runtime.dispatch`).
         const adapterCode = codeOnly(adapterSrc);
-        expect(adapterCode, 'the adapter must reach the host channel through dispatch-engine').to.include("require('../runtime/dispatch-engine')");
+        expect(adapterCode, 'the adapter must reach the host channel through the package public API root').to.include("require('@animastor/orchestration').runtime.dispatch");
         for (const banned of ['gpu-dispatcher', 'fetch(', 'HUB_URL', '/queue/clear']) {
             expect(adapterCode, `the adapter must not own hub transport itself (${banned})`).to.not.include(banned);
         }
@@ -227,7 +242,7 @@ describe('§32.26 O-9 guards: hub-queue cleanup happens only via the HubCancelPo
         // require(identifier) whose surrounding text mentions hub cleanup.
         const offenders = [];
         for (const file of allTierFiles()) {
-            if (rel(file) === 'backend/src/runtime/dispatch-engine.js') continue; // host channel itself
+            if (rel(file) === 'packages/animastor-orchestration/src/runtime/dispatch-engine.js') continue; // host channel itself
             const src = readSource(file);
             const dyn = src.match(/require\(\s*[A-Za-z_$][\w$.]*\s*\)/g) || [];
             for (const call of dyn) {
@@ -242,11 +257,12 @@ describe('§32.26 O-9 guards: hub-queue cleanup happens only via the HubCancelPo
 
         // The adapter resolves the host channel via a lazy call-time resolver
         // (the single channel — require.cache stubbing discipline); it must
-        // not capture the module at load time.
+        // not capture the module at load time. §32.30: the channel is now the
+        // package public API root (`.runtime.dispatch`), still lazy.
         const adapterSrc = readSource(ADAPTER_FILE);
         expect(adapterSrc, 'the adapter must keep call-time (lazy) dispatch-engine resolution for test-stub parity')
-            .to.include("() => require('../runtime/dispatch-engine')");
-        expect(/const\s+\w+\s*=\s*require\('\.\.\/runtime\/dispatch-engine'/.test(adapterSrc),
+            .to.include("() => require('@animastor/orchestration').runtime.dispatch");
+        expect(/const\s+\w+\s*=\s*require\('@animastor\/orchestration'\)/.test(adapterSrc),
             'the adapter must not capture the dispatch-engine module at load time').to.equal(false);
     });
 
@@ -316,23 +332,26 @@ describe('§32.26 O-9 guards: hub-queue cleanup happens only via the HubCancelPo
             if (file === ENGINE_FILE) continue;
             for (const spec of requireSpecifiers(readSource(file))) {
                 const target = resolveSpecifier(file, spec);
-                if (target === ENGINE_FILE) consumers.push(rel(file));
+                // §32.30: host consumers reach dispatch-engine through the
+                // package public API root — `.runtime.dispatch` IS the same
+                // engine module, so it counts as the same frozen edge.
+                if (target === ENGINE_FILE) { consumers.push(rel(file)); break; }
+                if (spec === '@animastor/orchestration' && /\.runtime\.dispatch/.test(readSource(file))) { consumers.push(rel(file)); break; }
             }
         }
         // The frozen pre-O-9 dispatch-engine consumer set (the tier files
         // keep their OTHER dispatch-engine deps — lease ops, dispatchStage,
         // finalize…; only the two clearHubDispatches CALL SITES moved to the
-        // port, checked in O9-G1) + the O-9 adapter bridge.
-        expect([...new Set(consumers)].sort(), 'the frozen pre-O-9 host consumer set + the O-9 adapter bridge').to.deep.equal([
+        // port, checked in O9-G1) + the O-9 adapter bridge. §32.30: the
+        // package-side consumers (orchestrator, scene-callbacks,
+        // reconciliation-engine, runtime-scheduler) are now intra-package
+        // and excluded from the host scan — the host set stays frozen at 8.
+        expect([...new Set(consumers)].sort(), 'the frozen host dispatch-engine consumer set (all via the package root)').to.deep.equal([
             'backend/src/backend.cjs',
             'backend/src/image/iu-processor.js',
-            'backend/src/orchestration/orchestrator.js',
-            'backend/src/orchestration/scene-callbacks.js',
             'backend/src/routes/book/generation-routes.cjs',
             'backend/src/routes/generation-routes.cjs',
-            'backend/src/runtime/reconciliation-engine.js',
             'backend/src/runtime/runtime-loop.js',
-            'backend/src/runtime/runtime-scheduler.js',
             'backend/src/services/task-handler.cjs',
             'backend/src/services/video-orchestrator.js',
             'backend/src/storage/hub-cancel-adapter.js',

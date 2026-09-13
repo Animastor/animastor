@@ -184,20 +184,28 @@ describe('architecture: orchestration ↔ runtime cycle freeze (S-5 reduced)', (
     // The multi-module SCC is dissolved (P7-T7 pins its absence). Full
     // before/after evidence: recon doc §26/§32.
     // Docs: docs/architecture/generation-module-extraction-reconnaissance.md §26, §32
-    const RUNTIME_TO_ORCH_ALLOWED = [
-        'backend/src/runtime/dispatch-engine.js:../state/event-journal',
-        'backend/src/runtime/reconciliation-engine.js:../state/event-journal',
-    ];
+    // §32.30 update: the moved runtime tier reaches the journal ONLY through
+    // the composition-root host-bindings seam (lazyHostBinding('journal')) —
+    // the former two `../state/event-journal` require edges are GONE. The
+    // allowed require-edge baseline is therefore ZERO, scanned across BOTH
+    // the host-stay runtime dir and the package runtime dir.
+    const RUNTIME_TO_ORCH_ALLOWED = [];
 
     it('runtime → orchestration edges stay limited to the classified event-journal sink (no policy imports)', () => {
         const edges = [];
-        for (const file of listSourceFiles(path.join(BACKEND_SRC, 'runtime'))) {
-            for (const spec of requireSpecifiers(readSource(file))) {
-                // policy imports are any orchestration require; the journal
-                // sink (canonical owner ../state/event-journal) is separately
-                // classified by the zero-require check below
-                if (/^\.\.\/orchestration/.test(spec) || /event-journal$/.test(spec)) {
-                    edges.push(`${rel(file)}:${spec.replace(/^\.\.\//, '../')}`);
+        const scanDirs = [
+            path.join(BACKEND_SRC, 'runtime'),
+            path.join(REPO_ROOT, 'packages', 'animastor-orchestration', 'src', 'runtime'),
+        ];
+        for (const dir of scanDirs) {
+            for (const file of listSourceFiles(dir)) {
+                for (const spec of requireSpecifiers(readSource(file))) {
+                    // policy imports are any orchestration require; the journal
+                    // sink (canonical owner state/event-journal) is separately
+                    // classified by the zero-require check below
+                    if (/^\.\.\/orchestration/.test(spec) || /event-journal$/.test(spec)) {
+                        edges.push(`${rel(file)}:${spec.replace(/^\.\.\//, '../')}`);
+                    }
                 }
             }
         }
@@ -207,20 +215,27 @@ describe('architecture: orchestration ↔ runtime cycle freeze (S-5 reduced)', (
     });
 
     it('event-journal is a zero-require sink, single-owned by state/event-journal.js (O-1 shim deleted)', () => {
-        // The journal is the only runtime→orchestration-directory edge that
-        // may exist: it is an append-only observability ledger with ZERO
+        // The journal is an append-only observability ledger with ZERO
         // requires of its own (a graph sink — it cannot close a cycle).
         // O-1 deleted the orchestration/event-journal.js relocation shim —
         // pin its absence so the re-export surface cannot return.
+        // §32.30: the package dir must never re-host it either.
         expect(fs.existsSync(path.join(BACKEND_SRC, 'orchestration', 'event-journal.js')),
             'orchestration/event-journal.js was deleted at O-1 — canonical owner is state/event-journal.js')
             .to.equal(false);
+        expect(fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration', 'src', 'orchestration', 'event-journal.js')),
+            'the deleted O-1 shim must not reappear inside the package')
+            .to.equal(false);
         const journal = readSource(path.join(BACKEND_SRC, 'state', 'event-journal.js'));
         expect(requireSpecifiers(journal), 'the journal itself must stay a zero-require sink').to.deep.equal([]);
-        // runtime files must consume the canonical owner, never a re-export
+        // §32.30: the moved tier files consume the journal through the
+        // composition-root host-binding (lazyHostBinding('journal')) — never
+        // through a direct require of the canonical owner or a re-export.
+        const pkgRuntime = path.join(REPO_ROOT, 'packages', 'animastor-orchestration', 'src', 'runtime');
         for (const f of ['dispatch-engine.js', 'reconciliation-engine.js']) {
-            const specs = requireSpecifiers(readSource(path.join(BACKEND_SRC, 'runtime', f)));
-            expect(specs.filter((s) => /event-journal$/.test(s)), `${f} journal require`).to.deep.equal(['../state/event-journal']);
+            const src = readSource(path.join(pkgRuntime, f));
+            expect(requireSpecifiers(src).filter((s) => /event-journal$/.test(s)), `${f} must not require the journal directly (use the host-binding seam)`).to.deep.equal([]);
+            expect(src.includes("lazyHostBinding('journal')"), `${f} must consume the journal via the host-binding seam`).to.equal(true);
         }
     });
 });

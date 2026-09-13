@@ -7,7 +7,7 @@
 //      wired (fail-fast contract, `_resetHubCancelPort` test hygiene);
 //   2. the adapter delegates 1:1 to dispatch-engine.clearHubDispatches
 //      through the lazy call-time channel — a require.cache stub of
-//      ../src/runtime/dispatch-engine is honored (the gpu-hub-cleanup /
+//      ../node_modules/@animastor/orchestration/src/runtime/dispatch-engine is honored (the gpu-hub-cleanup /
 //      reconciliation harness stubbing channel);
 //   3. the real engine still answers with the frozen { requested,
 //      cleared, failed } accounting for the empty/ok path (no network:
@@ -23,10 +23,10 @@
 
 const { expect } = require('chai');
 
-const port = require('../src/runtime/hub-cancel-port');
+const port = require('../node_modules/@animastor/orchestration/src/runtime/hub-cancel-port');
 const adapter = require('../src/storage/hub-cancel-adapter');
 
-const ENGINE_PATH = require.resolve('../src/runtime/dispatch-engine');
+const ENGINE_PATH = require.resolve('../node_modules/@animastor/orchestration/src/runtime/dispatch-engine');
 
 describe('O-9 HubCancelPort — contract, delegation and consumer-leg semantics', () => {
 

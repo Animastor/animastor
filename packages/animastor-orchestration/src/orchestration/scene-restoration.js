@@ -1,6 +1,8 @@
 const fs = require('fs');
 const path = require('path');
-const state = require('../state');
+const { lazyHostBinding, hostBinding } = require('../host/host-bindings');
+// §32.30: former host requires resolve lazily through the host-bindings seam.
+const state = lazyHostBinding('state');
 // S-4: identifier grammar composed from the canonical owner (bytes unchanged)
 const artifactNaming = require('@animastor/generation').artifactNaming;
 const runtimeScheduler = require('../runtime/runtime-scheduler');
@@ -14,11 +16,15 @@ const persist = require('../runtime/persistence-port').persist;
 const placeholderAudioOp = require('../runtime/placeholder-audio-port').placeholderAudioOp;
 const { log, warn } = require('./scene-utils');
 
-const OUTPUT_DIR = process.env.OUTPUT_DIR || '/data/output';
+// §32.29 step 4a: the former process.env.OUTPUT_DIR read is closed — the
+// artifact root arrives through the composition-root host-bindings seam
+// (the host passes config.OUTPUT_DIR; identical value, identical fallback
+// semantics are host-owned now).
+const OUTPUT_DIR = () => hostBinding('artifactRoot');
 
 async function restoreSceneChunkStatus(redis, buildId, bookId, chapterId, sceneId, hasDirtyUnits, unitIds) {
     const sceneWindow = require('../runtime/scene-window');
-    const buildDir = path.join(OUTPUT_DIR, buildId);
+    const buildDir = path.join(OUTPUT_DIR(), buildId);
     const fileStatus = await sceneWindow.getSceneFilesStatus(buildDir, bookId, chapterId, sceneId);
 
     if (!hasDirtyUnits) {
@@ -113,7 +119,7 @@ async function restoreSceneChunkStatus(redis, buildId, bookId, chapterId, sceneI
     // S-5: canonical owner is the state layer (facade re-exports it) —
     // calling the facade here would keep a scene-restoration→orchestrator
     // cycle edge inside orchestration.
-    const stateOps = require('../state/scene-state-ops');
+    const stateOps = lazyHostBinding('stateOps');
     await stateOps.markDirtyScene(redis, bookId, chapterId, sceneId, ['image']);
 
     log(`[RESTORE-PER-UNIT] ${bookId}/${chapterId}/${sceneId}: ${unitIds?.length || 0} dirty unit(s) — audio=${fileStatus.audio.exists}, image=${unitIds?.length > 0 ? 'dirty' : fileStatus.image.exists}, PNG pre-deleted`);

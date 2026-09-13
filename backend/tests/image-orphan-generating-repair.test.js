@@ -67,12 +67,12 @@ const P = {
     cancelRepo: require.resolve('../src/storage/postgres/repositories/generation-cancel-repo'),
     sceneAssetsRepo: require.resolve('../src/storage/postgres/repositories/scene-assets-repo'),
     database: require.resolve('../src/storage/postgres/database'),
-    reconciler: require.resolve('../src/runtime/reconciliation-engine'),
-    dispatchEngine: require.resolve('../src/runtime/dispatch-engine'),
-    orchestrator: require.resolve('../src/orchestration/orchestrator'),
+    reconciler: require.resolve('../node_modules/@animastor/orchestration/src/runtime/reconciliation-engine'),
+    dispatchEngine: require.resolve('../node_modules/@animastor/orchestration/src/runtime/dispatch-engine'),
+    orchestrator: require.resolve('../node_modules/@animastor/orchestration/src/orchestration/orchestrator'),
     state: require.resolve('../src/state'),
-    scheduler: require.resolve('../src/runtime/runtime-scheduler'),
-    sceneWindow: require.resolve('../src/runtime/scene-window'),
+    scheduler: require.resolve('../node_modules/@animastor/orchestration/src/runtime/runtime-scheduler'),
+    sceneWindow: require.resolve('../node_modules/@animastor/orchestration/src/runtime/scene-window'),
     journal: require.resolve('../src/state/event-journal'),
     genProgress: require.resolve('../src/services/generation-progress'),
     cancelRoute: require.resolve('../src/routes/book/generation-routes.cjs'),
@@ -251,7 +251,7 @@ function mountProgressPanel() {
     };
     const deps = {
         state,
-        activeScenes: require('../src/runtime/active-scenes-index'),
+        activeScenes: require('../node_modules/@animastor/orchestration/src/runtime/active-scenes-index'),
         iuRepo: {
             getImageUnitsForScene: async () =>
                 Array.from({ length: IU_COUNT }, (_, i) => ({ unit_id: `iu-${i + 1}` })),

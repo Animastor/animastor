@@ -32,8 +32,8 @@
 
 const { expect } = require('chai');
 const state = require('../src/state');
-const orchestrator = require('../src/orchestration/orchestrator');
-const dispatchEngine = require('../src/runtime/dispatch-engine');
+const orchestrator = require('../node_modules/@animastor/orchestration/src/orchestration/orchestrator');
+const dispatchEngine = require('../node_modules/@animastor/orchestration/src/runtime/dispatch-engine');
 // S-5: production seam wiring (dispatch-engine resolves the executor via seams)
 const { wireProductionSeams } = require('./helpers/wire-seams');
 const provider = require('@animastor/generation').comfyuiProvider;
@@ -42,7 +42,7 @@ const path = require('path');
 const config = require('../src/config/runtime-config');
 const iuProcessor = require('../src/image/iu-processor');
 const imageModule = require('../src/image');
-const callbacks = require('../src/orchestration/scene-callbacks');
+const callbacks = require('../node_modules/@animastor/orchestration/src/orchestration/scene-callbacks');
 const { createMockRedis } = require('./mocks/redis-mock');
 
 const B = 'ghost_book', C = 'ch-1', S = 'sc-1', BUILD = 'build-ghost';
@@ -230,7 +230,7 @@ describe('image ghost GENERATING — no_jobs_sent lifecycle fix (audit 6929ba5)'
             // S-5: the executor entry reaches dispatch-engine through the
             // seam registry (composition-root wiring), not a direct require.
             const { registerOrchestrationSeams } = require('../src/runtime/orchestration-seams');
-            const orchestration = require('../src/orchestration');
+            const orchestration = require('@animastor/orchestration');
             const originalExec = orchestration.dispatchStage;
             registerOrchestrationSeams({ dispatchStage: async () => { throw new Error('executor exploded'); } });
             try {

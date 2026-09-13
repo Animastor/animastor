@@ -146,7 +146,16 @@ describe('G7: @animastor/generation package boundary', () => {
         for (const file of listSourceFiles(BACKEND_SRC)) {
             if (requireSpecifiers(readSource(file)).includes('@animastor/generation')) consumers.push(rel(file));
         }
-        expect(consumers.length, 'backend must actually consume @animastor/generation').to.be.greaterThan(40);
+        // §32.30: the orchestration package is also a first-class Generation
+        // consumer — count its package files so the live-integration pin
+        // stays meaningful after the physical move (was >40 host-only).
+        const orchSrc = path.join(REPO_ROOT, 'packages', 'animastor-orchestration', 'src');
+        if (fs.existsSync(orchSrc)) {
+            for (const file of listSourceFiles(orchSrc)) {
+                if (requireSpecifiers(readSource(file)).includes('@animastor/generation')) consumers.push(rel(file));
+            }
+        }
+        expect(consumers.length, 'backend + orchestration package must actually consume @animastor/generation').to.be.greaterThan(40);
     });
 
     // ── G7-E — no second implementation in backend ──────────────────

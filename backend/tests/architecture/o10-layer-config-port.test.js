@@ -57,6 +57,8 @@
 const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
+const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
+
 const {
     BACKEND_SRC,
     listSourceFiles,
@@ -64,10 +66,21 @@ const {
     requireSpecifiers,
     resolveSpecifier,
     rel,
+    ORCH_PKG_RUNTIME_DIR,
+    ORCH_PKG_ORCH_DIR,
+    ORCH_PKG_REL,
+    ORCH_PKG_RUNTIME_REL,
+    tierFiles,
 } = require('./helpers');
 
-const RUNTIME_DIR = path.join(BACKEND_SRC, 'runtime');
-const ORCH_DIR = path.join(BACKEND_SRC, 'orchestration');
+// §32.30: the tier contour moved to the package — tier scans resolve at its
+// CURRENT physical location (host-stays keep using backend/src/runtime).
+const RUNTIME_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? ORCH_PKG_RUNTIME_DIR
+    : path.join(BACKEND_SRC, 'runtime');
+const ORCH_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? ORCH_PKG_ORCH_DIR
+    : path.join(BACKEND_SRC, 'orchestration');
 const PORT_FILE = path.join(RUNTIME_DIR, 'layer-config-port.js');
 const ADAPTER_FILE = path.join(BACKEND_SRC, 'storage', 'layer-config-adapter.js');
 const SERVICE_FILE = path.join(BACKEND_SRC, 'services', 'layer-config.js');
@@ -122,7 +135,7 @@ describe('§32.27 O-10 guards: per-book layer config reaches the tiers only via 
         // resolver at a real tier call site.
         const liveOps = new Set();
         for (const file of allTierFiles()) {
-            if (rel(file) === 'backend/src/runtime/layer-config-port.js') continue;
+            if (rel(file) === 'packages/animastor-orchestration/src/runtime/layer-config-port.js') continue;
             const src = codeOnly(readSource(file));
             for (const m of src.match(/layerConfigOp\(\s*'([^']+)'\s*\)/g) || []) {
                 liveOps.add(m.match(/layerConfigOp\(\s*'([^']+)'/)[1]);
@@ -132,7 +145,7 @@ describe('§32.27 O-10 guards: per-book layer config reaches the tiers only via 
         // And no undeclared op may be resolved through the port.
         const offenders = [];
         for (const file of allTierFiles()) {
-            if (rel(file) === 'backend/src/runtime/layer-config-port.js') continue;
+            if (rel(file) === 'packages/animastor-orchestration/src/runtime/layer-config-port.js') continue;
             const src = codeOnly(readSource(file));
             for (const m of src.match(/layerConfigOp\(\s*'([^']+)'\s*\)/g) || []) {
                 const op = m.match(/layerConfigOp\(\s*'([^']+)'/)[1];
@@ -254,9 +267,9 @@ describe('§32.27 O-10 guards: per-book layer config reaches the tiers only via 
             if (count > 0) rawReads.push(`${rel(file)} x${count}`);
         }
         expect(rawReads, 'the pinned raw-Redis layer-config read set (§32.27: deliberately NOT in the port)').to.deep.equal([
-            'backend/src/runtime/reconciliation-engine.js x1',
-            'backend/src/runtime/runtime-scheduler.js x1',
-            'backend/src/runtime/scene-window.js x3',
+            'packages/animastor-orchestration/src/runtime/reconciliation-engine.js x1',
+            'packages/animastor-orchestration/src/runtime/runtime-scheduler.js x1',
+            'packages/animastor-orchestration/src/runtime/scene-window.js x3',
         ]);
 
         // The adapter resolves the host channel via a lazy call-time

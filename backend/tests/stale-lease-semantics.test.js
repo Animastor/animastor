@@ -15,8 +15,8 @@
 
 const { expect } = require('chai');
 const config = require('../src/config/runtime-config');
-const leaseManager = require('../src/runtime/lease-manager');
-const dispatchEngine = require('../src/runtime/dispatch-engine');
+const leaseManager = require('../node_modules/@animastor/orchestration/src/runtime/lease-manager');
+const dispatchEngine = require('../node_modules/@animastor/orchestration/src/runtime/dispatch-engine');
 const { createMockRedis } = require('./mocks/redis-mock');
 
 const B = 'test_book', C = 'ch-1', S = 'sc-1';

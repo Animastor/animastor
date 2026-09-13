@@ -4,11 +4,15 @@
 // Runs periodically to drive scene progression.
 // The heartbeat of the runtime scheduler system.
 
-const runtimeScheduler = require('./runtime-scheduler');
-const reconciliationEngine = require('./reconciliation-engine');
-const runtimeMetrics = require('./runtime-metrics');
-const counterReconciliation = require('./counter-reconciliation');
-const dispatchEngine = require('./dispatch-engine');
+// §32.30: the scheduler/metrics/reconciliation/dispatch contour moved into
+// @animastor/orchestration — the host timer shell reaches it through the
+// frozen package public API root only.
+const orch = require('@animastor/orchestration');
+const runtimeScheduler = orch.runtime.scheduler;
+const reconciliationEngine = orch.runtime.reconciliation;
+const runtimeMetrics = orch.runtime.metrics;
+const counterReconciliation = orch.runtime.counterReconciliation;
+const dispatchEngine = orch.runtime.dispatch;
 const prometheus = require('../metrics/prometheus');
 
 // Reconciliation cycle interval (60 seconds — not every 5s tick)

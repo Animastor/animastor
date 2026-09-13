@@ -12,12 +12,17 @@
 
 const path = require('path');
 const fs = require('fs');
-const state = require('../state');
+const { lazyHostBinding, hostBinding } = require('../host/host-bindings');
+// §32.30: former host requires resolve lazily through the host-bindings seam.
+const state = lazyHostBinding('state');
+const audio = lazyHostBinding('media.audio');
+const image = lazyHostBinding('media.image');
+const video = lazyHostBinding('media.video');
+// §32.30: the artifact root (former process.env.OUTPUT_DIR read) resolves
+// through the composition-root host-bindings seam at call time.
+const artifactRoot = () => hostBinding('artifactRoot');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
 const artifactNaming = require('@animastor/generation').artifactNaming;
-const audio = require('../audio');
-const image = require('../image');
-const video = require('../video');
 // O-2: persistence arrives ONLY through the PersistencePort (host adapter:
 // storage/runtime-persistence-adapter) — the storage barrel, the scene-assets
 // and IU repositories left this file. The Redis asset-registry and the
@@ -121,7 +126,7 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
     });
 
     const audioPath = persist('filesystem.getSceneAudioPath')(
-        process.env.OUTPUT_DIR || '/data/output', buildId, bookId, chapterId, sceneId
+        artifactRoot(), buildId, bookId, chapterId, sceneId
     );
 
     try {
@@ -325,7 +330,7 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
     try {
         const dirtyIds = await persist('sceneAssets.getDirtyUnitIds')(bookId, chapterId, sceneId);
         if (dirtyIds && dirtyIds.length > 0) {
-            const buildDir = path.join(process.env.OUTPUT_DIR || '/data/output', buildId);
+            const buildDir = path.join(artifactRoot(), buildId);
             const stillPending = [];
             for (const uid of dirtyIds) {
                 const pngPath = path.join(buildDir, artifactNaming.sceneImageName(bookId, chapterId, sceneId, uid));

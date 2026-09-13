@@ -26,7 +26,7 @@
 
 const { expect } = require('chai');
 
-const port = require('../src/runtime/layer-config-port');
+const port = require('../node_modules/@animastor/orchestration/src/runtime/layer-config-port');
 const adapter = require('../src/storage/layer-config-adapter');
 
 const SERVICE_PATH = require.resolve('../src/services/layer-config');

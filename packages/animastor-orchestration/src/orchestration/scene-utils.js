@@ -1,4 +1,7 @@
-const journal = require('../state/event-journal');
+const { lazyHostBinding } = require('../host/host-bindings');
+// §32.30: former host require ('../state/event-journal') resolves lazily
+// through the host-bindings seam.
+const journal = lazyHostBinding('journal');
 
 const logPrefix = '[ORCH]';
 

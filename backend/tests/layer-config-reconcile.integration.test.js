@@ -16,7 +16,7 @@ const { createMockRedis } = require('./mocks/redis-mock');
 require('./vbook-test-bindings.cjs');
 const config = require('../src/config/runtime-config');
 const layerConfig = require('../src/services/layer-config');
-const reconciliation = require('../src/runtime/reconciliation-engine');
+const reconciliation = require('../node_modules/@animastor/orchestration/src/runtime/reconciliation-engine');
 // S-5: production seam wiring (reconcileCycle resolves FSM writers via seams)
 require('./helpers/wire-seams').wireProductionSeams();
 

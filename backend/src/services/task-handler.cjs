@@ -29,7 +29,7 @@ module.exports = function(redis, config, deps) {
             throw new Error(`Invalid job_id: ${job_id}`);
         }
 
-        const dispatchEngine = require('../runtime/dispatch-engine');
+        const dispatchEngine = require('@animastor/orchestration').runtime.dispatch;
         const identity = await dispatchEngine.verifyDispatchIdentity(
             redis,
             parsed.bookId,

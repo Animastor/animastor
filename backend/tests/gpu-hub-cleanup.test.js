@@ -1,5 +1,5 @@
 const { expect } = require('chai');
-const dispatchEngine = require('../src/runtime/dispatch-engine');
+const dispatchEngine = require('../node_modules/@animastor/orchestration/src/runtime/dispatch-engine');
 
 describe('GPU Hub dispatch cleanup', () => {
     it('deduplicates dispatch ids and applies API authentication', async () => {

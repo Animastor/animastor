@@ -4,7 +4,9 @@
 // Redis Set tracking active scenes (_audio_pending through video_generating).
 // Enables efficient iteration without SCAN operations.
 
-const state = require('../state');
+const { lazyHostBinding } = require('../host/host-bindings');
+// §32.30: former host requires resolve lazily through the host-bindings seam.
+const state = lazyHostBinding('state');
 
 const ACTIVE_SCENES_KEY = 'animastor:active-scenes';
 

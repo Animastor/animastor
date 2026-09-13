@@ -11,6 +11,36 @@ const path = require('path');
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 const BACKEND_SRC = path.join(REPO_ROOT, 'backend', 'src');
 
+// ── Orchestration package relocation (§32.30 — physical move LANDED) ─────
+// The runtime/orchestration contour now lives in
+// packages/animastor-orchestration (host-stays gpu-dispatcher/runtime-loop/
+// orchestration-seams/job-schema remain in backend/src/runtime). Guards that
+// scan "the two tiers" must scan the PACKAGE dirs; rel()-style allowlist
+// strings use the ORCH_PKG_REL prefix. Resolve the CURRENT physical
+// location — canonical package path once landed, legacy backend paths
+// before — so suites stay green through both states.
+const ORCH_PKG_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? path.join(REPO_ROOT, 'packages', 'animastor-orchestration')
+    : null;
+const ORCH_PKG_SRC = ORCH_PKG_DIR
+    ? path.join(ORCH_PKG_DIR, 'src')
+    : path.join(BACKEND_SRC, 'orchestration');
+const ORCH_PKG_RUNTIME_DIR = path.join(ORCH_PKG_SRC, 'runtime');
+const ORCH_PKG_ORCH_DIR = path.join(ORCH_PKG_SRC, 'orchestration');
+const ORCH_PKG_REL = ORCH_PKG_DIR ? 'packages/animastor-orchestration/src' : 'backend/src/orchestration';
+const ORCH_PKG_RUNTIME_REL = ORCH_PKG_DIR ? 'packages/animastor-orchestration/src/runtime' : 'backend/src/runtime';
+
+/** The two tier dirs at their CURRENT physical location (package first). */
+function tierDirs() {
+    if (ORCH_PKG_DIR) return [ORCH_PKG_RUNTIME_DIR, ORCH_PKG_ORCH_DIR];
+    return [path.join(BACKEND_SRC, 'runtime'), path.join(BACKEND_SRC, 'orchestration')];
+}
+
+/** All tier source files (the moved contour, wherever it physically lives). */
+function tierFiles() {
+    return tierDirs().flatMap((d) => listSourceFiles(d));
+}
+
 // ── Worker package relocation (preparation) ──────────────────────────────
 // The package boundary is being relocated: worker/ → packages/animastor-
 // worker/ (see docs/architecture/WORKER_PACKAGE_RELOCATION_CHECKLIST.md).
@@ -86,6 +116,14 @@ function resolveSpecifier(fromFile, spec) {
 module.exports = {
     REPO_ROOT,
     BACKEND_SRC,
+    ORCH_PKG_DIR,
+    ORCH_PKG_SRC,
+    ORCH_PKG_RUNTIME_DIR,
+    ORCH_PKG_ORCH_DIR,
+    ORCH_PKG_REL,
+    ORCH_PKG_RUNTIME_REL,
+    tierDirs,
+    tierFiles,
     WORKER_PKG_DIR,
     WORKER_BUNDLE_DIR,
     WORKER_TESTS_DIR,

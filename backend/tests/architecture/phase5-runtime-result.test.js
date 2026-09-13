@@ -19,6 +19,7 @@
 const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
+
 const {
     listSourceFiles,
     readSource,
@@ -26,16 +27,27 @@ const {
     REPO_ROOT,
     requireSpecifiers,
     resolveSpecifier,
+    ORCH_PKG_RUNTIME_DIR,
+    ORCH_PKG_ORCH_DIR,
+    ORCH_PKG_REL,
+    ORCH_PKG_RUNTIME_REL,
+    tierFiles,
 } = require('./helpers');
 
 const BACKEND_SRC = path.join(REPO_ROOT, 'backend', 'src');
 const CONTRACTS_DIR = path.join(BACKEND_SRC, 'contracts');
-const RUNTIME_DIR = path.join(BACKEND_SRC, 'runtime');
-const ORCH_DIR = path.join(BACKEND_SRC, 'orchestration');
+// §32.30: the tier contour moved to the package — tier scans resolve at its
+// CURRENT physical location (host-stays keep using backend/src/runtime).
+const RUNTIME_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? ORCH_PKG_RUNTIME_DIR
+    : path.join(BACKEND_SRC, 'runtime');
+const ORCH_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? ORCH_PKG_ORCH_DIR
+    : path.join(BACKEND_SRC, 'orchestration');
 const SERVICES_DIR = path.join(BACKEND_SRC, 'services');
 
 const contract = require('../../src/contracts/runtime-result');
-const emitter = require('../../src/runtime/runtime-result-emitter');
+const emitter = require('../../node_modules/@animastor/orchestration/src/runtime/runtime-result-emitter');
 
 // ── T1 — Runtime result contract ────────────────────────
 describe('Phase 5 T1: runtime result contract', () => {
@@ -102,6 +114,9 @@ describe('Phase 5 T2: runtime does not import orchestration through the seam', (
         path.join(BACKEND_SRC, 'contracts', 'runtime-result.js'),
         path.join(RUNTIME_DIR, 'runtime-result-emitter.js'),
     ];
+        // §32.30: runtime-result-emitter moved into the package — the canonical
+        // file is the package one (the host path no longer exists).
+        if (!fs.existsSync(SEAM_FILES[1])) SEAM_FILES[1] = path.join(ORCH_PKG_RUNTIME_DIR, 'runtime-result-emitter.js');
 
     it('seam modules require nothing from orchestration', () => {
         for (const file of SEAM_FILES) {
@@ -111,11 +126,18 @@ describe('Phase 5 T2: runtime does not import orchestration through the seam', (
         }
     });
 
-    it('contracts layer is a leaf (no relative requires at all)', () => {
-        const specs = requireSpecifiers(
-            readSource(path.join(BACKEND_SRC, 'contracts', 'runtime-result.js'))
+    it('contracts layer is a leaf (canonical impl in @animastor/contracts; host file is a facade)', () => {
+        // §32.30: the canonical implementation moved into @animastor/contracts
+        // (a zero-require leaf there); backend/src/contracts/runtime-result.js
+        // is a facade re-exporting it.
+        const canonSpecs = requireSpecifiers(
+            readSource(path.join(REPO_ROOT, 'packages', 'animastor-contracts', 'src', 'runtime-result.js'))
         ).filter(s => s.startsWith('.'));
-        expect(specs).to.deep.equal([]);
+        expect(canonSpecs, 'the canonical contract module must require nothing relative').to.deep.equal([]);
+        const facadeCode = readSource(path.join(BACKEND_SRC, 'contracts', 'runtime-result.js'))
+            .replace(/\/\/[^\n]*/g, ' ');
+        const facadeSpecs = requireSpecifiers(facadeCode);
+        expect(facadeSpecs, 'the host facade must re-export exactly the contracts package').to.deep.equal(['@animastor/contracts']);
     });
 
     it('residual runtime→orchestration edges stay pinned (cannot grow)', () => {
@@ -125,13 +147,18 @@ describe('Phase 5 T2: runtime does not import orchestration through the seam', (
         // runtime→orchestration edges are the event-journal sink requires
         // (zero-dep observability leaf, no orchestration policy).
         // Docs: docs/architecture/generation-module-extraction-reconnaissance.md §26
+        // §32.30: the event-journal edges now flow through the host-bindings
+        // seam (lazyHostBinding('journal')) — the former require(...) edges are
+        // frozen as binding accesses in the two engines.
         const BASELINE = new Set([
-            'backend/src/runtime/dispatch-engine.js:../state/event-journal',
-            'backend/src/runtime/reconciliation-engine.js:../state/event-journal',
+            'packages/animastor-orchestration/src/runtime/dispatch-engine.js:host-bindings-journal',
+            'packages/animastor-orchestration/src/runtime/reconciliation-engine.js:host-bindings-journal',
         ]);
         const edges = new Set();
         for (const file of listSourceFiles(RUNTIME_DIR)) {
-            for (const spec of requireSpecifiers(readSource(file))) {
+            const s0 = readSource(file);
+            if (/lazyHostBinding\('journal'\)/.test(s0)) edges.add(`${rel(file)}:host-bindings-journal`);
+            for (const spec of requireSpecifiers(s0)) {
                 if (/^\.\.\/orchestration/.test(spec) || /event-journal$/.test(spec)) {
                     edges.add(`${rel(file)}:${spec}`);
                 }
@@ -140,9 +167,9 @@ describe('Phase 5 T2: runtime does not import orchestration through the seam', (
         expect([...edges].sort()).to.deep.equal([...BASELINE].sort());
     });
 
-    it('runtime-persistence no longer imports orchestration (dead edge removed)', () => {
-        const src = readSource(path.join(RUNTIME_DIR, 'runtime-persistence.js'));
-        expect(src).to.not.match(/require\(\s*['"]\.\.\/orchestration\/event-journal['"]/);
+    it('runtime-persistence is gone entirely (dead file deleted at the §32.30 move)', () => {
+        expect(fs.existsSync(path.join(RUNTIME_DIR, 'runtime-persistence.js'))).to.equal(false);
+        expect(fs.existsSync(path.join(ORCH_PKG_RUNTIME_DIR, 'runtime-persistence.js'))).to.equal(false);
     });
 });
 
@@ -155,7 +182,7 @@ describe('Phase 5 T3: orchestration consumes runtime result through the seam', (
     });
 
     it('orchestration ships a runtime result consumer adapter', () => {
-        const { createRuntimeResultConsumer } = require('../../src/orchestration/runtime-result-consumer');
+        const { createRuntimeResultConsumer } = require('../../node_modules/@animastor/orchestration/src/orchestration/runtime-result-consumer');
         expect(createRuntimeResultConsumer).to.be.a('function');
         const consumer = createRuntimeResultConsumer({ log: () => {} });
         expect(consumer).to.be.a('function');
@@ -169,8 +196,9 @@ describe('Phase 5 T3: orchestration consumes runtime result through the seam', (
 
     it('composition root wires emitter ← consumer', () => {
         const src = readSource(path.join(BACKEND_SRC, 'backend.cjs'));
-        expect(src).to.include("require('./runtime/runtime-result-emitter')");
-        expect(src).to.include("require('./orchestration/runtime-result-consumer')");
+        // §32.30: both arrive through the package root namespace
+        expect(src).to.include('orchestrationRuntime.runtimeResultEmitter');
+        expect(src).to.include('createRuntimeResultConsumer');
         expect(src).to.match(/setConsumer\s*\(\s*createRuntimeResultConsumer\s*\(/);
     });
 
@@ -306,11 +334,13 @@ describe('Phase 5 T8: the seam creates no new architectural cycle', () => {
         }
     });
 
-    it('runtime result emitter imports only the contracts layer (inside runtime)', () => {
+    it('runtime result emitter imports only the contracts package (leaf)', () => {
+        // §32.30: the emitter moved into the package; its only import is the
+        // @animastor/contracts root specifier (the leaf contract).
         const specs = requireSpecifiers(
-            readSource(path.join(RUNTIME_DIR, 'runtime-result-emitter.js'))
-        ).filter(s => s.startsWith('.'));
-        expect(specs).to.deep.equal(['../contracts/runtime-result']);
+            readSource(path.join(ORCH_PKG_RUNTIME_DIR, 'runtime-result-emitter.js'))
+        ).filter(s => s.startsWith('.') || s.startsWith('@animastor/'));
+        expect(specs).to.deep.equal(['@animastor/contracts']);
     });
 
     it('orchestration consumer is a leaf (imports nothing relative)', () => {
@@ -362,12 +392,13 @@ describe('Phase 5 final audit: full runtime/** boundary', () => {
                 hosts.push(rel(file));
             }
         }
-        expect(hosts, 'computed/template/concat require or import() is only allowed in runtime/index.js (lazyRequire)').to.deep.equal([
-            'backend/src/runtime/index.js',
-        ]);
+        // §32.30: the scan covers the package runtime (computed require is
+        // forbidden there — lazyRequire lived in the host facade, pinned below).
+        expect(hosts, 'computed/template/concat require or import() is forbidden in the package runtime').to.deep.equal([]);
 
         // The one allowed host may only lazy-load runtime-internal './' modules.
-        const indexSrc = readSource(path.join(RUNTIME_DIR, 'index.js'));
+        // §32.30: the lazyRequire barrel stays HOST-side (backend/src/runtime/index.js).
+        const indexSrc = readSource(path.join(BACKEND_SRC, 'runtime', 'index.js'));
         const nonInternal = requireSpecifiers(indexSrc).filter((s) => !s.startsWith('./'));
         expect(nonInternal, 'lazyRequire targets must stay runtime-internal (./...)').to.deep.equal([]);
         expect(indexSrc, 'lazyRequire must never reference orchestration').to.not.include('../orchestration');
@@ -425,13 +456,18 @@ describe('Phase 5 final audit: full runtime/** boundary', () => {
         for (const dir of [CONTRACTS_DIR, RUNTIME_DIR, ORCH_DIR, SERVICES_DIR]) {
             for (const file of listSourceFiles(dir)) {
                 if (rel(file) === 'backend/src/contracts/runtime-result.js') continue;
-                for (const spec of requireSpecifiers(readSource(file))) {
+                const codeNoComments = readSource(file).replace(/\/\/[^\n]*/g, ' ');
+                for (const spec of requireSpecifiers(codeNoComments)) {
                     if (/contracts\/runtime-result$/.test(spec)) producers.push(rel(file));
                 }
+                // §32.30: the package consumes the contract via the bare root
+                // specifier — count only files whose `.runtimeResult` destructure
+                // or member access shows runtime-result usage (not jobProtocolV2).
+                if (/require\('@animastor\/contracts'\)\.runtimeResult/.test(codeNoComments)) producers.push(rel(file));
             }
         }
         expect(producers, 'only runtime/runtime-result-emitter.js may require the runtime-result contract').to.deep.equal([
-            'backend/src/runtime/runtime-result-emitter.js',
+            'packages/animastor-orchestration/src/runtime/runtime-result-emitter.js',
         ]);
     });
 });

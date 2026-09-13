@@ -1,7 +1,14 @@
-const state = require('../state');
-const audio = require('../audio');
-const image = require('../image');
-const video = require('../video');
+const { lazyHostBinding } = require('../host/host-bindings');
+// §32.30: former host requires ('../state', '../audio', '../image', '../video')
+// resolve lazily through the composition-root host-bindings seam — usage
+// below stays verbatim.
+const state = lazyHostBinding('state');
+const media = lazyHostBinding('media');
+const audio = lazyHostBinding('media.audio');
+const image = lazyHostBinding('media.image');
+const video = lazyHostBinding('media.video');
+const segments = lazyHostBinding('media.audio.segments');
+const chunks = lazyHostBinding('media.audio.chunks');
 // S-3: Generation → GPU transport rides the provider seam only. The
 // orchestrator never requires gpu-dispatcher or the workflow connector.
 const provider = require('@animastor/generation').comfyuiProvider;
@@ -28,7 +35,13 @@ const layerConfigOp = require('../runtime/layer-config-port').layerConfigOp;
 const { log, warn, logEvent } = require('./scene-utils');
 const { handleAudioCompleted, handleImageCompleted, handleVideoCompleted } = require('./scene-callbacks');
 const { restoreSceneChunkStatus } = require('./scene-restoration');
-const { completeStage, failStage, setScenePending, setSceneGenerating } = require('./orchestrator');
+// §32.30: setScenePending/setSceneGenerating are LAZY getters on the facade
+// (stateOps host binding) — destructure at call time, not at load time.
+const orchestratorModule = require('./orchestrator');
+const completeStage = (...a) => orchestratorModule.completeStage(...a);
+const failStage = (...a) => orchestratorModule.failStage(...a);
+const setScenePending = (...a) => orchestratorModule.setScenePending(...a);
+const setSceneGenerating = (...a) => orchestratorModule.setSceneGenerating(...a);
 // Полный модуль нужен для fast-track video-orch (completeGroup принимает
 // deps.orchestrator) — деструктуризация выше не покрывает этот кейс.
 const orchestrator = require('./orchestrator');
@@ -159,7 +172,7 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
     // и повторяем переход.
     if (!transResult.success && transResult.reason === 'no_state') {
         log(`  🔧 AUDIO_ORCH: state missing for ${bookId}/${chapterId}/${sceneId} — initializing PLACEHOLDER_READY first`);
-        const segList = require('../audio/segments').buildSegments(sceneData);
+        const segList = segments.buildSegments(sceneData);
         await audioFsmOp('initPlaceholderReady')(redis, bookId, chapterId, sceneId, buildId, segList.length);
         log(`  🔧 AUDIO_ORCH: initialized PLACEHOLDER_READY with ${segList.length} expected segments`);
         transResult = await audioFsmOp('setGenerating')(redis, bookId, chapterId, sceneId);
@@ -183,13 +196,13 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
             log(`  🔧 AUDIO_ORCH: unexpected WAITING_CHUNKS/MERGING in stale recovery — lease outpaced watchdog (phase=${stalePhase})`);
             // 🔧 FIX: Прежде чем reset'ить, проверяем — есть ли чанки на диске?
             // Если все чанки на месте, зовём completeChunk для завершения merge.
-            const chunksUtil = require('../audio/chunks');
+            const chunksUtil = chunks;
             const presentChunks = chunksUtil.findExistingSceneChunks(bookId, chapterId, sceneId, buildId, null);
             if (presentChunks.length > 0) {
                 log(`  🔧 AUDIO_ORCH: ${presentChunks.length} chunks on disk for ${bookId}/${chapterId}/${sceneId} — calling completeChunk instead of reset`);
                 try {
                     await audioFsmOp('completeChunk')(redis, bookId, chapterId, sceneId, 'recovery', buildId, {
-                        audio: require('../audio'),
+                        audio,
                         orchestrator: require('./orchestrator'),
                         dispatchId: 'stale-recovery',
                     });
@@ -201,7 +214,7 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
         }
         log(`  🔧 AUDIO_ORCH: stale phase ${stalePhase} for ${bookId}/${chapterId}/${sceneId} — resetting to PLACEHOLDER_READY`);
         await audioFsmOp('deleteState')(redis, bookId, chapterId, sceneId);
-        const segList = require('../audio/segments').buildSegments(sceneData);
+        const segList = segments.buildSegments(sceneData);
         await audioFsmOp('initPlaceholderReady')(redis, bookId, chapterId, sceneId, buildId, segList.length);
         log(`  🔧 AUDIO_ORCH: reset stale phase, initialized PLACEHOLDER_READY with ${segList.length} expected segments`);
         transResult = await audioFsmOp('setGenerating')(redis, bookId, chapterId, sceneId);
@@ -392,7 +405,7 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchI
     // dispatch перегенерируются только группы, содержащие dirty-юниты.
     // O-8: через VideoFsmPort (host adapter: storage/video-fsm-adapter).
     const videoOrch = require('../runtime/video-fsm-port').videoFsm();
-    const jobSchema = require('../runtime/job-schema');
+    const jobSchema = require('@animastor/contracts').jobProtocolV2;
     const groups = jobSpecs.map(js => {
         const parsed = jobSchema.parseJobId(js.job_id);
         return {

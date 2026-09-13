@@ -26,10 +26,18 @@
 const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
-const { BACKEND_SRC, listSourceFiles, readSource, requireSpecifiers, rel } = require('./helpers');
+const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 
-const RUNTIME_DIR = path.join(BACKEND_SRC, 'runtime');
-const ORCH_DIR = path.join(BACKEND_SRC, 'orchestration');
+const { BACKEND_SRC, listSourceFiles, readSource, requireSpecifiers, rel, ORCH_PKG_RUNTIME_DIR, ORCH_PKG_ORCH_DIR, tierFiles } = require('./helpers');
+
+// §32.30: the tier contour moved to the package — tier scans resolve at its
+// CURRENT physical location (host-stays keep using backend/src/runtime).
+const RUNTIME_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? ORCH_PKG_RUNTIME_DIR
+    : path.join(BACKEND_SRC, 'runtime');
+const ORCH_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? ORCH_PKG_ORCH_DIR
+    : path.join(BACKEND_SRC, 'orchestration');
 
 const SEAM_NAMES = [
     'dispatchStage',
@@ -68,7 +76,9 @@ describe('S5-R5: runtime → orchestration cycle reduction', () => {
     });
 
     it('S5-B: the seams registry stays hollow — zero requires at all', () => {
-        const src = readSource(path.join(RUNTIME_DIR, 'orchestration-seams.js'));
+        // §32.30: the seams registry is a classified HOST STAY — always resolve
+        // it from backend/src/runtime regardless of where the tiers live
+        const src = readSource(path.join(BACKEND_SRC, 'runtime', 'orchestration-seams.js'));
         expect(requireSpecifiers(src), 'the seam registry must not require any module — it is a pure function registry').to.deep.equal([]);
         // it must expose the frozen seam surface
         const seams = require('../../src/runtime/orchestration-seams');
@@ -117,7 +127,7 @@ describe('S5-R5: runtime → orchestration cycle reduction', () => {
             }
         }
         // facade re-export identity: orchestrator.setX === stateOps.setX
-        const facade = require('../../src/orchestration/orchestrator');
+        const facade = require('../../node_modules/@animastor/orchestration/src/orchestration/orchestrator');
         const ops = require('../../src/state/scene-state-ops');
         for (const name of ['markDirtyScene', 'setScenePending', 'setSceneGenerating', 'setSceneAllReady', 'setScenePlaceholder']) {
             expect(facade[name], `facade must re-export ${name} from the state layer`).to.equal(ops[name]);
@@ -146,7 +156,8 @@ describe('S5-R5: runtime → orchestration cycle reduction', () => {
         // were re-pointed to the state-layer canonical owner in S-5. Pin the
         // re-pointing so the services→orchestration bridge cannot return.
         const placeholder = readSource(path.join(BACKEND_SRC, 'services', 'placeholder-audio.js'));
-        const restoration = readSource(path.join(BACKEND_SRC, 'orchestration', 'scene-restoration.js'));
+        // §32.30: scene-restoration moved into the orchestration package
+        const restoration = readSource(path.join(REPO_ROOT, 'packages', 'animastor-orchestration', 'src', 'orchestration', 'scene-restoration.js'));
         for (const [name, src] of [['placeholder-audio.js', placeholder], ['scene-restoration.js', restoration]]) {
             const specs = requireSpecifiers(src).filter((s) => /orchestration\/orchestrator/.test(s));
             expect(specs, `${name} must not require the orchestrator facade (use state/scene-state-ops.js)`).to.deep.equal([]);

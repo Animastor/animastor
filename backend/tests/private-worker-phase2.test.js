@@ -51,7 +51,7 @@ const path = require('path');
 
 const { query } = require('../src/storage/postgres/database');
 const { runMigrations } = require('../src/storage/postgres/schema');
-const dispatchEngine = require('../src/runtime/dispatch-engine');
+const dispatchEngine = require('../node_modules/@animastor/orchestration/src/runtime/dispatch-engine');
 const workerAuth = require('../src/services/worker-auth');
 const workerRepo = require('../src/storage/postgres/repositories/worker-repo');
 const taskRepo = require('../src/storage/postgres/repositories/task-repo');

@@ -42,11 +42,22 @@ const {
     readSource,
     requireSpecifiers,
     rel,
+    ORCH_PKG_RUNTIME_DIR,
+    ORCH_PKG_ORCH_DIR,
+    ORCH_PKG_REL,
+    ORCH_PKG_RUNTIME_REL,
+    tierFiles,
 } = require('./helpers');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
-const RUNTIME_DIR = path.join(BACKEND_SRC, 'runtime');
-const ORCH_DIR = path.join(BACKEND_SRC, 'orchestration');
+// §32.30: the tier contour moved to the package — tier scans resolve at its
+// CURRENT physical location (host-stays keep using backend/src/runtime).
+const RUNTIME_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? ORCH_PKG_RUNTIME_DIR
+    : path.join(BACKEND_SRC, 'runtime');
+const ORCH_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-orchestration'))
+    ? ORCH_PKG_ORCH_DIR
+    : path.join(BACKEND_SRC, 'orchestration');
 const PORT_FILE = path.join(RUNTIME_DIR, 'persistence-port.js');
 
 // The ONLY tier file allowed to require persistence implementations: the
@@ -101,7 +112,7 @@ describe('§32.9 O-2 guards: persistence arrives only via the PersistencePort', 
     it('O2-G1: the two tiers require ZERO persistence implementations (static + dynamic)', () => {
         const offenders = [];
         for (const file of allTierFiles()) {
-            if (rel(file) === 'backend/src/runtime/persistence-port.js') continue;
+            if (rel(file) === 'packages/animastor-orchestration/src/runtime/persistence-port.js') continue;
             if (TIER_STORAGE_ALLOWLIST.includes(rel(file))) continue;
             for (const s of staticPersistenceRequires(file)) {
                 offenders.push(`${rel(file)} -> ${s}`);
@@ -131,7 +142,7 @@ describe('§32.9 O-2 guards: persistence arrives only via the PersistencePort', 
         );
         const usedOps = new Set();
         for (const file of allTierFiles()) {
-            if (rel(file) === 'backend/src/runtime/persistence-port.js') continue;
+            if (rel(file) === 'packages/animastor-orchestration/src/runtime/persistence-port.js') continue;
             for (const m of readSource(file).match(/persist\('([^']+)'\)/g) || []) {
                 usedOps.add(m.slice("persist('".length, -2));
             }

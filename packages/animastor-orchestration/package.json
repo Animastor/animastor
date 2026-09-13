@@ -1,0 +1,51 @@
+{
+    "name": "@animastor/orchestration",
+    "version": "0.1.0",
+    "description": "Animastor Orchestration — the generation orchestration/runtime contour of the Animastor backend, physically extracted from the host (§32.30): the unified generation lifecycle owner (orchestrator facade, stage executor, scene callbacks/restoration), the dispatch engine and its lease/quota/retry managers, the reconciliation engine and counter reconciliation, the scene window/scheduler/worker-health, the runtime-result emitter/consumer, and the eight O-2..O-10 port contracts (Persistence, SceneData, PlaceholderAudio, ProgressEvents, AudioFsm, VideoFsm, HubCancel, LayerConfig). The package reaches the host (runtime config slices, Redis-domain state layer, media facades, the S-5 seam registry, the artifact root, the PW-2 workspace resolver) ONLY through the composition-root host-bindings seam — no backend/src require, no storage/book/routes/services, no Redis, no PG, no Express inside.",
+    "keywords": [
+        "animastor",
+        "orchestration",
+        "runtime",
+        "dispatch",
+        "reconciliation",
+        "generation"
+    ],
+    "main": "src/index.js",
+    "exports": {
+        ".": "./src/index.js"
+    },
+    "files": [
+        "src/",
+        "test/",
+        "README.md",
+        "LICENSE"
+    ],
+    "scripts": {
+        "test": "mocha --exit --require test/test-bindings.js test/*.test.js"
+    },
+    "engines": {
+        "node": ">=18"
+    },
+    "license": "MIT",
+    "publishConfig": {
+        "access": "public"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/Animastor/animastor.git",
+        "directory": "packages/animastor-orchestration"
+    },
+    "homepage": "https://github.com/Animastor/animastor/tree/main/packages/animastor-orchestration#readme",
+    "bugs": {
+        "url": "https://github.com/Animastor/animastor/issues"
+    },
+    "dependencies": {
+        "@animastor/contracts": "^0.1.0",
+        "@animastor/generation": "^0.1.0",
+        "music-metadata": "^11.12.3"
+    },
+    "devDependencies": {
+        "chai": "^6.2.2",
+        "mocha": "^11.7.5"
+    }
+}

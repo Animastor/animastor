@@ -22,7 +22,12 @@
 const mediaRegistry = require('@animastor/generation').mediaRegistry;
 // S-5: pure FSM-writer ownership (markDirtyScene/setScene*) — re-exported from
 // the state layer; bodies moved verbatim (see state/scene-state-ops.js header).
-const stateOps = require('../state/scene-state-ops');
+const { lazyHostBinding } = require('../host/host-bindings');
+// §32.30: former host requires resolve lazily through the host-bindings seam.
+const stateOps = lazyHostBinding('stateOps');
+const state = lazyHostBinding('state');
+const journal = lazyHostBinding('journal');
+const runtimeConfig = lazyHostBinding('config');
 
 // ── markDirty ─────────────────────────────────────────
 // Единственный способ объявить «нужна регенерация». Делегирует в
@@ -51,8 +56,7 @@ async function planScene(redis, bookId, chapterId, sceneId) {
 // для исполнения генерации).
 async function beginStage(redis, scene, loadedBook, buildId, stage) {
     const dispatchEngine = require('../runtime/dispatch-engine');
-    const state = require('../state');
-// S-4: filename grammar composed from the canonical owner (bytes unchanged)
+    // S-4: filename grammar composed from the canonical owner (bytes unchanged)
 const artifactNaming = require('@animastor/generation').artifactNaming;
     const bookId = scene.book_id;
     const chapterId = scene.chapter_id;
@@ -80,8 +84,7 @@ const artifactNaming = require('@animastor/generation').artifactNaming;
 async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId, dispatchId) {
     const callbacks = require('./scene-callbacks');
     const dispatchEngine = require('../runtime/dispatch-engine');
-    const state = require('../state');
-    const { log, warn, error } = require('./scene-utils');
+        const { log, warn, error } = require('./scene-utils');
     // O-2: PG persistence via the PersistencePort (host adapter:
     // storage/runtime-persistence-adapter) — the scene-assets repository and
     // the database handle left this file. SQL lives host-side.
@@ -250,10 +253,8 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId, 
 // путь исчерпания merge-ретраев в task-handler; сам failStage retry-политику
 // не содержит.
 async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reason = 'unknown', { redispatch = true, dispatchId } = {}) {
-    const state = require('../state');
-    const dispatchEngine = require('../runtime/dispatch-engine');
-    const journal = require('../state/event-journal');
-    const { log, warn } = require('./scene-utils');
+        const dispatchEngine = require('../runtime/dispatch-engine');
+        const { log, warn } = require('./scene-utils');
 
     // S-2: fail event type map — derived from journal event types.
     // Maps media type → failure event type for the event journal.
@@ -354,9 +355,7 @@ async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reas
 // (ghost, forensic audit 6929ba5: no_jobs_sent → setScenePending rejected →
 // rejection проглочен → вечный GENERATING).
 async function rollbackStageToPending(redis, bookId, chapterId, sceneId, asset, buildId = null, reason = 'dispatch_cancelled') {
-    const state = require('../state');
-    const journal = require('../state/event-journal');
-    const { log, error } = require('./scene-utils');
+            const { log, error } = require('./scene-utils');
 
     const states = await state.getAssetStates(redis, bookId, chapterId, sceneId);
     const current = states?.[asset];
@@ -413,8 +412,7 @@ async function rollbackStageToPending(redis, bookId, chapterId, sceneId, asset, 
 // and complete remaining scene lifecycle (cleanup, slide).
 // Callback function handles cleanup only — state is set here in the facade.
 async function completeStageWithoutVideo(redis, loadedBook, bookId, chapterId, sceneId, buildId) {
-    const state = require('../state');
-    const callbacks = require('./scene-callbacks');
+        const callbacks = require('./scene-callbacks');
     await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
     await callbacks.completeSceneWithoutVideo(redis, loadedBook, bookId, chapterId, sceneId, buildId);
 }
@@ -423,8 +421,7 @@ async function completeStageWithoutVideo(redis, loadedBook, bookId, chapterId, s
 // When image is disabled by layer config, mark image as READY
 // and complete remaining scene lifecycle.
 async function completeStageWithoutImage(redis, loadedBook, bookId, chapterId, sceneId, buildId) {
-    const state = require('../state');
-    const callbacks = require('./scene-callbacks');
+        const callbacks = require('./scene-callbacks');
     await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.READY);
     await callbacks.completeSceneWithoutImage(redis, loadedBook, bookId, chapterId, sceneId, buildId);
 }
@@ -472,8 +469,7 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
         readdToActiveIndex = true,
     } = options;
     const { log, warn } = require('./scene-utils');
-    const journal = require('../state/event-journal');
-
+    
     if (!scenes || scenes.length === 0) {
         log('[RESET-SCENES] No scenes to reset');
         return { marked: 0, reset_scenes: 0 };
@@ -483,8 +479,7 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
     log(`[RESET-SCENES] ${bookId}: ${scenes.length} scenes, scope=${scopeDisplay}`);
 
     // 1. Force-dispatch flag (T1: TTL из TIMEOUTS)
-    const runtimeConfig = require('../config/runtime-config');
-    await redis.set(
+        await redis.set(
         `animastor:force-dispatch:${bookId}`, '1',
         'EX', runtimeConfig.TIMEOUTS.FORCE_DISPATCH_TTL_S
     );
@@ -613,19 +608,22 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
 // byte-compatible. rollbackStageToPending remains a facade-owned function:
 // it additionally reports the runtime-owned stateRollbackFailures metric.
 
+// §32.30: the FSM-writer re-exports resolve the stateOps binding lazily via
+// getters — the facade module must stay loadable before the composition root
+// binds host modules (byte-compatible surface, deferred resolution).
 module.exports = {
     markDirty,
-    markDirtyScene: stateOps.markDirtyScene,
+    get markDirtyScene() { return stateOps.markDirtyScene; },
     planScene,
     beginStage,
     completeStage,
     failStage,
     completeStageWithoutVideo,
     completeStageWithoutImage,
-    setScenePending: stateOps.setScenePending,
-    setSceneGenerating: stateOps.setSceneGenerating,
-    setSceneAllReady: stateOps.setSceneAllReady,
-    setScenePlaceholder: stateOps.setScenePlaceholder,
+    get setScenePending() { return stateOps.setScenePending; },
+    get setSceneGenerating() { return stateOps.setSceneGenerating; },
+    get setSceneAllReady() { return stateOps.setSceneAllReady; },
+    get setScenePlaceholder() { return stateOps.setScenePlaceholder; },
     rollbackStageToPending,
     reconcile,
     resetScenes,

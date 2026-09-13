@@ -16,7 +16,9 @@
 // the persisted scope, checks the current window, and slides forward
 // if the window is complete.
 
-const config = require('../config/runtime-config');
+const { lazyHostBinding } = require('../host/host-bindings');
+// §32.30: former host requires resolve lazily through the host-bindings seam.
+const config = lazyHostBinding('config');
 // S-2: per-asset stale shape derived from media registry
 const { listMediaTypes: _mediaTypes } = require('@animastor/generation').mediaRegistry;
 // O-3: scene content arrives ONLY through the SceneDataPort (host adapter:
@@ -24,15 +26,15 @@ const { listMediaTypes: _mediaTypes } = require('@animastor/generation').mediaRe
 // file. loadBook/collectScenes are consumed as `sceneData(op)(...)` at the
 // call sites.
 const sceneData = require('./scene-data-port').sceneDataOp;
-const state = require('../state');
+const state = lazyHostBinding('state');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
 const artifactNaming = require('@animastor/generation').artifactNaming;
 // S-5: orchestration-owned behavior (FSM facade writers) reaches runtime only
 // via the composition-root-injected seam registry — never a direct import.
-const orchestrationSeams = require('./orchestration-seams');
+const orchestrationSeams = lazyHostBinding('seams');
 const activeScenes = require('./active-scenes-index');
-const audio = require('../audio/audio-service');
-const genScope = require('../services/gen-scope');
+const audio = lazyHostBinding('media.audio');
+const genScope = lazyHostBinding('genScope');
 // O-2: persistence arrives ONLY through the PersistencePort (host adapter:
 // storage/runtime-persistence-adapter) — the scene-assets repository and the
 // database handle left this file. SQL lives host-side; this file consumes
@@ -387,9 +389,13 @@ async function isWindowComplete(redis, bookId) {
     // video worker must not make this book's window wait for video that will
     // never be served for it (and the owner's private worker DOES count).
     let bookWorkspaceId = null;
+    // §32.30 (PW-2 closure): the former lazy require of the pinned host
+    // transport ('./gpu-dispatcher') is replaced by the composition-root
+    // host-binding; optional-load semantics + system-pool fallback stay
+    // host-owned (the host wrapper reproduces the exact former behavior).
     try {
-        const gpuDispatcher = require('./gpu-dispatcher');
-        bookWorkspaceId = await gpuDispatcher.resolveWorkspaceForBook(bookId);
+        const resolveWorkspaceForBook = lazyHostBinding('resolveWorkspaceForBook');
+        bookWorkspaceId = await resolveWorkspaceForBook(bookId);
     } catch (_) { /* system pool availability only */ }
     const hasVideo = await workerHealth.isAvailable(redis, 'video', bookWorkspaceId);
 
@@ -534,7 +540,7 @@ async function slideWindow(redis, bookId, loadedBook, buildId) {
         }
 
         // No valid content — remove from active index for restart
-        const scheduler = require('../runtime/runtime-scheduler');
+        const scheduler = require('./runtime-scheduler');
         await scheduler.removeSceneFromActiveIndex(redis, bookId, scene.chapter_id, scene.scene_id);
 
         const didStart = await startScene(redis, scene, buildId, bookId);
