@@ -13,7 +13,7 @@ import {
   renderEnvBlock,
   OFFLINE_TROUBLESHOOT_KEYS,
   VALID_WORKER_TYPES,
-} from './privateWorkers';
+} from '../src/privateWorkers';
 
 // ── create-input validation ────────────────────────────────────────────────
 describe('validateCreateInput', () => {
@@ -106,8 +106,8 @@ describe('buildSetupContract', () => {
   it('exposes the worker source + run command for onboarding', () => {
     const c = buildSetupContract('wrk.id.secret', 'image', 'w');
     // Source is served by the GPU Hub itself (repo mirror is private).
-    expect(c.sourceUrl).toBe(`${c.env.HUB_URL}/worker-source`);
-    expect(c.downloadCommand).toBe(`curl -o worker.cjs ${c.env.HUB_URL}/worker-source`);
+    expect(c.sourceUrl).toBe(`${c.env.HUB_URL}/worker-bundle`);
+    expect(c.downloadCommand).toBe(`curl -o worker-bundle.tar.gz ${c.env.HUB_URL}/worker-bundle && tar -xzf worker-bundle.tar.gz && rm worker-bundle.tar.gz`);
     // The real start command matching the worker implementation.
     expect(c.runCommand).toBe('node worker.cjs');
     // Prerequisites are i18n keys, not hardcoded prose.

@@ -7,8 +7,8 @@ import {
   onShareNotice, emitShareNotice, noticeFromEntry, shareNoticeMessage,
   syncSharedWithMe, markSharedSeen, resetShareNotifications,
   sharedWithMeCount, sharedUnreadCount,
-} from './shareNotifications';
-import type { SharedWithMeWorker } from './sharing';
+} from '../src/shareNotifications';
+import type { SharedWithMeWorker } from '../src/sharing';
 
 function swm(id: string, sharedBy = 'ivan'): SharedWithMeWorker {
   return {

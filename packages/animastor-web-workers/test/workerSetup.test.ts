@@ -14,8 +14,46 @@ import {
   initialWizardState, canGoNext, nextStep, prevStep,
   stepTitleKey, stepBodyKey, formatDiskBudget,
   type SetupProfile, type SetupMethod, type DeploymentCapability,
-} from './workerSetup';
-import { buildSetupContract, renderEnvBlock, looksLikeWorkerToken } from './privateWorkers';
+} from '../src/workerSetup';
+import { buildSetupContract, renderEnvBlock, looksLikeWorkerToken } from '../src/privateWorkers';
+import type { WorkerApiPort, WorkerApiError } from '../src/ports';
+
+// ── Mock API port (uses global fetch stubs) ───────────────────────────────
+
+class MockApiError extends Error implements WorkerApiError {
+  status: number;
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+const mockApi: WorkerApiPort = {
+  getJson: async <T>(url: string): Promise<T> => {
+    const res = await fetch(url);
+    if (!res.ok) throw new MockApiError(`HTTP ${res.status}`, res.status);
+    return res.json() as Promise<T>;
+  },
+  postJson: async <T>(url: string, body?: unknown): Promise<T> => {
+    const res = await fetch(url, { method: 'POST', body: body ? JSON.stringify(body) : undefined, headers: { 'Content-Type': 'application/json' } });
+    if (!res.ok) throw new MockApiError(`HTTP ${res.status}`, res.status);
+    return res.json() as Promise<T>;
+  },
+  deleteJson: async <T>(url: string): Promise<T> => {
+    const res = await fetch(url, { method: 'DELETE' });
+    if (!res.ok) throw new MockApiError(`HTTP ${res.status}`, res.status);
+    return res.json() as Promise<T>;
+  },
+  deleteJsonBody: async <T>(url: string, body: unknown): Promise<T> => {
+    const res = await fetch(url, { method: 'DELETE', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } });
+    if (!res.ok) throw new MockApiError(`HTTP ${res.status}`, res.status);
+    return res.json() as Promise<T>;
+  },
+  ApiError: MockApiError as unknown as new (message: string, status: number, code?: string) => WorkerApiError,
+};
 
 // ── fixtures (shaped like real backend responses) ───────────────────────────
 
@@ -102,9 +140,9 @@ describe('profiles', () => {
       json: async () => ({ profiles: PROFILES }),
     }));
     vi.stubGlobal('fetch', fetchMock);
-    const { profiles } = await fetchSetupProfiles();
+    const { profiles } = await fetchSetupProfiles(mockApi);
     expect(profiles.map((p) => p.id)).toEqual(['image/qwen-image', 'video/ltx-2.3', 'audio/qwen-tts']);
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/v1/private-worker/setup/profiles');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/private-worker/setup/profiles');
   });
 
   it('groupProfilesByType builds one card per worker type with a recommended profile', () => {
@@ -181,7 +219,7 @@ describe('installation', () => {
       json: async () => ({ methods: [method('linux', true, '9.8.7')] }),
     }));
     vi.stubGlobal('fetch', fetchMock);
-    const { methods } = await fetchSetupMethods();
+    const { methods } = await fetchSetupMethods(mockApi);
     const linux = pickMethod(methods, 'linux')!;
     expect(linux.installer.version).toBe('9.8.7');
     expect(platformOptions(methods).find((o) => o.platform === 'linux')!.installerVersion).toBe('9.8.7');
@@ -259,9 +297,9 @@ describe('deploymentOptions — the backend capability model', () => {
       return { ok: true, status: 200, statusText: 'OK', json: async () => ({}) };
     });
     vi.stubGlobal('fetch', fetchMock);
-    await fetchSetupInstructions('image/qwen-image', 'linux', 'managed', 'native');
-    await fetchSetupInstructions('image/qwen-image', 'windows', 'managed', 'native');
-    await fetchSetupInstructions('audio/qwen-tts', 'linux', 'managed', 'docker');
+    await fetchSetupInstructions(mockApi, 'image/qwen-image', 'linux', 'managed', 'native');
+    await fetchSetupInstructions(mockApi, 'image/qwen-image', 'windows', 'managed', 'native');
+    await fetchSetupInstructions(mockApi, 'audio/qwen-tts', 'linux', 'managed', 'docker');
     expect(seen[0]).toContain('platform=linux&deployment=native');
     expect(seen[1]).toContain('platform=windows&deployment=native');
     expect(seen[2]).toContain('platform=linux&deployment=docker');
@@ -364,7 +402,7 @@ describe('workflows', () => {
       }),
     }));
     vi.stubGlobal('fetch', fetchMock);
-    const { workflows } = await fetchSetupWorkflows('image/qwen-image');
+    const { workflows } = await fetchSetupWorkflows(mockApi, 'image/qwen-image');
     expect(String(fetchMock.mock.calls[0][0])).toContain('profile_id=image%2Fqwen-image');
     const url = resolveArtifactUrl(workflows[0].download_url, 'https://app.example');
     expect(url).toBe('https://app.example/gpu/workflow/img-qwen-image');
@@ -395,7 +433,7 @@ describe('security — worker key', () => {
       return { ok: true, status: 200, statusText: 'OK', json: async () => ({}) };
     });
     vi.stubGlobal('fetch', fetchMock);
-    await fetchSetupInstructions('image/qwen-image', 'linux', 'managed');
+    await fetchSetupInstructions(mockApi, 'image/qwen-image', 'linux', 'managed');
     for (const url of seen) expect(url).not.toContain('wrk.');
     expect(resolveArtifactUrl('/gpu/installer', 'https://app.example')).not.toContain('wrk.');
   });

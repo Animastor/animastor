@@ -12,12 +12,7 @@
 // SECURITY: the Worker Key is a ONE-TIME disclosure held in transient
 // component state only — never persisted (localStorage/URL) or logged.
 import { useState, useCallback, useEffect } from 'preact/hooks';
-import { getJson, postJson, deleteJson, ApiError } from '../../api/client';
-import type { StrKey } from '../../app/i18n';
-import { t, tf } from '../../app/i18n';
-import { IconAdd, IconReset } from '../../app/icons';
-import { authMe } from '../../state/authStore';
-import { Modal, toast } from '../../lib/ui';
+import type { WorkerI18nKey, WorkerPorts } from './ports';
 import {
   type PrivateWorker,
   validateCreateInput, looksLikeWorkerToken,
@@ -42,7 +37,7 @@ import {
   nextStep, prevStep, stepTitleKey, stepBodyKey, formatDiskBudget,
 } from './workerSetup';
 
-export function PrivateWorkersSection() {
+export function PrivateWorkersSection({ ports }: { ports: WorkerPorts }) {
   const [workers, setWorkers] = useState<PrivateWorker[] | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -70,12 +65,12 @@ export function PrivateWorkersSection() {
   const [sharingFor, setSharingFor] = useState<PrivateWorker | null>(null);
 
   const shareOn = shareFeatureEnabled.value === true;
-  const authed = !!authMe.value.authenticated;
+  const authed = ports.auth.isAuthenticated();
 
   const load = useCallback(async () => {
     setError('');
     try {
-      const res = await getJson<{ workers: PrivateWorker[] }>('/workers');
+      const res = await ports.api.getJson<{ workers: PrivateWorker[] }>('/workers');
       setWorkers(res.workers);
       // Row badges: read the active policy per private worker (a personal
       // list is small — bounded N parallel reads, all owner-scoped).
@@ -84,7 +79,7 @@ export function PrivateWorkersSection() {
           .filter(canBeShared)
           .map(async (w) => {
             try {
-              const s = await fetchShareState(w.worker_id);
+              const s = await fetchShareState(ports.api, w.worker_id);
               return [w.worker_id, shareModeOf(s.policy)] as const;
             } catch { return [w.worker_id, 'off'] as const; }
           }));
@@ -93,24 +88,24 @@ export function PrivateWorkersSection() {
         setShareStates({});
       }
     } catch (e) {
-      setError(humanError(e));
+      setError(humanError(ports, e));
     }
   }, []);
 
   // "Shared with me" — ALWAYS a fresh server read (never a cached grant):
   // revocation and expiry simply stop the entry from arriving.
   const loadShared = useCallback(async (markSeen: boolean) => {
-    if (shareFeatureEnabled.value !== true || !authMe.value.authenticated) return;
+    if (shareFeatureEnabled.value !== true || !ports.auth.isAuthenticated()) return;
     setSharedLoading(true); setSharedError('');
     try {
-      const list = await fetchSharedWithMe();
+      const list = await fetchSharedWithMe(ports.api);
       setShared((prev) => {
         syncSharedWithMe(prev ?? [], list);
         return list;
       });
       if (markSeen) markSharedSeen(list);
     } catch (e) {
-      setSharedError(humanError(e));
+      setSharedError(humanError(ports, e));
       setShared([]);
     } finally {
       setSharedLoading(false);
@@ -118,14 +113,14 @@ export function PrivateWorkersSection() {
   }, []);
 
   useEffect(() => {
-    void probeShareFeature().then((on) => { if (on) void loadShared(false); });
+    void probeShareFeature(ports.api).then((on) => { if (on) void loadShared(false); });
   }, [loadShared]);
 
   // Notification seam: until a real transport exists, notices are derived
   // from the state diff (syncSharedWithMe) — rendered as toasts here.
   useEffect(() => (
     onShareNotice((n) => {
-      toast(tf('share_notification', n.actor_username ?? '—', n.worker_name ?? '—'), 4000);
+      ports.ui.toast(ports.i18n.tf('share_notification', n.actor_username ?? '—', n.worker_name ?? '—'), 4000);
     })
   ), []);
 
@@ -137,31 +132,31 @@ export function PrivateWorkersSection() {
   useEffect(() => { void load(); }, [load]);
 
   const onRotate = useCallback(async (worker: PrivateWorker) => {
-    if (busy || !confirm(t('worker_rotate_confirm'))) return;
+    if (busy || !confirm(ports.i18n.t('worker_rotate_confirm'))) return;
     setBusy(true); setError('');
     try {
-      const res = await postJson<{ worker: PrivateWorker; token: string }>(
+      const res = await ports.api.postJson<{ worker: PrivateWorker; token: string }>(
         `/workers/${worker.worker_id}/rotate`, {});
       // Rotating disconnects the current worker until it receives the new
       // credential — disclose the new one-time key exactly as on create.
       setRotated({ token: res.token, worker: res.worker });
       await load();
     } catch (e) {
-      setError(humanError(e));
+      setError(humanError(ports, e));
     } finally {
       setBusy(false);
     }
   }, [busy, load]);
 
   const onRevoke = useCallback(async (worker: PrivateWorker) => {
-    if (busy || !confirm(t('worker_revoke_confirm'))) return;
+    if (busy || !confirm(ports.i18n.t('worker_revoke_confirm'))) return;
     setBusy(true); setError('');
     try {
-      await deleteJson(`/workers/${worker.worker_id}`);
-      toast(t('worker_revoked'));
+      await ports.api.deleteJson(`/workers/${worker.worker_id}`);
+      ports.ui.toast(ports.i18n.t('worker_revoked'));
       await load();
     } catch (e) {
-      setError(humanError(e));
+      setError(humanError(ports, e));
     } finally {
       setBusy(false);
     }
@@ -171,14 +166,14 @@ export function PrivateWorkersSection() {
   // the registry row and clears every derived state (auth mirror, heartbeat,
   // hub GPU registry), so the worker can never resurface (reload/re-login).
   const onDelete = useCallback(async (worker: PrivateWorker) => {
-    if (busy || !confirm(t('worker_delete_confirm'))) return;
+    if (busy || !confirm(ports.i18n.t('worker_delete_confirm'))) return;
     setBusy(true); setError('');
     try {
-      await deleteJson(`/workers/${worker.worker_id}/purge`);
-      toast(t('worker_deleted'));
+      await ports.api.deleteJson(`/workers/${worker.worker_id}/purge`);
+      ports.ui.toast(ports.i18n.t('worker_deleted'));
       await load();
     } catch (e) {
-      setError(humanError(e));
+      setError(humanError(ports, e));
     } finally {
       setBusy(false);
     }
@@ -188,12 +183,12 @@ export function PrivateWorkersSection() {
     <section class="page settings-page">
       <div class="settings-page__scroll">
         <div class="card card--stack">
-          <p class="card__hint card__hint--wrap" style="margin-top:0">{t('worker_mgmt_desc')}</p>
+          <p class="card__hint card__hint--wrap" style="margin-top:0">{ports.i18n.t('worker_mgmt_desc')}</p>
 
           {/* «Добавить воркер» always sits ABOVE the three section selectors
               (Мои воркеры / Поделились со мной / Community). */}
           <button class="btn btn--block" onClick={() => setWizardOpen(true)} disabled={busy}>
-            <IconAdd width={18} height={18} /> {t('worker_add')}
+            <ports.icons.Add width={18} height={18} /> {ports.i18n.t('worker_add')}
           </button>
 
           {/* ── SH-2: three views (My / Shared with me / Community) ──
@@ -201,20 +196,20 @@ export function PrivateWorkersSection() {
               ever called while it is off; rows then render their Private
               badge — nothing can be shared). */}
           {shareOn && (
-            <div class="seg seg--block worker__tabs" role="tablist" aria-label={t('share_btn')}>
+            <div class="seg seg--block worker__tabs" role="tablist" aria-label={ports.i18n.t('share_btn')}>
               <button
                 role="tab" aria-selected={tab === 'my'}
                 class={'seg__btn' + (tab === 'my' ? ' seg__btn--active' : '')}
                 onClick={() => onTab('my')}
-              >{t('share_tab_my')}</button>
+              >{ports.i18n.t('share_tab_my')}</button>
               <button
                 role="tab" aria-selected={tab === 'shared'}
                 class={'seg__btn' + (tab === 'shared' ? ' seg__btn--active' : '')}
                 onClick={() => onTab('shared')}
               >
-                {t('share_tab_shared_with_me')}
+                {ports.i18n.t('share_tab_shared_with_me')}
                 {sharedUnreadCount.value > 0 && (
-                  <span class="share__badge" aria-label={t('share_badge_title')}>{sharedUnreadCount.value}</span>
+                  <span class="share__badge" aria-label={ports.i18n.t('share_badge_title')}>{sharedUnreadCount.value}</span>
                 )}
                 {sharedWithMeCount.value > 0 && sharedUnreadCount.value === 0 && (
                   <span class="share__badge share__badge--muted">{sharedWithMeCount.value}</span>
@@ -224,33 +219,34 @@ export function PrivateWorkersSection() {
                 role="tab" aria-selected={tab === 'community'}
                 class={'seg__btn' + (tab === 'community' ? ' seg__btn--active' : '')}
                 onClick={() => onTab('community')}
-              >{t('share_tab_community')}</button>
+              >{ports.i18n.t('share_tab_community')}</button>
             </div>
           )}
 
           {shareOn && tab === 'shared' && (
             <div class="card card--stack">
-              <h3 class="card__title">{t('share_swm_title')}</h3>
-              {!authed && <p class="card__hint card__hint--wrap">{t('share_login_required')}</p>}
+              <h3 class="card__title">{ports.i18n.t('share_swm_title')}</h3>
+              {!authed && <p class="card__hint card__hint--wrap">{ports.i18n.t('share_login_required')}</p>}
               <SharedWithMeView
                 entries={shared ?? []}
                 loading={sharedLoading}
                 error={sharedError}
+                ports={ports}
               />
             </div>
           )}
 
           {shareOn && tab === 'community' && (
             <div class="card card--stack">
-              <h3 class="card__title">{t('share_community_title')}</h3>
-              <CommunityView />
+              <h3 class="card__title">{ports.i18n.t('share_community_title')}</h3>
+              <CommunityView ports={ports} />
             </div>
           )}
 
           {(tab === 'my' || !shareOn) && (!workers ? (
-            <p class="card__hint">{t('play_loading')}</p>
+            <p class="card__hint">{ports.i18n.t('play_loading')}</p>
           ) : workers.length === 0 ? (
-            <p class="card__hint">{t('worker_empty')}</p>
+            <p class="card__hint">{ports.i18n.t('worker_empty')}</p>
           ) : (
             <div class="worker__list">
               {workers.map((w) => (
@@ -262,54 +258,54 @@ export function PrivateWorkersSection() {
                     <span class="worker__row-badges">
                       <span
                         class={'worker__badge ' + (shareStates[w.worker_id] === 'public' ? 'worker__badge--public' : 'worker__badge--private')}
-                        aria-label={t(shareStates[w.worker_id] === 'public' ? 'worker_access_public' : 'worker_access_private')}
+                        aria-label={ports.i18n.t(shareStates[w.worker_id] === 'public' ? 'worker_access_public' : 'worker_access_private')}
                       >
-                        {shareStates[w.worker_id] === 'public' ? t('share_public_badge') : t('worker_access_private')}
+                        {shareStates[w.worker_id] === 'public' ? ports.i18n.t('share_public_badge') : ports.i18n.t('worker_access_private')}
                       </span>
-                      <span class={'worker__status ' + statusClass(w.status)}>{t(statusKey(w.status))}</span>
+                      <span class={'worker__status ' + statusClass(w.status)}>{ports.i18n.t(statusKey(w.status) as WorkerI18nKey)}</span>
                     </span>
                   </div>
                   <div class="worker__row-meta">
-                    <span>{t(w.worker_type === 'audio' ? 'layer_audio' : w.worker_type === 'image' ? 'layer_image' : 'layer_video')}</span>
+                    <span>{ports.i18n.t(w.worker_type === 'audio' ? 'layer_audio' : w.worker_type === 'image' ? 'layer_image' : 'layer_video')}</span>
                     <span>·</span>
-                    <span>{t('worker_last_seen')} {formatLastSeen(w.last_seen)}</span>
+                    <span>{ports.i18n.t('worker_last_seen')} {formatLastSeen(w.last_seen)}</span>
                   </div>
                   {w.status === 'OFFLINE' && (
                     <details class="worker__trouble">
-                      <summary>{t('worker_trouble_title')}</summary>
-                      <p class="card__hint card__hint--wrap">{t('worker_offline_hint')}</p>
+                      <summary>{ports.i18n.t('worker_trouble_title')}</summary>
+                      <p class="card__hint card__hint--wrap">{ports.i18n.t('worker_offline_hint')}</p>
                       <ul class="worker__steps">
                         {OFFLINE_TROUBLESHOOT_KEYS.map((k) => (
-                          <li key={k}>{t(k)}</li>
+                          <li key={k}>{ports.i18n.t(k)}</li>
                         ))}
                       </ul>
                     </details>
                   )}
                   <div class="worker__actions">
                     <button class="btn btn--outlined" disabled={busy} onClick={() => setDetailsFor(w)}>
-                      {t('worker_details_title')}
+                      {ports.i18n.t('worker_details_title')}
                     </button>
                     {/* SH-2: owner sharing controls — private, non-revoked
                         workers only (ownership/mode are never editable here). */}
                     {shareOn && canBeShared(w) && (
                       <button class="btn btn--outlined" disabled={busy} onClick={() => setSharingFor(w)}>
-                        {t('share_btn')}
+                        {ports.i18n.t('share_btn')}
                       </button>
                     )}
                     {w.status !== 'REVOKED' && (
                       <>
                         <button class="btn btn--outlined" disabled={busy} onClick={() => void onRotate(w)}
-                          title={t('worker_rotate')} aria-label={t('worker_rotate')}>
-                          <IconReset width={18} height={18} /> {busy ? t('play_loading') : t('worker_rotate_short')}
+                          title={ports.i18n.t('worker_rotate')} aria-label={ports.i18n.t('worker_rotate')}>
+                          <ports.icons.Reset width={18} height={18} /> {busy ? ports.i18n.t('play_loading') : ports.i18n.t('worker_rotate_short')}
                         </button>
                         <button class="btn btn--outlined btn--error" disabled={busy} onClick={() => void onRevoke(w)}>
-                          {t('worker_revoke')}
+                          {ports.i18n.t('worker_revoke')}
                         </button>
                       </>
                     )}
                     {w.status === 'REVOKED' && (
                       <button class="btn btn--outlined btn--error" disabled={busy} onClick={() => void onDelete(w)}>
-                        {t('worker_delete')}
+                        {ports.i18n.t('worker_delete')}
                       </button>
                     )}
                     {/* Repair / Reinstall — UI extension point (Phase 3.1 §20).
@@ -327,12 +323,14 @@ export function PrivateWorkersSection() {
 
       {wizardOpen && (
         <SetupWizard
+          ports={ports}
           onClose={() => { if (!busy) { setWizardOpen(false); void load(); } }}
         />
       )}
 
       {detailsFor && (
         <WorkerDetailsModal
+          ports={ports}
           worker={detailsFor}
           isPublicShare={shareStates[detailsFor.worker_id] === 'public'}
           onClose={() => setDetailsFor(null)}
@@ -344,11 +342,13 @@ export function PrivateWorkersSection() {
           worker={sharingFor}
           onClose={() => setSharingFor(null)}
           onChanged={() => { void load(); }}
+          ports={ports}
         />
       )}
 
       {rotated && looksLikeWorkerToken(rotated.token) && (
         <OneTimeKeyModal
+          ports={ports}
           token={rotated.token}
           workerName={rotated.worker.name}
           onClose={() => setRotated(null)}
@@ -363,7 +363,8 @@ export function PrivateWorkersSection() {
 // from transient state only, and dropped from memory on close. The worker
 // reconnects when the installer/worker process receives the new key.
 // ─────────────────────────────────────────────────────────────────────────
-function OneTimeKeyModal({ token, workerName, onClose }: {
+function OneTimeKeyModal({ ports, token, workerName, onClose }: {
+  ports: WorkerPorts;
   token: string; workerName: string; onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
@@ -373,27 +374,27 @@ function OneTimeKeyModal({ token, workerName, onClose }: {
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } catch (_) {
-      toast(t('worker_copy_failed'));
+      ports.ui.toast(ports.i18n.t('worker_copy_failed'));
     }
   }, [token]);
 
   return (
-    <Modal title={`${t('worker_rotate')} — ${workerName}`} onClose={onClose}>
+    <ports.ui.Modal title={`${ports.i18n.t('worker_rotate')} — ${workerName}`} onClose={onClose}>
       <>
-        <p class="modal__notice worker__warn">{t('worker_credential_warning')}</p>
-        <p class="card__label">{t('worker_setup_key_title')}</p>
+        <p class="modal__notice worker__warn">{ports.i18n.t('worker_credential_warning')}</p>
+        <p class="card__label">{ports.i18n.t('worker_setup_key_title')}</p>
         <div class="worker__cred">
           <code class="worker__token">{token}</code>
           <button class="btn btn--outlined" onClick={() => void onCopy()}>
-            {copied ? t('worker_copied') : t('worker_copy')}
+            {copied ? ports.i18n.t('worker_copied') : ports.i18n.t('worker_copy')}
           </button>
         </div>
-        <p class="card__hint card__hint--wrap">{t('worker_setup_key_installer_note')}</p>
+        <p class="card__hint card__hint--wrap">{ports.i18n.t('worker_setup_key_installer_note')}</p>
         <div class="modal__footer">
-          <button class="btn" onClick={onClose}>{t('worker_done')}</button>
+          <button class="btn" onClick={onClose}>{ports.i18n.t('worker_done')}</button>
         </div>
       </>
-    </Modal>
+    </ports.ui.Modal>
   );
 }
 
@@ -402,7 +403,7 @@ function OneTimeKeyModal({ token, workerName, onClose }: {
 // Every fact (profiles, versions, URLs, checksums, instructions) comes from
 // the Setup Contract API; nothing is hardcoded.
 // ─────────────────────────────────────────────────────────────────────────
-function SetupWizard({ onClose }: { onClose: () => void }) {
+function SetupWizard({ ports, onClose }: { ports: WorkerPorts; onClose: () => void }) {
   const [state, setState] = useState<WizardState>(initialWizardState);
   const [profiles, setProfiles] = useState<SetupProfile[] | null>(null);
   const [methods, setMethods] = useState<SetupMethod[] | null>(null);
@@ -427,13 +428,13 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
     let alive = true;
     (async () => {
       try {
-        const [p, m] = await Promise.all([fetchSetupProfiles(), fetchSetupMethods()]);
+        const [p, m] = await Promise.all([fetchSetupProfiles(ports.api), fetchSetupMethods(ports.api)]);
         if (!alive) return;
         setProfiles(p.profiles);
         setMethods(m.methods);
         setCapabilities(m.capabilities ?? null);
       } catch (e) {
-        if (alive) setLoadError(humanError(e));
+        if (alive) setLoadError(humanError(ports, e));
       }
     })();
     return () => { alive = false; };
@@ -465,10 +466,10 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
   const onCreate = useCallback(async () => {
     if (busy || !profile) return;
     const v = validateCreateInput(name, profile.worker_type);
-    if (!v.ok) { setLoadError(t(v.error as StrKey)); return; }
+    if (!v.ok) { setLoadError(ports.i18n.t(v.error as WorkerI18nKey)); return; }
     setBusy(true); setLoadError('');
     try {
-      const res = await postJson<{ worker: PrivateWorker; token: string }>('/workers', {
+      const res = await ports.api.postJson<{ worker: PrivateWorker; token: string }>('/workers', {
         name: v.name, worker_type: v.worker_type,
       });
       setCreated({ token: res.token, worker: res.worker });
@@ -479,8 +480,9 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
       void (async () => {
         try {
           const [wf, ins] = await Promise.all([
-            fetchSetupWorkflows(profile.id),
+            fetchSetupWorkflows(ports.api, profile.id),
             fetchSetupInstructions(
+              ports.api,
               profile.id,
               state.platform ?? 'linux',
               state.mode ?? 'managed',
@@ -494,7 +496,7 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
         }
       })();
     } catch (e) {
-      setLoadError(humanError(e));
+      setLoadError(humanError(ports, e));
     } finally {
       setBusy(false);
     }
@@ -507,7 +509,7 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } catch (_) {
-      toast(t('worker_copy_failed'));
+      ports.ui.toast(ports.i18n.t('worker_copy_failed'));
     }
   }, [created]);
 
@@ -515,36 +517,36 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
   const canNext = canGoNext(state, { platformSelectable: platformOk, nameValid });
 
   return (
-    <Modal title={t('worker_setup_center_title')} onClose={onClose}>
+    <ports.ui.Modal title={ports.i18n.t('worker_setup_center_title')} onClose={onClose}>
       <>
         {loadError && <p class="settings-page__error">{loadError}</p>}
 
         {/* ── Step 1: profile ── */}
         {state.step === 'profile' && (
-          !profiles ? <p class="card__hint">{loadError || t('play_loading')}</p> : (
+          !profiles ? <p class="card__hint">{loadError || ports.i18n.t('play_loading')}</p> : (
             <div class="setup__step">
-              <p class="card__label">{t('worker_setup_choose_profile')}</p>
+              <p class="card__label">{ports.i18n.t('worker_setup_choose_profile')}</p>
               <div class="setup__grid">
                 {groupProfilesByType(profiles).map(({ worker_type, recommended }) => (
                   <div class="setup__card" key={worker_type}>
                     <span class="setup__card-type">
-                      {t(worker_type === 'audio' ? 'layer_audio' : worker_type === 'image' ? 'layer_image' : 'layer_video')}
+                      {ports.i18n.t(worker_type === 'audio' ? 'layer_audio' : worker_type === 'image' ? 'layer_image' : 'layer_video')}
                     </span>
                     <span class="setup__card-name">{recommended.name}</span>
-                    <span class="setup__card-hint">{t('worker_setup_recommended')}</span>
+                    <span class="setup__card-hint">{ports.i18n.t('worker_setup_recommended')}</span>
                     {formatDiskBudget(recommended.disk_budget_bytes_approx) && (
                       <span class="setup__card-hint">
-                        {tf('worker_setup_disk_budget', formatDiskBudget(recommended.disk_budget_bytes_approx)!)}
+                        {ports.i18n.tf('worker_setup_disk_budget', formatDiskBudget(recommended.disk_budget_bytes_approx)!)}
                       </span>
                     )}
                     {recommended.status === 'draft' && (
-                      <span class="setup__badge">{t('worker_setup_draft_badge')}</span>
+                      <span class="setup__badge">{ports.i18n.t('worker_setup_draft_badge')}</span>
                     )}
                     <button
                       class="btn setup__card-btn"
                       onClick={() => { setState((s) => ({ ...s, profileId: recommended.id })); goto('mode'); }}
                     >
-                      {t('worker_setup_set_up')}
+                      {ports.i18n.t('worker_setup_set_up')}
                     </button>
                   </div>
                 ))}
@@ -556,7 +558,7 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
         {/* ── Step 2: installation mode ── */}
         {state.step === 'mode' && profile && (
           <div class="setup__step">
-            <p class="card__label">{t('worker_setup_mode_title')}</p>
+            <p class="card__label">{ports.i18n.t('worker_setup_mode_title')}</p>
             <label class={'setup__choice' + (modeAvail.managed ? '' : ' setup__choice--disabled')}>
               <input
                 type="radio" name="setup-mode" value="managed"
@@ -565,9 +567,9 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
                 onChange={() => { if (modeAvail.managed) setState((s) => ({ ...s, mode: 'managed' })); }}
               />
               <span class="setup__choice-main">
-                <span class="setup__choice-title">{t('worker_setup_mode_managed')}</span>
+                <span class="setup__choice-title">{ports.i18n.t('worker_setup_mode_managed')}</span>
                 <span class="card__hint card__hint--wrap">
-                  {modeAvail.managed ? t('worker_setup_mode_managed_desc') : t('worker_setup_mode_managed_unavailable')}
+                  {modeAvail.managed ? ports.i18n.t('worker_setup_mode_managed_desc') : ports.i18n.t('worker_setup_mode_managed_unavailable')}
                 </span>
               </span>
             </label>
@@ -579,14 +581,14 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
                 onChange={() => { if (modeAvail.existing) setState((s) => ({ ...s, mode: 'existing' })); }}
               />
               <span class="setup__choice-main">
-                <span class="setup__choice-title">{t('worker_setup_mode_existing')}</span>
+                <span class="setup__choice-title">{ports.i18n.t('worker_setup_mode_existing')}</span>
                 <span class="card__hint card__hint--wrap">
-                  {modeAvail.existing ? t('worker_setup_mode_existing_desc') : t('worker_setup_mode_existing_unavailable')}
+                  {modeAvail.existing ? ports.i18n.t('worker_setup_mode_existing_desc') : ports.i18n.t('worker_setup_mode_existing_unavailable')}
                 </span>
               </span>
             </label>
             {state.mode === 'existing' && (
-              <p class="modal__notice setup__notice">{t('worker_setup_existing_warning')}</p>
+              <p class="modal__notice setup__notice">{ports.i18n.t('worker_setup_existing_warning')}</p>
             )}
           </div>
         )}
@@ -594,7 +596,7 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
         {/* ── Step 3: platform × deployment (one capability model) ── */}
         {state.step === 'platform' && (
           <div class="setup__step">
-            <p class="card__label">{t('worker_setup_platform_title')}</p>
+            <p class="card__label">{ports.i18n.t('worker_setup_platform_title')}</p>
             {deploymentOpts.map((o) => (
               <label class={'setup__choice' + (o.selectable ? '' : ' setup__choice--disabled')} key={o.key}>
                 <input
@@ -608,10 +610,10 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
                 <span class="setup__choice-main">
                   <span class="setup__choice-title">
                     {o.label}
-                    {' '}· {t(o.availabilityKey)}
+                    {' '}· {ports.i18n.t(o.availabilityKey)}
                   </span>
                   <span class="card__hint">
-                    {t(o.stateKey)}
+                    {ports.i18n.t(o.stateKey)}
                     {o.selectable && o.installerVersion ? ` · v${o.installerVersion}` : ''}
                   </span>
                   {/* Preview/Experimental: informational notice, never blocking */}
@@ -627,14 +629,14 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
         {/* ── Step 4: create worker ── */}
         {state.step === 'create' && profile && (
           <div class="setup__step">
-            <p class="card__label">{t('worker_setup_create_title')}</p>
-            <p class="card__hint card__hint--wrap">{t('worker_setup_create_body')}</p>
-            <p class="card__label">{t('worker_name')}</p>
+            <p class="card__label">{ports.i18n.t('worker_setup_create_title')}</p>
+            <p class="card__hint card__hint--wrap">{ports.i18n.t('worker_setup_create_body')}</p>
+            <p class="card__label">{ports.i18n.t('worker_name')}</p>
             <input
               class="settings__input"
               value={name}
-              placeholder={t('worker_name_hint')}
-              aria-label={t('worker_name')}
+              placeholder={ports.i18n.t('worker_name_hint')}
+              aria-label={ports.i18n.t('worker_name')}
               disabled={busy}
               onInput={(e) => setName((e.target as HTMLInputElement).value)}
             />
@@ -644,6 +646,7 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
         {/* ── Step 5: install ── */}
         {state.step === 'install' && created && profile && (
           <InstallStep
+            ports={ports}
             created={created}
             method={method}
             mode={state.mode ?? 'managed'}
@@ -658,25 +661,25 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
         <div class="modal__footer">
           {state.step !== 'profile' && state.step !== 'install' && (
             <button class="btn btn--outlined" onClick={onBack} disabled={busy}>
-              {t('worker_setup_back')}
+              {ports.i18n.t('worker_setup_back')}
             </button>
           )}
           {state.step !== 'install' && state.step !== 'create' && (
             <button class="btn" onClick={onNext} disabled={!canNext}>
-              {t('worker_setup_next')}
+              {ports.i18n.t('worker_setup_next')}
             </button>
           )}
           {state.step === 'create' && (
             <button class="btn" onClick={() => void onCreate()} disabled={busy || !nameValid}>
-              {busy ? t('play_loading') : t('worker_create')}
+              {busy ? ports.i18n.t('play_loading') : ports.i18n.t('worker_create')}
             </button>
           )}
           {state.step === 'install' && (
-            <button class="btn" onClick={onClose}>{t('worker_done')}</button>
+            <button class="btn" onClick={onClose}>{ports.i18n.t('worker_done')}</button>
           )}
         </div>
       </>
-    </Modal>
+    </ports.ui.Modal>
   );
 }
 
@@ -687,7 +690,8 @@ function SetupWizard({ onClose }: { onClose: () => void }) {
 // bootstrap — nothing is typed. The worker is ALWAYS created before this
 // step (wizard 'create') — there is no "create a worker" instruction.
 // ─────────────────────────────────────────────────────────────────────────
-function InstallStep({ created, method, mode, workflows, instructions, instructionsFailed, copied, onCopyKey }: {
+function InstallStep({ ports, created, method, mode, workflows, instructions, instructionsFailed, copied, onCopyKey }: {
+  ports: WorkerPorts;
   created: { token: string; worker: PrivateWorker };
   method: SetupMethod | null;
   mode: 'managed' | 'existing';
@@ -718,36 +722,36 @@ function InstallStep({ created, method, mode, workflows, instructions, instructi
       )}
 
       {/* One-time Worker Key (existing secure lifecycle — Phase 3.1 §14) */}
-      <p class="modal__notice worker__warn">{t('worker_credential_warning')}</p>
-      <p class="card__label">{t('worker_setup_key_title')}</p>
+      <p class="modal__notice worker__warn">{ports.i18n.t('worker_credential_warning')}</p>
+      <p class="card__label">{ports.i18n.t('worker_setup_key_title')}</p>
       <div class="worker__cred">
         <code class="worker__token">{created.token}</code>
         <button class="btn btn--outlined" onClick={onCopyKey}>
-          {copied ? t('worker_copied') : t('worker_copy')}
+          {copied ? ports.i18n.t('worker_copied') : ports.i18n.t('worker_copy')}
         </button>
       </div>
-      <p class="card__hint card__hint--wrap">{t('worker_setup_key_installer_note')}</p>
+      <p class="card__hint card__hint--wrap">{ports.i18n.t('worker_setup_key_installer_note')}</p>
 
       {/* Bootstrap installer — version prominent, checksum collapsed (once) */}
-      <p class="card__label">{t('worker_setup_installer_title')}</p>
+      <p class="card__label">{ports.i18n.t('worker_setup_installer_title')}</p>
       {installerUrl ? (
         <div class="setup__artifact">
           <span class="setup__artifact-meta">
-            {installerVersionStr ? tf('worker_setup_installer_version_line', installerVersionStr) : tf('worker_setup_version_fmt', '—')}
+            {installerVersionStr ? ports.i18n.tf('worker_setup_installer_version_line', installerVersionStr) : ports.i18n.tf('worker_setup_version_fmt', '—')}
           </span>
           <a class="btn" href={installerUrl} download>
-            {t('worker_setup_download_installer')}
+            {ports.i18n.t('worker_setup_download_installer')}
           </a>
           {installerSha && (
             <details class="setup__checksum-details">
-              <summary>{t('worker_setup_checksum')}</summary>
+              <summary>{ports.i18n.t('worker_setup_checksum')}</summary>
               <code class="setup__checksum-value">{installerSha}</code>
             </details>
           )}
         </div>
       ) : (
         <p class="card__hint card__hint--wrap">
-          {bundle?.available ? t('worker_setup_installer_down_existing_hint') : t('worker_setup_installer_unavailable')}
+          {bundle?.available ? ports.i18n.t('worker_setup_installer_down_existing_hint') : ports.i18n.t('worker_setup_installer_unavailable')}
         </p>
       )}
 
@@ -755,29 +759,29 @@ function InstallStep({ created, method, mode, workflows, instructions, instructi
           Existing ComfyUI flow; otherwise a note (installer provisions it). */}
       {bundle && bundle.available && bundleUrl && bundlePrimary ? (
         <>
-          <p class="card__label">{t('worker_setup_bundle_title')}</p>
+          <p class="card__label">{ports.i18n.t('worker_setup_bundle_title')}</p>
           <div class="setup__artifact">
             <span class="setup__artifact-meta">
-              {tf('worker_setup_version_fmt', bundle.version ?? '—')}
+              {ports.i18n.tf('worker_setup_version_fmt', bundle.version ?? '—')}
               {bundle.sha256 ? ` · SHA-256: ${bundle.sha256.slice(0, 12)}…` : ''}
             </span>
             <a class="btn" href={bundleUrl} download>
-              {t('worker_setup_download_bundle')}
+              {ports.i18n.t('worker_setup_download_bundle')}
             </a>
           </div>
         </>
       ) : bundle && bundle.available && bundle.version ? (
-        <p class="card__hint card__hint--wrap">{tf('worker_setup_bundle_note', bundle.version)}</p>
+        <p class="card__hint card__hint--wrap">{ports.i18n.tf('worker_setup_bundle_note', bundle.version)}</p>
       ) : null}
 
       {/* Baseline workflows — OPTIONAL artifacts (never a runtime dependency):
           the installer fetches the profile's workflows itself; these downloads
           exist only for manual experiments in the ComfyUI editor. */}
-      <p class="card__label">{t('worker_setup_workflows_title')}</p>
+      <p class="card__label">{ports.i18n.t('worker_setup_workflows_title')}</p>
       {workflows === null ? (
-        <p class="card__hint">{t('play_loading')}</p>
+        <p class="card__hint">{ports.i18n.t('play_loading')}</p>
       ) : workflows.length === 0 ? (
-        <p class="card__hint card__hint--wrap">{t('worker_setup_workflow_none')}</p>
+        <p class="card__hint card__hint--wrap">{ports.i18n.t('worker_setup_workflow_none')}</p>
       ) : (
         <div class="setup__workflows">
           {workflows.map((wf) => {
@@ -787,30 +791,30 @@ function InstallStep({ created, method, mode, workflows, instructions, instructi
                 <span class="setup__workflow-name">{wf.name}</span>
                 {wf.baseline_available && url ? (
                   <a class="btn btn--outlined" href={url} download>
-                    {t('worker_setup_workflow_download')}
+                    {ports.i18n.t('worker_setup_workflow_download')}
                   </a>
                 ) : (
-                  <span class="card__hint">{t('worker_setup_workflow_unavailable')}</span>
+                  <span class="card__hint">{ports.i18n.t('worker_setup_workflow_unavailable')}</span>
                 )}
               </div>
             );
           })}
-          <p class="card__hint card__hint--wrap">{t('worker_setup_workflow_optional')}</p>
+          <p class="card__hint card__hint--wrap">{ports.i18n.t('worker_setup_workflow_optional')}</p>
         </div>
       )}
 
       {/* Instructions — generated from API metadata (Phase 3.1 §15) */}
-      <p class="card__label">{t('worker_setup_instructions_title')}</p>
+      <p class="card__label">{ports.i18n.t('worker_setup_instructions_title')}</p>
       {instructions ? (
         <ol class="worker__steps">
           {instructions.steps.map((s) => (
             <li key={s.id}>
-              <strong>{t((stepTitleKey(s.id) ?? '') as StrKey, s.title)}</strong>
-              <div>{t((stepBodyKey(s.id) ?? '') as StrKey, s.body)}</div>
+              <strong>{ports.i18n.t((stepTitleKey(s.id) ?? '') as WorkerI18nKey, s.title)}</strong>
+              <div>{ports.i18n.t((stepBodyKey(s.id) ?? '') as WorkerI18nKey, s.body)}</div>
               {s.code && <pre class="settings__debug worker__env">{s.code}</pre>}
               {s.checksum && (
                 <details class="setup__checksum-details">
-                  <summary>{t('worker_setup_checksum')}: <code>{s.checksum.value.slice(0, 12)}…</code></summary>
+                  <summary>{ports.i18n.t('worker_setup_checksum')}: <code>{s.checksum.value.slice(0, 12)}…</code></summary>
                   <code class="setup__checksum-value">{s.checksum.value}</code>
                   {s.checksum.verify_code && <pre class="settings__debug worker__env">{s.checksum.verify_code}</pre>}
                 </details>
@@ -820,30 +824,30 @@ function InstallStep({ created, method, mode, workflows, instructions, instructi
         </ol>
       ) : instructionsFailed ? (
         // Compatibility path — legacy single-file contract (kept, not canonical).
-        <LegacyInstructions token={created.token} worker={created.worker} />
+        <LegacyInstructions ports={ports} token={created.token} worker={created.worker} />
       ) : (
-        <p class="card__hint">{t('play_loading')}</p>
+        <p class="card__hint">{ports.i18n.t('play_loading')}</p>
       )}
 
       {/* Optional terminal diagnostics — never a required step: the page
           itself shows the worker status (ONLINE after the first heartbeat). */}
       {instructions?.verify_command && (
         <details class="setup__checksum-details">
-          <summary>{t('worker_setup_verify_command_label')}</summary>
+          <summary>{ports.i18n.t('worker_setup_verify_command_label')}</summary>
           <pre class="settings__debug worker__env">{instructions.verify_command}</pre>
         </details>
       )}
 
-      <p class="card__hint card__hint--wrap">{t('worker_setup_verify_hint')}</p>
+      <p class="card__hint card__hint--wrap">{ports.i18n.t('worker_setup_verify_hint')}</p>
 
       {/* Preview/Experimental installs: a direct path for testers to report
           real installation problems (informational — diagnostics above never
           contain the Worker Key). */}
       {instructions?.availability && instructions.availability !== 'stable' && (
         <p class="card__hint card__hint--wrap">
-          {t('worker_setup_report_problem_hint')}{' '}
+          {ports.i18n.t('worker_setup_report_problem_hint')}{' '}
           <a href="https://github.com/Animastor/animastor/issues" target="_blank" rel="noreferrer">
-            {t('worker_setup_report_problem')}
+            {ports.i18n.t('worker_setup_report_problem')}
           </a>
         </p>
       )}
@@ -854,13 +858,13 @@ function InstallStep({ created, method, mode, workflows, instructions, instructi
 // Legacy compatibility instructions (old single-file model). Rendered ONLY
 // when the Setup Contract instructions endpoint is unreachable — the old
 // helpers/strings stay functional but are no longer the canonical flow.
-function LegacyInstructions({ token, worker }: { token: string; worker: PrivateWorker }) {
+function LegacyInstructions({ ports, token, worker }: { ports: WorkerPorts; token: string; worker: PrivateWorker }) {
   const contract = buildSetupContract(token, worker.worker_type, worker.name);
   return (
     <ol class="worker__steps">
       {contract.steps.map((s, i) => (
         <li key={i}>
-          {t(s as StrKey)}
+          {ports.i18n.t(s as WorkerI18nKey)}
           {i === 0 && <pre class="settings__debug worker__env">{contract.downloadCommand}</pre>}
           {i === 3 && <pre class="settings__debug worker__env">{contract.runCommand}</pre>}
         </li>
@@ -877,7 +881,8 @@ function LegacyInstructions({ token, worker }: { token: string; worker: PrivateW
 // Shows ONLY real backend fields: extended status, last seen, capabilities
 // (profiles/workflows/GPU/VRAM when reported). Null data is never invented.
 // ─────────────────────────────────────────────────────────────────────────
-function WorkerDetailsModal({ worker, isPublicShare, onClose }: {
+function WorkerDetailsModal({ ports, worker, isPublicShare, onClose }: {
+  ports: WorkerPorts;
   worker: PrivateWorker;
   isPublicShare: boolean;
   onClose: () => void;
@@ -890,15 +895,15 @@ function WorkerDetailsModal({ worker, isPublicShare, onClose }: {
     let alive = true;
     (async () => {
       try {
-        const res = await fetchSetupWorkerStatus(worker.worker_id);
+        const res = await fetchSetupWorkerStatus(ports.api, worker.worker_id);
         if (alive) setDetail(res.worker);
       } catch (e) {
-        if (alive) setError(humanError(e));
+        if (alive) setError(humanError(ports, e));
       }
       // Uninstall action exists ONLY if the backend says the uninstaller
       // artifact is actually available (Phase 3.1 §19 — no fake actions).
       try {
-        const { methods } = await fetchSetupMethods();
+        const { methods } = await fetchSetupMethods(ports.api);
         const linux = methods.find((m) => m.platform === 'linux');
         if (alive && linux && linux.uninstaller.available) {
           setUninstallUrl(resolveArtifactUrl(linux.uninstaller.download_url));
@@ -911,7 +916,7 @@ function WorkerDetailsModal({ worker, isPublicShare, onClose }: {
   const caps = detail?.capabilities ?? null;
 
   return (
-    <Modal title={t('worker_details_title')} onClose={onClose}>
+    <ports.ui.Modal title={ports.i18n.t('worker_details_title')} onClose={onClose}>
       <>
         <div class="worker__row-main">
           <span class="worker__name">{worker.name}</span>
@@ -920,23 +925,23 @@ function WorkerDetailsModal({ worker, isPublicShare, onClose }: {
           <span class="worker__row-badges">
             <span
               class={'worker__badge ' + (isPublicShare ? 'worker__badge--public' : 'worker__badge--private')}
-              aria-label={t(isPublicShare ? 'worker_access_public' : 'worker_access_private')}
+              aria-label={ports.i18n.t(isPublicShare ? 'worker_access_public' : 'worker_access_private')}
             >
-              {isPublicShare ? t('share_public_badge') : t('worker_access_private')}
+              {isPublicShare ? ports.i18n.t('share_public_badge') : ports.i18n.t('worker_access_private')}
             </span>
             {detail ? (
               <span class={'worker__status ' + setupStatusClass(detail.status)}>
-                {t(setupStatusKey(detail.status))}
+                {ports.i18n.t(setupStatusKey(detail.status) as WorkerI18nKey)}
               </span>
             ) : (
-              <span class={'worker__status ' + statusClass(worker.status)}>{t(statusKey(worker.status))}</span>
+              <span class={'worker__status ' + statusClass(worker.status)}>{ports.i18n.t(statusKey(worker.status) as WorkerI18nKey)}</span>
             )}
           </span>
         </div>
         <div class="worker__row-meta">
-          <span>{t(worker.worker_type === 'audio' ? 'layer_audio' : worker.worker_type === 'image' ? 'layer_image' : 'layer_video')}</span>
+          <span>{ports.i18n.t(worker.worker_type === 'audio' ? 'layer_audio' : worker.worker_type === 'image' ? 'layer_image' : 'layer_video')}</span>
           <span>·</span>
-          <span>{t('worker_last_seen')} {formatLastSeen(detail ? detail.last_seen : worker.last_seen)}</span>
+          <span>{ports.i18n.t('worker_last_seen')} {formatLastSeen(detail ? detail.last_seen : worker.last_seen)}</span>
         </div>
 
         {error && <p class="settings-page__error">{error}</p>}
@@ -946,45 +951,45 @@ function WorkerDetailsModal({ worker, isPublicShare, onClose }: {
             <div class="setup__caps">
               {caps.gpu && (caps.gpu.name || caps.gpu.vram_gb != null) && (
                 <p class="card__hint">
-                  {t('worker_details_gpu')}: {caps.gpu.name ?? '—'}
-                  {caps.gpu.vram_gb != null ? ` · ${t('worker_details_vram')}: ${caps.gpu.vram_gb} GB` : ''}
+                  {ports.i18n.t('worker_details_gpu')}: {caps.gpu.name ?? '—'}
+                  {caps.gpu.vram_gb != null ? ` · ${ports.i18n.t('worker_details_vram')}: ${caps.gpu.vram_gb} GB` : ''}
                 </p>
               )}
               {caps.profiles && caps.profiles.length > 0 && (
-                <p class="card__hint">{t('worker_details_profiles')}: {caps.profiles.join(', ')}</p>
+                <p class="card__hint">{ports.i18n.t('worker_details_profiles')}: {caps.profiles.join(', ')}</p>
               )}
               {caps.workflows && caps.workflows.length > 0 && (
-                <p class="card__hint">{t('worker_details_workflows')}: {caps.workflows.join(', ')}</p>
+                <p class="card__hint">{ports.i18n.t('worker_details_workflows')}: {caps.workflows.join(', ')}</p>
               )}
             </div>
           ) : (
-            <p class="card__hint card__hint--wrap">{t('worker_details_capabilities_empty')}</p>
+            <p class="card__hint card__hint--wrap">{ports.i18n.t('worker_details_capabilities_empty')}</p>
           )
         )}
 
         <div class="modal__footer">
           {uninstallUrl && (
             <a class="btn btn--outlined btn--error" href={uninstallUrl} download>
-              {t('worker_details_uninstall')}
+              {ports.i18n.t('worker_details_uninstall')}
             </a>
           )}
-          <button class="btn" onClick={onClose}>{t('worker_done')}</button>
+          <button class="btn" onClick={onClose}>{ports.i18n.t('worker_done')}</button>
         </div>
       </>
-    </Modal>
+    </ports.ui.Modal>
   );
 }
 
 /** Map an ApiError to a user-facing localized message; hide DB/Redis internals. */
-function humanError(e: unknown): string {
-  if (e instanceof ApiError) {
-    if (e.status === 401) return t('worker_err_auth_required');
-    if (e.status === 403) return t('worker_err_forbidden');
-    if (e.status === 404) return t('worker_err_not_found');
-    if (e.status >= 500) return t('worker_err_unavailable');
-    return e.message || t('worker_err_unavailable');
+function humanError(ports: WorkerPorts, e: unknown): string {
+  if (e instanceof ports.api.ApiError) {
+    if (e.status === 401) return ports.i18n.t('worker_err_auth_required');
+    if (e.status === 403) return ports.i18n.t('worker_err_forbidden');
+    if (e.status === 404) return ports.i18n.t('worker_err_not_found');
+    if (e.status >= 500) return ports.i18n.t('worker_err_unavailable');
+    return e.message || ports.i18n.t('worker_err_unavailable');
   }
-  return (e as Error)?.message || t('worker_err_unavailable');
+  return (e as Error)?.message || ports.i18n.t('worker_err_unavailable');
 }
 
 export type { WorkerStatus } from './privateWorkers';

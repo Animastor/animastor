@@ -13,7 +13,7 @@
 //    Contract itself never carries a key (backend placeholder only).
 //  - Nothing here logs the key; analytics receive no worker material.
 
-import { getJson, postJson } from '../../api/client';
+import type { WorkerApiPort } from './ports';
 
 // ── Contract DTOs (1:1 with backend/src/installer/setup-contract.js) ────────
 
@@ -148,12 +148,12 @@ export interface SetupWorkerDetail {
 
 const BASE = '/private-worker/setup';
 
-export function fetchSetupProfiles(): Promise<{ profiles: SetupProfile[] }> {
-  return getJson<{ profiles: SetupProfile[] }>(`${BASE}/profiles`);
+export function fetchSetupProfiles(api: WorkerApiPort): Promise<{ profiles: SetupProfile[] }> {
+  return api.getJson<{ profiles: SetupProfile[] }>(`${BASE}/profiles`);
 }
 
-export function fetchSetupMethods(): Promise<SetupMethodsResponse> {
-  return getJson<SetupMethodsResponse>(`${BASE}/methods`);
+export function fetchSetupMethods(api: WorkerApiPort): Promise<SetupMethodsResponse> {
+  return api.getJson<SetupMethodsResponse>(`${BASE}/methods`);
 }
 
 /** GET /setup/methods response envelope: artifact metadata + the shared
@@ -163,22 +163,23 @@ export interface SetupMethodsResponse {
   capabilities?: DeploymentCapability[];
 }
 
-export function fetchSetupWorkflows(profileId: string): Promise<{ workflows: SetupWorkflow[] }> {
-  return getJson<{ workflows: SetupWorkflow[] }>(`${BASE}/workflows?profile_id=${encodeURIComponent(profileId)}`);
+export function fetchSetupWorkflows(api: WorkerApiPort, profileId: string): Promise<{ workflows: SetupWorkflow[] }> {
+  return api.getJson<{ workflows: SetupWorkflow[] }>(`${BASE}/workflows?profile_id=${encodeURIComponent(profileId)}`);
 }
 
 export function fetchSetupInstructions(
+  api: WorkerApiPort,
   profileId: string,
   platform: SetupPlatform,
   mode: SetupInstallMode,
   deployment: SetupDeployment = 'native',
 ): Promise<SetupInstructions> {
   const q = `profile_id=${encodeURIComponent(profileId)}&platform=${platform}&deployment=${deployment}&mode=${mode}`;
-  return getJson<SetupInstructions>(`${BASE}/instructions?${q}`);
+  return api.getJson<SetupInstructions>(`${BASE}/instructions?${q}`);
 }
 
-export function fetchSetupWorkerStatus(workerId: string): Promise<{ worker: SetupWorkerDetail }> {
-  return getJson<{ worker: SetupWorkerDetail }>(`${BASE}/workers/${encodeURIComponent(workerId)}`);
+export function fetchSetupWorkerStatus(api: WorkerApiPort, workerId: string): Promise<{ worker: SetupWorkerDetail }> {
+  return api.getJson<{ worker: SetupWorkerDetail }>(`${BASE}/workers/${encodeURIComponent(workerId)}`);
 }
 
 export interface SetupPlanResponse {
@@ -193,12 +194,13 @@ export interface SetupPlanResponse {
 }
 
 export function postSetupPlan(
+  api: WorkerApiPort,
   profileIds: string[],
   mode: SetupInstallMode,
   platform: SetupPlatform,
   deployment: SetupDeployment = 'native',
 ): Promise<SetupPlanResponse> {
-  return postJson<SetupPlanResponse>(`${BASE}/plan`, { profile_ids: profileIds, mode, platform, deployment });
+  return api.postJson<SetupPlanResponse>(`${BASE}/plan`, { profile_ids: profileIds, mode, platform, deployment });
 }
 
 // ── Pure helpers (unit-tested in workerSetup.test.ts) ───────────────────────

@@ -12,8 +12,63 @@ import {
   shareErrorKey, diffSharedWorkers, canBeShared,
   fetchShareState, startShare, stopShare, addShareUsers, removeShareUser, lookupUser,
   probeShareFeature, shareFeatureEnabled,
-} from './sharing';
-import { ApiError } from '../../api/client';
+} from '../src/sharing';
+import type { WorkerApiPort, WorkerApiError } from '../src/ports';
+
+// ── Mock API error ──────────────────────────────────────────────────────────
+
+class MockApiError extends Error implements WorkerApiError {
+  status: number;
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+// ── Mock API port (uses global fetch stubs) ───────────────────────────────
+
+function createMockApi(): WorkerApiPort {
+  return {
+    getJson: async <T>(url: string): Promise<T> => {
+      const res = await globalThis.fetch(url);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+        throw new MockApiError(String(body.error ?? `HTTP ${res.status}`), res.status);
+      }
+      return res.json() as Promise<T>;
+    },
+    postJson: async <T>(url: string, body?: unknown): Promise<T> => {
+      const res = await globalThis.fetch(url, {
+        method: 'POST',
+        body: body != null ? JSON.stringify(body) : undefined,
+        headers: body != null ? { 'Content-Type': 'application/json' } : undefined,
+      });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({})) as Record<string, unknown>;
+        throw new MockApiError(String(b.error ?? `HTTP ${res.status}`), res.status);
+      }
+      return res.json() as Promise<T>;
+    },
+    deleteJson: async <T>(url: string): Promise<T> => {
+      const res = await globalThis.fetch(url, { method: 'DELETE' });
+      if (!res.ok) throw new MockApiError(`HTTP ${res.status}`, res.status);
+      return res.json() as Promise<T>;
+    },
+    deleteJsonBody: async <T>(url: string, body: unknown): Promise<T> => {
+      const res = await globalThis.fetch(url, {
+        method: 'DELETE',
+        body: JSON.stringify(body),
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) throw new MockApiError(`HTTP ${res.status}`, res.status);
+      return res.json() as Promise<T>;
+    },
+    ApiError: MockApiError as unknown as new (message: string, status: number, code?: string) => WorkerApiError,
+  };
+}
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 const NOW = 1_700_000_000_000;
@@ -128,17 +183,17 @@ describe('expiry conversion', () => {
 // ── error mapping (ApiError → localized keys) ──────────────────────────────
 describe('shareErrorKey', () => {
   it('maps the documented backend error codes', () => {
-    expect(shareErrorKey(new ApiError('Unknown user(s): x', 400))).toBe('share_err_unknown_user');
-    expect(shareErrorKey(new ApiError('Cannot share with yourself', 400))).toBe('share_err_self_grant');
-    expect(shareErrorKey(new ApiError('Worker is already shared — stop sharing first', 409))).toBe('share_err_already_active');
-    expect(shareErrorKey(new ApiError('Worker has no active users sharing — start sharing with users first', 409))).toBe('share_err_no_users_policy');
-    expect(shareErrorKey(new ApiError('expires_at must be in the future', 400))).toBe('share_err_expiry_past');
-    expect(shareErrorKey(new ApiError('users must be a non-empty array', 400))).toBe('share_err_invalid_users');
-    expect(shareErrorKey(new ApiError('scope must be one of', 400))).toBe('share_err_invalid_scope');
-    expect(shareErrorKey(new ApiError('Authentication required', 401))).toBe('worker_err_auth_required');
-    expect(shareErrorKey(new ApiError('Worker not found', 404))).toBe('worker_err_not_found');
-    expect(shareErrorKey(new ApiError('Guests cannot look up users', 403))).toBe('share_err_forbidden');
-    expect(shareErrorKey(new ApiError('DB exploded', 500))).toBe('worker_err_unavailable');
+    expect(shareErrorKey(new MockApiError('Unknown user(s): x', 400), MockApiError)).toBe('share_err_unknown_user');
+    expect(shareErrorKey(new MockApiError('Cannot share with yourself', 400), MockApiError)).toBe('share_err_self_grant');
+    expect(shareErrorKey(new MockApiError('Worker is already shared — stop sharing first', 409), MockApiError)).toBe('share_err_already_active');
+    expect(shareErrorKey(new MockApiError('Worker has no active users sharing — start sharing with users first', 409), MockApiError)).toBe('share_err_no_users_policy');
+    expect(shareErrorKey(new MockApiError('expires_at must be in the future', 400), MockApiError)).toBe('share_err_expiry_past');
+    expect(shareErrorKey(new MockApiError('users must be a non-empty array', 400), MockApiError)).toBe('share_err_invalid_users');
+    expect(shareErrorKey(new MockApiError('scope must be one of', 400), MockApiError)).toBe('share_err_invalid_scope');
+    expect(shareErrorKey(new MockApiError('Authentication required', 401), MockApiError)).toBe('worker_err_auth_required');
+    expect(shareErrorKey(new MockApiError('Worker not found', 404), MockApiError)).toBe('worker_err_not_found');
+    expect(shareErrorKey(new MockApiError('Guests cannot look up users', 403), MockApiError)).toBe('share_err_forbidden');
+    expect(shareErrorKey(new MockApiError('DB exploded', 500), MockApiError)).toBe('worker_err_unavailable');
   });
   it('non-ApiError degrades to a generic message', () => {
     expect(shareErrorKey(new Error('boom'))).toBe('boom');
@@ -170,29 +225,31 @@ describe('canBeShared', () => {
 
 // ── API layer (wire contract with the real backend routes) ─────────────────
 describe('sharing API client', () => {
-  beforeEach(() => { shareFeatureEnabled.value = true; });
+  let api: WorkerApiPort;
+  beforeEach(() => { shareFeatureEnabled.value = true; api = createMockApi(); });
   afterEach(() => { vi.unstubAllGlobals(); });
 
   it('startShare POSTs scope+users and re-reads the owner view', async () => {
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      if (init?.method === 'POST' && String(url).endsWith('/workers/w1/share')) {
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (init?.method === 'POST' && u.endsWith('/workers/w1/share')) {
         expect(JSON.parse(String(init.body))).toEqual({ scope: 'users', users: ['ivan'] });
         return ok({ sharing: true, policy: policy({ scope_kind: 'users' }), grants: [grant()] });
       }
-      if (String(url).endsWith('/workers/w1/share') && !init?.method) {
+      if (u.endsWith('/workers/w1/share') && !init?.method) {
         return ok({ sharing: true, policy: policy({ scope_kind: 'users' }), grants: [grant()] });
       }
-      throw new Error('unexpected ' + url);
+      throw new Error('unexpected ' + u);
     });
     vi.stubGlobal('fetch', fetchMock);
-    const res = await startShare('w1', { scope: 'users', users: ['ivan'] });
+    const res = await startShare(api, 'w1', { scope: 'users', users: ['ivan'] });
     expect(res.sharing).toBe(true);
     expect(res.grants).toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledTimes(2); // POST + canonical re-read
   });
 
   it('startShare public never sends a users array (backend contract)', async () => {
-    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
       if (init?.method === 'POST') {
         expect(JSON.parse(String(init.body))).toEqual({ scope: 'public' });
         return ok({ sharing: true, policy: policy(), grants: [] });
@@ -200,55 +257,55 @@ describe('sharing API client', () => {
       return ok({ sharing: true, policy: policy(), grants: [] });
     });
     vi.stubGlobal('fetch', fetchMock);
-    await startShare('w1', { scope: 'public' });
+    await startShare(api, 'w1', { scope: 'public' });
   });
 
   it('stopShare DELETEs the policy endpoint', async () => {
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
       expect(init?.method).toBe('DELETE');
       expect(String(url)).toContain('/workers/w1/share');
       return ok({ sharing: false, stopped: true });
     });
     vi.stubGlobal('fetch', fetchMock);
-    await stopShare('w1');
+    await stopShare(api, 'w1');
   });
 
   it('addShareUsers POSTs usernames; response grants replace local state', async () => {
-    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
       expect(init && init.method).toBe('POST');
       expect(JSON.parse(String(init && init.body))).toEqual({ users: ['maria'] });
       return ok({ grants: [grant({ username: 'maria' })] });
     });
     vi.stubGlobal('fetch', fetchMock);
-    const grants = await addShareUsers('w1', ['maria']);
+    const grants = await addShareUsers(api, 'w1', ['maria']);
     expect(grants[0].username).toBe('maria');
   });
 
   it('removeShareUser DELETEs with a JSON body { username }', async () => {
-    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
       expect(init && init.method).toBe('DELETE');
       expect(JSON.parse(String(init && init.body))).toEqual({ username: 'maria' });
       return ok({ revoked: true });
     });
     vi.stubGlobal('fetch', fetchMock);
-    expect(await removeShareUser('w1', 'maria')).toBe(true);
+    expect(await removeShareUser(api, 'w1', 'maria')).toBe(true);
   });
 
   it('lookupUser returns the public projection or null on 404', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL) => {
       expect(String(url)).toContain('/users/lookup?username=ivan');
       return ok({ user: { user_id: 'u2', username: 'ivan', display_name: 'Ivan Petrov' } });
     }));
-    const user = await lookupUser('ivan');
+    const user = await lookupUser(api, 'ivan');
     expect(user).toEqual({ user_id: 'u2', username: 'ivan', display_name: 'Ivan Petrov' });
 
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'User not found' }), { status: 404 })));
-    expect(await lookupUser('ghost')).toBeNull();
+    expect(await lookupUser(api, 'ghost')).toBeNull();
   });
 
   it('fetchShareState surfaces the full owner view', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ok({ sharing: true, policy: policy({ scope_kind: 'users' }), grants: [grant()] })));
-    const s = await fetchShareState('w1');
+    const s = await fetchShareState(api, 'w1');
     expect(s.sharing).toBe(true);
     expect(s.grants).toHaveLength(1);
   });
@@ -256,29 +313,31 @@ describe('sharing API client', () => {
 
 // ── kill-switch capability probe (config → fail CLOSED) ────────────────────
 describe('probeShareFeature', () => {
+  let api: WorkerApiPort;
   afterEach(() => { vi.unstubAllGlobals(); shareFeatureEnabled.value = null; });
+  beforeEach(() => { api = createMockApi(); });
 
   it('reads features.share from /config when the kill-switch is on', async () => {
     shareFeatureEnabled.value = null;
     vi.stubGlobal('fetch', vi.fn(async () => ok({ limits: {}, features: { share: true } })));
-    expect(await probeShareFeature()).toBe(true);
+    expect(await probeShareFeature(api)).toBe(true);
     expect(shareFeatureEnabled.value).toBe(true);
   });
 
   it('disabled flag → UI layer must never dial V2 endpoints', async () => {
     shareFeatureEnabled.value = null;
-    const fetchMock = vi.fn(async (_url: string) => ok({ limits: {}, features: { share: false } }));
+    const fetchMock = vi.fn(async (_url: string | URL) => ok({ limits: {}, features: { share: false } }));
     vi.stubGlobal('fetch', fetchMock);
-    expect(await probeShareFeature()).toBe(false);
+    expect(await probeShareFeature(api)).toBe(false);
     // The probe is the ONLY request — no share endpoint is ever called.
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).not.toContain('/workers/');
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('/workers/');
   });
 
   it('config unreachable → fail CLOSED', async () => {
     shareFeatureEnabled.value = null;
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
-    expect(await probeShareFeature()).toBe(false);
+    expect(await probeShareFeature(api)).toBe(false);
   });
 });
 

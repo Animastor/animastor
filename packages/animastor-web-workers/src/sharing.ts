@@ -17,7 +17,7 @@
 // privateWorkers.ts.
 
 import { signal } from '@preact/signals';
-import { getJson, postJson, deleteJson, deleteJsonBody, ApiError } from '../../api/client';
+import type { WorkerApiPort, WorkerApiError } from './ports';
 import type { PrivateWorker, WorkerStatus, WorkerType } from './privateWorkers';
 
 // ── Wire types (1:1 with backend JSON) ─────────────────────────────────────
@@ -89,10 +89,10 @@ export const shareFeatureEnabled = signal<boolean | null>(null);
 /** One-time capability probe. Never re-dials: the flag lives for the session
  *  (a running process flips it only via env change, which implies a restart
  *  in the current deployment model). */
-export async function probeShareFeature(): Promise<boolean> {
+export async function probeShareFeature(api: WorkerApiPort): Promise<boolean> {
   if (shareFeatureEnabled.value !== null) return shareFeatureEnabled.value;
   try {
-    const cfg = await getJson<{ features?: { share?: boolean } }>('/config');
+    const cfg = await api.getJson<{ features?: { share?: boolean } }>('/config');
     shareFeatureEnabled.value = cfg?.features?.share === true;
   } catch {
     // Config unavailable — fail CLOSED: no sharing UI, no V2 requests.
@@ -103,53 +103,53 @@ export async function probeShareFeature(): Promise<boolean> {
 
 // ── API functions (thin, 1:1 with the backend routes) ──────────────────────
 
-export async function fetchShareState(workerId: string): Promise<ShareState> {
-  const res = await getJson<ShareState>(`/workers/${encodeURIComponent(workerId)}/share`);
+export async function fetchShareState(api: WorkerApiPort, workerId: string): Promise<ShareState> {
+  const res = await api.getJson<ShareState>(`/workers/${encodeURIComponent(workerId)}/share`);
   return { sharing: !!res.sharing, policy: res.policy ?? null, grants: res.grants ?? [] };
 }
 
 /** Start sharing. scope 'public' (no recipients) or 'users' (+ usernames). */
-export async function startShare(workerId: string, opts: {
+export async function startShare(api: WorkerApiPort, workerId: string, opts: {
   scope: ShareScope; users?: string[]; expiresAt?: number | null;
 }): Promise<ShareState & { created?: true }> {
   const body: Record<string, unknown> = { scope: opts.scope };
   if (opts.scope === 'users') body.users = opts.users ?? [];
   if (opts.expiresAt != null) body.expires_at = opts.expiresAt;
-  await postJson<unknown>(`/workers/${encodeURIComponent(workerId)}/share`, body);
+  await api.postJson<unknown>(`/workers/${encodeURIComponent(workerId)}/share`, body);
   // Server response is authoritative but partial (policy+grants) — re-read
   // the canonical owner view so the UI never mirrors a hand-built state.
-  return { ...(await fetchShareState(workerId)), created: true };
+  return { ...(await fetchShareState(api, workerId)), created: true };
 }
 
-export async function stopShare(workerId: string): Promise<void> {
-  await deleteJson(`/workers/${encodeURIComponent(workerId)}/share`);
+export async function stopShare(api: WorkerApiPort, workerId: string): Promise<void> {
+  await api.deleteJson(`/workers/${encodeURIComponent(workerId)}/share`);
 }
 
-export async function addShareUsers(workerId: string, usernames: string[]): Promise<ShareGrant[]> {
-  const res = await postJson<{ grants: ShareGrant[] }>(
+export async function addShareUsers(api: WorkerApiPort, workerId: string, usernames: string[]): Promise<ShareGrant[]> {
+  const res = await api.postJson<{ grants: ShareGrant[] }>(
     `/workers/${encodeURIComponent(workerId)}/share/users`, { users: usernames });
   return res.grants ?? [];
 }
 
-export async function removeShareUser(workerId: string, username: string): Promise<boolean> {
-  const res = await deleteJsonBody<{ revoked: boolean }>(
+export async function removeShareUser(api: WorkerApiPort, workerId: string, username: string): Promise<boolean> {
+  const res = await api.deleteJsonBody<{ revoked: boolean }>(
     `/workers/${encodeURIComponent(workerId)}/share/users`, { username });
   return !!res.revoked;
 }
 
-export async function lookupUser(username: string): Promise<LookupUser | null> {
+export async function lookupUser(api: WorkerApiPort, username: string): Promise<LookupUser | null> {
   try {
-    const res = await getJson<{ user: LookupUser }>(
+    const res = await api.getJson<{ user: LookupUser }>(
       `/users/lookup?username=${encodeURIComponent(username)}`);
     return res.user ?? null;
   } catch (e) {
-    if (e instanceof ApiError && e.status === 404) return null; // unknown user
+    if (e instanceof api.ApiError && (e as WorkerApiError).status === 404) return null; // unknown user
     throw e;
   }
 }
 
-export async function fetchSharedWithMe(): Promise<SharedWithMeWorker[]> {
-  const res = await getJson<{ workers: SharedWithMeWorker[] }>('/workers/shared-with-me');
+export async function fetchSharedWithMe(api: WorkerApiPort): Promise<SharedWithMeWorker[]> {
+  const res = await api.getJson<{ workers: SharedWithMeWorker[] }>('/workers/shared-with-me');
   return res.workers ?? [];
 }
 
@@ -238,25 +238,26 @@ export function formatExpiry(ts: number | null | undefined, now: number = Date.n
 
 /** Map share-flow failures to i18n keys; hides DB/Redis internals the same
  *  way humanError() does in PrivateWorkersSection. */
-export function shareErrorKey(e: unknown): string {
-  if (e instanceof ApiError) {
-    const msg = e.message || '';
-    if (e.status === 401) return 'worker_err_auth_required';
-    if (e.status === 403) return 'share_err_forbidden';
-    if (e.status === 404) return 'worker_err_not_found';
-    if (e.status === 409) {
+export function shareErrorKey(e: unknown, ApiErrorCtor?: new (message: string, status: number) => WorkerApiError): string {
+  if (ApiErrorCtor && e instanceof ApiErrorCtor) {
+    const apiErr = e as WorkerApiError;
+    const msg = apiErr.message || '';
+    if (apiErr.status === 401) return 'worker_err_auth_required';
+    if (apiErr.status === 403) return 'share_err_forbidden';
+    if (apiErr.status === 404) return 'worker_err_not_found';
+    if (apiErr.status === 409) {
       if (msg.includes('already shared')) return 'share_err_already_active';
       if (msg.includes('no active users sharing')) return 'share_err_no_users_policy';
     }
-    if (e.status === 400) {
+    if (apiErr.status === 400) {
       if (msg.includes('Unknown user')) return 'share_err_unknown_user';
       if (msg.includes('yourself')) return 'share_err_self_grant';
       if (msg.includes('expires_at must be in the future')) return 'share_err_expiry_past';
       if (msg.includes('users must be')) return 'share_err_invalid_users';
       if (msg.includes('scope')) return 'share_err_invalid_scope';
     }
-    if (e.status >= 500) return 'worker_err_unavailable';
-    return e.message || 'share_err_unavailable';
+    if (apiErr.status >= 500) return 'worker_err_unavailable';
+    return apiErr.message || 'share_err_unavailable';
   }
   return (e as Error)?.message || 'share_err_unavailable';
 }

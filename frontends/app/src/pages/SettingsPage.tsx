@@ -11,7 +11,8 @@ import { Modal, toast } from '../lib/ui';
 import { workerType } from '../app/routeState';
 import { navigate } from '../app/router';
 import type { Route } from '../app/router';
-import { PrivateWorkersSection } from '../features/workers/PrivateWorkersSection';
+import { PrivateWorkersSection } from '@animastor/web-workers';
+import { workerPorts } from '../app/workerAdapters';
 import { LocalAISection } from '../features/localAi/LocalAISection';
 import {
   PROVIDER_TYPE_OPTIONS,
@@ -32,7 +33,7 @@ export function SettingsPage(props: { section?: string; path?: string }) {
   if (section === 'vbook') return <VBookSection />;
   if (section === 'worker') return <WorkerSection />;
   if (section === 'ai') return <AIProviderSection />;
-  if (section === 'private-workers') return <PrivateWorkersSection />;
+  if (section === 'private-workers') return <PrivateWorkersSection ports={workerPorts} />;
   if (section === 'local-ai') return <LocalAISection />;
   return <GeneralSection />;
 }
