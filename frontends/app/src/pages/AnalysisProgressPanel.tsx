@@ -22,22 +22,12 @@ import {
   vbookAnalysisProgress,
   analysisMode,
   analysisOverallPercent,
+  formatTimerText as formatTimer,
   type AnalysisTaskRow,
   type AnalysisStatus,
 } from '../state/generateStore';
 
 const TICK_MS = 500;
-
-/** Format mm:ss / hh:mm:ss — same canonical formatter the rest of the
- *  Generate page uses (see formatTimerText in GeneratePage.tsx). */
-function formatTimer(seconds: number): string {
-  const sec = Math.max(0, Math.floor(seconds));
-  const hh = Math.floor(sec / 3600);
-  const mm = Math.floor((sec % 3600) / 60);
-  const ss = sec % 60;
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${p(hh)}:${p(mm)}:${p(ss)}`;
-}
 
 function elapsedSeconds(row: AnalysisTaskRow, nowMs: number): number {
   if (row.startedAt == null) return 0;

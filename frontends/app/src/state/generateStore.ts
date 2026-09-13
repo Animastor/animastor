@@ -9,19 +9,43 @@
 // bookkeeping) moved to state/fileStore.ts (audit blocker B1 split) — this
 // store keeps ONLY the shared session identity (bookId/buildId + loadBook) and
 // the shared status signals (phase/errorMessage) written by both slices.
+//
+// GENERATION-PROGRESS DOMAIN SPLIT (web-generator-extraction-audit.md §4.3.1,
+// Step 1 of the preparation sequence): the pure/near-pure progress logic —
+// applyAnalysisEvent/analysisOverallPercent/resetAnalysisProgress (analysis
+// state machine), computeProgressRows + tracking Maps/latches, the analysis/
+// progress SSE event routing, and the generation-timer math — physically
+// lives in state/generationProgress/ and is parameterized by EXPLICIT state
+// objects (progressTracking, generationTimer) owned HERE. This store remains
+// the host: identity (bookId/buildId), loadBook/persistence/stash-restore,
+// phase/errorMessage (SessionSeam contract), onPlaybackPrepared, transport
+// (api/client) and the VBook orchestration actions. No behavior changed.
 import { signal } from '@preact/signals';
 import { getJson, postJson, postJsonLong, putJson, sse } from '../api/client';
 import type {
   AssetsStateResponse, BookData, BookStatus, DiffSummary, LayerConfigResponse,
-  ProgressPanelResponse, ProgressTask, RegenerateResponse, WorkerCounts, ProgressEvent,
+  ProgressPanelResponse, RegenerateResponse, WorkerCounts,
 } from '../api/models';
 import { sceneRefs } from '../api/models';
 import type { SceneRef } from '../api/models';
 import { navigateTo, position } from './positionStore';
 import { vbookStageLabel } from '../app/i18n';
+import {
+  applyAgentStatus, applyAnalysisEvent, analysisOverallPercent as analysisOverallPercentDomain,
+  computeProgressRows as computeProgressRowsDomain, createAnalyzingVBookProgress,
+  createGenerationTimer, createIdleVBookProgress, createInitialAnalysisProgress,
+  createProgressTrackingState, elapsedSeconds, formatTimerText,
+  hasAnyProgress as hasAnyProgressDomain, resetProgressTracking, routeProgressEvent,
+  startGenerationTimer, stopGenerationTimer,
+} from './generationProgress';
+import type {
+  AgentStatusLike, AnalysisProgress, AnalysisStatus, AnalysisTaskRow,
+  GenerationTimerState, ProgressEventSink, ProgressPanelState, ProgressTrackingState,
+  TaskLabels, TaskRow, VBookProgress, VBookStage,
+} from './generationProgress';
 
 export type GenerationStatus = 'IDLE' | 'RUNNING' | 'ERROR' | 'SUCCESS';
-export type VBookStage = 'IDLE' | 'ANALYZING' | 'CREATING_SCENES' | 'COMPLETED';
+export type { VBookStage };
 
 // Re-export (playbackStore imports SceneRef from this module; single source of
 // truth lives in api/models.ts).
@@ -215,7 +239,7 @@ export function bumpVBookPollToken(): void { vbookPollToken++; }
 
 /** Mark the SSE import_complete handshake as not-yet-received so a stale
  *  latch from the previous import can't instantly finish the next poll. */
-export function markImportIncomplete(): void { importCompleteReceived = false; }
+export function markImportIncomplete(): void { progressTracking.importCompleteReceived = false; }
 
 // ═══════════════════════════════════════════════════════════════
 //  SHARED BOOK-SESSION STATUS (audit B6 — single source of truth)
@@ -239,27 +263,9 @@ export const errorMessage = signal<string | null>(null);
 //  uiState (GenUiState), isRegenerating, timer, layer config
 // ═══════════════════════════════════════════════════════════════
 
-export interface VBookProgress {
-  stage: VBookStage;
-  /** 0-based scene index within the current generated block; -1 = no scene yet. */
-  sceneIndex: number;
-  /** Backend-reported actual scene count for the current generated block. */
-  scenesInWindow: number;
-  /** Total scenes known so far across generated blocks (can grow). */
-  totalScenes: number | null;
-  /** Current window index (0-based). */
-  windowIndex: number;
-  /** Human-readable PROGRESS_STAGES message from the backend (Russian fallback). */
-  message: string | null;
-  /** Machine stage id (SSE `stage` / agent-status `step_type`) — mapped to a
-   *  localized status via vbookStageLabel; null when the backend didn't report one. */
-  stepType: string | null;
-}
+export type { VBookProgress, TaskRow, TaskLabels, ProgressPanelState, AgentStatusLike };
 
-export const vbookProgress = signal<VBookProgress>({
-  stage: 'IDLE', sceneIndex: -1, scenesInWindow: 0, totalScenes: null, windowIndex: 0, message: null, stepType: null,
-});
-
+export const vbookProgress = signal<VBookProgress>(createIdleVBookProgress());
 export const isRegenerating = signal(false);
 
 // ── Parallel AI Analysis per-task progress (Milestone #2) ──
@@ -274,193 +280,28 @@ export const isRegenerating = signal(false);
 // and startedAt / finishedAt timestamps (epoch ms). duration_ms from
 // the orchestrator is the final authoritative value when a task ends
 // (the orchestrator computes it on the backend clock).
-export type AnalysisStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+//
+// The state machine itself is pure domain logic in
+// state/generationProgress/analysis.ts; this section keeps only the
+// host signal + the reset wrapper (the domain exposes the factory).
+export type { AnalysisStatus, AnalysisTaskRow, AnalysisProgress };
 
-export interface AnalysisTaskRow {
-  id: 'characters' | 'locations' | 'voices';
-  status: AnalysisStatus;
-  /** Epoch ms — set when status first transitions to 'running'. */
-  startedAt: number | null;
-  /** Epoch ms — set when status transitions to a terminal state. */
-  finishedAt: number | null;
-  /** Wall-clock ms the task spent in 'running' state. Authoritative value
-   *  from the orchestrator (`task.duration_ms`) when finished. */
-  durationMs: number | null;
-  /** Set only when status === 'failed'. */
-  error: string | null;
-}
+/** Pure per-task analysis transition (domain fn — previously inline here).
+ *  Re-exported to keep the store's public surface stable; the implementation
+ *  and its unit tests live in state/generationProgress/analysis.ts. */
+export { applyAnalysisEvent };
 
-export interface AnalysisProgress {
-  /** Total tasks the orchestrator has scheduled (3 today: characters, locations, voices). */
-  totalTasks: number;
-  /** Tasks that have transitioned to 'completed'. */
-  completedTasks: number;
-  /** Tasks that have transitioned to 'failed' (failure isolation — siblings still run). */
-  failedTasks: number;
-  /** Tasks that have transitioned to 'cancelled'. */
-  cancelledTasks: number;
-  /** Epoch ms — when the analysis phase started (first task → running).
-   *  Null until then. Used by the overall timer in the UI. */
-  phaseStartedAt: number | null;
-  /** Epoch ms — when the analysis phase finished (all tasks terminal).
-   *  Null until then. Used to freeze the overall timer. */
-  phaseFinishedAt: number | null;
-  /** Total elapsed wall-clock ms for the analysis phase. Authoritative
-   *  when phaseFinishedAt is set; live `Date.now() - phaseStartedAt`
-   *  while running. */
-  phaseDurationMs: number | null;
-  /** Per-task rows, keyed by id. Inserted in PENDING on first sighting
-   *  of an event for that task id; updated on each transition. */
-  tasks: Record<'characters' | 'locations' | 'voices', AnalysisTaskRow>;
-  /** Set when an event reports analysis_mode === 'parallel' (truth from
-   *  backend). Sequential mode never populates this signal — callers
-   *  fall back to the legacy single-row VBook UI. */
-  active: boolean;
-}
-
-const EMPTY_ANALYSIS_TASK: AnalysisTaskRow = {
-  id: 'characters', status: 'pending', startedAt: null, finishedAt: null, durationMs: null, error: null,
-};
-
-function makeEmptyTaskRow(id: 'characters' | 'locations' | 'voices'): AnalysisTaskRow {
-  return { ...EMPTY_ANALYSIS_TASK, id };
-}
-
-const INITIAL_ANALYSIS_PROGRESS: AnalysisProgress = {
-  totalTasks: 3,
-  completedTasks: 0,
-  failedTasks: 0,
-  cancelledTasks: 0,
-  phaseStartedAt: null,
-  phaseFinishedAt: null,
-  phaseDurationMs: null,
-  tasks: {
-    characters: makeEmptyTaskRow('characters'),
-    locations:  makeEmptyTaskRow('locations'),
-    voices:     makeEmptyTaskRow('voices'),
-  },
-  active: false,
-};
-
-export const vbookAnalysisProgress = signal<AnalysisProgress>(INITIAL_ANALYSIS_PROGRESS);
+export const vbookAnalysisProgress = signal<AnalysisProgress>(createInitialAnalysisProgress());
 
 /** Reset to a fresh empty state. Idempotent. */
 export function resetAnalysisProgress(): void {
-  vbookAnalysisProgress.value = {
-    ...INITIAL_ANALYSIS_PROGRESS,
-    tasks: {
-      characters: makeEmptyTaskRow('characters'),
-      locations:  makeEmptyTaskRow('locations'),
-      voices:     makeEmptyTaskRow('voices'),
-    },
-  };
+  vbookAnalysisProgress.value = createInitialAnalysisProgress();
 }
 
-// ── Pure helpers (exported for unit tests) ───────────────────────
-// `applyAnalysisEvent(progress, event)` is a pure function: same input
-// produces the same output. The SSE handler wraps it once the event
-// has been JSON-parsed. This separation keeps the progress state
-// machine testable without mocking the SSE transport.
-
-const ANALYSIS_TASK_IDS = ['characters', 'locations', 'voices'] as const;
-type AnalysisTaskId = typeof ANALYSIS_TASK_IDS[number];
-
-function isAnalysisTaskId(v: unknown): v is AnalysisTaskId {
-  return typeof v === 'string' && (ANALYSIS_TASK_IDS as readonly string[]).includes(v);
-}
-
-function transition(prev: AnalysisTaskRow, ev: ProgressEvent): AnalysisTaskRow {
-  const next: AnalysisTaskRow = { ...prev };
-  if (typeof ev.status === 'string') {
-    next.status = (['pending', 'running', 'completed', 'failed', 'cancelled'] as const)
-      .includes(ev.status as AnalysisStatus) ? (ev.status as AnalysisStatus) : prev.status;
-  }
-  if (next.status === 'running' && prev.startedAt == null) {
-    next.startedAt = Date.now();
-  }
-  // A task transitioning out of 'running' gets a finishedAt stamp.
-  // Also handle the edge case where a task was 'pending' and the orchestrator
-  // reports it cancelled / failed directly (no 'running' ever fired) —
-  // finishedAt is still recorded so the overall phaseFinishedAt detection works.
-  const isTerminal = next.status === 'completed' || next.status === 'failed' || next.status === 'cancelled';
-  if (isTerminal && next.finishedAt == null) {
-    next.finishedAt = Date.now();
-  }
-  if (typeof ev.duration_ms === 'number' && Number.isFinite(ev.duration_ms)) {
-    next.durationMs = ev.duration_ms;
-    if (next.startedAt != null) next.finishedAt = next.startedAt + ev.duration_ms;
-  }
-  if (typeof ev.error === 'string' && ev.error.length > 0 && next.status === 'failed') {
-    next.error = ev.error;
-  }
-  return next;
-}
-
-export function applyAnalysisEvent(prev: AnalysisProgress, ev: ProgressEvent): AnalysisProgress {
-  if (!isAnalysisTaskId(ev.task)) return prev;
-  const id = ev.task;
-  const prevRow = prev.tasks[id];
-  const nextRow = transition(prevRow, ev);
-
-  // Recompute totals from the per-row statuses — never trust the
-  // orchestrator's counters blindly because a late event with a stale
-  // counter could roll the numbers backwards. The single source of
-  // truth is the row statuses.
-  const tasks = { ...prev.tasks, [id]: nextRow };
-  let completed = 0, failed = 0, cancelled = 0;
-  let phaseStartedAt = prev.phaseStartedAt;
-  let phaseFinishedAt = prev.phaseFinishedAt;
-  for (const t of Object.values(tasks)) {
-    if (t.status === 'completed') completed++;
-    else if (t.status === 'failed') failed++;
-    else if (t.status === 'cancelled') cancelled++;
-  }
-  if (phaseStartedAt == null && Object.values(tasks).some((t) => t.startedAt != null)) {
-    phaseStartedAt = Math.min(...Object.values(tasks).map((t) => t.startedAt ?? Infinity));
-    if (!Number.isFinite(phaseStartedAt)) phaseStartedAt = null;
-  }
-  const allTerminal = Object.values(tasks).every((t) =>
-    t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled'
-  );
-  if (allTerminal && phaseFinishedAt == null) {
-    // Degenerate case: all tasks cancelled/failed/completed without ever
-    // entering 'running' (orchestrator reported terminal state directly).
-    // In that case there is no phaseStartedAt to anchor against, but we
-    // still set phaseFinishedAt so the UI's overall timer shows 00:00:00
-    // and the 'All tasks terminal' detection fires.
-    if (phaseStartedAt == null) {
-      const earliestFinish = Math.min(
-        ...Object.values(tasks).map((t) => t.finishedAt ?? Infinity)
-      );
-      phaseStartedAt = Number.isFinite(earliestFinish) ? earliestFinish : Date.now();
-    }
-    phaseFinishedAt = Date.now();
-  }
-  const phaseDurationMs = phaseStartedAt != null
-    ? (phaseFinishedAt ?? Date.now()) - phaseStartedAt
-    : null;
-
-  return {
-    ...prev,
-    completedTasks: completed,
-    failedTasks: failed,
-    cancelledTasks: cancelled,
-    phaseStartedAt,
-    phaseFinishedAt,
-    phaseDurationMs,
-    tasks,
-    active: true,
-  };
-}
-
-/** Aggregate health flag for the overall row. */
+/** Aggregate health flag for the overall row (domain fn re-exported
+ *  for the existing host consumers; tests live in generationProgress/). */
 export function analysisOverallPercent(p: AnalysisProgress): number {
-  if (p.totalTasks === 0) return 0;
-  const completed = p.completedTasks;
-  const failed = p.failedTasks;
-  // Failed tasks count as "done" for progress (the row stops moving) but
-  // not as success — the UI surfaces the failure separately.
-  return Math.round(((completed + failed) / p.totalTasks) * 100);
+  return analysisOverallPercentDomain(p);
 }
 
 // ── Layer config (GenerateFragment toggle chips) ──
@@ -540,350 +381,78 @@ export async function refreshAssetsState(): Promise<void> {
 }
 
 // ── Generation timer (wall-clock; Android: timerStartedAt/finalElapsedSeconds) ──
-let timerStartedAt = 0;        // 0 = not running
-let finalElapsedSeconds = 0;   // final value when stopped (-1)
+// Explicit state object (generationProgress/timer.ts) — the host owns ONE
+// instance; all computation lives in the domain module.
+const generationTimer: GenerationTimerState = createGenerationTimer();
 
-export function getTimerStartedAt(): number { return timerStartedAt; }
-export function getFinalElapsedSeconds(): number { return finalElapsedSeconds; }
+export function getTimerStartedAt(): number { return generationTimer.startedAt; }
+export function getFinalElapsedSeconds(): number { return generationTimer.finalElapsedSeconds; }
+export { formatTimerText };
+export function liveElapsedSeconds(): number { return elapsedSeconds(generationTimer); }
 
 function startTimer(): void {
-  timerStartedAt = Date.now();
-  finalElapsedSeconds = 0;
+  startGenerationTimer(generationTimer);
 }
 function stopTimer(): void {
-  if (timerStartedAt > 0) finalElapsedSeconds = Math.floor((Date.now() - timerStartedAt) / 1000);
-  timerStartedAt = -1;
+  stopGenerationTimer(generationTimer);
 }
 
 // ── Worker progress panel tracking (computeProgressRows state) ──
-const COMPLETED_TASK_DISPLAY_MS = 10_000;
-// Tolerance for comparing server task started_at against the client session
-// clock (Date.now()): absorbs small client/server clock skew so a task that
-// legitimately started right after the user clicked Generate is never wrongly
-// classified as stale. Safe against the reported flash: the no-session branch
-// (timerStartedAt <= 0) still suppresses every done row on fresh page open.
-const STALE_DONE_TOLERANCE_MS = 3_000;
-const taskReadyFloor = new Map<string, number>();
-const taskCompletedAt = new Map<string, number>();
-const taskFrozenElapsed = new Map<string, number>();
-let generationCompleted = false;
-let newGenerationPending = false;
-let importCompleteReceived = false;
-
-/**
- * Row-unique tracking key for one progress row.
- *
- * A generation task can emit MULTIPLE rows: the backend's progress-panel emits
- * one row per target scene for `current_scene` tasks, and a task can legitimately
- * span several scenes. Keying the monotonic floor / completion timestamp by
- * task_id ALONE made sibling rows of the same task share one record: when the
- * first sibling finished (e.g. the cover's fast 1/1 row), its `completedAt` was
- * recorded under the shared key, and the 10s done-row expiry then dropped the
- * STILL-RUNNING sibling (the real scene) the moment it reached 5/5 — so the
- * final green "5/5 → 100%" row never rendered and the panel finalised early
- * (the reported "4/5 → drop, no final 100%" bug). The shared floor also leaked
- * ready counts across rows (e.g. a cover row showing "4/1").
- */
-function rowTaskKey(taskId: string | null, type: string, chapterId: string | null, sceneId: string | null): string {
-  return taskId ? `${taskId}:${type}:${chapterId ?? ''}:${sceneId ?? ''}` : `legacy:${type}`;
-}
+// Explicit state object (generationProgress/progressRows.ts): the previously
+// module-scope Maps (taskReadyFloor/taskCompletedAt/taskFrozenElapsed) and
+// latches (generationCompleted/newGenerationPending/importCompleteReceived)
+// live here — passed into every domain computeProgressRows call.
+const progressTracking: ProgressTrackingState = createProgressTrackingState();
 
 /** Clear in-flight generation tracking (GenerateViewModel.resetProgressState).
  *  Used by the Settings clear-storyboard flow — the book stays open, only the
  *  progress-panel tracking and playback state are reset. */
 export function resetProgressState(): void {
-  taskCompletedAt.clear();
-  taskReadyFloor.clear();
-  taskFrozenElapsed.clear();
-  generationCompleted = false;
+  resetProgressTracking(progressTracking);
 }
 
 function hasAnyProgress(): boolean {
-  return [...taskReadyFloor.values()].some((v) => v > 0) || taskCompletedAt.size > 0;
+  return hasAnyProgressDomain(progressTracking);
 }
-
-/** One row in the GPU progress panel (TaskRow.kt). */
-export interface TaskRow {
-  taskId: string | null;
-  type: string;
-  label: string;
-  scope: string;
-  chapterId: string | null;
-  sceneId: string | null;
-  sceneLabel: string | null;
-  chapterLabel: string | null;
-  endSceneLabel: string | null;
-  endChapterLabel: string | null;
-  ready: number;
-  total: number;
-  percent: number;
-  done: boolean;
-  countText: string | null;
-  indeterminate: boolean;
-  cancelled: boolean;
-  /** Frozen elapsed (done) vs live (active): -1 live, >= 0 frozen. */
-  elapsedSeconds: number;
-  /** true when elapsedSeconds is frozen at completion (Android row.tag >= 0). */
-  frozen: boolean;
-}
-
-/** Localized label strings for the worker progress panel (TaskLabels.kt). */
-export interface TaskLabels {
-  cover: string;
-  audio: string;
-  image: string;
-  video: string;
-  generationDone: string;
-  vbookLabel: string;
-  vbookAnalyzing: string;
-  vbookScenesFormat: (ready: number, total: number) => string;
-}
-
-export type ProgressPanelState =
-  | { kind: 'rows'; rows: TaskRow[] }
-  | { kind: 'done' }
-  | { kind: 'hidden' };
 
 /**
  * Build the progress panel state from server-computed worker list + local VBook
- * (port of GenerateViewModel.computeProgressRows). Mutates module tracking
- * state (monotonic floor, 10s done-window, new-gen gate) and finalises the
- * generation (SUCCESS + playbackPrepared soft refresh) when all rows expire.
+ * (port of GenerateViewModel.computeProgressRows — the pure computation lives
+ * in generationProgress/progressRows.ts). This host wrapper binds the shared
+ * session state (progressTracking + generationTimer), reads the host signals
+ * at call time, and routes the finalize/idle side effects to this store. No
+ * behavior change: the wiring is 1:1 with the previous inline implementation.
  */
 export function computeProgressRows(
   panel: ProgressPanelResponse | null,
   vbookProg: VBookProgress | null,
   labels: TaskLabels
 ): ProgressPanelState {
-  // NEW-GEN GATE: wait for actual new activity before showing stale 100% rows.
-  if (newGenerationPending) {
-    const hasVBook = vbookProg != null &&
-      (vbookProg.stage === 'ANALYZING' || vbookProg.stage === 'CREATING_SCENES');
-    const hasGpuActivity = panel?.tasks?.some((t) => !t.done && !t.cancelled && t.visible) === true;
-    if (hasVBook || hasGpuActivity) {
-      generationCompleted = false;
-      newGenerationPending = false;
-    } else {
-      return { kind: 'hidden' };
-    }
-  }
-
-  if (generationCompleted) return { kind: 'hidden' };
-
-  const now = Date.now();
-  const rows: TaskRow[] = [];
-
-  const addFromServer = (sw: ProgressTask, label: string) => {
-    if (sw.total <= 0) return;
-    // Per-ROW key: sibling rows of one task (per-target rows) keep their own
-    // floor and their own 10s done-window — a fast sibling can never expire a
-    // still-running one, and ready counts never cross-pollute.
-    const taskKey = rowTaskKey(sw.task_id ?? null, sw.type, sw.chapter_id ?? null, sw.scene_id ?? null);
-    const ready = Math.max(sw.ready, taskReadyFloor.get(taskKey) ?? 0);
-    const done = sw.done || (ready >= sw.total && ready > 0);
-    // STALE-DONE GATE — the backend keeps recently-completed tasks in the panel
-    // for ~30s (TERMINAL_RETENTION_MS) and can report a task whose assets are all
-    // ready as done. On page open these done rows from a PREVIOUS generation must
-    // NOT flash as fresh green 100% bars: only work that started within the current
-    // session (timerStartedAt) may render its "Done" state. Rows started before
-    // the session (or with no session at all) are skipped before they reach the
-    // ready-floor / completedAt maps, so they can never look freshly finished.
-    // (Complementary to the newGenerationPending gate, which covers stale rows
-    // right after starting a NEW generation from this page.)
-    const staleDone = done && !sw.cancelled && (
-      timerStartedAt <= 0 ||
-      (sw.started_at != null && sw.started_at + STALE_DONE_TOLERANCE_MS < timerStartedAt)
-    );
-    if (staleDone) return;
-    taskReadyFloor.set(taskKey, ready);
-    if (done && !sw.cancelled && !taskCompletedAt.has(taskKey)) taskCompletedAt.set(taskKey, now);
-    const frozen = done && !taskFrozenElapsed.has(taskKey);
-    const elapsedSeconds: number = done
-      ? (taskFrozenElapsed.get(taskKey) ?? (timerStartedAt > 0 ? Math.floor((now - timerStartedAt) / 1000) : 0))
-      : (timerStartedAt > 0 ? Math.floor((now - timerStartedAt) / 1000) : 0);
-    if (frozen) taskFrozenElapsed.set(taskKey, elapsedSeconds);
-    rows.push({
-      taskId: sw.task_id ?? null,
-      type: sw.type,
-      label,
-      scope: sw.scope || 'whole_book',
-      chapterId: sw.chapter_id ?? null,
-      sceneId: sw.scene_id ?? null,
-      sceneLabel: sw.scene_label ?? null,
-      chapterLabel: sw.chapter_label ?? null,
-      endSceneLabel: sw.end_scene_label ?? null,
-      endChapterLabel: sw.end_chapter_label ?? null,
-      ready,
-      total: sw.total,
-      percent: done ? 100 : sw.percent,
-      done,
-      countText: null,
-      indeterminate: sw.indeterminate,
-      cancelled: sw.cancelled,
-      elapsedSeconds,
-      frozen: done,
-    });
-  };
-
-  if (panel != null) {
-    for (const sw of panel.tasks) {
-      if (!sw.visible) continue;
-      const label = sw.type === 'cover' ? labels.cover
-        : sw.type === 'audio' ? labels.audio
-        : sw.type === 'image' ? labels.image
-        : sw.type === 'video' ? labels.video
-        : sw.type;
-      addFromServer(sw, label);
-    }
-  }
-
-  // ── VBook worker (local state) ──
-  if (vbookProg != null && vbookProg.stage !== 'IDLE') {
-    const vbookElapsed = timerStartedAt > 0 ? Math.floor((now - timerStartedAt) / 1000) : 0;
-    if (vbookProg.stage === 'COMPLETED') {
-      const vbookKey = rowTaskKey('vbook', 'vbook', null, null);
-      if (!taskCompletedAt.has(vbookKey)) taskCompletedAt.set(vbookKey, now);
-      if (!taskFrozenElapsed.has(vbookKey)) taskFrozenElapsed.set(vbookKey, vbookElapsed);
-      // Preserve the final window counter (e.g. "3/3") instead of resetting to
-      // "1/1": derive ready/total from the last known window state. When no
-      // scene-level index was ever reported, show the full window count (best
-      // available estimate).
-      const finalTotal = Math.max(1, vbookProg.scenesInWindow);
-      const hasSceneProgress = vbookProg.sceneIndex >= 0 && vbookProg.scenesInWindow > 0;
-      const finalReady = hasSceneProgress
-        ? Math.min(vbookProg.sceneIndex + 1, finalTotal)
-        : finalTotal;
-      rows.push({
-        taskId: 'vbook', type: 'vbook', label: labels.vbookLabel, scope: 'whole_book',
-        chapterId: null, sceneId: null, sceneLabel: null, chapterLabel: null,
-        endSceneLabel: null, endChapterLabel: null,
-        ready: finalReady, total: finalTotal, percent: 100, done: true, countText: null,
-        indeterminate: false, cancelled: false,
-        elapsedSeconds: taskFrozenElapsed.get(rowTaskKey('vbook', 'vbook', null, null)) ?? vbookElapsed, frozen: true,
-      });
-    } else {
-      const stageMsg = vbookProg.message?.trim() || null;
-      // Localize by machine stage id first (follows the UI language); fall back
-      // to the backend's Russian progress message, then the generic label.
-      const label = vbookStageLabel(vbookProg.stepType, vbookProg.sceneIndex) ?? stageMsg ?? labels.vbookLabel;
-      let ready: number; let total: number; let pct: number;
-      let countText: string | null = null; let indeterminate: boolean;
-      if (vbookProg.stage === 'ANALYZING') {
-        ready = 0; total = 1; pct = 0; indeterminate = true;
-      } else if (vbookProg.stage === 'CREATING_SCENES') {
-        total = Math.max(1, vbookProg.scenesInWindow);
-        ready = Math.max(0, Math.min(vbookProg.sceneIndex + 1, total));
-        pct = ready >= total ? 100 : Math.floor((ready * 100) / total);
-        countText = labels.vbookScenesFormat(ready, total);
-        indeterminate = false;
-      } else {
-        ready = 0; total = 1; pct = 0; indeterminate = true;
+  return computeProgressRowsDomain({
+    tracking: progressTracking,
+    timer: generationTimer,
+    now: Date.now(),
+    vbookStage: vbookProgress.value.stage,
+    isRunning: generationStatus.value === 'RUNNING',
+    vbookStageLabel,
+    setRegenerating: (v) => { isRegenerating.value = v; },
+    onGenerationFinalized: () => {
+      stopProgressStream();
+      if (vbookProg?.stage === 'COMPLETED') {
+        vbookProgress.value = { ...vbookProgress.value, stage: 'IDLE' };
       }
-      rows.push({
-        taskId: 'vbook', type: 'vbook', label, scope: 'whole_book',
-        chapterId: null, sceneId: null, sceneLabel: null, chapterLabel: null,
-        endSceneLabel: null, endChapterLabel: null,
-        ready, total, percent: pct, done: false, countText, indeterminate,
-        cancelled: false, elapsedSeconds: vbookElapsed, frozen: false,
-      });
-    }
-  }
-
-  // ── All-cancelled guard ──
-  const allCancelled = rows.length > 0 && rows.every((r) => r.cancelled);
-  if (allCancelled) {
-    taskCompletedAt.clear();
-    isRegenerating.value = false;
-    return { kind: 'hidden' };
-  }
-
-  // ── No workers at all → Hidden ──
-  if (rows.length === 0) {
-    taskCompletedAt.clear();
-    isRegenerating.value = false;
-    // A restored/straggler generation that finished while this page was closed
-    // may leave the nav icon pulsing RUNNING with nothing actually in flight —
-    // clear it. Only fires when the backend reports nothing incomplete AND no
-    // VBook agent is active: a live restored generation whose panel is
-    // transiently empty between windows must keep its RUNNING pulse.
-    if (generationStatus.value === 'RUNNING'
-      && !panel?.any_incomplete
-      && vbookProgress.value.stage === 'IDLE') {
-      setGenerationStatus('IDLE');
-    }
-    return { kind: 'hidden' };
-  }
-
-  // ── Per-worker expiry: drop done rows whose 10s display window expired ──
-  // Uses the ROW-unique key (task + type + target), so each sibling row of a
-  // multi-target task expires by its OWN completion time — the real scene's
-  // green 5/5 stays visible for its full 10s window and only then finalises.
-  const filtered = rows.filter((row) => {
-    if (row.done && !row.cancelled) {
-      const taskKey = rowTaskKey(row.taskId, row.type, row.chapterId, row.sceneId);
-      const completedAt = taskCompletedAt.get(taskKey);
-      return !(completedAt != null && (now - completedAt) >= COMPLETED_TASK_DISPLAY_MS);
-    }
-    return true;
-  });
-  rows.length = 0;
-  rows.push(...filtered);
-
-  // ── All workers expired → finalise generation ──
-  if (rows.length === 0) {
-    generationCompleted = true;
-    stopProgressStream();
-    taskCompletedAt.clear();
-    if (vbookProg?.stage === 'COMPLETED') {
-      vbookProgress.value = { ...vbookProgress.value, stage: 'IDLE' };
-    }
-    setGenerationStatus('SUCCESS');
-    isRegenerating.value = false;
-    void applyGenerationResults();
-    return { kind: 'hidden' };
-  }
-
-  // Check if any worker is still active (non-done, non-cancelled)
-  const anyActive = rows.some((r) => !r.done && !r.cancelled);
-  if (!anyActive) {
-    // All remaining workers done but still within the 10s display window
-    return { kind: 'rows', rows };
-  }
-
-  isRegenerating.value = true;
-  return { kind: 'rows', rows };
+      setGenerationStatus('SUCCESS');
+      isRegenerating.value = false;
+      void applyGenerationResults();
+    },
+    onRunningIdle: () => { setGenerationStatus('IDLE'); },
+  }, panel, vbookProg, labels);
 }
 
 // ── VBook agent status → structured VBookProgress ──
-function updateVBookProgress(status: { step_type?: string | null; window_total_scenes?: number | null; window_size?: number | null; window_scene_index?: number | null; created_scenes?: number | null; window_start_scene?: number | null; total_scenes?: number | null; window_index?: number | null; progress_msg?: string | null }): void {
-  const stage: VBookStage = status.step_type === 'create_units' || status.step_type === 'create_visual_prompts'
-    ? 'CREATING_SCENES'
-    : 'ANALYZING';
-  const windowTotal = Math.max(1, status.window_total_scenes ?? status.window_size ?? 1);
-  const windowSceneIndex = status.window_scene_index != null
-    ? status.window_scene_index
-    : status.created_scenes != null && status.window_start_scene != null
-      ? Math.max(1, status.created_scenes - status.window_start_scene + 1)
-      : null;
-  const fallbackIdx = vbookProgress.value.sceneIndex;
-  const sceneIndex = windowSceneIndex != null
-    ? Math.min(windowSceneIndex - 1, windowTotal - 1)
-    : fallbackIdx;
-  const messageText = status.progress_msg?.trim() ? status.progress_msg : null;
-  vbookProgress.value = {
-    stage,
-    sceneIndex,
-    scenesInWindow: windowTotal,
-    totalScenes: status.created_scenes ?? status.total_scenes ?? null,
-    windowIndex: status.window_index ?? 0,
-    message: messageText,
-    // Preserve the last known stage id when agent-status reports none (between
-    // steps / at window end the running-step lookup returns null) — otherwise
-    // every poll would fall back to the backend's Russian progress message in
-    // English UIs for a render cycle. The value is nulled on each new
-    // generation start (startVBookGeneration), so it never leaks across runs.
-    stepType: status.step_type ?? vbookProgress.value.stepType,
-  };
+// (pure mapping lives in generationProgress/vbookProgress.ts applyAgentStatus)
+function updateVBookProgress(status: AgentStatusLike): void {
+  vbookProgress.value = applyAgentStatus(vbookProgress.value, status);
 }
 
 /** Poll /agent-status once and update vbookProgress (checkVBookAgentStatus). */
@@ -919,7 +488,7 @@ export async function checkVBookAgentStatus(): Promise<VBookProgress> {
 }
 
 export function clearVBookProgress(): void {
-  vbookProgress.value = { stage: 'IDLE', sceneIndex: -1, scenesInWindow: 0, totalScenes: null, windowIndex: 0, message: null, stepType: null };
+  vbookProgress.value = createIdleVBookProgress();
   // Parallel AI Analysis (Milestone #2): clear per-task rows in lockstep
   // with the legacy signal so a new generation / re-open never shows stale
   // per-task rows from the previous run. resetAnalysisProgress() is
@@ -968,52 +537,18 @@ async function runProgressStream(bId: string, epoch: number, controller: AbortCo
   }
 }
 
+// Analysis/progress SSE event routing (JSON parse + dispatch) lives in
+// generationProgress/sseRouting.ts routeProgressEvent; this host adapter
+// binds it to the store signals + the shared tracking state's
+// importCompleteReceived latch. Malformed payloads are dropped silently.
+const progressEventSink: ProgressEventSink = {
+  getAnalysisProgress: () => vbookAnalysisProgress.value,
+  setAnalysisProgress: (p) => { vbookAnalysisProgress.value = p; },
+  setVBookProgress: (p) => { vbookProgress.value = p; },
+};
+
 function handleProgressEvent(data: string): void {
-  let ev: ProgressEvent;
-  try { ev = JSON.parse(data); } catch { return; }
-  if (ev.type === 'vbook') {
-    // Parallel-mode heartbeat (Milestone #2): orchestrator publishes one
-    // { stage: 'analysis_parallel', analysis_completed, ... } event between
-    // waves. We forward it to vbookAnalysisProgress so the per-task rows
-    // can render an "Analysis: N/M" progress line. The existing vbook
-    // signal is unaffected — sequential mode never emits this heartbeat.
-    if (ev.stage === 'analysis_parallel') {
-      const cur = vbookAnalysisProgress.value;
-      vbookAnalysisProgress.value = {
-        ...cur,
-        totalTasks: Math.max(cur.totalTasks, ev.analysis_total ?? cur.totalTasks),
-        completedTasks: Math.max(cur.completedTasks, ev.analysis_completed ?? cur.completedTasks),
-        failedTasks: Math.max(cur.failedTasks, ev.analysis_failed ?? cur.failedTasks),
-        active: true,
-      };
-    }
-    const stage: VBookStage = ev.stage === 'creating_units' || ev.stage === 'creating_visuals'
-      ? 'CREATING_SCENES' : 'ANALYZING';
-    const windowTotal = Math.max(1, ev.window_total_scenes ?? ev.window_size ?? 1);
-    const sceneIdx = ev.window_scene_index != null
-      ? Math.min(Math.max(ev.window_scene_index - 1, 0), windowTotal - 1)
-      : -1;
-    const totalScenes = Math.max(1, ev.total_scenes ?? ev.scene_index ?? 1);
-    vbookProgress.value = {
-      stage,
-      sceneIndex: sceneIdx,
-      scenesInWindow: windowTotal,
-      totalScenes,
-      windowIndex: 0,
-      message: ev.message?.trim() ? ev.message : null,
-      stepType: ev.stage ?? null,
-    };
-  } else if (ev.type === 'analysis') {
-    // Parallel AI Analysis per-task event (Milestone #2). Add new branch
-    // BEFORE the existing vbook/generation_complete/import_complete switch
-    // so unknown task ids don't fall through silently.
-    vbookAnalysisProgress.value = applyAnalysisEvent(vbookAnalysisProgress.value, ev);
-  } else if (ev.type === 'generation_complete') {
-    // A completion event belongs to one generation scope — the progress-panel
-    // poll remains authoritative and finalises only after all workers are done.
-  } else if (ev.type === 'import_complete') {
-    importCompleteReceived = true;
-  }
+  routeProgressEvent(progressEventSink, progressTracking, data);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1035,8 +570,8 @@ export async function startGeneration(req: GenerationRequest): Promise<Generatio
   if (!bId) return { ok: false, message: 'No book' };
   setGenerationStatus('RUNNING');
   isRegenerating.value = true;
-  newGenerationPending = true;
-  if (timerStartedAt <= 0) startTimer();
+  progressTracking.newGenerationPending = true;
+  if (generationTimer.startedAt <= 0) startTimer();
   startProgressStream(bId);
   try {
     const res = await postJson<RegenerateResponse>(`/book/${encodeURIComponent(bId)}/regenerate`, {
@@ -1070,14 +605,14 @@ export async function startVBookGeneration(): Promise<void> {
   // timer is NOT stopped when the VBook agent finishes while audio/image/video
   // stages are still running (Android GenerateViewModel fix, 1:1 parity).
   isRegenerating.value = true;
-  newGenerationPending = true;
-  vbookProgress.value = { stage: 'ANALYZING', sceneIndex: -1, scenesInWindow: 1, totalScenes: null, windowIndex: 0, message: null, stepType: null };
+  progressTracking.newGenerationPending = true;
+  vbookProgress.value = createAnalyzingVBookProgress();
   // Manual per-window mode: one click = one window = one generation. The timer
   // always starts fresh for the new window (no survival across windows); the
   // previous window's finalise already stopped it.
   startTimer();
   startProgressStream(bid);
-  importCompleteReceived = false;
+  progressTracking.importCompleteReceived = false;
   const token = ++vbookPollToken;
   try {
     const status = await getJson<BookStatus>(`/book/${encodeURIComponent(bid)}/status`).catch(() => null);
@@ -1127,7 +662,7 @@ async function pollVBookProgress(bId: string, token: number): Promise<void> {
   let safetyCapTripped = false;
   while (consecutiveInactive < maxInactive) {
     if (token !== vbookPollToken) return;
-    if (importCompleteReceived) {
+    if (progressTracking.importCompleteReceived) {
       vbookProgress.value = { ...vbookProgress.value, stage: 'COMPLETED' };
       break;
     }
@@ -1238,7 +773,7 @@ export async function cancelGeneration(): Promise<void> {
   const bId = bookId.value;
   if (!bId) return;
   setGenerationStatus('IDLE');
-  newGenerationPending = false;
+  progressTracking.newGenerationPending = false;
   stopTimer();
   stopProgressStream();
   resetProgressState();
@@ -1301,7 +836,7 @@ export async function checkAndRestoreGenerationState(): Promise<void> {
       console.log('checkAndRestoreGenerationState: active workers found — restoring generation state');
       isRegenerating.value = hasActiveGpuTasks;
       setGenerationStatus('RUNNING');
-      if (timerStartedAt <= 0) startTimer();
+      if (generationTimer.startedAt <= 0) startTimer();
       startProgressStream(currentBookId);
       resetProgressState();
       phase.value = 'GENERATING';

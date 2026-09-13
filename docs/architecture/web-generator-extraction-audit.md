@@ -1,9 +1,10 @@
 # Web Generator — Extraction Audit (Re-verification)
 
-**Status:** READ-ONLY audit (no production code changed, no files moved, no packages created)  
+**Status:** Step-1 domain split EXECUTED (this document updated after the change)  
 **Date:** 2026-09-13  
 **Branch:** `c21.4-physically-extract-analysis-from-backend`  
 **Baseline commit:** `066ddaae` ("arch(orchestration): physically extract orchestration package")  
+**Step-1 change:** in-repo `generation-progress` domain module extracted (see §9) — **no package created**  
 **Target package:** `@animastor/web-generator`  
 **Target location:** `packages/animastor-web-generator/` (NOT created — no physical extraction performed)  
 **Re-verification of:** `web-next-extraction-reconnaissance.md` (§3.1, verdict "NOT READY")  
@@ -15,7 +16,7 @@
 
 The Generator contour is **NOT READY** for physical package extraction at current HEAD. The verdict from the previous reconnaissance is **unchanged**, but the risk surface has shifted: the generateStore⇄playbackStore cycle is dissolved, the store has no router or `@animastor/*` dependencies, and API access is a pure transport layer. What remains is the **identity blocker**: `generateStore` is the host-owned source of truth for session identity (`bookId`/`buildId`), written and read by 10+ host files, 3 extracted packages (via adapters), auth stash/restore, and the fileStore session seam.
 
-A **domain-first slice** (analysis/progress pure logic) is READY WITH CONDITIONS and is the recommended first safe contour.
+A **domain-first slice** (analysis/progress pure logic) was READY WITH CONDITIONS at baseline — **Step 1 is now EXECUTED** (§9): the slice physically exists as the in-repo module `state/generationProgress/` with parameterized state, independent unit tests, and a contour guard. It is now **READY for a mechanical package cut** (§10).
 
 **Key findings:**
 - **2,553 LOC** core contour (4 files), ~30 signals in one store
@@ -28,25 +29,31 @@ A **domain-first slice** (analysis/progress pure logic) is READY WITH CONDITIONS
 
 ## 2. File Inventory
 
-### 2.1 Core contour (production)
+### 2.1 Core contour (production — post Step-1 split, see §9)
 
 | File | LOC | Role |
 |---|---|---|
-| `state/generateStore.ts` | 1,323 | Generation orchestration store: identity, phase, VBook flow, SSE progress, timers |
-| `pages/GeneratePage.tsx` | 720 | The Generate screen: worker cards, scope dialog, polls, timer |
-| `pages/AnalysisProgressPanel.tsx` | 191 | Per-task parallel-analysis rows (consumed only by GeneratePage) |
-| **TOTAL** | **2,236** | |
+| `state/generateStore.ts` | 858 | Generation orchestration host: identity, phase, VBook flow, SSE transport, actions — progress logic delegated to `generationProgress/` |
+| `state/generationProgress/` (6 files) | 875 | generation-progress domain slice: analysis state machine, progress rows, SSE routing, timer math — explicit state objects, no host reach |
+| `pages/GeneratePage.tsx` | 703 | The Generate screen: worker cards, scope dialog, polls, timer |
+| `pages/AnalysisProgressPanel.tsx` | 187 | Per-task parallel-analysis rows (consumed only by GeneratePage) |
+| **TOTAL** | **2,623** | |
 
-### 2.2 Core contour (tests)
+### 2.2 Core contour (tests — post Step-1 split)
 
 | File | LOC | Coverage |
 |---|---|---|
-| `state/generateStore.analysis.test.ts` | 318 | `applyAnalysisEvent` purity, `analysisOverallPercent`, `resetAnalysisProgress`, `loadLayerConfig` roundtrip, SSE routing |
-| **TOTAL** | **318** | |
+| `state/generationProgress/analysis.test.ts` | 239 | `applyAnalysisEvent` purity, `analysisOverallPercent`, reset semantics, heartbeat — standalone (no store import) |
+| `state/generationProgress/progressRows.test.ts` | 363 | `computeProgressRows`: floor monotonicity, stale-done gate, sibling keys, 10s window, new-gen gate, finalize, VBook rows, reset |
+| `state/generationProgress/sseRouting.test.ts` | 125 | SSE routing: analysis/heartbeat/import_complete/generation_complete/malformed |
+| `state/generationProgress/timer.test.ts` | 61 | timer start/stop/freeze/restart + formatter |
+| `state/generationProgress/vbookProgress.test.ts` | 108 | SSE event mapping + agent-status merge + factories |
+| `state/generateStore.analysis.test.ts` | 139 | Host integration: layer-config roundtrip, SSE seam end-to-end, reset wrapper |
+| **TOTAL** | **1,035** | |
 
 ### 2.3 Combined total
 
-**2,553 LOC** (2,236 production + 318 tests)
+**3,658 LOC** (2,623 production + 1,035 tests, post Step-1 split — was 2,553 at baseline; the growth is the new standalone domain unit tests)
 
 ### 2.4 Shared infrastructure the contour depends on (NOT part of the contour — candidate ports)
 
@@ -129,14 +136,14 @@ Test consumers: `state/__tests__/auth-book-session.test.ts`, `state/fileStore.te
 
 ## 4. Deep-dive: Can the contour be split?
 
-### 4.1 Pure generation domain logic — YES
+### 4.1 Pure generation domain logic — YES (DONE, §9)
 
-Extractable pure/near-pure functions inside `generateStore.ts`:
-- `applyAnalysisEvent` (+ `analysisOverallPercent`, `resetAnalysisProgress`) — already unit-tested (318 LOC)
-- `computeProgressRows` + SSE event routing
-- Timer math (`getTimerStartedAt`, `getFinalElapsedSeconds`, `formatTimerText`, `liveElapsedSeconds`, `globalElapsedSeconds` in GeneratePage)
+Extracted into `state/generationProgress/` (Step 1 executed):
+- `applyAnalysisEvent` (+ `analysisOverallPercent`, reset via `createInitialAnalysisProgress`) — unit-tested standalone
+- `computeProgressRows` + SSE event routing (`routeProgressEvent`)
+- Timer math (`GenerationTimerState`, `start/stopGenerationTimer`, `elapsedSeconds`, `formatTimerText`)
 
-**Condition:** the module-level Maps (`taskReadyFloor`, `taskCompletedAt`, `taskFrozenElapsed`) and latch gates (`generationCompleted`, `newGenerationPending`, `importCompleteReceived`) must be **parameterized into a state object** instead of module scope.
+~~**Condition:**~~ The module-level Maps (`taskReadyFloor`, `taskCompletedAt`, `taskFrozenElapsed`) and latch gates (`generationCompleted`, `newGenerationPending`, `importCompleteReceived`) are **parameterized into `ProgressTrackingState`** (plus `GenerationTimerState` for the wall-clock lets) — the condition is satisfied.
 
 ### 4.2 Domain/service layer first, store host-owned — YES (recommended path)
 
@@ -148,7 +155,7 @@ Precedent: the fileStore B1 split (seams `GenerationResetSeam`/`PlaybackPrepared
 
 ### 4.3 Split Generator into 2+ package contours — YES, naturally
 
-1. **`generation-progress` (analysis/progress domain):** `applyAnalysisEvent`, `analysisOverallPercent`, `computeProgressRows`, SSE routing, wire models (`ProgressEvent`, `ProgressPanelResponse`, `AgentStatusResponse`, `AnalysisTaskRow`) — ~400–500 LOC, zero identity/auth/playback-write. **READY WITH CONDITIONS.**
+1. **`generation-progress` (analysis/progress domain):** `applyAnalysisEvent`, `analysisOverallPercent`, `computeProgressRows`, SSE routing, wire models (`ProgressEvent`, `ProgressPanelResponse`, `AgentStatusResponse`, `AnalysisTaskRow`) — **~875 LOC impl + 866 LOC standalone tests, zero identity/auth/playback-write. Step 1 EXECUTED (§9): READY for a mechanical package cut (§10).**
 2. **`generation-orchestration` (VBook/bootstrap flow):** start/bootstrap/cancel/poll actions — depends on identity port + http port. Requires the 4.2 split first.
 3. **UI (`GeneratePage` + `AnalysisProgressPanel`):** separable from orchestration (imports only signals + ports), but low value until the store split lands.
 
@@ -199,7 +206,7 @@ Only **one**: `onPlaybackPrepared` (emit direction). Player's subscription alrea
 3. **Dual-writer phase/errorMessage:** fileStore SessionSeam + generateStore both write; source of truth must not fork across package boundary.
 4. **Event producer inversion:** `onPlaybackPrepared` consumed by Player/Navigator/Edit via adapters — moving the producer inverts the direction unless the bus stays host-side.
 5. **No web generation contracts:** wire types live only in host `api/models.ts`; nothing in `@animastor/contracts`.
-6. **Module-level state:** timers/Maps/latches in module scope prevent pure-function extraction without parameterization.
+6. ~~**Module-level state:**~~ **RESOLVED for the progress slice** (§9): timers/Maps/latches now live in explicit state objects (`ProgressTrackingState`/`GenerationTimerState`) owned by the host; still applies to any other slice until split.
 
 ### Minimal preparation sequence
 
@@ -232,8 +239,66 @@ Notes:
 
 ## 8. Guard pattern reference (for the future extraction)
 
-Follow `frontends/app/src/architecture/*.guard.test.ts` mechanics: raw-source scan via `import.meta.glob(..., { query: '?raw', eager: true })`, `importSpecifiers()` regex extraction; checks: physical structure (old paths gone), entry-only consumption (deep-specifier ban), pinned consumer allowlist, single adapters file building Ports, reverse-dep bans (no state/ module imports the package; no state cycles), identity ownership (no host file binds bookId/buildId from package entry; fileStore must not re-declare identity signals), pinned route mounts in main.tsx, test-mock discipline (entry, not deep paths).
+Follow `frontends/app/src/architecture/*.guard.test.ts` mechanics: raw-source scan via `import.meta.glob(..., { query: '?raw', eager: true })`, `importSpecifiers()` regex extraction; checks: physical structure (old paths gone), entry-only consumption (deep-specifier ban), pinned consumer allowlist, single adapters file building Ports, reverse-dep bans (no state/ module imports the package; no state cycles), identity ownership (no host file binds bookId/buildId from package entry; fileStore must not re-declare identity signals), pinned route mounts in main.tsx, test-mock discipline (entry, not deep paths). A first contour-specific guard already exists: `frontends/app/src/architecture/generation-progress-contour.guard.test.ts` (see §9.4).
 
 ---
 
-*Read-only audit — no code changed, no files moved, no packages created, no commits beyond this document.*
+## 9. Step 1 EXECUTED — generation-progress domain split (in-repo)
+
+**Status:** landed on `c21.4-physically-extract-analysis-from-backend`; no package created; Generator UI behavior unchanged (host public API of `generateStore` preserved 1:1, incl. re-exports of the moved types/fns).
+
+### 9.1 What moved (module: `frontends/app/src/state/generationProgress/`)
+
+| File | LOC (impl/tests) | Contents |
+|---|---|---|
+| `analysis.ts` | 209 / 239 | `AnalysisStatus`/`AnalysisTaskId`/`AnalysisTaskRow`/`AnalysisProgress` types, `createInitialAnalysisProgress` (reset semantics), `applyAnalysisEvent(prev, ev, now?)` (pure; clock injectable), `analysisOverallPercent`, `applyAnalysisHeartbeat` (the SSE `analysis_parallel` branch, pure), `isAnalysisTaskId`, `transition` |
+| `vbookProgress.ts` | 112 / 108 | `VBookStage`/`VBookProgress` types, `createIdleVBookProgress`/`createAnalyzingVBookProgress` factories, `vbookProgressFromEvent` (pure SSE `vbook` mapping), `applyAgentStatus(prev, status)` (near-pure `/agent-status` merge, port of `updateVBookProgress`) |
+| `progressRows.ts` | 374 / 363 | `TaskRow`/`TaskLabels`/`ProgressPanelState` types, **`ProgressTrackingState`** (explicit object holding the previously module-scope Maps `taskReadyFloor`/`taskCompletedAt`/`taskFrozenElapsed` + latches `generationCompleted`/`newGenerationPending`/`importCompleteReceived`), `createProgressTrackingState`, `resetProgressTracking`, `hasAnyProgress`, `rowTaskKey`, `computeProgressRows(ctx, panel, vbookProg, labels)` |
+| `timer.ts` | 51 / 61 | `GenerationTimerState` (explicit object replacing module-scope `timerStartedAt`/`finalElapsedSeconds`), `create/start/stopGenerationTimer`, `elapsedSeconds`, `formatTimerText` |
+| `sseRouting.ts` | 60 / 125 | `routeProgressEvent(sink, tracking, data)` — JSON parse + dispatch of `analysis` / `vbook` (+heartbeat) / `generation_complete` (no-op) / `import_complete` (latch). Host signals are written through an explicit `ProgressEventSink` |
+| `index.ts` | 69 / — | entry re-exports; documents the boundary rules |
+
+### 9.2 Host side (unchanged ownership, `state/generateStore.ts` 1,323 → 858 LOC)
+
+- `generateStore` now owns exactly: identity (`bookId`/`buildId`, `loadBook`, persistence + per-user stash/restore), `phase`/`errorMessage` (SessionSeam contract, audit B6), `onPlaybackPrepared`/`emitPlaybackPrepared`, nav-icon status machinery, layer-config/assets signals, transport (`api/client`), VBook orchestration actions (`startGeneration`, `startVBookGeneration`, `pollVBookProgress`, `cancel*`, `checkAndRestore*`, `applyGenerationResults`), SSE transport loop (`startProgressStream`/`runProgressStream` — stream machinery, NOT routing).
+- It creates the two explicit state objects — `progressTracking: ProgressTrackingState`, `generationTimer: GenerationTimerState` — and passes them into every domain call; the previously hidden module-scope Maps/latches/`let`s are gone from both sides.
+- `computeProgressRows` is a thin host wrapper: binds `progressTracking`+`generationTimer`, reads `vbookProgress.value.stage` / `generationStatus.value === 'RUNNING'` at call time, injects `vbookStageLabel` (i18n port-shaped) and the two side-effect ports `onGenerationFinalized` (stop stream + clear COMPLETED stage + SUCCESS + `isRegenerating=false` + `applyGenerationResults`) and `onRunningIdle` (clear RUNNING pulse). The finalize interleaving (domain clears `taskCompletedAt`, host callback does the rest) is synchronous and re-entrancy-free — externally observable write order identical.
+- `handleProgressEvent` delegates to `routeProgressEvent` via a module-level `ProgressEventSink` adapter; `importCompleteReceived` now lives on `progressTracking` (read by `pollVBookProgress`, reset by `markImportIncomplete`/`startVBookGeneration`).
+- Timer helpers re-exported for pages: `liveElapsedSeconds`, `formatTimerText` (GeneratePage's local duplicates deleted; AnalysisProgressPanel's `formatTimer` duplicate deleted — it imports the store re-export).
+- Public surface of `generateStore` preserved: all previously exported symbols still resolve (types via `export type {…}`, `applyAnalysisEvent` re-export, `analysisOverallPercent` wrapper). Consumers (AppShell, fileAdapters, playerAdapters, navigatorAdapters, Edit/Settings/AiAssistant/Generate pages, main.tsx, authStore, fileStore seams, tests) untouched.
+
+### 9.3 Dependencies of the new domain module (guard-pinned)
+
+Allowed imports: domain siblings (`./analysis` etc.) + `../../api/models` **type-only** (wire types — vendored at package-cut time, web-player `models.ts` precedent). Forbidden and verified absent: `api/client`, `app/*` (router/i18n/desktop/icons), host state stores (`positionStore`/`authStore`/`fileStore`/`playbackStore`/`generateStore`), `pages/`, `@animastor/*`, `@preact/signals`. The authStore → generateStore identity edge is unchanged (documented, one-directional). No new cycles: `generateStore → generationProgress` is the only edge and one-directional (state-graph guard re-verified).
+
+### 9.4 Tests
+
+- Moved/extended: `generationProgress/analysis.test.ts` (verbatim migration of the pure suites + new injected-clock + heartbeat cases), `timer.test.ts`, `vbookProgress.test.ts`, `sseRouting.test.ts`, `progressRows.test.ts` (**new**: monotonic floor, stale-done gate incl. tolerance, sibling-row keys, 10s done-window, new-gen gate, all-cancelled guard, RUNNING-pulse self-heal, VBook row states, reset/hasAnyProgress semantics) — all run with **zero** `generateStore` imports (guard-enforced).
+- Kept host-side: `generateStore.analysis.test.ts` now covers only the host integration (layer-config roundtrip, SSE seam end-to-end via the domain router, reset wrapper).
+- New architecture guard: `architecture/generation-progress-contour.guard.test.ts` (16 assertions: boundary, type-only models, no signals, no module-global state, explicit-state parameterization, host ownership tokens, consumer allowlist, domain-test independence, no premature package).
+- Result at time of landing: **typecheck clean, 190/190 tests green, vite build green.**
+
+### 9.5 Deviations / notes
+
+- Two pure functions gained an injectable clock (`applyAnalysisEvent(prev, ev, now = Date.now())`, timer start/stop) — default parameter preserves every production call site; no behavior change.
+- One port bug was caught by the new unit tests during the move (agent-status stage id is `create_visual_prompts`, not the SSE's `creating_visuals`) and fixed in the port — final code is a 1:1 port verified by line-diff against HEAD.
+- `resetProgressTracking` intentionally does NOT clear `importCompleteReceived` (host `markImportIncomplete` owns it) — matches the previous module-scope behavior exactly.
+
+---
+
+## 10. Re-audit verdict: readiness of `generation-progress` for physical extraction
+
+**READY (mechanical cut).** After Step 1 the §4.3.1 slice requires only packaging work, no further refactoring:
+
+1. **Zero host reach** — imports are domain siblings + `api/models` types only; verified by the new contour guard, which already encodes the package-cut rules (entry-only consumption can be added the day the package exists).
+2. **No hidden state** — blocker 6 (module-level Maps/latches) is resolved: all mutable state arrives as explicit objects the host owns; the domain is pure/near-pure and clock-injectable.
+3. **Tests travel** — 5 domain test files (866 LOC) import nothing but the domain; they move with the package unchanged.
+4. **What must be vendored at cut time** (mechanical, precedent-backed): the `ProgressEvent`, `ProgressPanelResponse`, `ProgressTask` (and a slice of `AgentStatusResponse` shape, already narrowed as `AgentStatusLike`) wire types — into a package `models.ts`, like web-player.
+5. **What stays host-side permanently** (unchanged): identity (`bookId`/`buildId`/`loadBook`/stash/restore), `phase`/`errorMessage` (B6 dual-writer contract), `onPlaybackPrepared` bus, SSE/HTTP transport (`api/client`), VBook orchestration actions, `vbookStageLabel` i18n injection (port-shaped already), and the signal binding (the domain is signal-free; the future package gets its own signals or keeps the sink/ctx pattern).
+6. **Remaining seams to define at cut time** (small): the host wrapper's ctx callbacks (`setRegenerating`, `onGenerationFinalized`, `onRunningIdle`, `vbookStageLabel`) become a `ProgressHostPorts` object — the current `ProgressRowContext` + `ProgressEventSink` shapes are already port-shaped, so this is renaming, not redesign.
+
+The overall `@animastor/web-generator` verdict stays **NOT READY** (identity/auth/phase blockers per §6 — Step 2/3 unchanged). The §6 blocker list shrinks by one: blocker 6 (module-level state) is now resolved for the progress slice.
+
+---
+
+*Step-1 change executed and documented on this branch; no packages created, no files moved out of the host app.*

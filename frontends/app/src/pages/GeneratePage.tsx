@@ -13,7 +13,7 @@ import {
   startGeneration, startVBookGeneration, cancelGeneration, cancelTask,
   checkAndRestoreGenerationState, checkVBookAgentStatus, computeProgressRows,
   resetGenerationStatus, onPlaybackPrepared,
-  getTimerStartedAt, getFinalElapsedSeconds,
+  liveElapsedSeconds, formatTimerText,
 } from '../state/generateStore';
 import type { TaskLabels, TaskRow } from '../state/generateStore';
 import { position as positionSignal } from '../state/positionStore';
@@ -619,24 +619,12 @@ function scopedTaskLabel(row: TaskRow): string {
   return target ? `${row.label} · ${target}` : row.label;
 }
 
-// Timer helpers — formatTimerText + live/frozen elapsed (Android formatTimerText).
-function liveElapsedSeconds(): number {
-  const started = getTimerStartedAt();
-  if (started > 0) return Math.floor((Date.now() - started) / 1000);
-  return getFinalElapsedSeconds();
-}
+// Timer helpers — live/frozen elapsed + the shared hh:mm:ss formatter.
+// The computation lives in the generation-progress domain
+// (state/generationProgress/timer.ts); GeneratePage calls the store
+// re-exports (liveElapsedSeconds/formatTimerText).
 function globalElapsedSeconds(): number {
-  const started = getTimerStartedAt();
-  if (started > 0) return Math.floor((Date.now() - started) / 1000);
-  return getFinalElapsedSeconds();
-}
-function formatTimerText(elapsedSeconds: number): string {
-  const sec = Math.max(0, Math.floor(elapsedSeconds));
-  const hh = Math.floor(sec / 3600);
-  const mm = Math.floor((sec % 3600) / 60);
-  const ss = sec % 60;
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${p(hh)}:${p(mm)}:${p(ss)}`;
+  return liveElapsedSeconds();
 }
 
 // buildLabels — TaskLabels for computeProgressRows (localized).
