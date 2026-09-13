@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@animastor/web-ai-chat": "file:../../packages/animastor-web-ai-chat",
+    "@animastor/web-editor": "file:../../packages/animastor-web-editor",
     "@animastor/web-file": "file:../../packages/animastor-web-file",
     "@animastor/web-navigator": "file:../../packages/animastor-web-navigator",
     "@animastor/web-player": "file:../../packages/animastor-web-player",

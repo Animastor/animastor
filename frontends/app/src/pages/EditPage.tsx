@@ -43,10 +43,9 @@ import { navigateTo, position as positionSignal } from '../state/positionStore';
 import { seekToPosition, invalidateDeletedScene, invalidateDeletedChapter } from '@animastor/web-player';
 import { bookResource, emitLocal, onResourceInvalidated } from '../state/resourceInvalidations';
 import { resilientReload, sharedRecovery } from '../state/resilientReloader';
-import { Waveform } from '../lib/waveform';
-import { BehaviorAddDialog, DeleteConfirmDialog, ENTITY_SCHEMAS, EntityAddButton, EntityDeleteButton, EntityEditorDialog, StructureAddDialog } from '../lib/entityEditor';
-import type { EntityKind, StructureKind, StructureParentOption } from '../lib/entityEditor';
-import { chapterId as genChapterId, sceneId as genSceneId, unitId as genUnitId } from '../lib/idgen';
+import { Waveform, BehaviorAddDialog, DeleteConfirmDialog, ENTITY_SCHEMAS, EntityAddButton, EntityDeleteButton, EntityEditorDialog, StructureAddDialog, chapterId as genChapterId, sceneId as genSceneId, unitId as genUnitId } from '@animastor/web-editor';
+import type { EntityKind, StructureKind, StructureParentOption } from '@animastor/web-editor';
+import { editorPorts } from '../app/editorAdapters';
 import { IconChevronDown, IconChevronLeft, IconChevronRight, IconChevronUp, IconClock, IconClose, IconFullscreen, IconImageOff, IconPlay, IconReset, IconSave, IconStop } from '../app/icons';
 
 // ── Tabs (propertyTabs) — Global is the first level (mirrors the top-level
@@ -1891,7 +1890,7 @@ export function EditPage(props: { path?: string }) {
     if (chId) {
       out.push(
         <div class="edit-card__head" key="chapter-head">
-          <EntityDeleteButton onClick={() => { setEntityError(null); setStructureDelete({ kind: 'chapter', chapterId: chId, sceneId: null, id: chId }); }} />
+          <EntityDeleteButton ports={editorPorts} onClick={() => { setEntityError(null); setStructureDelete({ kind: 'chapter', chapterId: chId, sceneId: null, id: chId }); }} />
           <span class="edit-card__title">{chId}</span>
         </div>
       );
@@ -1909,7 +1908,7 @@ export function EditPage(props: { path?: string }) {
     if (scId && chId) {
       out.push(
         <div class="edit-card__head" key="scene-head">
-          <EntityDeleteButton onClick={() => { setEntityError(null); setStructureDelete({ kind: 'scene', chapterId: chId, sceneId: scId, id: scId }); }} />
+          <EntityDeleteButton ports={editorPorts} onClick={() => { setEntityError(null); setStructureDelete({ kind: 'scene', chapterId: chId, sceneId: scId, id: scId }); }} />
           <span class="edit-card__title">{scId}</span>
         </div>
       );
@@ -1955,7 +1954,7 @@ export function EditPage(props: { path?: string }) {
       <div class="edit-section edit-section--row">
         <span class="edit-section__label">
           <span class="edit-section__delete">
-            <EntityDeleteButton onClick={() => {
+            <EntityDeleteButton ports={editorPorts} onClick={() => {
               setEntityError(null);
               const chId = chapters[currentChIndex]?.chapter_id;
               const scId = currentScene()?.scene_id;
@@ -2002,7 +2001,7 @@ export function EditPage(props: { path?: string }) {
           {/* Delete on the LEFT so the floating "+" (top-right corner of the
               table) never sits on top of the first row's delete button. */}
           <div class="edit-card__head">
-            <EntityDeleteButton onClick={() => { setEntityError(null); setDeleteTarget({ kind: 'character', id: charId }); }} />
+            <EntityDeleteButton ports={editorPorts} onClick={() => { setEntityError(null); setDeleteTarget({ kind: 'character', id: charId }); }} />
             <span class="edit-card__title">{charId || '—'}</span>
           </div>
           {inputCard(t('field_name'), ch.name ?? '', false, `char.${charId}.name`)}
@@ -2025,7 +2024,7 @@ export function EditPage(props: { path?: string }) {
     return entries.map(([voiceId, entry]) => (
       <div class="edit-card" key={voiceId}>
         <div class="edit-card__head">
-          <EntityDeleteButton onClick={() => { setEntityError(null); setDeleteTarget({ kind: 'voice', id: voiceId }); }} />
+          <EntityDeleteButton ports={editorPorts} onClick={() => { setEntityError(null); setDeleteTarget({ kind: 'voice', id: voiceId }); }} />
           <span class="edit-card__title">{voiceId}</span>
         </div>
         {inputCard(t('field_instruction'), entry?.instruction ?? '', (entry?.instruction?.length ?? 0) > 80, `voice.${voiceId}.instruction`)}
@@ -2051,7 +2050,7 @@ export function EditPage(props: { path?: string }) {
       return (
         <div class="edit-card" key={charId}>
           <div class="edit-card__head">
-            <EntityDeleteButton onClick={() => { setEntityError(null); setDeleteTarget({ kind: 'behavior', id: charId }); }} />
+            <EntityDeleteButton ports={editorPorts} onClick={() => { setEntityError(null); setDeleteTarget({ kind: 'behavior', id: charId }); }} />
             <span class="edit-card__title">{title}</span>
           </div>
           {inputCard(t('field_baseline'), entry?.baseline ?? '', (entry?.baseline?.length ?? 0) > 80, `behavior.${charId}.baseline`)}
@@ -2075,7 +2074,7 @@ export function EditPage(props: { path?: string }) {
       out.push(
         <div class="edit-card" key={locId}>
           <div class="edit-card__head">
-            <EntityDeleteButton onClick={() => { setEntityError(null); setDeleteTarget({ kind: 'location', id: locId }); }} />
+            <EntityDeleteButton ports={editorPorts} onClick={() => { setEntityError(null); setDeleteTarget({ kind: 'location', id: locId }); }} />
             <span class="edit-card__title">{locId}</span>
           </div>
           {inputCard(t('field_name'), loc?.name ?? '', false, `${prefix}name`)}
@@ -2455,7 +2454,7 @@ export function EditPage(props: { path?: string }) {
         {loading ? <div class="progress"><div class="progress__bar" /></div> : (
           isEntityTab || isStructureTab ? (
             <div class="edit-entity-table">
-              <EntityAddButton onClick={() => {
+              <EntityAddButton ports={editorPorts} onClick={() => {
                 setEntityError(null);
                 if (tab === BEHAVIORS_TAB) setBehaviorAddOpen(true);
                 else if (isStructureTab) openStructureAdd(tab === CHAPTER_TAB ? 'chapter' : tab === SCENE_TAB ? 'scene' : 'unit');
@@ -2536,6 +2535,7 @@ export function EditPage(props: { path?: string }) {
           driven reusable form; save closes it and refreshes the table. */}
       {entityAddKind && (
         <EntityEditorDialog
+          ports={editorPorts}
           schema={ENTITY_SCHEMAS[entityAddKind]}
           existingIds={entityExistingIds}
           busy={entityBusy}
@@ -2549,6 +2549,7 @@ export function EditPage(props: { path?: string }) {
           yet (behavior.json is keyed by character_id, not a free-form id). */}
       {behaviorAddOpen && (
         <BehaviorAddDialog
+          ports={editorPorts}
           characters={behaviorCharacters}
           busy={entityBusy}
           error={entityError}
@@ -2561,6 +2562,7 @@ export function EditPage(props: { path?: string }) {
           explicit confirmation; the text is per-entity (character/location/voice). */}
       {deleteTarget && (
         <DeleteConfirmDialog
+          ports={editorPorts}
           title={t(ENTITY_SCHEMAS[deleteTarget.kind].deleteTitleKey)}
           message={t(ENTITY_SCHEMAS[deleteTarget.kind].deleteConfirmKey)}
           busy={entityBusy}
@@ -2576,6 +2578,7 @@ export function EditPage(props: { path?: string }) {
           the server anchors the insert point. */}
       {structureAddKind && (
         <StructureAddDialog
+          ports={editorPorts}
           kind={structureAddKind}
           id={structurePreviewId}
           chapters={structureChapters}
@@ -2592,6 +2595,7 @@ export function EditPage(props: { path?: string }) {
       {/* Structure delete confirmation — chapter/scene/unit (destructive). */}
       {structureDelete && (
         <DeleteConfirmDialog
+          ports={editorPorts}
           title={t(structureDelete.kind === 'chapter' ? 'structure_delete_chapter' : structureDelete.kind === 'scene' ? 'structure_delete_scene' : 'structure_delete_unit')}
           message={t(structureDelete.kind === 'chapter' ? 'structure_delete_chapter_confirm' : structureDelete.kind === 'scene' ? 'structure_delete_scene_confirm' : 'structure_delete_unit_confirm')}
           busy={entityBusy}
