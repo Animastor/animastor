@@ -1,6 +1,6 @@
 {
     "name": "@animastor/orchestration",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "Animastor Orchestration — the generation orchestration/runtime contour of the Animastor backend, physically extracted from the host (§32.30): the unified generation lifecycle owner (orchestrator facade, stage executor, scene callbacks/restoration), the dispatch engine and its lease/quota/retry managers, the reconciliation engine and counter reconciliation, the scene window/scheduler/worker-health, the runtime-result emitter/consumer, and the eight O-2..O-10 port contracts (Persistence, SceneData, PlaceholderAudio, ProgressEvents, AudioFsm, VideoFsm, HubCancel, LayerConfig). The package reaches the host (runtime config slices, Redis-domain state layer, media facades, the S-5 seam registry, the artifact root, the PW-2 workspace resolver) ONLY through the composition-root host-bindings seam — no backend/src require, no storage/book/routes/services, no Redis, no PG, no Express inside.",
     "keywords": [
         "animastor",
