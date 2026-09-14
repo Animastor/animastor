@@ -2372,27 +2372,37 @@ The Step-14 architecture preparation remains valid unchanged: `SseStreamState` u
 
 **Owner of the signal objects:** `generateStore.ts` (lines 227–232: `export const phase = signal<PlayerPhase>('IDLE')`, `export const errorMessage = signal<string | null>(null)`). Type is a structural mirror in fileStore (`FilePhase`) — a TYPE alias only, not a second value.
 
-**Writers — `phase` (18 production write sites total):**
+**Writers — `phase` (14 production assignment sites total — counting method: every raw `.value =` assignment statement on `phase`/`session.phase` in production sources (tests excluded), verified by grep at `259380bb`; no other write style (destructuring/aliasing) exists; READERS ARE NOT COUNTED):**
 
 | # | File | Function | Value | Lifecycle event | Pre/post-await | Concurrent mutators |
 |---|---|---|---|---|---|---|
 | 1 | fileStore | `beginBookTransition` (171) | `LOADING_BOOK` | any File open flow starts (import/open/blank) | sync (pre-await) | any in-flight generation poll effects |
-| 2 | fileStore | `beginBookTransition` (172) | `errorMessage=null` | same | sync | — |
-| 3 | fileStore | `importBookFromFile` (193) | `SCENE_READY` or `IDLE` | vbook import done (scenes fetched) | post-await (after POST + GET) | generation poll if a generation was running |
-| 4 | fileStore | `importBookFromFile` (198) | `IMPORTING_TXT` | TXT path, pre-assets-check | post-await | — |
+| 2 | fileStore | `importBookFromFile` (193) | `SCENE_READY` or `IDLE` | vbook import done (scenes fetched) | post-await (after POST + GET) | generation poll if a generation was running |
+| 3 | fileStore | `importBookFromFile` (198) | `IMPORTING_TXT` | TXT path, pre-assets-check | post-await | — |
 | 5 | fileStore | `importBookFromFile` (201) | `SCENE_READY`/`IDLE` | TXT path done (assets fetched) | post-await | — |
-| 6 | fileStore | `importBookFromFile` (205–206) | `IDLE` + error message | import failure catch | post-await (failure) | — |
-| 7 | fileStore | `restoreBookSession` (273) | `SCENE_READY`/`IDLE` | cold-start restore load done | post-await (2 GETs) | deep-link/import race guarded by bookId re-checks |
-| 8 | fileStore | `openBookById` (299) | `SCENE_READY`/`IDLE` | open-by-id done (assets fetched) | post-await | — |
-| 9 | fileStore | `openBookById` (302–303) | `IDLE` + error | open failure catch | post-await (failure) | — |
-| 10 | fileStore | `closeBook` (317–318) | `IDLE`, `errorMessage=null` | book closed (Create-New card / Settings delete) | sync (post `stopGenerationSession`) | — |
-| 11 | fileStore | `createBlankBook` (347) | `SCENE_READY` | blank book created + loaded | post-await | — |
-| 12 | fileStore | `createBlankBook` (351–352) | `IDLE` + error | blank creation failure | post-await (failure) | — |
-| 13 | generateStore | `startGeneration` (572) | `SCENE_READY` | `/regenerate` accepted (build_id captured) | post-await | poll effects see SCENE_READY while RUNNING |
-| 14 | generateStore | `settleGenerationSessionAfterCancel` (669–670) | `IDLE`, `errorMessage=null` | cancel request RESOLVED (Step 14A contract) | **post-await (pinned)** | none (Step 14A regression tests) |
-| 15 | generateStore | `checkAndRestoreGenerationState` (730) | `GENERATING` | restore found active workers | post-await (2 GETs) | — |
+| 5 | fileStore | `importBookFromFile` (205) | `IDLE` | import failure catch | post-await (failure) | — |
+| 6 | fileStore | `restoreBookSession` (273) | `SCENE_READY`/`IDLE` | cold-start restore load done | post-await (2 GETs) | deep-link/import race guarded by bookId re-checks |
+| 7 | fileStore | `openBookById` (299) | `SCENE_READY`/`IDLE` | open-by-id done (assets fetched) | post-await | — |
+| 8 | fileStore | `openBookById` (302) | `IDLE` | open failure catch | post-await (failure) | — |
+| 9 | fileStore | `closeBook` (317) | `IDLE` | book closed (Create-New card / Settings delete) | sync (post `stopGenerationSession`) | — |
+| 10 | fileStore | `createBlankBook` (347) | `SCENE_READY` | blank book created + loaded | post-await | — |
+| 11 | fileStore | `createBlankBook` (351) | `IDLE` | blank creation failure | post-await (failure) | — |
+| 12 | generateStore | `startGeneration` (572) | `SCENE_READY` | `/regenerate` accepted (build_id captured) | post-await | poll effects see SCENE_READY while RUNNING |
+| 13 | generateStore | `settleGenerationSessionAfterCancel` (669) | `IDLE` | cancel request RESOLVED (Step 14A contract) | **post-await (pinned)** | none (Step 14A regression tests) |
+| 14 | generateStore | `checkAndRestoreGenerationState` (730) | `GENERATING` | restore found active workers | post-await (2 GETs) | — |
 
-**Writers — `errorMessage` (6 sites):** fileStore #2/#6/#9/#10/#12 (above: `null` on begin/close, message on 3 failure paths) + generateStore #14 (`null` on cancel settle). **No generation-failure path writes a message** — generation errors surface via `generationStatus='ERROR'` + GeneratePage's own fetch error handling; only File-flow failures use `errorMessage` today.
+**Writers — `errorMessage` (6 production assignment sites — same counting method; the previous version of this table incorrectly folded them into the phase rows as "#2/#6/#9/#10/#12", mixing signals — corrected to a separate table):**
+
+| # | File | Function | Value | Lifecycle event | Pre/post-await |
+|---|---|---|---|---|---|
+| 1 | fileStore | `beginBookTransition` (172) | `null` | any File open flow starts | sync (pre-await) |
+| 2 | fileStore | `importBookFromFile` (206) | error message | import failure catch | post-await (failure) |
+| 3 | fileStore | `openBookById` (303) | error message | open failure catch | post-await (failure) |
+| 4 | fileStore | `closeBook` (318) | `null` | book closed | sync |
+| 5 | fileStore | `createBlankBook` (352) | error message | blank creation failure | post-await (failure) |
+| 6 | generateStore | `settleGenerationSessionAfterCancel` (670) | `null` | cancel request RESOLVED | post-await (pinned) |
+
+**No generation-failure path writes a message** — generation errors surface via `generationStatus='ERROR'` + GeneratePage's own fetch error handling; only File-flow failures use `errorMessage` today. Totals: **14 phase assignment sites (11 fileStore + 3 generateStore) + 6 errorMessage assignment sites (5 fileStore + 1 generateStore) = 20 sites across exactly 2 files.**
 
 **Readers (production):**
 
@@ -2410,19 +2420,19 @@ The Step-14 architecture preparation remains valid unchanged: `SseStreamState` u
 
 | Event | Prev phase | Writer | New phase | Consumers | Observable consequence |
 |---|---|---|---|---|---|
-| loadBook via import (vbook, scenes>0) | any | fileStore #1,#3 | LOADING_BOOK → SCENE_READY | FilePage status, GeneratePage isGenerating (loading) | UI shows loading then ready; bounce fallback would pick `/play` |
-| loadBook via import (vbook, scenes=0) | any | fileStore #1,#3 | LOADING_BOOK → IDLE | same | ready → `/generate` navigation decision |
-| import TXT | any | fileStore #1,#4,#5 | LOADING_BOOK → IMPORTING_TXT → SCENE_READY/IDLE | FilePage (importing→loading stages), GeneratePage | two-stage loading visible on File screen |
-| import failure | any | fileStore #6 | → IDLE + errorMessage | FilePage error line (error > all) | error shown on File screen until next flow clears it |
-| restore session (cold start) | IDLE | fileStore #7 | → SCENE_READY/IDLE | AppShell fallback, GeneratePage | user "has" a book without explicit action |
-| open by id / deep link | any | fileStore #8/#9 | → SCENE_READY/IDLE (+error) | same as import | — |
-| blank book create | any | fileStore #11/#12 | → SCENE_READY (+AI bubble flag) | GeneratePage, AppShell | Edit-ready state |
-| generation start | any (typically SCENE_READY) | generateStore #13 | → SCENE_READY (unchanged value; status→RUNNING separately) | GeneratePage (isRegenerating drives UI) | phase is NOT the generation-progress signal — status is |
+| loadBook via import (vbook, scenes>0) | any | fileStore #1,#2 | LOADING_BOOK → SCENE_READY | FilePage status, GeneratePage isGenerating (loading) | UI shows loading then ready; bounce fallback would pick `/play` |
+| loadBook via import (vbook, scenes=0) | any | fileStore #1,#2 | LOADING_BOOK → IDLE | same | ready → `/generate` navigation decision |
+| import TXT | any | fileStore #1,#3,#4 | LOADING_BOOK → IMPORTING_TXT → SCENE_READY/IDLE | FilePage (importing→loading stages), GeneratePage | two-stage loading visible on File screen |
+| import failure | any | fileStore #5 | → IDLE + errorMessage | FilePage error line (error > all) | error shown on File screen until next flow clears it |
+| restore session (cold start) | IDLE | fileStore #6 | → SCENE_READY/IDLE | AppShell fallback, GeneratePage | user "has" a book without explicit action |
+| open by id / deep link | any | fileStore #7/#8 | → SCENE_READY/IDLE (+error) | same as import | — |
+| blank book create | any | fileStore #10/#11 | → SCENE_READY (+AI bubble flag) | GeneratePage, AppShell | Edit-ready state |
+| generation start | any (typically SCENE_READY) | generateStore #12 | → SCENE_READY (unchanged value; status→RUNNING separately) | GeneratePage (isRegenerating drives UI) | phase is NOT the generation-progress signal — status is |
 | generation progress (SSE/poll) | — | **no phase writer** | — | GeneratePage via vbookProgress/rows | progress lives OUTSIDE phase — only restore writes GENERATING |
-| restore finds active workers | any | generateStore #15 | → GENERATING | GeneratePage isGenerating, FilePage loading | re-arm after backend restart |
+| restore finds active workers | any | generateStore #14 | → GENERATING | GeneratePage isGenerating, FilePage loading | re-arm after backend restart |
 | generation success | GENERATING/IDLE | computeProgressRows finalize (no phase write — SUCCESS is `generationStatus`) | unchanged | GeneratePage SUCCESS pulse | phase and status diverge by design |
-| generation cancel (Step 14A) | any | generateStore #14 | → IDLE + errorMessage=null, POST-await split | GeneratePage stops, FilePage loading ends | **settle only AFTER request resolves** (regression-pinned) |
-| close/reset | any | fileStore #10 (+ teardown leg) | → IDLE + errorMessage=null | all readers | full reset, generation status→IDLE via `stopGenerationSession` |
+| generation cancel (Step 14A) | any | generateStore #13 | → IDLE + errorMessage=null, POST-await split | GeneratePage stops, FilePage loading ends | **settle only AFTER request resolves** (regression-pinned) |
+| close/reset | any | fileStore #9 (+ teardown leg) | → IDLE + errorMessage=null | all readers | full reset, generation status→IDLE via `stopGenerationSession` |
 
 **Interleavings file ↔ generation (the cases that matter):**
 
@@ -2436,14 +2446,14 @@ The Step-14 architecture preparation remains valid unchanged: `SseStreamState` u
 
 | Criterion | A. fileStore owns | B. generateStore owns (status quo) | C. separate SessionStatus boundary |
 |---|---|---|---|
-| Writers that move | fileStore writes natively; generateStore's 3 sites need an injected seam (fileStore → generateStore port) | none move | ALL 15 sites move behind ports on BOTH sides |
+| Writers that move | fileStore writes natively; generateStore's 3 sites need an injected seam (fileStore → generateStore port) | none move | ALL 20 assignment sites (14 phase + 6 errorMessage) move behind ports on BOTH sides |
 | Readers that change | AppShell/GeneratePage/FilePage must consume fileStore (or a new export) — FilePage is in the web-file package whose ports.ts already carries `phase`/`errorMessage` by reference (would keep working) | unchanged | all readers re-point to the module/package |
 | Seams/ports needed | a GenerationStatusSeam (generateStore writing fileStore-owned signals) — inverts today's SessionSeam direction; authStore untouched | none | a full write-port API (setPhase/setError/stepTransitions) + a read API — the "SessionStatusPort" the Step-13 audit already rejected |
 | Observable ordering | **changes**: cancel (#14, generateStore) and checkAndRestore (#15) would cross a seam — still same-tick, but the writer set splits across modules; interleaving semantics preserved only if seam calls are synchronous (they would be) | unchanged | unchanged IF all writes go through sync ports; but any package-ization adds await/delivery decisions |
 | Cycles | fileStore→(new port)←generateStore is fine, but fileStore already consumes generateStore via injected seams (no import) — A adds a SECOND cross-direction seam pair (generateStore writing fileStore state) = bidirectional seam coupling | none | module must be imported by both stores + wired in fileAdapters; no cycle if dependency-neutral |
 | Compatibility with packages | web-file's ports.session already exposes phase/errorMessage — A actually FITS the web-file port shape; web-book-session unaffected (identity ≠ status, §19.2); web-generator unaffected | fits (status quo) | a new package beside web-book-session; duplicates its "host-owned signals consumed via ports" pattern but for TWO writer modules |
 | API/ports to introduce | GenerationStatusSeam (~3 methods) | none | SessionStatusPorts: write (6+ transition methods or raw set), read hooks, possibly transition validation — a real API surface for 2 signals |
-| Verdict | **WORSE than B**: solves nothing (the dual-writer remains, just seam-routed), adds an inverted seam, and mis-locates ownership — File flows are not "the session"; they are one of TWO flows that settle status | **keep** | **NOT justified today**: the boundary owns 2 signals + 15 write sites spread across two flows with interleaved, order-dependent semantics (§25.2) — packaging it now creates a state-pass-through, not a domain |
+| Verdict | **WORSE than B**: solves nothing (the dual-writer remains, just seam-routed), adds an inverted seam, and mis-locates ownership — File flows are not "the session"; they are one of TWO flows that settle status | **keep** | **NOT justified today**: the boundary owns 2 signals + 20 assignment sites (14 phase + 6 errorMessage) spread across two flows with interleaved, order-dependent semantics (§25.2) — packaging it now creates a state-pass-through, not a domain |
 
 **C deep-dive — would `@animastor/web-session-status` be a natural boundary?**
 - What it would own: the 2 signals + a transition table. What transitions does it OWN? None of its own — every transition is initiated by a flow (file or generation); the module would hold no decision logic, only storage + (maybe) validation. That is the definition of an ambient state object.
@@ -2469,14 +2479,14 @@ So: `phase` = genuinely shared cross-slice session status (6 values spanning bot
 
 ### 25.6 Guards (audit-oriented additions only)
 
-`generation-progress-contour.guard.test.ts` — +3 assertions in 1 new group (Step 15): the phase/errorMessage declarations stay adjacent in generateStore (one boundary); fileStore writes exclusively via `session.phase.value`/`session.errorMessage.value` (never its own declaration — already pinned elsewhere, now asserted together); **no production module outside {generateStore, fileStore} writes phase/errorMessage** (undocumented third writer fails with a message pointing at §25). No existing guard rewritten; identity owner (web-book-session), package boundaries, reverse-dependency bans, and Step 14/14A cancel guards all unchanged and re-verified passing.
+`session-status-contour.guard.test.ts` (restructured in Step 15A, §26 — the 3 assertions originally landed in the generation-progress guard were relocated to this dedicated boundary guard): the phase/errorMessage declarations stay adjacent in generateStore (one boundary); fileStore writes exclusively via `session.phase.value`/`session.errorMessage.value` (never its own declaration); **no production module outside {generateStore, fileStore} writes phase/errorMessage** (undocumented third writer fails with a message pointing at §25). No Step 14/14A guard content rewritten; identity owner (web-book-session), package boundaries, reverse-dependency bans all unchanged and re-verified passing.
 
 ### 25.7 Verification
 
 | Check | Result |
 |---|---|
-| Architecture guards (generation-progress 24, vbook 13, book-session-package, file-navigator, ports, player, local-ai) | PASS |
-| Full frontend suite | **175/175 PASS** (13 files; +3 audit assertions) |
+| Architecture guards (9 guard files incl. the new session-status-contour guard) | PASS |
+| Full frontend suite | **175/175 PASS** (14 files; +3 audit assertions in the new guard) |
 | Frontend typecheck (`tsc --noEmit`) | CLEAN |
 | Frontend build (`vite build`) | GREEN (405 KB JS) |
 | Production code changes in this Step-15 commit | **NONE** — tests/guards + audit doc only |
@@ -2497,9 +2507,52 @@ So: `phase` = genuinely shared cross-slice session status (6 values spanning bot
 
 1. **Last-writer-wins is load-bearing public behavior** — three readers across two packages depend on it; no merge/priority design exists to replace it (§25.5).
 2. **errorMessage is mis-scoped but co-located** — splitting it requires touching the `@animastor/web-file` package's public ports surface (§25.4).
-3. **15 write sites across two flows** — any boundary must either port all of them or inherit them; both outcomes are wrappers today (§25.3).
+3. **20 assignment sites across two flows** — any boundary must either port all of them or inherit them; both outcomes are wrappers today (§25.3).
 4. Unchanged from Step 13: producer-bus inversion risk and nav-pulse/regeneration host coupling remain outside this boundary.
 
 ---
 
 *Step-15 B6 session-status boundary audit completed on this branch; audit-only — no production behavior changed, no packages created, ownership unchanged; last-writer-wins documented as the B6 contract and guard-pinned.*
+
+---
+
+## 26. Step 15A — Session-Status Audit Inventory Correction
+
+**Status:** DOC/GUARD CORRECTION — no production code changed, no behavior change, no verdict change.  
+**Date:** 2026-09-14  
+**Branch:** `c21.4-physically-extract-analysis-from-backend`  
+**HEAD (baseline):** `259380bbab08b793214ea5224f5e598326a252b1` ("audit(web): analyze session status boundary" — Step 15 complete)  
+**Parent:** `325cb794ff689848ff4c31969f5bd81345ef1a29` (Step 14A)  
+**diff parent..HEAD (audited baseline):** 2 files — audit doc (Step 15) + generation-progress-contour.guard.test.ts (Step-15 audit pins). No production changes in the baseline commit.
+
+### 26.1 The inconsistency found
+
+Step 15 carried three mutually contradictory counts: the §25.1 header said "`phase` (18 production write sites total)", the §25.1 table listed 15 rows, and the summary/commit narrative said "15 phase write sites / 6 errorMessage write sites". Root cause: the first Step-15 grep conflated signals — errorMessage rows (#1/#6/#9/#10 in fileStore and the cancel settle in generateStore) were folded into the phase table, inflating the count, and the header was never updated to match the table.
+
+### 26.2 Fresh inventory + counting method
+
+Method (fixed, mechanical): count every raw `.value =` **assignment statement** on `phase`/`session.phase` and `errorMessage`/`session.errorMessage` in production sources (`frontends/app/src`, tests excluded). Readers are NOT counted. No other write style exists in the codebase (no destructured/aliased signal writes — grep-verified); helper functions/seams write only through these literal assignment statements, so assignment sites are the atomic unit. Two rows in different functions of one lifecycle operation count as two sites.
+
+**Result: `phase` = 14 assignment sites (fileStore 11: lines 171, 193, 198, 201, 205, 273, 299, 302, 317, 347, 351; generateStore 3: lines 572, 669, 730). `errorMessage` = 6 assignment sites (fileStore 5: lines 172, 206, 303, 318, 352; generateStore 1: line 670). Total 20, across exactly 2 files.**
+
+Completeness re-check: all fileStore flows covered (beginBookTransition/import/open/restore/close/createBlank), all generateStore writes covered (startGeneration/cancel settle/checkAndRestore), no writer exists in callbacks/effects/timers outside these functions (generation success deliberately writes NO phase — SUCCESS lives on `generationStatus`; regeneration writes no phase). The state-machine table (§25.2) row references were renumbered to match.
+
+### 26.3 Guard decision
+
+The 3 Step-15 assertions were topically mis-placed in `generation-progress-contour.guard.test.ts` (they pin the session-status boundary, not the generation-progress package contour). Relocated verbatim to a dedicated **`session-status-contour.guard.test.ts`** (3 assertions, 1 group). The generation-progress guard keeps a one-line pointer comment; Step 14/14A guard content untouched. Verified: no duplication, no structure cost — the relocation makes the guard file match its boundary one-to-one.
+
+### 26.4 Explicit record
+
+- Exact `phase` writers: **14 assignment sites** (11 fileStore + 3 generateStore).
+- Exact `errorMessage` writers: **6 assignment sites** (5 fileStore + 1 generateStore).
+- Counting method: raw `.value =` assignment statements in production sources; readers excluded; no other write style exists.
+- Readers (3: AppShell, GeneratePage, web-file FilePage + wiring-only fileAdapters) are listed separately in §25.1 and are NOT included in the writer counts.
+- **Production behavior: 100% unchanged** — no production file touched in this step.
+
+### 26.5 Verdict
+
+Unchanged by the correction (fresh inventory found no real contradiction beyond the counting errors): B6 session-status boundary **NOT READY** for physical extraction; ownership stays host-side; **NO NEXT PHYSICAL EXTRACTION YET** (§25.8 stands, with §25.1/§25.3/§25.9 numbers corrected to 14/6/20).
+
+---
+
+*Step-15A inventory correction completed; documentation counts reconciled to the mechanical count, session-status pins relocated to their own boundary guard; production code unchanged.*
