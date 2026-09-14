@@ -2902,3 +2902,174 @@ The existing `session-status-contour.guard.test.ts` (3 assertions: two-writer se
 ---
 
 *Step-18 session-status boundary design completed on this branch; audit-only — production code unchanged, no package created, ownership unchanged; errorMessage split identified as the minimal next preparation.*
+
+---
+
+## 30. Step 19 — errorMessage Separation Preparation
+
+**Status:** AUDIT / PREPARATION ONLY — no production changes, no package created, no API changes.
+**Date:** 2026-09-14
+**Baseline commit:** `3eff1faf` ("audit(web): design session status boundary" — Step 18); parent `0ee83006` (Step 17).
+**Purpose:** Prepare the physical separation of `errorMessage` from the shared `phase` boundary (B6), identifying exactly what the future production commit must change — without executing it.
+
+### 30.1 Fresh source-grounded inventory (rebuilt at 3eff1faf, not carried over)
+
+**Declaration:** `frontends/app/src/state/generateStore.ts:247` — `export const errorMessage = signal<string | null>(null);` (adjacent to `phase`, one B6 boundary per §25.5).
+
+**Production writers (6 assignment sites — recounted from source, method: raw `.value =` statements):**
+
+| # | File | Site (line) | Value | Lifecycle event | Await position |
+|---|---|---|---|---|---|
+| 1 | fileStore | `beginBookTransition` (172) via `session.errorMessage` | `null` | EVERY book transition begin (import/open/create entry; **NOT** restore) | sync, pre-await |
+| 2 | fileStore | `importBookFromFile` catch (206) | `(e as Error).message \|\| 'Import failed'` | import failure | post-await (failure path) |
+| 3 | fileStore | `openBookById` catch (303) | `(e as Error).message \|\| 'Book not found'` | open failure | post-await (failure path) |
+| 4 | fileStore | `closeBook` (318) | `null` | book closed (Create-New card / Settings delete) | sync, post `stopGenerationSession` |
+| 5 | fileStore | `createBlankBook` catch (352) | `(e as Error).message \|\| 'Failed to create book'` | blank-create failure | post-await (failure path) |
+| 6 | generateStore | `settleGenerationSessionAfterCancel` (685) | `null` | cancel request RESOLVED (Step 14A contract) | post-await (pinned by regression tests) |
+
+**Corrections vs Step 15/15A inventory:** the Step 15A recount (§26) listed 5 fileStore sites; the fresh count is 5 fileStore + 1 generateStore = **6** — consistent with §26's totals; the only structural error found was Step 15's original 5-site table omitting `beginBookTransition` while its summary counted it (corrected in §26; re-verified here).
+
+**Production reader (exactly ONE):** `@animastor/web-file` `FilePage.tsx:81` — `ports.session.errorMessage.value` → the `statusText` derivation (`error > export status > importing > loading, else hidden`). No other production read exists — confirmed by repo-wide sweep of `errorMessage`, `ports.session.errorMessage`, `session.errorMessage`, `setErrorMessage`.
+
+**By-reference seams (pass-through, no read):** `fileAdapters.ts:32/55/75` — the host wires the signal into `wireFileStore` (`SessionSeam`) and `filePorts.session` (`FileSessionPort`). `web-file` `ports.ts:79` (`FileSessionPort.errorMessage`) and fileStore `SessionSeam` (`fileStore.ts:127`) are typed `Signal<string | null>` — received by reference, never copied, never read by the seam modules themselves.
+
+**Not a hidden consumer:** `generationPorts.ts:99` declares `GenerationStatePort.setErrorMessage(msg)` — design-only; the whole `generationPorts.ts` module has **zero production importers** (only its own `generation-ports.guard.test.ts` consumes it), so this method is dead/unwired and cannot write the signal. (Found by the fresh sweep; Step 18 did not inventory it.)
+
+**Disqualifiable look-alikes:** `@animastor/web-player` `playbackStore.ts` owns a *different* `errorMessage` (playback UI state in its own `uiState` object; read by `PlayPage`) — unrelated signal, separate boundary, no shared writer. `@animastor/web-book-session` contains no `errorMessage` code (guard-pinned exclusion, `test/guard.test.ts:91`).
+
+**Persistence:** none. `errorMessage` never touches localStorage (grep-verified in `@animastor/web-book-session` and host).
+
+### 30.2 Reconstructed lifecycle (source-grounded)
+
+```
+beginBookTransition()            → errorMessage = null   (sync, clear-on-entry)
+  ├─ import success              → (no write; phase carries the outcome)
+  ├─ import failure              → errorMessage = msg    (post-await, catch)
+  ├─ open failure                → errorMessage = msg    (post-await, catch)
+  ├─ create success              → (no write)
+  ├─ create failure              → errorMessage = msg    (post-await, catch)
+  ├─ closeBook()                 → errorMessage = null   (sync)
+  └─ restoreBookSession()        → (NEVER writes; catch = console.warn + loadBook('',''))
+cancel request RESOLVED (14A)    → errorMessage = null   (post-await, generateStore)
+```
+
+Answers required by the step:
+
+1. **Owner:** conceptually fileStore — every *message* is set by a file flow; `closeBook` and `beginBookTransition` (both fileStore) own the normal clears; the user-facing surface is FilePage's status bar.
+2. **Appears:** only on a caught failure of a file flow (3 failure sites).
+3. **Cleared:** on every new transition begin, on close, and on generation-cancel settle.
+4. **Stale write after a new transition:** a failed import/open/create writes post-await; a second transition begun in between re-runs `beginBookTransition` (clear) and its own outcome writes later. **No transition-guard/token exists** on these flows (unlike generation flows, which have poll tokens/epochs). Classification: **intentional last-writer-wins**, the same documented B6 contract as `phase` (§25.2/§25.5) — not protected by identity, not tokenized, not an accidental race that silently corrupts state: the final writer is always the most recent flow's outcome, and the stale value is always displayed until the next transition clears it.
+5. **Is generateStore's `errorMessage = null` needed after separation?** — see §30.5: provably no.
+6. **Interleaving with generation:** generation flows never write a *message* (generation errors surface via `generationStatus='ERROR'` + GeneratePage's own handling). The only cross-slice write is the cancel settle — analyzed in §30.5.
+
+### 30.3 web-file port surface analysis (the main question)
+
+| Element | Location | Content | Would separation change it? |
+|---|---|---|---|
+| `FileSessionPort.errorMessage` | `web-file/src/ports.ts:79` | `readonly errorMessage: Signal<string \| null>` | **NO** — port receives the signal by reference |
+| `FilePage` reader | `web-file/src/FilePage.tsx:81` | `ports.session.errorMessage.value` | **NO** — reads via the port |
+| Host `FilePorts` wiring | `fileAdapters.ts:75` | `session: { bookId, buildId, phase, errorMessage, … }` | **YES** — `errorMessage` must be sourced from fileStore instead of generateStore |
+| Host seam wiring | `fileAdapters.ts:55` (`wireFileStore`) | `session: { … errorMessage … }` | **YES** — same |
+| `SessionSeam.errorMessage` | `fileStore.ts:127` | typed signal reference | **NO** |
+
+**Key structural fact:** `@animastor/web-file` is already a physical package whose port *consumes the signal by reference*. Because a `Signal` is just a mutable reference, the separation does **not** require any change to `web-file`'s public API, `FilePage`, or `ports.ts` — only to *which host module's signal object the adapter binds*. The package boundary, the semantic responsibility of `phase` in the port, and FilePage's display logic are untouched.
+
+**Minimal hypothetical diff (NOT applied):**
+- `state/fileStore.ts`: declare `export const errorMessage = signal<string | null>(null);` (file-local, precedent: `importMessages`/`isExporting`/`navigationEvent`); stop writing via `session.errorMessage`; remove `errorMessage` from `SessionSeam`.
+- `state/generateStore.ts`: delete the declaration (:247) and the settle write (:685); update boundary comments (:11, :234, :758).
+- `app/fileAdapters.ts`: bind fileStore's `errorMessage` in both wiring points (:55, :75).
+- Tests: `generateStore.analysis.test.ts` (14A settle pins — the mock-provided signal already makes this mechanical; end-state assertion `errorMessage: null` remains true), `fileStore.test.ts` (writer assertions), `fileAdapters.test.ts` (wiring).
+- Guards: `session-status-contour.guard.test.ts` — rewrite the writer-set assertions for the new single-writer truth.
+- **Must NOT change:** `@animastor/web-file` (ports.ts, FilePage.tsx — zero diff), `@animastor/web-generator*`, `@animastor/web-book-session`, GenerationPorts design, cancel ordering/semantics, `phase` handling.
+
+### 30.4 Cancel interaction analysis
+
+`settleGenerationSessionAfterCancel()` (generateStore:682–686) currently writes `isRegenerating=false; phase='IDLE'; errorMessage=null` — the exact post-await settle legs preserved by Step 14A (observable contract pinned by `generateStore.analysis.test.ts`).
+
+**Is the `errorMessage = null` write real cancellation semantics, historical cleanup, or redundant?** Provably **redundant — a null-over-null write in every reachable state**:
+
+`cancelGeneration()` begins with `const bId = bookId.value; if (!bId) return;` — it can only reach the settle when a book is open. The complete set of states where a book is open and `errorMessage !== null`:
+- A file flow failed → but every failure catch also writes `phase = 'IDLE'` **and** every failed flow writes identity via `session.loadBook` only on success — the failed flow leaves `bookId = ''` (empty), so the cancel early-return fires before any settle.
+- Restore failure → writes no message (console.warn only, §30.2).
+- Import failure after `loadBook` succeeded → impossible: the write happens in the same catch as `phase='IDLE'` only when the flow did not reach `loadBook`… and `beginBookTransition` cleared the error before the request; a *later* successful transition clears again on entry. No reachable path keeps a non-null error while `bookId` is non-empty.
+
+(And symmetrically, while a book is open with `errorMessage = null`, the write is null-over-null.)
+
+**Therefore: removing the write after separation preserves observable behavior for ALL consumers** (the only reader is FilePage; its rendering of `err` is identical for `null` and a stale non-null that cannot exist in a reachable cancel-settle state). Interleavings checked: cancel→file transition (later transition clears on entry), file transition→cancel (covered by the reachability proof), cancel→open/import (cancel settles before the new flow's `beginBookTransition`, which clears anyway), cancel failure (settle still runs — pinned by the 14A failure test; the message cannot exist), cancel while FilePage visible (FilePage sees identical values), cancel while generation already finalized (cancel still reachable; settle write still null-over-null). **The 14A ordering contract is unaffected: the phase leg keeps its exact post-await position; only the redundant error leg is documented for deletion.**
+
+### 30.5 Stale async error classification
+
+| Scenario | Protection | Classification |
+|---|---|---|
+| Import resolves/fails after user opened another book | none (no token) — later writer wins | **Intentional last-writer-wins** (§25.2 contract, file-flow local) |
+| Open fails after a create succeeded | same | same |
+| Stale error shown until next transition | clear-on-entry in `beginBookTransition` | intended self-correction |
+| Cancel settle after a failed file flow | unreachable (empty bookId early-return) | n/a |
+| Cancel settle overwriting a live error | unreachable (§30.4 proof) | n/a |
+
+No accidental race corrupting identity or state exists; the behavior matches the already-documented shared-status contract and does not block separation — the future file-local signal inherits the identical last-writer-wins semantics among its own (single) writer set.
+
+### 30.6 Ownership variants (A/B/C/D)
+
+| Variant | Ownership | Verdict | Reason |
+|---|---|---|---|
+| **A** — keep in generateStore | generation host store | REJECT | Only justification is history; sole reader is FilePage, all messages originate in file flows. Zero generation semantics remain (§30.4/§30.5). |
+| **B** — move into fileStore (host) | fileStore file-local signal, bound through both existing seams | **ADOPT** (target) | All writers except one redundant write; sole reader FilePage; dependency direction unchanged (host→web-file by-reference); API-compatible with web-file without touching the package. |
+| **C** — "web-file-owned error state" | host fileStore as *the* file-flow state | same as B | No real architectural difference — `@animastor/web-file` cannot own host state; the only honest realization of "file-owned" is a host fileStore-local signal wired through the existing seams. Not a separate option. |
+| **D** — new `@animastor/web-session-status` | package | REJECT | Creates a package for ONE string signal with one reader — a giant ambient container for near-zero content (Step 18 §29.6 criterion 10 already rejected it for phase; it is even weaker for errorMessage). |
+
+### 30.7 Extraction criteria (the 10, applied to the future fileStore-local `errorMessage`)
+
+| # | Criterion | Assessment |
+|---|---|---|
+| 1 | Single responsibility | YES — file-flow error display state; every message originates in a file flow |
+| 2 | Lifecycle ownership | YES — clear-on-entry/close in fileStore; failure writes in fileStore catches; one redundant foreign write documented for deletion (§30.4) |
+| 3 | No giant interface | YES — no new port; `FileSessionPort`/`SessionSeam` shapes unchanged (by-reference binding) |
+| 4 | No package → host dependency | YES — unchanged: host wires the reference into web-file's port as today |
+| 5 | Deterministic async ordering | YES — single writer module; last-writer-wins collapses to trivially deterministic |
+| 6 | Cancellation semantics | YES — 14A contract intact (phase leg untouched; error leg provably redundant) |
+| 7 | Stale-session protection | YES — §30.5: no reachable stale cross-write; file-local semantics identical |
+| 8 | Host remains composition root | YES — fileAdapters keeps binding both seams |
+| 9 | Guardability | YES — writer set becomes single-module; guard rewrite is mechanical |
+| 10 | Genuinely reduces ownership complexity | **YES — with the one honest caveat** below |
+
+**Criterion-10 caveat (strict answer):** the reduction is real but small: B6 collapses from a two-signal dual-boundary to a single shared signal (`phase`) whose only remaining cross-module aspect is its two documented writers; errorMessage gains a single-writer, single-reader module. The net win is the *elimination of the last generation→file-flow state write* (the settle's `errorMessage = null`), not LOC. That is a genuine ownership improvement, not a cosmetic move — but the future step should be sized honestly as a small boundary correction, not a major extraction.
+
+### 30.8 Minimal future production step (defined, NOT executed)
+
+1. **Exact owner:** `state/fileStore.ts` — `export const errorMessage = signal<string | null>(null);` (file-local, adjacent to `importMessages`).
+2. **Exact public API changes:** none — `generateStore`'s export of `errorMessage` is consumed only by `fileAdapters.ts` (grep-verified); after rewiring, the export can be deleted with no other importer. `web-file` public surface unchanged.
+3. **Exact adapter changes:** `fileAdapters.ts` — import `errorMessage` from `../state/fileStore`, bind at both `:55` (wireFileStore session) and `:75` (filePorts.session).
+4. **Exact store changes:** delete `generateStore.ts:247` declaration + `:685` settle write; convert fileStore's five `session.errorMessage.value =` writes to direct `errorMessage.value =`; remove `errorMessage` from `SessionSeam` (fileStore.ts:127) and the two seam comments (:26, generateStore :234).
+5. **Exact test changes:** update the 14A settle mock/end-state assertions (mechanical — the mock already supplies the signal), fileStore writer assertions, fileAdapters wiring test.
+6. **Exact guard changes:** `session-status-contour.guard.test.ts` — single-writer truth for errorMessage (fileStore only), phase keeps the documented two-writer set; add a no-new-writer scan covering the file-local signal.
+7. **Files that must NOT change:** `packages/animastor-web-file/**`, `packages/animastor-web-generator/**`, `packages/animastor-web-generator-sse/**`, `packages/animastor-web-generator-vbook/**`, `packages/animastor-web-generator-config/**`, `packages/animastor-web-book-session/**`, `app/generationPorts.ts`, `api/**`, `AppShell.tsx`, `GeneratePage.tsx`, backend.
+
+### 30.9 Guard strategy
+
+Existing `session-status-contour.guard.test.ts` remains correct **for the current state** (its writer-set assertions pin today's two-writer truth and would fail during the future commit until updated — which is the desired guard behavior: the change cannot land silently). No new guard is added in this audit-only step. Invariants the future commit must encode:
+- `phase` stays a shared two-writer signal owned by generateStore;
+- `errorMessage` has exactly ONE writer module (fileStore) and one reader (web-file via port);
+- no generation module ever writes the file error signal again (settle leg deleted);
+- `GenerationPorts` stays a type-only design file with no runtime consumers (existing generation-ports guard) — no `ports.sessionStatus.*` state container.
+
+### 30.10 Verdict
+
+**READY FOR PHYSICAL EXTRACTION** — the separation (errorMessage → fileStore-local, wired through the existing two seams) satisfies all ten criteria; the boundary already physically exists (the port is by-reference; only the binding source changes); observable behavior is provably preserved (§30.4/§30.5). The future production commit is fully specified in §30.8 and is deliberately **not executed** in this step per the task constraints.
+
+### 30.11 Verification
+
+| Check | Result |
+|---|---|
+| session-status-contour guard (3) | PASS |
+| generation-progress contour guard (22) | PASS |
+| generateStore/fileStore-related tests | PASS |
+| Frontend typecheck (`tsc --noEmit`) | CLEAN |
+| Frontend build (`vite build`) | GREEN |
+| Full frontend suite | intentionally not re-run — production code unchanged; guards + targeted tests + typecheck + build cover this audit-only commit |
+| GitHub Combined Status | statuses: [] — no independent CI confirmation (local checks are not CI) |
+| Production code changes in this commit | **NONE** — audit doc only |
+
+---
+
+*Step-19 errorMessage separation preparation completed on this branch; audit-only — production code unchanged, no package created, the future separation is specified in §30.8 and verdicted READY FOR PHYSICAL EXTRACTION (not executed here).*
