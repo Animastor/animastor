@@ -3,13 +3,14 @@
 **Status:** Step-8 orchestration re-audit COMPLETED (audit-only; VBook agent slice identified as the next physical extraction — READY, see §17)  
 **Date:** 2026-09-14  
 **Branch:** `c21.4-physically-extract-analysis-from-backend`  
-**Baseline commit:** `066ddaae` ("arch(orchestration): physically extract orchestration package")  
+**Baseline commit:** `d3403ca1` ("docs(web): align SSE reconnect lifecycle comments" — Step 7 complete; Step-8 re-audit base)  
+**Original re-verification baseline:** `066ddaae` ("arch(orchestration): physically extract orchestration package")  
 **Step-1 change:** in-repo `generation-progress` domain module extracted (see §9) — **no package created**  
 **Step-2 change:** physical package `@animastor/web-generator` created at `packages/animastor-web-generator/` (see §11); old in-repo contour deleted  
 **Target package:** `@animastor/web-generator`  
 **Target location:** `packages/animastor-web-generator/` (CREATED — physical extraction completed)  
 **Re-verification of:** `web-next-extraction-reconnaissance.md` (§3.1, verdict "NOT READY")  
-**Context:** Verdict re-checked at current HEAD after the workers (`b096d2a6`) and local-ai (`71065221`) extractions.
+**Context:** Verdict re-checked at current HEAD through Step 8 (§17) — after the generation-progress (Step 2), layer-config (Step 5), and SSE orchestration (Step 7) extractions; next slice: VBook agent lifecycle (`@animastor/web-generator-vbook`, §17.3).
 
 ---
 
