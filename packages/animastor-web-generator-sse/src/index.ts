@@ -109,7 +109,6 @@ export async function runSseStream(
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    let streamErrored = false;
     try {
       const stream = streamPort.start(bookId);
       for await (const ev of stream) {
@@ -118,18 +117,13 @@ export async function runSseStream(
           routeProgressEvent(sink, tracking, ev.data);
         }
       }
-      // Stream closed normally — exit (host re-enters runSseStream if needed)
-      return;
-    } catch {
-      streamErrored = true;
-    }
+      // Stream closed — reconnect (server keeps it open; close = drop).
+    } catch { /* will retry below */ }
 
     // Stale check — host bumped epoch
     if (getEpoch() !== epoch) return;
 
-    if (!streamErrored) return;
-
-    // Stream errored — reconnect with backoff
+    // Reconnect with backoff
     const delayMs = Math.min(maxDelay, initialDelay * (1 << Math.min(attempt, maxExponent)));
     attempt++;
     await new Promise((r) => setTimeout(r, delayMs));

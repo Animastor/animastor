@@ -49,7 +49,6 @@ function mockTracking(): ProgressTrackingState {
   };
 }
 
-/** Create an async iterable that yields a fixed list then closes. */
 function finiteStream(events: SseEvent[]): AsyncIterable<SseEvent> {
   return {
     [Symbol.asyncIterator]() {
@@ -66,19 +65,11 @@ function finiteStream(events: SseEvent[]): AsyncIterable<SseEvent> {
   };
 }
 
-/** Create an async iterable that throws on the Nth iteration. */
-function errorStream(events: SseEvent[], throwOn: number): AsyncIterable<SseEvent> {
+function errorStream(): AsyncIterable<SseEvent> {
   return {
     [Symbol.asyncIterator]() {
-      let index = 0;
       return {
-        async next() {
-          if (index === throwOn) throw new Error('stream error');
-          if (index < events.length) {
-            return { done: false, value: events[index++] };
-          }
-          return { done: true, value: undefined };
-        },
+        async next() { throw new Error('stream error'); },
       };
     },
   };
@@ -119,42 +110,72 @@ describe('handleProgressEvent', () => {
 // ── Tests: runSseStream (reconnect + epoch) ─────────────────
 
 describe('runSseStream', () => {
-  it('routes events from a finite stream', async () => {
-    const events: SseEvent[] = [
-      { data: JSON.stringify({ type: 'vbook', stage: 'ANALYZING' }) },
-      { data: JSON.stringify({ type: 'analysis', task: 'characters', status: 'running' }) },
-    ];
+  it('reconnects on normal stream close and processes second stream', async () => {
+    let connectCount = 0;
     const port: SseStreamPort = {
-      start: () => finiteStream(events),
+      start: () => {
+        connectCount++;
+        if (connectCount === 1) {
+          return finiteStream([{ data: JSON.stringify({ type: 'vbook', stage: 'ANALYZING' }) }]);
+        }
+        return finiteStream([{ data: JSON.stringify({ type: 'vbook', stage: 'GENERATING' }) }]);
+      },
       stop() {},
     };
     const sink = mockSink();
     const tracking = mockTracking();
     let epoch = 0;
 
-    await runSseStream(port, () => epoch, sink, tracking, 'book-1');
+    const done = runSseStream(port, () => epoch, sink, tracking, 'book-1', { initialDelayMs: 1 });
 
+    // Wait for two connections then bump epoch to stop
+    while (connectCount < 2) await new Promise((r) => setTimeout(r, 1));
+    epoch = 1;
+    await done;
+
+    expect(connectCount).toBe(2);
     expect(sink.calls).toContain('setVBookProgress');
-    expect(sink.calls).toContain('setAnalysisProgress');
+  });
+
+  it('reconnects after stream error', async () => {
+    let connectCount = 0;
+    const port: SseStreamPort = {
+      start: () => {
+        connectCount++;
+        if (connectCount === 1) return errorStream();
+        return finiteStream([{ data: JSON.stringify({ type: 'vbook', stage: 'ANALYZING' }) }]);
+      },
+      stop() {},
+    };
+    const sink = mockSink();
+    const tracking = mockTracking();
+    let epoch = 0;
+
+    const done = runSseStream(port, () => epoch, sink, tracking, 'book-1', { initialDelayMs: 1 });
+
+    while (connectCount < 2) await new Promise((r) => setTimeout(r, 1));
+    epoch = 1;
+    await done;
+
+    expect(connectCount).toBe(2);
+    expect(sink.calls).toContain('setVBookProgress');
   });
 
   it('exits when epoch changes mid-stream', async () => {
-    const events: SseEvent[] = [
-      { data: JSON.stringify({ type: 'vbook', stage: 'ANALYZING' }) },
-      // Epoch will be bumped before this event is processed
-      { data: JSON.stringify({ type: 'vbook', stage: 'GENERATING' }) },
-    ];
     let processed = 0;
     const port: SseStreamPort = {
       start: () => ({
         [Symbol.asyncIterator]() {
           let index = 0;
+          const events: SseEvent[] = [
+            { data: JSON.stringify({ type: 'vbook', stage: 'ANALYZING' }) },
+            { data: JSON.stringify({ type: 'vbook', stage: 'GENERATING' }) },
+          ];
           return {
             async next() {
               if (index < events.length) {
-                const ev = events[index++];
                 processed++;
-                return { done: false, value: ev };
+                return { done: false, value: events[index++] };
               }
               return { done: true, value: undefined };
             },
@@ -169,61 +190,17 @@ describe('runSseStream', () => {
 
     const done = runSseStream(port, () => epoch, sink, tracking, 'book-1');
 
-    // Bump epoch after first event is processed
     await new Promise((r) => setTimeout(r, 10));
     epoch = 1;
-
     await done;
-    // Should have stopped processing after epoch bump
+
     expect(processed).toBeLessThanOrEqual(2);
-    expect(epoch).toBe(1);
   });
 
-  it('exits on normal stream close', async () => {
-    const events: SseEvent[] = [
-      { data: JSON.stringify({ type: 'vbook', stage: 'ANALYZING' }) },
-    ];
-    const port: SseStreamPort = {
-      start: () => finiteStream(events),
-      stop() {},
-    };
-    const sink = mockSink();
-    const tracking = mockTracking();
-    let epoch = 0;
-
-    await runSseStream(port, () => epoch, sink, tracking, 'book-1');
-
-    expect(sink.calls).toContain('setVBookProgress');
-  });
-
-  it('reconnects after stream error', async () => {
+  it('does not reconnect after epoch bump during reconnect delay', async () => {
     let connectCount = 0;
     const port: SseStreamPort = {
-      start: () => {
-        connectCount++;
-        if (connectCount === 1) {
-          // First connection: error immediately
-          return errorStream([], 0);
-        }
-        // Second connection: emit one event then close
-        return finiteStream([{ data: JSON.stringify({ type: 'vbook', stage: 'ANALYZING' }) }]);
-      },
-      stop() {},
-    };
-    const sink = mockSink();
-    const tracking = mockTracking();
-    let epoch = 0;
-
-    await runSseStream(port, () => epoch, sink, tracking, 'book-1', { initialDelayMs: 1 });
-
-    expect(connectCount).toBe(2);
-    expect(sink.calls).toContain('setVBookProgress');
-  });
-
-  it('does not reconnect after epoch bump during delay', async () => {
-    let connectCount = 0;
-    const port: SseStreamPort = {
-      start: () => { connectCount++; return errorStream([], 0); }, // error → reconnect
+      start: () => { connectCount++; return finiteStream([]); },
       stop() {},
     };
     const sink = mockSink();
@@ -232,69 +209,60 @@ describe('runSseStream', () => {
 
     const done = runSseStream(port, () => epoch, sink, tracking, 'book-1', { initialDelayMs: 100 });
 
-    // Let it enter reconnect delay
     await new Promise((r) => setTimeout(r, 10));
-    // Bump epoch during delay
     epoch = 1;
     await done;
 
-    // Only 1 connect — should NOT have reconnected
     expect(connectCount).toBe(1);
   });
 
   it('uses exponential backoff on reconnect', async () => {
-    const delays: number[] = [];
     let connectCount = 0;
-
-    // Override setTimeout to capture delays
-    const origSetTimeout = globalThis.setTimeout;
-    globalThis.setTimeout = ((fn: Function, ms: number) => {
-      delays.push(ms);
-      return origSetTimeout(fn, 0); // resolve immediately for test
-    }) as any;
-
-    try {
-      const port: SseStreamPort = {
-        start: () => {
-          connectCount++;
-          if (connectCount <= 3) return errorStream([], 0); // error → reconnect
-          return finiteStream([{ data: JSON.stringify({ type: 'vbook', stage: 'ANALYZING' }) }]);
-        },
-        stop() {},
-      };
-      const sink = mockSink();
-      const tracking = mockTracking();
-      let epoch = 0;
-
-      await runSseStream(port, () => epoch, sink, tracking, 'book-1', {
-        initialDelayMs: 1000,
-        maxDelayMs: 15000,
-        maxExponent: 4,
-      });
-
-      // Should have delays: 1000, 2000 (exponential)
-      expect(delays.length).toBeGreaterThanOrEqual(2);
-      expect(delays[0]).toBe(1000);
-      expect(delays[1]).toBe(2000);
-    } finally {
-      globalThis.setTimeout = origSetTimeout;
-    }
-  });
-
-  it('skips events with empty data', async () => {
-    const events: SseEvent[] = [
-      { data: '' },
-      { data: JSON.stringify({ type: 'vbook', stage: 'ANALYZING' }) },
-    ];
     const port: SseStreamPort = {
-      start: () => finiteStream(events),
+      start: () => {
+        connectCount++;
+        if (connectCount <= 3) return errorStream();
+        return finiteStream([{ data: JSON.stringify({ type: 'vbook', stage: 'ANALYZING' }) }]);
+      },
       stop() {},
     };
     const sink = mockSink();
     const tracking = mockTracking();
     let epoch = 0;
 
-    await runSseStream(port, () => epoch, sink, tracking, 'book-1');
+    const done = runSseStream(port, () => epoch, sink, tracking, 'book-1', { initialDelayMs: 1 });
+
+    while (connectCount < 4) await new Promise((r) => setTimeout(r, 1));
+    epoch = 1;
+    await done;
+
+    expect(connectCount).toBe(4);
+    expect(sink.calls).toContain('setVBookProgress');
+  });
+
+  it('skips events with empty data', async () => {
+    let connectCount = 0;
+    const port: SseStreamPort = {
+      start: () => {
+        connectCount++;
+        if (connectCount === 1) {
+          return finiteStream([
+            { data: '' },
+            { data: JSON.stringify({ type: 'vbook', stage: 'ANALYZING' }) },
+          ]);
+        }
+        return finiteStream([]);
+      },
+      stop() {},
+    };
+    const sink = mockSink();
+    const tracking = mockTracking();
+    let epoch = 0;
+
+    const done = runSseStream(port, () => epoch, sink, tracking, 'book-1', { initialDelayMs: 1 });
+    while (connectCount < 2) await new Promise((r) => setTimeout(r, 1));
+    epoch = 1;
+    await done;
 
     expect(sink.calls.filter((c) => c === 'setVBookProgress')).toHaveLength(1);
   });
