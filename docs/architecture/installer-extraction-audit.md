@@ -116,15 +116,20 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 ### 3.2 `install-manifest.js:37-41` — MANIFEST_ROOT
 
 ```js
-const MANIFEST_ROOT = process.env.ANIMASTOR_MANIFEST_ROOT ||
-    path.join('/app', 'artifacts', 'install-manifests') ||
-    path.join(__dirname, '..', '..', 'ai', 'install-manifests');
+const MANIFEST_ROOT = (() => {
+    const bakedIn = path.join('/app', 'artifacts', 'install-manifests');
+    try { if (require('fs').existsSync(bakedIn)) return bakedIn; } catch (_) {}
+    return path.join(__dirname, '..', '..', 'ai', 'install-manifests');
+})();
 ```
+
+IIFE with `existsSync` check — NOT `||` chain, NO env var override.
 
 | Context | Resolves to | Status |
 |---|---|---|
-| Hub container (baked-in) | `/app/artifacts/install-manifests` | ✓ |
-| Repo dev (today) | `backend/ai/install-manifests` | ✓ |
+| Hub container (baked-in) | `/app/artifacts/install-manifests` (existsSync wins) | ✓ |
+| Repo dev (today) | `backend/ai/install-manifests` (fallback) | ✓ |
+| Tarball extracted | `<extract>/animastor-installer/ai/install-manifests` (fallback) | ✓ |
 | After nested move (if manifests stay in `backend/ai/`) | `packages/animastor-installer/ai/install-manifests` | ✗ MISS |
 | After nested move + manifests move | `packages/animastor-installer/ai/install-manifests` | ✓ |
 
@@ -214,13 +219,12 @@ animastor-installer/README.txt
 
 | Variable / path | Used by | Backend coupling |
 |---|---|---|
-| `/app/artifacts/install-manifests` | install-manifest.js baked-in | None |
+| `/app/artifacts/install-manifests` | install-manifest.js baked-in (existsSync check) | None |
 | `/app/artifacts/worker-bundle` | setup-contract baked-in | None |
 | `ANIMASTOR_DEPLOYMENT` | setup-contract, engine, cli | None |
 | `/.dockerenv` | platform detection | None |
 | `HOME`, `LC_ALL`, `LANG` | CLI locale, io/term | None |
 | `HF_TOKEN`, `HUGGINGFACE_HUB_TOKEN`, `MODELSCOPE_API_TOKEN` | download-planner | None |
-| `ANIMASTOR_MANIFEST_ROOT` | install-manifest.js override | None |
 | Node >= 20 | engines requirement | None |
 
 All assumptions are installer-internal. No backend coupling.
@@ -419,7 +423,166 @@ Add architecture test: `packages/animastor-installer/tests/architecture/installe
 
 ---
 
-## 11. Final verdict
+## 11. MANIFEST_ROOT Runtime Contract Audit
+
+**Audit date:** 2026-09-14 (follow-up to initial extraction audit)
+
+### 11.1 Correction: previous audit was factually wrong
+
+The initial audit (§3.2) described MANIFEST_ROOT as:
+
+```js
+const MANIFEST_ROOT = process.env.ANIMASTOR_MANIFEST_ROOT ||
+    path.join('/app', 'artifacts', 'install-manifests') ||
+    path.join(__dirname, '..', '..', 'ai', 'install-manifests');
+```
+
+**This is incorrect.** The actual code (`install-manifest.js:37-41`):
+
+```js
+const MANIFEST_ROOT = (() => {
+    const bakedIn = path.join('/app', 'artifacts', 'install-manifests');
+    try { if (require('fs').existsSync(bakedIn)) return bakedIn; } catch (_) {}
+    return path.join(__dirname, '..', '..', 'ai', 'install-manifests');
+})();
+```
+
+**Three errors in the previous audit:**
+
+| Error | Previous audit claimed | Actual |
+|---|---|---|
+| Env override | `process.env.ANIMASTOR_MANIFEST_ROOT` exists | **DOES NOT EXIST** — no env var override in code |
+| Fallback logic | `\|\|` chain (always evaluates both) | IIFE with `existsSync` check (baked-in wins if dir exists) |
+| env table (§5) | Lists `ANIMASTOR_MANIFEST_ROOT` as env assumption | **Fabricated** — not in codebase |
+
+### 11.2 Actual runtime behavior — per context
+
+**Production container (Hub Docker image):**
+
+```
+Dockerfile:15  COPY backend/ai/install-manifests/ /staging/artifacts/install-manifests/
+Dockerfile:29  COPY --from=stager /staging/artifacts/ /app/artifacts/
+→ /app/artifacts/install-manifests EXISTS at runtime
+→ bakedIn wins → MANIFEST_ROOT = '/app/artifacts/install-manifests' ✓
+```
+
+Evidence: `Dockerfile:33-34` verifies all 4 artifact groups at build time. The baked-in path is guaranteed to exist.
+
+**Repo dev (host machine):**
+
+```
+/app/artifacts/install-manifests → DOES NOT EXIST (no Docker image)
+fallback → path.join(__dirname, '..', '..', 'ai', 'install-manifests')
+→ backend/src/installer → ../../ai/install-manifests = backend/ai/install-manifests ✓
+```
+
+Evidence: `ls backend/ai/install-manifests/` → `{audio,image,video}/` (3 manifest dirs, 3 JSON files).
+
+**Tarball extracted on GPU machine:**
+
+```
+CLI at <WORK_DIR>/animastor-installer/src/installer/cli.js
+__dirname = <WORK_DIR>/animastor-installer/src/installer
+fallback → <WORK_DIR>/animastor-installer/ai/install-manifests ✓
+```
+
+Evidence: tar entry `animastor-installer/ai/install-manifests/{audio,image,video}/*.json` present in tarball (hub builder line 1654-1658).
+
+**Backend server (worker-setup-routes.cjs → listWorkflowArtifacts):**
+
+```js
+// setup-contract.js:593
+const root = workflowsRoot || path.join(MANIFEST_ROOT, '..', 'workflows');
+```
+
+Backend server runs on host with overlay mount. MANIFEST_ROOT fallback → `backend/ai/install-manifests`. Workflows default → `backend/ai/workflows` ✓.
+
+### 11.3 GPU Hub: completely independent manifest resolution
+
+The GPU Hub has its own manifest resolution — **completely independent** of installer code:
+
+```js
+// gpu-hub.js:1305-1311
+function resolveArtifactDir(bakedInName, mountFallback, configKey) {
+    if (config[configKey]) return config[configKey];
+    const bakedPath = path.join(ARTIFACT_BASE, bakedInName);
+    if (fs.existsSync(bakedPath)) return bakedPath;
+    return mountFallback;
+}
+
+// gpu-hub.js:1316
+const INSTALLER_MANIFESTS_DIR = resolveArtifactDir(
+    'install-manifests', '/app/install-manifests', 'INSTALLER_MANIFESTS_DIR');
+```
+
+Resolution per context:
+
+| Context | Baked-in path | Exists? | Fallback | Result |
+|---|---|---|---|---|
+| Production container | `/app/artifacts/install-manifests` | ✓ | — | `/app/artifacts/install-manifests` |
+| Local dev + overlay | `/app/artifacts/install-manifests` | ✗ | `/app/install-manifests` | `/app/install-manifests` (mounted) |
+| Test (config override) | — | — | — | `REAL_MANIFESTS` (test config) |
+
+**Key:** The Hub NEVER runs installer code. It reads manifest files directly from its own `INSTALLER_MANIFESTS_DIR`. The installer's `MANIFEST_ROOT` is irrelevant to the Hub.
+
+### 11.4 Consumers of MANIFEST_ROOT
+
+| Consumer | How it uses MANIFEST_ROOT | Context |
+|---|---|---|
+| `install-manifest.js:296` | `manifestPath(profileId)` → `MANIFEST_ROOT/${profileId}.json` | Internal (called by `loadManifest`) |
+| `install-manifest.js:331-333` | `loadAllManifests()` → iterates `MANIFEST_ROOT` subdirs | Internal |
+| `install-manifest.js:350-352` | `listProfileIds()` → iterates `MANIFEST_ROOT` subdirs | Internal |
+| `setup-contract.js:259` | `createManifestRegistry({ root = MANIFEST_ROOT })` | Internal |
+| `setup-contract.js:593` | `listWorkflowArtifacts()` → `path.join(MANIFEST_ROOT, '..', 'workflows')` default | Called by `worker-setup-routes.cjs:177` |
+| `install-manifest.js:363` | Exported as `MANIFEST_ROOT` | Used by tests |
+
+**All consumers are installer-internal or backend route handlers.** The Hub never uses `MANIFEST_ROOT`.
+
+### 11.5 `listWorkflowArtifacts` default workflowsRoot
+
+```js
+// setup-contract.js:593
+const root = workflowsRoot || path.join(MANIFEST_ROOT, '..', 'workflows');
+```
+
+| Context | MANIFEST_ROOT | Default workflowsRoot | Exists? |
+|---|---|---|---|
+| Production container | `/app/artifacts/install-manifests` | `/app/artifacts/workflows` | ✓ (Dockerfile copies) |
+| Repo dev | `backend/ai/install-manifests` | `backend/ai/workflows` | ✓ |
+| Tarball | `<extract>/animastor-installer/ai/install-manifests` | `<extract>/animastor-installer/ai/workflows` | ✓ (tarball includes) |
+| After nested move | `packages/animastor-installer/ai/install-manifests` | `packages/animastor-installer/ai/workflows` | ✓ (if workflows move too) |
+
+**Note:** The Hub never calls `listWorkflowArtifacts()` — it uses its own `INSTALLER_WORKFLOWS_DIR` scan. The default path is only relevant for backend server route handlers.
+
+### 11.6 Implications for extraction
+
+**Previous audit conclusion (§3.2) was correct in substance:** manifests must move with the package. But the reasoning was based on wrong code understanding.
+
+**Corrected analysis:**
+
+With nested layout (`packages/animastor-installer/src/installer/`):
+- `__dirname` = `packages/animastor-installer/src/installer`
+- fallback = `path.join(__dirname, '..', '..', 'ai', 'install-manifests')` = `packages/animastor-installer/ai/install-manifests`
+- If manifests stay at `backend/ai/install-manifests` → **fallback misses** (path resolves to `packages/animastor-installer/ai/install-manifests` which doesn't exist)
+- If manifests move to `packages/animastor-installer/ai/install-manifests` → **fallback hits** ✓
+
+**No code change needed** — the fallback path automatically resolves to the correct location after manifests move.
+
+### 11.7 Final decision on manifests
+
+| Option | Verdict | Reason |
+|---|---|---|
+| Move manifests into package | **RECOMMENDED** | Self-contained; MANIFEST_ROOT fallback works without code change; matches tarball layout |
+| Keep manifests in `backend/ai/` | REJECTED | MANIFEST_ROOT fallback would miss; would need env override or code change to escape package |
+| Add `ANIMASTOR_MANIFEST_ROOT` env var | UNNECESSARY | Current IIFE + existsSync works correctly for all contexts |
+
+**Manifests move:** `git mv backend/ai/install-manifests packages/animastor-installer/ai/install-manifests`
+
+**Seam impact:** S1 in §7 remains correct. Dockerfile COPY source changes (S8). Compose overlay mount source changes (S9). No installer code change.
+
+---
+
+## 12. Final verdict
 
 | Criterion | Status |
 |---|---|
@@ -430,6 +593,7 @@ Add architecture test: `packages/animastor-installer/tests/architecture/installe
 | Path arithmetic compatible | ✓ (3-up depth identical) |
 | All consumers identified | ✓ (3 production, 8 hub/filesystem, 20+ tests, 0 frontend) |
 | Env/global assumptions self-contained | ✓ (no backend coupling) |
+| MANIFEST_ROOT contract verified | ✓ (existsSync IIFE, no env override, all contexts resolved) |
 | Seam work scoped and exact | ✓ (12 items, all enumerated) |
 | Guard tests available | ✓ (add installer isolation guard) |
 
