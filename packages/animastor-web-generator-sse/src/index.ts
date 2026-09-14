@@ -71,13 +71,16 @@ const DEFAULT_MAX_EXPONENT = 4;
  * This function owns the reconnect loop. It:
  *  1. Iterates the SSE stream provided by the host
  *  2. Routes each event through @animastor/web-generator's routeProgressEvent
- *  3. On stream error or server-initiated close, waits with exponential
- *     backoff and retries
+ *  3. On stream close (normal or error), waits with exponential backoff
+ *     and retries — server SSE keeps the connection open; close = drop
  *  4. Checks the epoch on every iteration — returns silently if stale
  *
  * Exit conditions:
  *  - Epoch mismatch (host bumped epoch → cancel/new generation)
- *  - Stream closes normally (host-initiated stop → stream resolves)
+ *
+ * Reconnect triggers (both reconnect via exponential backoff):
+ *  - Normal stream close (server dropped connection)
+ *  - Stream error (network failure, timeout, etc.)
  *
  * The host controls session lifetime via the epoch: when the host bumps the
  * epoch (e.g., on cancel or new generation), this function detects the mismatch
