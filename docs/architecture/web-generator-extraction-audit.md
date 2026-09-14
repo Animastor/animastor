@@ -1,12 +1,13 @@
 # Web Generator — Extraction Audit (Re-verification)
 
-**Status:** Step-1 domain split EXECUTED (this document updated after the change)  
-**Date:** 2026-09-13  
+**Status:** Step-2 physical package extraction EXECUTED (this document updated after the change)  
+**Date:** 2026-09-14  
 **Branch:** `c21.4-physically-extract-analysis-from-backend`  
 **Baseline commit:** `066ddaae` ("arch(orchestration): physically extract orchestration package")  
 **Step-1 change:** in-repo `generation-progress` domain module extracted (see §9) — **no package created**  
+**Step-2 change:** physical package `@animastor/web-generator` created at `packages/animastor-web-generator/` (see §11); old in-repo contour deleted  
 **Target package:** `@animastor/web-generator`  
-**Target location:** `packages/animastor-web-generator/` (NOT created — no physical extraction performed)  
+**Target location:** `packages/animastor-web-generator/` (CREATED — physical extraction completed)  
 **Re-verification of:** `web-next-extraction-reconnaissance.md` (§3.1, verdict "NOT READY")  
 **Context:** Verdict re-checked at current HEAD after the workers (`b096d2a6`) and local-ai (`71065221`) extractions.
 
@@ -14,9 +15,9 @@
 
 ## 1. Executive Summary
 
-The Generator contour is **NOT READY** for physical package extraction at current HEAD. The verdict from the previous reconnaissance is **unchanged**, but the risk surface has shifted: the generateStore⇄playbackStore cycle is dissolved, the store has no router or `@animastor/*` dependencies, and API access is a pure transport layer. What remains is the **identity blocker**: `generateStore` is the host-owned source of truth for session identity (`bookId`/`buildId`), written and read by 10+ host files, 3 extracted packages (via adapters), auth stash/restore, and the fileStore session seam.
+The Generator contour is **NOT READY** for full physical package extraction at current HEAD. The verdict from the previous reconnaissance is **unchanged**, but the risk surface has shifted: the generateStore⇄playbackStore cycle is dissolved, the store has no router or `@animastor/*` dependencies, and API access is a pure transport layer. What remains is the **identity blocker**: `generateStore` is the host-owned source of truth for session identity (`bookId`/`buildId`), written and read by 10+ host files, 3 extracted packages (via adapters), auth stash/restore, and the fileStore session seam.
 
-A **domain-first slice** (analysis/progress pure logic) was READY WITH CONDITIONS at baseline — **Step 1 is now EXECUTED** (§9): the slice physically exists as the in-repo module `state/generationProgress/` with parameterized state, independent unit tests, and a contour guard. It is now **READY for a mechanical package cut** (§10).
+A **domain-first slice** (analysis/progress pure logic) was READY WITH CONDITIONS at baseline — **Step 1 is now EXECUTED** (§9): the slice physically exists as the in-repo module `state/generationProgress/` with parameterized state, independent unit tests, and a contour guard. **Step 2 is now EXECUTED** (§11): the slice has been physically extracted into `@animastor/web-generator` at `packages/animastor-web-generator/`, the old in-repo contour deleted, and the host wired to consume the package root. The generation-progress domain is now **PHYSICALLY EXTRACTED / READY**.
 
 **Key findings:**
 - **2,553 LOC** core contour (4 files), ~30 signals in one store
@@ -288,17 +289,120 @@ Allowed imports: domain siblings (`./analysis` etc.) + `../../api/models` **type
 
 ## 10. Re-audit verdict: readiness of `generation-progress` for physical extraction
 
-**READY (mechanical cut).** After Step 1 the §4.3.1 slice requires only packaging work, no further refactoring:
+**COMPLETED (Step 2 executed, see §11).** The mechanical cut has been performed:
 
-1. **Zero host reach** — imports are domain siblings + `api/models` types only; verified by the new contour guard, which already encodes the package-cut rules (entry-only consumption can be added the day the package exists).
-2. **No hidden state** — blocker 6 (module-level Maps/latches) is resolved: all mutable state arrives as explicit objects the host owns; the domain is pure/near-pure and clock-injectable.
-3. **Tests travel** — 5 domain test files (866 LOC) import nothing but the domain; they move with the package unchanged.
-4. **What must be vendored at cut time** (mechanical, precedent-backed): the `ProgressEvent`, `ProgressPanelResponse`, `ProgressTask` (and a slice of `AgentStatusResponse` shape, already narrowed as `AgentStatusLike`) wire types — into a package `models.ts`, like web-player.
-5. **What stays host-side permanently** (unchanged): identity (`bookId`/`buildId`/`loadBook`/stash/restore), `phase`/`errorMessage` (B6 dual-writer contract), `onPlaybackPrepared` bus, SSE/HTTP transport (`api/client`), VBook orchestration actions, `vbookStageLabel` i18n injection (port-shaped already), and the signal binding (the domain is signal-free; the future package gets its own signals or keeps the sink/ctx pattern).
-6. **Remaining seams to define at cut time** (small): the host wrapper's ctx callbacks (`setRegenerating`, `onGenerationFinalized`, `onRunningIdle`, `vbookStageLabel`) become a `ProgressHostPorts` object — the current `ProgressRowContext` + `ProgressEventSink` shapes are already port-shaped, so this is renaming, not redesign.
+1. **Zero host reach** — the package imports nothing at runtime; wire types are vendored locally (`src/models.ts`).
+2. **No hidden state** — all mutable state arrives as explicit objects the host owns.
+3. **Tests travel** — 5 domain test files (896 LOC) live in `packages/animastor-web-generator/test/` and run standalone.
+4. **Wire types vendored** — `ProgressEvent`, `ProgressPanelResponse`, `ProgressTask` in `src/models.ts` (web-player precedent).
+5. **Host-owned permanently** — identity, phase, auth, transport, VBook orchestration, i18n port, signal binding.
+6. **Port contracts** — `ProgressRowContext` + `ProgressEventSink` shapes serve as the port contracts; no renaming needed.
 
-The overall `@animastor/web-generator` verdict stays **NOT READY** (identity/auth/phase blockers per §6 — Step 2/3 unchanged). The §6 blocker list shrinks by one: blocker 6 (module-level state) is now resolved for the progress slice.
+The overall `@animastor/web-generator` verdict stays **NOT READY** (identity/auth/phase blockers per §6 — Steps 3-5 unchanged). The generation-progress slice is **PHYSICALLY EXTRACTED / READY** (§11).
 
 ---
 
-*Step-1 change executed and documented on this branch; no packages created, no files moved out of the host app.*
+## 11. Step 2 EXECUTED — physical package extraction of generation-progress
+
+**Status:** landed on `c21.4-physically-extract-analysis-from-backend`; package `@animastor/web-generator` created at `packages/animastor-web-generator/`. The in-repo `state/generationProgress/` directory is physically deleted; the host now consumes the package through its root entry point.
+
+### 11.1 Package location and structure
+
+```
+packages/animastor-web-generator/
+├── package.json          # @animastor/web-generator 0.1.0
+├── tsconfig.json         # pure TS (no JSX)
+├── tsup.config.ts        # ESM + dts, no JSX
+├── vitest.config.ts      # happy-dom, no JSX
+├── LICENSE               # MIT
+├── README.md
+├── src/
+│   ├── index.ts          # public API entry point
+│   ├── models.ts         # vendored wire types (ProgressEvent, ProgressPanelResponse, ProgressTask)
+│   ├── analysis.ts       # applyAnalysisEvent, analysisOverallPercent, heartbeat, reset
+│   ├── vbookProgress.ts  # vbookProgressFromEvent, applyAgentStatus, factories
+│   ├── progressRows.ts   # computeProgressRows, ProgressTrackingState, ProgressRowContext
+│   ├── timer.ts          # GenerationTimerState, start/stop/elapsed/formatTimerText
+│   └── sseRouting.ts     # routeProgressEvent, ProgressEventSink
+└── test/
+    ├── analysis.test.ts      # 239 LOC
+    ├── vbookProgress.test.ts  # 108 LOC
+    ├── progressRows.test.ts   # 363 LOC
+    ├── timer.test.ts          # 61 LOC
+    └── sseRouting.test.ts     # 125 LOC
+```
+
+### 11.2 What was vendored (wire types)
+
+The `ProgressEvent`, `ProgressPanelResponse`, and `ProgressTask` interfaces from `api/models.ts` were vendored into `src/models.ts` as structural (NOT nominal) types. This follows the `@animastor/web-player` `models.ts` precedent. The `AgentStatusLike` interface (already narrowed in the domain module) required no additional vendoring — it is defined directly in `vbookProgress.ts` as a structural subset of `AgentStatusResponse`.
+
+**Decision:** Vendored locally into the package. No `@animastor/contracts` additions were needed. No new cross-package contracts created.
+
+### 11.3 Host boundary after extraction
+
+**Host-owned (unchanged):**
+- `bookId` / `buildId` signals + `loadBook` + localStorage persistence
+- Per-user stash/restore (`authStore` edge)
+- `phase` / `errorMessage` (fileStore dual-writer contract, audit B6)
+- `onPlaybackPrepared` bus
+- SSE/HTTP transport (`api/client`)
+- VBook orchestration actions
+- `vbookStageLabel` i18n injection (via `ProgressRowContext.vbookStageLabel` port)
+- `progressTracking` / `generationTimer` state objects (host-owned, passed explicitly)
+
+**Package-owned:**
+- Analysis state machine (`applyAnalysisEvent`, `analysisOverallPercent`, `applyAnalysisHeartbeat`)
+- Progress panel rows (`computeProgressRows`, `ProgressTrackingState`)
+- SSE event routing (`routeProgressEvent`)
+- Generation timer math (`GenerationTimerState`, `start/stop/elapsed/formatTimerText`)
+- VBook progress mapping (`vbookProgressFromEvent`, `applyAgentStatus`)
+
+### 11.4 Dependency direction (verified)
+
+```
+host (generateStore) → @animastor/web-generator (package root)
+```
+
+One-directional. No reverse dependencies. No deep imports. Architecture guard verified.
+
+### 11.5 Tests after extraction
+
+- **Package unit tests:** 5 test files, 69 tests — all pass from `packages/animastor-web-generator/`
+- **Frontend tests:** 10 test files, 115 tests — all pass from `frontends/app/`
+- **Combined:** 184 tests passing (69 package + 115 frontend)
+- **Package typecheck:** clean (`tsc --noEmit`)
+- **Frontend typecheck:** clean (`tsc --noEmit`)
+- **Vite build:** success (403 KB JS bundle)
+- **Architecture guard:** updated to verify physical package boundary (old contour removed, root-only consumption, no reverse deps)
+
+### 11.6 Architecture guard updates
+
+The `generation-progress-contour.guard.test.ts` was rewritten from in-repo domain verification to physical package boundary verification. It now checks:
+1. Old `state/generationProgress/` directory is gone
+2. `generateStore` imports from `@animastor/web-generator` (package root)
+3. No deep imports (`@animastor/web-generator/src/...`) from any host file
+4. Only `generateStore` consumes the package (pages via store surface)
+5. Host ownership preserved (identity, auth, state objects)
+6. No reverse dependencies from host stores to the package
+7. No new dependency cycles
+
+### 11.7 Verdict
+
+**generation-progress: PHYSICALLY EXTRACTED / READY**
+
+The generation-progress domain slice is now a standalone NPM package (`@animastor/web-generator`) with zero host dependencies. The package can be built, tested, and published independently.
+
+**@animastor/web-generator (full): NOT READY**
+
+The overall web-generator extraction remains blocked on:
+1. **Identity ownership** (§6 blocker 1): `bookId`/`buildId`/`loadBook` consumed by 10+ host files
+2. **Auth edge** (§6 blocker 2): `authStore` → `generateStore` hard edge
+3. **Dual-writer phase/errorMessage** (§6 blocker 3): fileStore SessionSeam contract
+4. **Event producer inversion** (§6 blocker 4): `onPlaybackPrepared` bus
+5. **No web generation contracts in @animastor/contracts** (§6 blocker 5): wire types vendored locally
+
+The next blocker for full "web-generator" extraction is the **identity split** (audit §6, Steps 2-3): split `generateStore` so identity stays host-side and orchestration moves to a `GenerationService` parameterized by `GenerationSession` + `GeneratorPorts`.
+
+---
+
+*Step-1 change (in-repo domain split) executed and documented; Step-2 change (physical package extraction) executed and documented on this branch. Package: packages/animastor-web-generator/ (@animastor/web-generator). Old in-repo contour deleted.*

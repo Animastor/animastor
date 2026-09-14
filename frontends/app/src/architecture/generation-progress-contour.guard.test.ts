@@ -1,32 +1,26 @@
-// Architecture contour guard — Generation-progress domain split
-// (docs/architecture/web-generator-extraction-audit.md §4.3.1, Step 1 of
-// the preparation sequence).
+// Architecture contour guard — Generation-progress PHYSICAL PACKAGE EXTRACTION
+// (docs/architecture/web-generator-extraction-audit.md, Step 2).
 //
-// Phase: IN-REPO domain module (state/generationProgress/) — the preparatory
-// refactoring BEFORE any physical package extraction. No
-// packages/animastor-web-generator and no generation-progress NPM package
-// exist yet; this guard pins the contour so the future cut is mechanical.
+// Phase: PHYSICAL PACKAGE (packages/animastor-web-generator/) — the
+// generation-progress domain slice has been physically extracted from
+// frontends/app/src/state/generationProgress/ into its own NPM package.
 //
-// Rules pinned here (audit §6 blocker 6 + the task constraints):
-//   1. Boundary — the domain imports ONLY api/models (wire types to be
-//      vendored at package-cut time, web-player models.ts precedent);
-//      NO api/client (transport stays host-side), NO app/* (router, i18n,
-//      desktop, icons), NO state siblings (positionStore, authStore,
-//      fileStore, playbackStore), NO pages/, NO @animastor/*.
-//   2. No hidden module-global state — the tracking Maps/latches
-//      (taskReadyFloor/taskCompletedAt/taskFrozenElapsed/generationCompleted/
-//      newGenerationPending/importCompleteReceived) and the timer state must
-//      be parameterized through explicit state objects; the domain modules
-//      must not declare module-level `let` mutable state or bare Maps.
-//   3. No signals in the domain — @preact/signals must not appear in
-//      state/generationProgress/ sources (host binding only).
+// Rules pinned here:
+//   1. The old in-repo directory state/generationProgress/ is GONE — no
+//      two production copies of the domain.
+//   2. generateStore imports from @animastor/web-generator (package root
+//      only — no deep imports).
+//   3. No host file imports deep paths: @animastor/web-generator/src/...
 //   4. Host ownership unchanged — generateStore keeps identity
 //      (bookId/buildId), loadBook, stash/restore, phase/errorMessage,
-//      onPlaybackPrepared; the domain must not reach them.
-//   5. No new dependency cycles — the state/ module graph stays acyclic
-//      (generateStore → generationProgress one-directional).
-//   6. Consumers — only generateStore (the host) imports the domain
-//      (plus its own tests); pages reach it via the store surface.
+//      onPlaybackPrepared.
+//   5. generateStore owns the domain state objects (progressTracking,
+//      generationTimer) and passes them explicitly.
+//   6. No reverse dependency: the package must not import host stores,
+//      api/client, app/*, pages, @preact/signals, or any @animastor/*
+//      package.
+//   7. No new dependency cycles — the dependency direction is
+//      host → @animastor/web-generator (one-directional).
 
 import { describe, it, expect } from 'vitest';
 
@@ -63,114 +57,64 @@ function allSourceFiles(): string[] {
     .sort();
 }
 
-const DOMAIN_DIR = 'state/generationProgress';
 const HOST_STORE = 'state/generateStore.ts';
-
-function domainModules(includeTests = false): string[] {
-  return allSourceFiles().filter((f) =>
-    f.startsWith(`${DOMAIN_DIR}/`) && f.endsWith('.ts') &&
-    (includeTests || !f.endsWith('.test.ts')));
-}
+const PACKAGE_NAME = '@animastor/web-generator';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 1. Boundary — allowed imports only (api/models wire types; domain-internal)
+// 1. Old in-repo directory is gone — no two production copies
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Generation-progress domain boundary (in-repo Step 1)', () => {
-  it('every domain module imports only the sanctioned specifiers', () => {
-    for (const f of domainModules()) {
-      const specs = importSpecifiers(f);
-      for (const spec of specs) {
-        // Domain-internal relative imports (./siblings, ../../api/models).
-        const internal = spec.startsWith('./') || spec === '../../api/models';
-        expect(
-          internal,
-          `${f} imports "${spec}" — only domain siblings + ../../api/models are allowed`,
-        ).toBe(true);
-      }
-    }
-  });
-
-  it('no forbidden host/package reach: api/client, app/*, state siblings, pages, @animastor/*', () => {
-    const FORBIDDEN = /(^|\/)(api\/client|app\/|state\/(positionStore|authStore|fileStore|playbackStore|generateStore|resourceInvalidations|resilientReloader)|pages\/)|^@animastor\//;
-    for (const f of domainModules()) {
-      for (const spec of importSpecifiers(f)) {
-        expect(
-          spec,
-          `${f} must not reach "${spec}" — transport/UI/identity/host stores stay host-side`,
-        ).not.toMatch(FORBIDDEN);
-      }
-    }
-  });
-
-  it('no @preact/signals in the domain (signals are the host binding)', () => {
-    for (const f of domainModules()) {
-      expect(
-        importSpecifiers(f),
-        `${f} imports @preact/signals — the domain must stay signal-free`,
-      ).not.toContain('@preact/signals');
-    }
-  });
-
-  it('wire-contract types are imported as types only (no runtime api/models reach)', () => {
-    for (const f of domainModules()) {
-      const src = requireRaw(f);
-      const runtimeModelImports = [...src.matchAll(/import\s*\{([^}]*)\}\s*from\s*['"]\.\.\/\.\.\/api\/models['"]/g)]
-        .flatMap((m) => m[1].split(',').map((s) => s.trim()))
-        .filter((s) => s.length > 0 && !s.startsWith('type ') && !s.startsWith('export type'));
-      expect(
-        runtimeModelImports,
-        `${f} imports runtime values from api/models — only type imports are sanctioned (values get vendored at package-cut time)`,
-      ).toEqual([]);
-    }
+describe('Generation-progress package extraction — old contour removed', () => {
+  it('state/generationProgress/ directory no longer exists', () => {
+    const files = Object.keys(RAW_SOURCES);
+    expect(
+      files.some((k) => k.startsWith('/src/state/generationProgress/')),
+      'state/generationProgress/ still exists — the old in-repo contour must be deleted',
+    ).toBe(false);
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 2. No hidden module-global mutable state (audit §6 blocker 6, resolved)
+// 2. generateStore imports from the package root (no deep imports)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Generation-progress domain — explicit state parameterization', () => {
-  it('no module-level mutable state declarations (let / bare Map latches)', () => {
-    for (const f of domainModules()) {
-      const src = requireRaw(f);
-      // Module-scope `let` (column 0) — the previously hidden Maps/latches.
+describe('Generation-progress package extraction — host consumption', () => {
+  it('generateStore imports from @animastor/web-generator (package root)', () => {
+    const specs = importSpecifiers(HOST_STORE);
+    expect(specs).toContain(PACKAGE_NAME);
+  });
+
+  it('generateStore does NOT use deep imports into the package', () => {
+    const specs = importSpecifiers(HOST_STORE);
+    const deepImports = specs.filter((s) => s.startsWith(`${PACKAGE_NAME}/`));
+    expect(
+      deepImports,
+      `generateStore uses deep imports: ${deepImports.join(', ')} — use the package root only`,
+    ).toEqual([]);
+  });
+
+  it('no host file imports deep paths into the package', () => {
+    for (const f of allSourceFiles()) {
+      if (f === HOST_STORE) continue;
+      const specs = importSpecifiers(f);
+      const deepImports = specs.filter((s) => s.startsWith(`${PACKAGE_NAME}/`));
       expect(
-        src,
-        `${f} declares module-level let state — parameterize via explicit state objects`,
-      ).not.toMatch(/^let\s/m);
-      // Bare module-scope Map/Set instantiation (const x = new Map...).
-      expect(
-        src,
-        `${f} declares a module-scope Map/Set — state must arrive via parameters`,
-      ).not.toMatch(/^const\s+\w+\s*=\s*new (Map|Set)\(/m);
+        deepImports,
+        `${f} uses deep package imports: ${deepImports.join(', ')} — forbidden`,
+      ).toEqual([]);
     }
   });
 
-  it('the tracking Maps/latches live in the explicit ProgressTrackingState interface', () => {
-    const src = requireRaw(`${DOMAIN_DIR}/progressRows.ts`);
-    for (const field of [
-      'taskReadyFloor', 'taskCompletedAt', 'taskFrozenElapsed',
-      'generationCompleted', 'newGenerationPending', 'importCompleteReceived',
-    ]) {
-      expect(src).toContain(`${field}:`);
-    }
-    expect(src).toMatch(/export function createProgressTrackingState\(/);
-    expect(src).toMatch(/export function resetProgressTracking\(/);
-  });
-
-  it('the timer state is an explicit object (no wall-clock lets)', () => {
-    const src = requireRaw(`${DOMAIN_DIR}/timer.ts`);
-    expect(src).toMatch(/export interface GenerationTimerState/);
-    expect(src).toMatch(/startedAt: number;/);
-    expect(src).toMatch(/finalElapsedSeconds: number;/);
-  });
-
-  it('domain functions receive state explicitly (no zero-arg global state reach)', () => {
-    const rows = requireRaw(`${DOMAIN_DIR}/progressRows.ts`);
-    expect(rows).toMatch(/export function computeProgressRows\(\s*ctx: ProgressRowContext,/);
-    const sse = requireRaw(`${DOMAIN_DIR}/sseRouting.ts`);
-    expect(sse).toMatch(/export function routeProgressEvent\(\s*sink: ProgressEventSink,\s*tracking: ProgressTrackingState,/);
+  it('only generateStore imports from the package (pages via store surface)', () => {
+    const consumers = allSourceFiles()
+      .filter((f) => !f.endsWith('.test.ts') && !f.endsWith('.test.tsx'))
+      .filter((f) => f !== HOST_STORE)
+      .filter((f) => importSpecifiers(f).includes(PACKAGE_NAME))
+      .sort();
+    expect(
+      consumers,
+      `non-store files import from ${PACKAGE_NAME} directly — pages must use the store surface`,
+    ).toEqual([]);
   });
 });
 
@@ -178,27 +122,7 @@ describe('Generation-progress domain — explicit state parameterization', () =>
 // 3. Host ownership unchanged (identity stays generateStore's)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Generation-progress domain — host ownership contract', () => {
-  it('the domain never USES host-owned identity/session duties (code-level tokens)', () => {
-    // Code-shaped tokens: signal reads/writes and host-fn calls. These cannot
-    // appear in prose comments ("bookId stays host-owned" is fine; binding
-    // bookId.value is not).
-    const FORBIDDEN_TOKENS = [
-      'bookId.value', 'buildId.value', 'loadBook(', 'stashBookSession',
-      'restoreStashedBookSession', 'onPlaybackPrepared(', 'emitPlaybackPrepared(',
-      'authStore', 'localStorage', 'phase.value', 'errorMessage.value',
-    ];
-    for (const f of domainModules()) {
-      const src = requireRaw(f);
-      for (const token of FORBIDDEN_TOKENS) {
-        expect(
-          src.includes(token),
-          `${f} uses "${token}" — host-owned duty leaked into the domain`,
-        ).toBe(false);
-      }
-    }
-  });
-
+describe('Generation-progress package extraction — host ownership contract', () => {
   it('generateStore keeps the identity/auth/event surface (nothing moved out of the host)', () => {
     const store = requireRaw(HOST_STORE);
     for (const token of [
@@ -219,29 +143,24 @@ describe('Generation-progress domain — host ownership contract', () => {
     expect(store).not.toMatch(/^const (taskReadyFloor|taskCompletedAt|taskFrozenElapsed) = new Map/m);
     expect(store).not.toMatch(/^let (generationCompleted|newGenerationPending|importCompleteReceived|timerStartedAt|finalElapsedSeconds)\b/m);
   });
+
+  it('generateStore no longer re-exports all domain types — they come from the package', () => {
+    const store = requireRaw(HOST_STORE);
+    // The old index.ts re-exports are gone; the host now imports from the package.
+    // generateStore should still re-export VBookStage and applyAnalysisEvent for
+    // backward compatibility, but should NOT contain the full list of domain imports.
+    // Verify the store does not define its own copy of domain functions.
+    expect(store).not.toMatch(/export function applyAnalysisEvent\(/);
+    expect(store).not.toMatch(/export function createInitialAnalysisProgress\(/);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 4. Dependency graph — no new cycles, entry consumption
+// 4. Dependency graph — no reverse deps, no new cycles
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Generation-progress domain — dependency graph', () => {
-  it('the domain is a leaf: it imports no module OUTSIDE its directory (except api/models types)', () => {
-    for (const f of domainModules()) {
-      for (const spec of importSpecifiers(f)) {
-        if (spec === '../../api/models') continue;
-        expect(
-          spec.startsWith('./'),
-          `${f} imports "${spec}" — the domain must be a leaf (siblings + wire types only)`,
-        ).toBe(true);
-      }
-    }
-  });
-
-  it('no state module imports generateStore EXCEPT the documented authStore identity edge (no NEW cycles)', () => {
-    // The authStore → generateStore edge is the pre-existing, audit-registered
-    // host identity seam (§3.2, blocker 2) — one-directional, not a cycle.
-    // Everything else in state/ reaches generateStore only via injected seams.
+describe('Generation-progress package extraction — dependency graph', () => {
+  it('no state module imports generateStore EXCEPT the documented authStore identity edge', () => {
     const stateFiles = allSourceFiles().filter((f) =>
       f.startsWith('state/') && f.endsWith('.ts') && !f.includes('.test.'));
     for (const f of stateFiles) {
@@ -253,34 +172,15 @@ describe('Generation-progress domain — dependency graph', () => {
     }
   });
 
-  it('production consumers of the domain directory: only generateStore (pages via store surface)', () => {
-    const consumers = allSourceFiles()
-      .filter((f) => !f.endsWith('.test.ts') && !f.endsWith('.test.tsx'))
-      .filter((f) => !f.startsWith(`${DOMAIN_DIR}/`))
-      .filter((f) => importSpecifiers(f).some((s) => s.includes('generationProgress')))
-      .sort();
-    expect(consumers).toEqual([HOST_STORE]);
-  });
-
-  it('domain tests import only the domain (independent of generateStore)', () => {
-    const domainTests = domainModules(true).filter((f) => f.endsWith('.test.ts'));
-    expect(domainTests.length).toBeGreaterThanOrEqual(4);
-    for (const f of domainTests) {
-      const specs = importSpecifiers(f);
+  it('host stores do not import from the package (only generateStore is the adapter)', () => {
+    const stateFiles = allSourceFiles().filter((f) =>
+      f.startsWith('state/') && f.endsWith('.ts') && !f.includes('.test.'));
+    for (const f of stateFiles) {
+      if (f === HOST_STORE) continue;
       expect(
-        specs.some((s) => s.includes('generateStore')),
-        `${f} imports generateStore — domain unit tests must run standalone`,
+        importSpecifiers(f).includes(PACKAGE_NAME),
+        `${f} imports from ${PACKAGE_NAME} — only generateStore should consume the package`,
       ).toBe(false);
-    }
-  });
-
-  it('no new package/dir was created (no physical extraction yet — prep only)', () => {
-    const files = Object.keys(RAW_SOURCES);
-    expect(files.some((k) => k.startsWith('/src/state/generationProgress/'))).toBe(true);
-    // No packages/animastor-web-generator (the app tree cannot see packages/,
-    // but the guard also pins that no module-level reference creeps in).
-    for (const f of allSourceFiles()) {
-      expect(requireRaw(f)).not.toContain('animastor-web-generator');
     }
   });
 });

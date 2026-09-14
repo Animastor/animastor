@@ -44,7 +44,7 @@ import {
   resetAnalysisProgress,
   vbookAnalysisProgress,
 } from './generateStore';
-import { createProgressTrackingState, routeProgressEvent } from './generationProgress';
+import { createProgressTrackingState, routeProgressEvent } from '@animastor/web-generator';
 import type { AnalysisProgress } from './generateStore';
 
 // Pin bookId so loadLayerConfig has a current book.

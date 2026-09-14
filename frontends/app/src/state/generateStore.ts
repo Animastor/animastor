@@ -37,12 +37,12 @@ import {
   createProgressTrackingState, elapsedSeconds, formatTimerText,
   hasAnyProgress as hasAnyProgressDomain, resetProgressTracking, routeProgressEvent,
   startGenerationTimer, stopGenerationTimer,
-} from './generationProgress';
+} from '@animastor/web-generator';
 import type {
   AgentStatusLike, AnalysisProgress, AnalysisStatus, AnalysisTaskRow,
   GenerationTimerState, ProgressEventSink, ProgressPanelState, ProgressTrackingState,
   TaskLabels, TaskRow, VBookProgress, VBookStage,
-} from './generationProgress';
+} from '@animastor/web-generator';
 
 export type GenerationStatus = 'IDLE' | 'RUNNING' | 'ERROR' | 'SUCCESS';
 export type { VBookStage };
