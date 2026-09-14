@@ -481,28 +481,41 @@ export function clearVBookProgress(): void {
 import { runSseStream } from '@animastor/web-generator-sse';
 import type { SseStreamPort } from '@animastor/web-generator-sse';
 
-let sseController: AbortController | null = null;
-let sseEpoch = 0;
+// Explicit host-owned stream state (Step 14 prep — see
+// docs/architecture/web-generator-extraction-audit.md §23): the former
+// module-scope pair (`let sseController` / `let sseEpoch`) is folded into ONE
+// explicit object with a single owner. The shape is exactly what a future
+// extraction would pass by reference. Epoch semantics are UNCHANGED:
+// monotonic counter, bumped on every start/stop, compared by
+// @animastor/web-generator-sse to detect stale sessions.
+interface SseStreamState {
+  controller: AbortController | null;
+  epoch: number;
+}
+function createSseStreamState(): SseStreamState {
+  return { controller: null, epoch: 0 };
+}
+const sseStream = createSseStreamState();
 
 const sseStreamPort: SseStreamPort = {
   start(bId: string) {
-    if (!sseController) sseController = new AbortController();
-    return sse(`/book/${encodeURIComponent(bId)}/progress-stream`, sseController.signal);
+    if (!sseStream.controller) sseStream.controller = new AbortController();
+    return sse(`/book/${encodeURIComponent(bId)}/progress-stream`, sseStream.controller.signal);
   },
   stop() {
-    sseController?.abort();
-    sseController = null;
+    sseStream.controller?.abort();
+    sseStream.controller = null;
   },
 };
 
 export function startProgressStream(bId: string): void {
   stopProgressStream();
   if (!bId) return;
-  ++sseEpoch;
-  sseController = new AbortController();
+  ++sseStream.epoch;
+  sseStream.controller = new AbortController();
   void runSseStream(
     sseStreamPort,
-    () => sseEpoch,
+    () => sseStream.epoch,
     progressEventSink,
     progressTracking,
     bId,
@@ -510,9 +523,9 @@ export function startProgressStream(bId: string): void {
 }
 
 export function stopProgressStream(): void {
-  sseEpoch++;
-  sseController?.abort();
-  sseController = null;
+  sseStream.epoch++;
+  sseStream.controller?.abort();
+  sseStream.controller = null;
 }
 
 // Analysis/progress SSE event routing (JSON parse + dispatch) lives in
@@ -604,10 +617,28 @@ export async function applyGenerationResults(): Promise<void> {
   }
 }
 
-/** Stop all generation (Stop All button + cancelGeneration). */
-export async function cancelGeneration(): Promise<void> {
-  const bId = bookId.value;
-  if (!bId) return;
+// ── Cancel: request vs local session teardown (Step 14 prep, §23) ──
+// The future extracted cancel contour owns ONLY the backend cancellation
+// request (transport). Everything else — signal writes, timer/stream teardown,
+// poll-token invalidation — is LOCAL SESSION TEARDOWN and stays host
+// composition. The navigation/playback bridge (applyGenerationResults) is NOT
+// part of a future cancel contour: the host finalization leg runs after the
+// request returns, exactly as before. Composition order is preserved
+// (teardown → request → conditional finalization); the only micro-reorder is
+// that isRegenerating/phase/errorMessage settle before the HTTP call instead
+// of after it — same inputs, no cross-function state dependency.
+
+/** Backend cancellation request ONLY (transport; no host-state writes). */
+async function requestCancelGeneration(bId: string): Promise<void> {
+  try {
+    await postJson(`/book/${encodeURIComponent(bId)}/cancel-generation`);
+  } catch (e) {
+    console.warn('cancelGeneration: backend call failed:', (e as Error).message);
+  }
+}
+
+/** Local session teardown ONLY (host state resets; no transport calls). */
+function teardownGenerationSessionLocal(): void {
   setGenerationStatus('IDLE');
   progressTracking.newGenerationPending = false;
   stopTimer();
@@ -621,14 +652,19 @@ export async function cancelGeneration(): Promise<void> {
   // timers by clearing the signal. New events from the orchestrator
   // will re-populate the signal on the next run.
   resetAnalysisProgress();
-  try {
-    await postJson(`/book/${encodeURIComponent(bId)}/cancel-generation`);
-  } catch (e) {
-    console.warn('cancelGeneration: backend call failed:', (e as Error).message);
-  }
   isRegenerating.value = false;
   phase.value = 'IDLE';
   errorMessage.value = null;
+}
+
+/** Stop all generation (Stop All button). Composition: local teardown →
+ *  backend cancel request → host finalization (navigation/playback bridge —
+ *  deliberately NOT owned by the request leg). */
+export async function cancelGeneration(): Promise<void> {
+  const bId = bookId.value;
+  if (!bId) return;
+  teardownGenerationSessionLocal();
+  await requestCancelGeneration(bId);
   if (hasAnyProgress()) {
     await applyGenerationResults();
   }

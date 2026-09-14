@@ -2161,3 +2161,130 @@ None — **"NO NEXT PHYSICAL EXTRACTION YET."** Every decision-rich slice (progr
 ---
 
 *Step-13 final re-audit completed on this branch; audit-only — no production code, no packages, no file moves, no API changes, no guard rewrites. Only this document changed.*
+
+---
+
+## 23. Step 14 — Prepare the Cancel / Session-Teardown Boundary (PREP EXECUTED)
+
+**Status:** PREP EXECUTED — SseStreamState explicit object created; cancelGeneration split into request vs local teardown; behavior preserved. **NOT a physical extraction** — no package created, no public API changed.  
+**Date:** 2026-09-14  
+**Branch:** `c21.4-physically-extract-analysis-from-backend`  
+**HEAD (baseline):** `acf7bf301ba477a733ad51857e785ec4dd929eb8` ("audit(web): re-audit remaining generator extraction boundary" — Step 13 complete)  
+**Parent:** `9c5b36fa11a281186836b6204f170ae45186f55d` (Step 12 — physical extraction of `@animastor/web-book-session`)  
+**diff parent..HEAD (audited baseline):** exactly 1 file — `docs/architecture/web-generator-extraction-audit.md` (+243/−1). The Step-13 audit commit contained no production changes.  
+**generateStore.ts at baseline:** 694 LOC; ownership: identity = `@animastor/web-book-session` (re-exports), decisions = the 4 generator packages, host = composition/seams/B6/cancel/restore/applyGenerationResults; consumers = 10 direct production files + fileStore via seams (§22.6/§22.7, unchanged at baseline).
+
+### 23.1 SSE state — blocker 1 resolved (explicit single-owner object)
+
+The last module-scope mutable pair in the teardown contour is gone:
+
+```ts
+// frontends/app/src/state/generateStore.ts (host-owned)
+interface SseStreamState {
+  controller: AbortController | null;
+  epoch: number;
+}
+function createSseStreamState(): SseStreamState { return { controller: null, epoch: 0 }; }
+const sseStream = createSseStreamState();
+```
+
+| Requirement | Status |
+|---|---|
+| One explicit owner | `generateStore` owns the single `sseStream` object; no other module references it (guard-pinned) |
+| No new global mutable state | the former `let sseController` / `let sseEpoch` pair is deleted — the object replaces it 1:1 (two bindings → one explicit state object, same as `vbookPollState`/`progressTracking`/`generationTimer`) |
+| `startProgressStream` / `stopProgressStream` through the state | both operate exclusively on `sseStream.controller` / `sseStream.epoch` |
+| Reconnect/epoch semantics preserved | monotonic epoch counter, bumped on every start (`++`) and stop (`++`), compared by `@animastor/web-generator-sse` via the injected `getEpoch` closure — byte-identical observable behavior |
+| External API unchanged | `startProgressStream(bId)` / `stopProgressStream()` signatures and call sites untouched (7 internal call sites + vbookAgentPorts `startStream` binding) |
+| Package API untouched | `@animastor/web-generator-sse` (`runSseStream`, `SseStreamPort`) NOT modified |
+
+### 23.2 Cancel split — request vs session teardown (real host refactoring, no extraction)
+
+`cancelGeneration` was a hidden owner of three concerns. It is now an explicit composition of two named legs + the finalization bridge:
+
+| Leg | Function | Responsibility | Transport | Host-state writes |
+|---|---|---|---|---|
+| **Cancel request** | `requestCancelGeneration(bId)` (private) | backend cancellation ONLY | 1 POST `/book/:id/cancel-generation` (error-tolerant, warn logged) | NONE |
+| **Local session teardown** | `teardownGenerationSessionLocal()` (private) | local resets ONLY | NONE | `generationStatus→IDLE`, `newGenerationPending=false`, `stopTimer`, `stopProgressStream`, `resetProgressState`, `vbookPollState.token++`, `resetAnalysisProgress`, `isRegenerating=false`, `phase=IDLE`, `errorMessage=null` |
+| **Composition** | `cancelGeneration()` (public, unchanged signature) | `teardown → request → if (hasAnyProgress()) applyGenerationResults()` | — | — |
+
+- **`applyGenerationResults` is no longer a hidden part of the cancel flow's state-mutation body** — it is an explicit finalization leg in the composition, clearly separated from the request contour. A future extracted cancel/request package would own ONLY `requestCancelGeneration`; the host keeps both other legs.
+- **Composition order preserved** (teardown → request → conditional finalization). One deliberate micro-reorder: `isRegenerating`/`phase`/`errorMessage` settle BEFORE the HTTP call instead of after it (previously between the request and the finalization). Both writes are unconditional, read no request result, and no observer can run between the two await points (single-threaded host) — externally observable behavior is identical.
+- `cancelTask` was already request-shaped (vbook branch token bump + POST) — left as-is, pinned by guard to never absorb session teardown.
+- No artificial package created; both legs remain host-internal (guards pin that nothing else calls them).
+
+### 23.3 `phase` / `errorMessage` — ownership audit (no change made)
+
+Re-derived at this HEAD (production only; grep-verified):
+
+| Writer | Values written | Lifecycle role |
+|---|---|---|
+| generateStore (generation slice) | `SCENE_READY` (startGeneration), `GENERATING` (checkAndRestore), `IDLE` + `errorMessage=null` (cancel/teardown leg) | generation lifecycle decisions |
+| fileStore (via SessionSeam, wired in fileAdapters) | `LOADING_BOOK`, `IMPORTING_TXT`, `SCENE_READY`, `IDLE` + 3 error paths | file-flow lifecycle decisions |
+
+| Reader | Use |
+|---|---|
+| AppShell | desktop bounce mirror |
+| GeneratePage | `currentPhase` |
+| (fileAdapters passes the signal objects by reference — wiring, not reading) |
+
+**Why the dual-writer exists:** the signals model ONE cross-slice session-status surface that two independently-owned flows (File flows, generation flows) settle in time-interleaved order; whoever finishes last defines the observable status. Neither slice's lifecycle can be derived from the other's.
+
+**Can an owner be assigned now?** NO. Both writers define the lifecycle (neither is derivable), both readers consume the merged result, and the merge order is behavioral. Assigning ownership to either slice forks the source of truth or changes bounce/restore semantics. **Consumers blocking the change:** AppShell (bounce mirror reads the merged signal), fileAdapters SessionSeam (by-reference identity wiring), GeneratePage, and fileStore's four flows.
+
+**Blocker documented (B6, unchanged):** `phase`/`errorMessage` remain HOST-OWNED dual-writer cross-slice UI status; not moved, no SessionStatusPort created. Any ownership change requires a session-status design that defines merge/priority semantics first (§22.3).
+
+### 23.4 Cancel teardown inventory (post Step 14)
+
+| Concern | Owner | State representation | Starts | Stops | Resets | Extraction-safe? |
+|---|---|---|---|---|---|---|
+| SSE lifetime | generateStore | **`SseStreamState` explicit object** (NEW) | `startProgressStream` (startGeneration, checkAndRestore, vbookAgentPorts.startStream) | `stopProgressStream` (teardown leg, computeProgressRows finalize, start-restart) | epoch bump on start/stop | **YES — explicit object, single owner, port-shaped** (a future package can receive it by reference) |
+| VBook poll lifetime | generateStore | `VBookPollState` explicit object | `startVBookGeneration` (package loop reads token) | token bump: teardown leg, `cancelTask`, `bumpVBookPollToken`, package `bumpPollToken` | n/a (token is monotonic) | YES (already extraction-safe since Step 9) |
+| Generation timer | generateStore | `GenerationTimerState` explicit object | `startTimer` (startGeneration, checkAndRestore, vbook lifecycle) | `stopTimer` (teardown leg, applyGenerationResults, package finalize) | freeze via stop | YES (extraction-safe) |
+| Progress tracking | generateStore | `ProgressTrackingState` explicit object | arming flows | — | `resetProgressState` (teardown leg, checkAndRestore, SettingsPage via seam) | YES (extraction-safe) |
+| Generation status / nav pulse | generateStore | signal + 2 module-scope timer handles (`navStatusTimer`, `navWatchdog`) | `setGenerationStatus` | self-clearing pulse + watchdog | reset to IDLE on teardown | NO — presentation-coupled (browser timer parity, §17.4); low value |
+| Regeneration state | generateStore | `isRegenerating` signal | startGeneration, checkAndRestore | teardown leg, finalize paths | file flows via `setRegenerating` seam | NO — shared with finalize/file seams; host composition |
+| Cancellation request | **cancel-request leg** (future package candidate) | none (stateless transport call) | `cancelGeneration` composition | — | — | **YES — stateless, transport-only, 1 endpoint** |
+| Teardown | generateStore (composition) | the named `teardownGenerationSessionLocal` sequence | `cancelGeneration` | — | — | PARTIAL — sequence is named and transport-free, but writes the B6 signals |
+| Stale-session protection | generateStore + packages | epoch compare (SSE) + token compare (VBook) | — | — | — | YES — both compares live in packages; authority is explicit host state |
+
+**Result:** 5 of 9 concerns are now explicit-object extraction-safe (SSE state joins poll/timer/tracking + the stateless request leg). The remainder (nav pulse, regeneration, teardown composition) is host composition entangled with the B6 signals.
+
+### 23.5 Guards (updated; no new files)
+
+`generation-progress-contour.guard.test.ts` — +9 assertions in 2 new groups:
+- **SSE state ownership:** explicit `SseStreamState` interface + `createSseStreamState()` singleton; start/stop operate on it; the old `^let sseController` / `^let sseEpoch` bindings are GONE from every host source file; no other module touches `sseStream`; exactly one definition site.
+- **Cancel boundary:** `requestCancelGeneration` is transport-only (no signal writes, no teardown calls in its body); `teardownGenerationSessionLocal` is state-only (no transport calls; owns the documented 10-token reset sequence — behavior parity pinned); `cancelGeneration` composes `teardown → request → conditional applyGenerationResults` with no direct `postJson`; `cancelTask` never absorbs teardown; the private legs are unreachable from other modules.
+
+`vbook-contour.guard.test.ts` — SSE host-ownership pin updated from the deleted `sseController` token to the explicit `SseStreamState`/`createSseStreamState()` tokens.
+
+All other guards unchanged and passing (package boundaries, identity ownership, no reverse deps — covered by the existing book-session/vbook/file-navigator/player guard suites).
+
+### 23.6 Untouched (per constraint)
+
+`@animastor/web-book-session`, `@animastor/web-generator-vbook`, `@animastor/web-generator-sse` (API and source), `@animastor/web-generator-config`, `@animastor/web-generator`, `generationPorts.ts` (zero changes), transport endpoints, identity ownership, navigation/playback semantics, generation behavior.
+
+### 23.7 Verification
+
+| Check | Result |
+|---|---|
+| Architecture guards (generation-progress 19, vbook 13 — incl. all new assertions) | PASS |
+| Frontend suite | **168/168 PASS** (13 files; +9 tests) |
+| Frontend typecheck (`tsc --noEmit`) | CLEAN |
+| Frontend build (`vite build`) | GREEN (405 KB JS) |
+| GitHub Combined Status | statuses: [] — no independent CI confirmation |
+| Production behavior | unchanged (composition reorder documented in §23.2; no signature/endpoint changes) |
+
+### 23.8 Verdict
+
+**PREPARATION REQUIRED → the preparation is now DONE for the request leg; remaining blockers are conceptual, not mechanical.**
+
+- **Cancel/request leg: READY FOR PHYSICAL EXTRACTION** — `requestCancelGeneration` is stateless, transport-only, single-endpoint, with `teardownGenerationSessionLocal` and `applyGenerationResults` clearly NOT part of its contour (guard-pinned). A future step could cut it mechanically — but per the standing rule it is NOT extracted in this commit, and as a ~5-LOC stateless POST it is of marginal standalone value (the honest boundary record matters more than the LOC).
+- **Session teardown: PREPARATION REQUIRED (B6-bound)** — the sequence is named, transport-free, and guard-pinned, but it writes the dual-writer `phase`/`errorMessage`; it cannot move until B6 has an ownership/merge design (§23.3).
+- **phase/errorMessage: NOT READY (unchanged blocker)** — §23.3.
+- **Overall `@animastor/web-generator`: NOT READY** — unchanged; the remaining host core (B6 signals, nav pulse, regeneration, `applyGenerationResults` host legs, teardown composition) is host composition. No new extraction boundary beyond the marginal cancel/request leg was unlocked.
+
+**Next candidate: NO NEXT PHYSICAL EXTRACTION YET** (the only extraction-safe piece is the stateless request leg of marginal value; the meaningful prerequisite remains the B6 session-status design).
+
+---
+
+*Step-14 boundary preparation completed on this branch; SseStreamState created, cancel split into request/teardown legs, guards strengthened, behavior preserved. No package created, no API changed, no behavior modified.*

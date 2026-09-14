@@ -192,3 +192,123 @@ describe('Generation-progress package extraction — dependency graph', () => {
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. Step 14 prep — explicit SSE stream state + cancel request/teardown split
+//    (docs/architecture/web-generator-extraction-audit.md §23)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Step 14 prep — SSE stream state ownership (single explicit object)', () => {
+  it('generateStore owns the SSE stream state as an explicit object (no module-scope pair)', () => {
+    const store = requireRaw(HOST_STORE);
+    // The explicit state object with a single owner.
+    expect(store).toMatch(/interface SseStreamState\s*\{/);
+    expect(store).toMatch(/controller: AbortController \| null/);
+    expect(store).toMatch(/epoch: number/);
+    expect(store).toMatch(/const sseStream = createSseStreamState\(\)/);
+    // start/stop operate through the explicit state object only.
+    expect(store).toMatch(/\+\+sseStream\.epoch/);
+    expect(store).toMatch(/sseStream\.epoch\+\+/);
+    expect(store).toContain('sseStream.controller');
+  });
+
+  it('the old module-scope SSE bindings are GONE from every host source file', () => {
+    for (const f of allSourceFiles()) {
+      if (!f.endsWith('.ts') && !f.endsWith('.tsx')) continue;
+      const src = requireRaw(f);
+      expect(
+        src.match(/^let sseController\b/m),
+        `${f}: module-scope 'let sseController' found — SSE state must be the explicit SseStreamState object`,
+      ).toBeNull();
+      expect(
+        src.match(/^let sseEpoch\b/m),
+        `${f}: module-scope 'let sseEpoch' found — the epoch lives on SseStreamState`,
+      ).toBeNull();
+    }
+  });
+
+  it('no other host module reaches into the SSE state (single owner, no aliasing)', () => {
+    for (const f of allSourceFiles()) {
+      if (f === HOST_STORE || f.includes('.test.')) continue;
+      const src = requireRaw(f);
+      expect(
+        src.match(/\bsseStream\b/),
+        `${f}: touches generateStore's SSE stream state — single-owner rule violated`,
+      ).toBeNull();
+    }
+  });
+
+  it('no duplicate SSE state implementation in host sources or package sources', () => {
+    const hostDefiners = allSourceFiles()
+      .filter((f) => !f.includes('.test.'))
+      .filter((f) => requireRaw(f).includes('interface SseStreamState'))
+      .sort();
+    expect(hostDefiners, 'SseStreamState must have exactly one definition site').toEqual([HOST_STORE]);
+  });
+});
+
+describe('Step 14 prep — cancel: request vs session teardown boundary', () => {
+  it('the backend cancel request is an isolated transport-only leg', () => {
+    const store = requireRaw(HOST_STORE);
+    expect(store).toMatch(/async function requestCancelGeneration\(/);
+    const leg = store.slice(store.indexOf('async function requestCancelGeneration('));
+    const legBody = leg.slice(0, leg.indexOf('\n}'));
+    // The request leg performs ONLY the transport call — no host-state writes.
+    expect(legBody).toContain('cancel-generation');
+    expect(legBody).not.toMatch(/\.value\s*=/);
+    expect(legBody).not.toMatch(/\b(setGenerationStatus|stopTimer|stopProgressStream|resetProgressState|resetAnalysisProgress)\b/);
+  });
+
+  it('the local session teardown is an isolated state-only leg (no transport calls)', () => {
+    const store = requireRaw(HOST_STORE);
+    expect(store).toMatch(/function teardownGenerationSessionLocal\(\): void/);
+    const leg = store.slice(store.indexOf('function teardownGenerationSessionLocal(): void'));
+    const legBody = leg.slice(0, leg.indexOf('\n}'));
+    expect(legBody).not.toMatch(/\bpostJson\b|\bgetJson\b|\bputJson\b|\bpostJsonLong\b/);
+    // It owns the documented host-state reset sequence (behavior parity).
+    for (const token of [
+      "setGenerationStatus('IDLE')",
+      'progressTracking.newGenerationPending = false',
+      'stopTimer()',
+      'stopProgressStream()',
+      'resetProgressState()',
+      'vbookPollState.token++',
+      'resetAnalysisProgress()',
+      'isRegenerating.value = false',
+      "phase.value = 'IDLE'",
+      'errorMessage.value = null',
+    ]) {
+      expect(legBody, `teardown leg must own: ${token}`).toContain(token);
+    }
+  });
+
+  it('cancelGeneration composes teardown → request → conditional finalization (no hidden bridge)', () => {
+    const store = requireRaw(HOST_STORE);
+    const fn = store.slice(store.indexOf('export async function cancelGeneration(): Promise<void>'));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+    expect(body).toContain('teardownGenerationSessionLocal()');
+    expect(body).toContain('await requestCancelGeneration(bId)');
+    // The navigation/playback bridge is NOT owned by the request contour —
+    // it is an explicit host finalization leg after the request returns.
+    expect(body).toContain('applyGenerationResults()');
+    expect(body).not.toMatch(/\bpostJson\b/);
+  });
+
+  it('cancelTask still carries no hidden teardown of the shared session', () => {
+    const store = requireRaw(HOST_STORE);
+    const fn = store.slice(store.indexOf('export async function cancelTask('));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+    expect(body).not.toContain('teardownGenerationSessionLocal()');
+    expect(body).not.toContain('stopProgressStream()');
+  });
+
+  it('no other module calls the private cancel legs (host-internal boundary)', () => {
+    for (const f of allSourceFiles()) {
+      if (f === HOST_STORE) continue;
+      const src = requireRaw(f);
+      expect(src, `${f}: reaches into the cancel request/teardown legs`).not.toMatch(
+        /requestCancelGeneration|teardownGenerationSessionLocal/,
+      );
+    }
+  });
+});

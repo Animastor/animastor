@@ -140,7 +140,10 @@ describe('VBook package extraction — host ownership contract', () => {
     const store = requireRaw(HOST_STORE);
     expect(store).toContain('startProgressStream');
     expect(store).toContain('stopProgressStream');
-    expect(store).toContain('sseController');
+    // Step 14: the stream state is an explicit host-owned object
+    // (SseStreamState { controller, epoch }) — no module-scope pair.
+    expect(store).toContain('createSseStreamState()');
+    expect(store).toContain('interface SseStreamState');
   });
 
   it('the module-global poll-token let is gone — explicit VBookPollState only', () => {
