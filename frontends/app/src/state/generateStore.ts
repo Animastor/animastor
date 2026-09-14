@@ -23,9 +23,14 @@
 import { signal } from '@preact/signals';
 import { getJson, postJson, postJsonLong, putJson, sse } from '../api/client';
 import type {
-  AssetsStateResponse, BookData, BookStatus, DiffSummary, LayerConfigResponse,
+  BookData, BookStatus, DiffSummary,
   ProgressPanelResponse, RegenerateResponse, WorkerCounts,
 } from '../api/models';
+import {
+  loadLayerConfig as loadLayerConfigDomain,
+  persistLayerConfig as persistLayerConfigDomain,
+  getAssetsState,
+} from '@animastor/web-generator-config';
 import { sceneRefs } from '../api/models';
 import type { SceneRef } from '../api/models';
 import { navigateTo, position } from './positionStore';
@@ -331,53 +336,44 @@ export function setImageEnabled(v: boolean): void { imageEnabled.value = v; void
 export function setVideoEnabled(v: boolean): void { videoEnabled.value = v; void persistLayerConfig(); }
 
 export async function loadLayerConfig(): Promise<void> {
-  const currentBook = bookId.value;
-  if (!currentBook) { layerConfigLoaded.value = true; analysisConfigLoaded.value = true; return; }
-  try {
-    const cfg = await getJson<LayerConfigResponse>(`/book/${encodeURIComponent(currentBook)}/layer-config`);
+  const cfg = await loadLayerConfigDomain(
+    { getBookId: () => bookId.value },
+    { getJson, putJson },
+  );
+  if (cfg) {
     audioEnabled.value = cfg.audio_enabled;
     imageEnabled.value = cfg.image_enabled;
     videoEnabled.value = cfg.video_enabled;
     vbookEnabled.value = cfg.vbook_enabled;
-    // Milestone #2 — backend authoritative. Defaults match layer-config
-    // DEFAULTS on the server (sequential, parallelism=3) so a missing
-    // field doesn't flip the UI to a non-default value.
     analysisMode.value = cfg.analysis_mode === 'parallel' ? 'parallel' : 'sequential';
     const p = cfg.analysis_parallelism;
     if (typeof p === 'number' && Number.isFinite(p)) {
       analysisParallelism.value = Math.min(8, Math.max(1, p));
     }
-  } catch (e) {
-    console.warn('loadLayerConfig failed:', (e as Error).message);
   }
   layerConfigLoaded.value = true;
   analysisConfigLoaded.value = true;
 }
 
 async function persistLayerConfig(): Promise<void> {
-  const currentBook = bookId.value;
-  if (!currentBook) return;
-  try {
-    await putJson(`/book/${encodeURIComponent(currentBook)}/layer-config`, {
+  await persistLayerConfigDomain(
+    { getJson, putJson },
+    bookId.value,
+    {
       audio_enabled: audioEnabled.value,
       image_enabled: imageEnabled.value,
       video_enabled: videoEnabled.value,
       vbook_enabled: vbookEnabled.value,
-    });
-  } catch (e) {
-    console.warn('persistLayerConfig failed:', (e as Error).message);
-  }
+    },
+  );
 }
 
 export async function refreshAssetsState(): Promise<void> {
-  const currentBook = bookId.value;
-  if (!currentBook) { hasAssets.value = false; return; }
-  try {
-    const s = await getJson<AssetsStateResponse>(`/book/${encodeURIComponent(currentBook)}/assets-state`);
-    hasAssets.value = s.has_assets ?? false;
-  } catch (e) {
-    console.warn('refreshAssetsState failed:', (e as Error).message);
-  }
+  const s = await getAssetsState(
+    { getBookId: () => bookId.value },
+    { getJson, putJson },
+  );
+  hasAssets.value = s?.has_assets ?? false;
 }
 
 // ── Generation timer (wall-clock; Android: timerStartedAt/finalElapsedSeconds) ──

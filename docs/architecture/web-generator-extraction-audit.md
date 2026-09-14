@@ -962,3 +962,158 @@ Eight small, focused port interfaces are proposed. Dependency direction is clean
 ---
 
 *Step-4 GenerationPorts boundary design completed on this branch; no production extraction performed. The ports file and guard are design artifacts — no runtime behavior changed.*
+
+---
+
+## 14. Step 5 — Layer Config Extraction
+
+**Status:** PHYSICALLY EXTRACTED / READY  
+**Date:** 2026-09-14  
+**Branch:** `c21.4-physically-extract-analysis-from-backend`  
+**Baseline commit:** `10ba46b7` (Step 4 complete — GenerationPorts boundary design)  
+**Purpose:** Extract `loadLayerConfig` / `persistLayerConfig` / `refreshAssetsState` as the first physical extraction through GenerationPorts.
+
+---
+
+### 14.1 Safety audit summary
+
+**Source code:** `state/generateStore.ts` lines 307–381 (75 LOC)
+
+**Extracted functions:**
+- `loadLayerConfig()` — fetches `GET /book/:id/layer-config`, returns parsed config
+- `persistLayerConfig()` — sends `PUT /book/:id/layer-config` with current toggle values
+- `getAssetsState()` — fetches `GET /book/:id/assets-state`, returns `{ has_assets }`
+
+**Dependencies:**
+- Reads `bookId.value` → ported via `IdentityPort.getBookId()`
+- Calls `getJson` / `putJson` → ported via `TransportPort`
+- No `@preact/signals` in extracted code (host wraps results in signals)
+- No `generateStore`, `api/client`, pages, or other stores in extracted code
+
+**Production consumers (unchanged):**
+- `GeneratePage.tsx` — reads 4 toggle signals + calls 4 setter functions
+- `AnalysisProgressPanel.tsx` — reads `analysisMode` signal
+- `generateStore.analysis.test.ts` — test file (imports `loadLayerConfig`, `analysisMode`, `analysisParallelism`)
+
+**What stays host-side:**
+- All 9 signals (`vbookEnabled`, `audioEnabled`, `imageEnabled`, `videoEnabled`, `layerConfigLoaded`, `hasAssets`, `analysisMode`, `analysisParallelism`, `analysisConfigLoaded`)
+- 4 setter functions (`setVBookEnabled`, `setAudioEnabled`, `setImageEnabled`, `setVideoEnabled`) — each writes a signal + calls `persistLayerConfig`
+- `loadLayerConfig()` wrapper — calls package function, applies results to signals
+- `refreshAssetsState()` wrapper — calls package function, writes `hasAssets` signal
+
+---
+
+### 14.2 Package: `@animastor/web-generator-config`
+
+**Location:** `packages/animastor-web-generator-config/`
+
+```
+packages/animastor-web-generator-config/
+├── package.json
+├── tsconfig.json
+├── tsup.config.ts
+├── vitest.config.ts
+├── LICENSE
+├── src/
+│   ├── index.ts          # Public API: 3 pure functions + 2 port interfaces
+│   └── models.ts         # Vendored wire types (LayerConfig, AssetsState)
+└── test/
+    ├── config.test.ts    # 10 unit tests (mock ports, no host imports)
+    └── guard.test.ts     # 12 architecture guard assertions
+```
+
+**Public API:**
+```typescript
+// Port interfaces
+interface IdentityPort { getBookId(): string }
+interface TransportPort { getJson<T>(path): Promise<T>; putJson<T>(path, body): Promise<T> }
+
+// Pure functions
+loadLayerConfig(identity, transport): Promise<LayerConfig | null>
+persistLayerConfig(transport, bookId, config): Promise<void>
+getAssetsState(identity, transport): Promise<AssetsState | null>
+```
+
+**Dependency direction:**
+```
+host (generateStore) ──depends on──▶ @animastor/web-generator-config
+```
+
+One-directional. No reverse dependencies. No deep imports.
+
+---
+
+### 14.3 Host wiring
+
+`generateStore.ts` imports 3 functions from the package:
+- `loadLayerConfigDomain` (aliased)
+- `persistLayerConfigDomain` (aliased)
+- `getAssetsState`
+
+The host provides port implementations inline:
+```typescript
+const cfg = await loadLayerConfigDomain(
+  { getBookId: () => bookId.value },
+  { getJson, putJson },
+);
+```
+
+Setter functions remain host-side — they write signals + call `persistLayerConfig()` which delegates to the package.
+
+The `frontends/app/package.json` dependency: `"@animastor/web-generator-config": "file:../../packages/animastor-web-generator-config"`
+
+---
+
+### 14.4 Architecture guard
+
+`packages/animastor-web-generator-config/test/guard.test.ts` (12 assertions):
+1. No forbidden imports in any source file (signals, stores, api/client, pages, @animastor/* packages)
+2. No `@preact/signals` usage (comment-stripped check)
+3. No `api/client` imports
+4. No `state/*` store imports
+5. No page/UI imports
+6. Exports are interfaces and async functions only
+
+---
+
+### 14.5 Test results
+
+| Suite | Tests | Status |
+|---|---|---|
+| `packages/animastor-web-generator-config/test/config.test.ts` | 10 | PASS |
+| `packages/animastor-web-generator-config/test/guard.test.ts` | 12 | PASS |
+| `frontends/app/` (all) | 124 | PASS |
+| `frontends/app/` typecheck | — | CLEAN |
+| `packages/animastor-web-generator-config/` typecheck | — | CLEAN |
+
+---
+
+### 14.6 Verdict
+
+**layer-config = PHYSICALLY EXTRACTED / READY**
+
+The layer-config logic (load/persist/assets-state) is now a standalone NPM package with zero host dependencies. The host wires it through IdentityPort + TransportPort. All tests pass. Typecheck clean.
+
+**web-generator = NOT READY** (overall verdict unchanged — identity/auth/phase blockers per §6 remain)
+
+---
+
+### 14.7 Next safe extraction slice
+
+With layer-config extracted, the next candidate is **cancel lifecycle** (`cancelGeneration` / `cancelTask`):
+- Writes to 5 state callbacks through `GenerationProgressPort` + `GenerationStatePort`
+- Calls transport port (`postJson`)
+- Stops SSE stream (port)
+- No identity read beyond bookId (port)
+- ~50 LOC, self-contained
+
+Or **SSE orchestration** (stream lifecycle):
+- Host owns start/stop/reconnect/epoch
+- Orchestration iterates events and routes through @animastor/web-generator
+- ~60 LOC, depends on SSE port design
+
+Both are READY WITH ADAPTER. Cancel lifecycle is slightly safer (fewer moving parts).
+
+---
+
+*Step-5 layer-config extraction completed on this branch; package created, host wired, all tests pass.*

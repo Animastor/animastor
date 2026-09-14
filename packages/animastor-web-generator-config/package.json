@@ -1,0 +1,55 @@
+{
+  "name": "@animastor/web-generator-config",
+  "version": "0.1.0",
+  "description": "Layer-config load/persist domain logic for Animastor web frontend. Pure functions that fetch and save book layer configuration (audio/image/video/vbook toggles, analysis mode/parallelism) through injected identity and transport ports. No host stores, signals, api/client, or UI dependencies.",
+  "keywords": [
+    "animastor",
+    "generator",
+    "config",
+    "layer-config",
+    "preact",
+    "web-ui",
+    "frontend",
+    "domain-logic",
+    "ports-and-adapters"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+  },
+  "devDependencies": {
+    "happy-dom": "^20.14.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Animastor/animastor.git",
+    "directory": "packages/animastor-web-generator-config"
+  }
+}
