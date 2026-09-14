@@ -15,8 +15,8 @@
 //   FilePorts (modules/file/ports.ts)
 //      ↓
 //   fileAdapters (this file — the single composition seam)
-//      ├── state/fileStore          ← File-owned state + flows
-//      ├── state/generateStore      ← shared session identity + status (B6)
+//      ├── state/fileStore          ← File-owned state + flows + errorMessage (Step 20)
+//      ├── state/generateStore      ← shared session identity + phase (B6)
 //      ├── state/playbackStore      ← player release port (former cycle leg)
 //      ├── api/client / router / i18n / lib/ui / icons
 //
@@ -29,7 +29,7 @@ import { navigate } from './router';
 import { toast } from '../lib/ui';
 import { IconFolder, IconAdd, IconLibrary, IconDownload, IconImage, IconVolumeUp, IconVideo } from './icons';
 import {
-  bookId, buildId, phase, errorMessage, dirtySummary, blankBookJustCreated,
+  bookId, buildId, phase, dirtySummary, blankBookJustCreated,
   loadBook, emitPlaybackPrepared,
   resetProgressState, clearVBookProgress, setRegenerating, bumpVBookPollToken,
   markImportIncomplete, stopGenerationSession,
@@ -38,13 +38,16 @@ import {
 // (closeBook's closePlayerBook), now an injected call through fileStore.
 import { closeBook as closePlayerBook } from '@animastor/web-player';
 import {
-  importMessages, isExporting, navigationEvent,
+  importMessages, isExporting, navigationEvent, errorMessage,
   importBookFromFile, openBookById, closeBook, createBlankBook, setExporting, setExportProgress,
   wireFileStore,
 } from '../state/fileStore';
 import type { FilePorts, FileRoute } from '@animastor/web-file';
 
 // ── Bind the File store to the shared seams (host-owned single wiring) ──
+// Step 20: `errorMessage` is fileStore-owned — the same signal object flows
+// through SessionSeam AND FileSessionPort; web-file's public API is unchanged
+// (it still receives a `Signal<string | null>` by reference).
 wireFileStore({
   generationReset: {
     resetProgressState, clearVBookProgress, setRegenerating,
@@ -52,7 +55,7 @@ wireFileStore({
   },
   playbackPrepared: { emit: emitPlaybackPrepared },
   player: { closeBook: closePlayerBook },
-  session: { bookId, buildId, phase, errorMessage, dirtySummary, blankBookJustCreated, loadBook },
+  session: { bookId, buildId, phase, dirtySummary, blankBookJustCreated, loadBook },
 });
 
 // The desktop shell's "Open" action (AppShell DesktopStartState) reaches the
@@ -72,6 +75,8 @@ function takeBookParam(): string | null {
 }
 
 export const filePorts: FilePorts = {
+  // Step 20: errorMessage arrives from fileStore (the fileStore import above);
+  // the FileSessionPort shape and web-file's public API are unchanged.
   session: { bookId, buildId, phase, errorMessage, importMessages, isExporting, navigationEvent },
   actions: { importBookFromFile, openBookById, closeBook, createBlankBook, setExporting, setExportProgress },
   http: {

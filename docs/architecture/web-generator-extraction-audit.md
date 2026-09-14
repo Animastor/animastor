@@ -3073,3 +3073,81 @@ Existing `session-status-contour.guard.test.ts` remains correct **for the curren
 ---
 
 *Step-19 errorMessage separation preparation completed on this branch; audit-only — production code unchanged, no package created, the future separation is specified in §30.8 and verdicted READY FOR PHYSICAL EXTRACTION (not executed here).*
+
+---
+
+## 31. Step 20 — Physical errorMessage Separation
+
+**Status:** PRODUCTION REFACTOR EXECUTED — the Step-19 §30.8 spec applied verbatim.
+**Date:** 2026-09-14
+**Baseline commit:** `83483eab` (Step 19 parent); branch HEAD before this step: `ea810931` (independent installer workstream — NOT part of this step, left untouched).
+**Purpose:** Physically move `errorMessage` ownership from `generateStore` to `fileStore`. Single atomic commit.
+
+### 31.1 Ownership change
+
+| | Before | After |
+|---|---|---|
+| Declaration | `generateStore.ts:247` | `fileStore.ts:76` (`export const errorMessage = signal<string \| null>(null);`) |
+| Production writers | 5 × fileStore (via `session.errorMessage` seam) + 1 × generateStore (cancel settle) | 5 × fileStore (direct `errorMessage.value =`) — writer set is fileStore ONLY |
+| Production reader | `@animastor/web-file` `FilePage.tsx:81` via `FileSessionPort` | unchanged — same signal object, now bound from fileStore |
+| `SessionSeam` | carried `errorMessage: Signal<string \| null>` | slimmed to identity + `phase` + `dirtySummary` + `blankBookJustCreated` + `loadBook` (minimal surface; no new abstraction layer) |
+
+The signal uses the existing `@preact/signals` pattern, declared adjacent to the other file-flow signals (`importMessages` et al.).
+
+### 31.2 Exact files changed
+
+**Production (3):**
+- `frontends/app/src/state/fileStore.ts` — declare `errorMessage`; convert all 5 seam writes (`beginBookTransition` → null, `importBookFromFile`/`openBookById`/`createBlankBook` catches → error, `closeBook` → null) to direct writes; remove `errorMessage` from `SessionSeam`; update boundary comments.
+- `frontends/app/src/state/generateStore.ts` — delete the declaration and the `settleGenerationSessionAfterCancel` error leg; update boundary comments (top-of-file, B6 section, file-slice section, settle docblock).
+- `frontends/app/src/app/fileAdapters.ts` — both wiring points (`wireFileStore` session + `filePorts.session`) now bind fileStore's `errorMessage`.
+
+**Tests (4):** `state/fileStore.test.ts` (ownership assertions + Step-20 error-preservation matrix 1–6 + cancel regression pair), `state/generateStore.analysis.test.ts` (Step-14A ordering suite: errorMessage removed from pre/snapshot/end-state — settle = `isRegenerating` + `phase` only), `app/fileAdapters.test.ts` (by-reference binding pin), `state/__tests__/auth-book-session.test.ts` (seam wiring).
+
+**Guards (3):** `session-status-contour.guard.test.ts` (rewritten: phase = shared two-writer boundary owned by generateStore; errorMessage = fileStore-owned, fileStore-only writer set; token-scoped scans, not broad greps), `generation-progress-contour.guard.test.ts` (settle-leg pin = exactly the old post-await writes minus the removed error leg), `file-navigator-contour.guard.test.ts` (no-fork pins scoped to bookId/buildId/phase).
+
+**Docs (1):** this section.
+
+### 31.3 What did NOT change
+
+- **`phase`** — declaration, writers, readers, `SessionSeam.phase`, `FileSessionPort.phase`, AppShell/GeneratePage behavior: untouched. Only errorMessage was separated.
+- **`@animastor/web-file` public API** — `ports.ts`, `FilePage.tsx`, `FileSessionPort` shape: zero diff. The package still receives a `Signal<string \| null>` by reference; only the host-side binding source changed.
+- **GenerationPorts** — `generationPorts.ts` untouched (its dead design-only `setErrorMessage` declaration stays, per the no-churn constraint; zero production importers, pinned by `generation-ports.guard.test.ts`).
+- **Step-14A cancellation ordering** — teardown → await request → settle is byte-identical; the settle keeps its exact post-await position. The removed `errorMessage = null` leg was a null-over-null in every state reachable past the cancel early-return (§30.4 proof); observable cancel semantics are unchanged.
+- **No new package** — `@animastor/web-session-status` was explicitly NOT created (Step 18/19: artificial boundary). No package versions, no lockfile, no backend, no installer, no SSE/VBook/navigation/playback changes.
+
+### 31.4 Cancellation invariant (frozen by tests, not comments)
+
+`settleGenerationSessionAfterCancel()` now performs exactly `isRegenerating.value = false; phase.value = 'IDLE';` — it does NOT touch the file error state. Two regression tests in `fileStore.test.ts` pin this: (1) the §30.4 reachability argument as behavior (file-flow error + empty bookId → cancel early-returns, error survives, no request fired); (2) with a book open, cancel settles `isRegenerating`/`phase` and leaves a foreign file-error value untouched. The Step-14A ordering suite continues to freeze the pre-await/post-await split.
+
+### 31.5 Final architecture state (repo-wide verification)
+
+Repo-wide sweep of `errorMessage` / `ports.session.errorMessage` / `SessionSeam.errorMessage` / `setErrorMessage`:
+
+| Surface | errorMessage presence |
+|---|---|
+| `@animastor/web-file` | consumer only — `FileSessionPort` type + `FilePage` read (by-reference port, unchanged) |
+| `@animastor/web-generator` / `-config` / `-sse` / `-vbook` / `web-book-session` | NONE (grep-clean) |
+| `generateStore` | NONE — only boundary documentation comments; no declaration/write/import/re-export (guard-pinned) |
+| `fileStore` | sole owner: 1 declaration + 5 writers |
+| `GenerationPorts` | design-record method only (`setErrorMessage`, dead/unwired), unchanged |
+
+**Verdict: ACCEPTED — ERROR MESSAGE SEPARATED**
+
+### 31.6 Verification
+
+| Check | Result |
+|---|---|
+| session-status-contour guard | PASS |
+| generation-progress-contour guard | PASS |
+| file-navigator-contour guard | PASS |
+| book-session-package-contour guard | PASS |
+| generation-ports guard | PASS |
+| fileStore tests (incl. Step-20 matrix + cancel regression) | PASS |
+| generateStore analysis tests (Step-14A ordering) | PASS |
+| fileAdapters tests | PASS |
+| auth-book-session tests | PASS |
+| Full frontend suite (`vitest run`) | 15 files / 201 tests PASS |
+| Frontend typecheck (`tsc --noEmit`) | CLEAN |
+| Vite build | GREEN (405.50 kB / 118.07 kB gzip) |
+| GitHub Combined Status | statuses: [] — no independent CI confirmation (local checks are not CI) |
+| Commit | single atomic commit; `git diff 83483eab..HEAD` checked — installer workstream (`ea810931`) remains a separate parent commit, not part of Step 20 |

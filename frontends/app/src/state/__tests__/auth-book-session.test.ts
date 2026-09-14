@@ -176,7 +176,6 @@ describe('browser refresh after logout — session does not leak', () => {
         bookId: generateStore.bookId,
         buildId: generateStore.buildId,
         phase: generateStore.phase,
-        errorMessage: generateStore.errorMessage,
         dirtySummary: generateStore.dirtySummary,
         blankBookJustCreated: generateStore.blankBookJustCreated,
         loadBook: generateStore.loadBook,

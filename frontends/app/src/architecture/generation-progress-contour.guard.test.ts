@@ -135,7 +135,8 @@ describe('Generation-progress package extraction — host ownership contract', (
       'stashBookSessionForUser, restoreStashedBookSessionForUser,',
       "} from '@animastor/web-book-session';",
       'export const phase',
-      'export const errorMessage',
+      // Step 20: errorMessage is fileStore-owned — the store must NOT declare it.
+      // (The negative pin lives in session-status-contour.guard.test.ts.)
       'export function onPlaybackPrepared',
       'export function emitPlaybackPrepared',
     ]) {
@@ -310,23 +311,28 @@ describe('Step 14 prep — cancel: request vs session teardown boundary', () => 
     ]) {
       expect(legBody, `teardown leg must own: ${token}`).toContain(token);
     }
-    for (const token of ['isRegenerating.value = false', "phase.value = 'IDLE'", 'errorMessage.value = null']) {
+    for (const token of ['isRegenerating.value = false', "phase.value = 'IDLE'"]) {
       expect(
         legBody,
         `teardown leg must NOT own: ${token} — that write ran AFTER the await in the old cancelGeneration (Step 14A ordering contract)`,
       ).not.toContain(token);
     }
+    // Step 20: the error leg left the cancel contour entirely (fileStore-owned);
+    // no generation leg may write the file-flow error state.
+    expect(legBody).not.toContain('errorMessage');
   });
 
-  it('the post-request settle leg owns exactly the OLD post-await writes (Step 14A ordering)', () => {
+  it('the post-request settle leg owns exactly the OLD post-await writes minus the removed error leg (Step 14A ordering × Step 20 ownership)', () => {
     const store = requireRaw(HOST_STORE);
     expect(store).toMatch(/function settleGenerationSessionAfterCancel\(\): void/);
     const leg = store.slice(store.indexOf('function settleGenerationSessionAfterCancel(): void'));
     const legBody = leg.slice(0, leg.indexOf('\n}'));
-    // Exactly the three writes the old cancelGeneration performed after await.
+    // Step 14A: the writes the old cancelGeneration performed after await…
     expect(legBody).toContain('isRegenerating.value = false');
     expect(legBody).toContain("phase.value = 'IDLE'");
-    expect(legBody).toContain('errorMessage.value = null');
+    // Step 20: …minus the errorMessage clear — the signal is fileStore-owned
+    // (§30.4: the write was a null-over-null in every reachable state).
+    expect(legBody).not.toContain('errorMessage');
     // No transport, no teardown bleed-in.
     expect(legBody).not.toMatch(/\bpostJson\b|\bgetJson\b|\bstopTimer\b|\bstopProgressStream\b|\bresetProgressState\b/);
   });

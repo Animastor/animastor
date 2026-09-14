@@ -14,7 +14,10 @@ describe('fileAdapters — host wiring', () => {
     expect(filePorts.session.bookId).toBe(generateStore.bookId);
     expect(filePorts.session.buildId).toBe(generateStore.buildId);
     expect(filePorts.session.phase).toBe(generateStore.phase);
-    expect(filePorts.session.errorMessage).toBe(generateStore.errorMessage);
+  });
+
+  it('Step 20: errorMessage is the fileStore signal itself (fileStore-owned, wired to web-file by reference)', () => {
+    expect(filePorts.session.errorMessage).toBe(fileStore.errorMessage);
   });
 
   it('File-owned signals are the fileStore signals themselves (single owner, no copy)', () => {

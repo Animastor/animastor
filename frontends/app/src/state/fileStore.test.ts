@@ -53,7 +53,6 @@ function wireRealSeams(): void {
       bookId: generateStore.bookId,
       buildId: generateStore.buildId,
       phase: generateStore.phase,
-      errorMessage: generateStore.errorMessage,
       dirtySummary: generateStore.dirtySummary,
       blankBookJustCreated: generateStore.blankBookJustCreated,
       loadBook: generateStore.loadBook,
@@ -76,7 +75,9 @@ beforeEach(() => {
   localStorage.clear();
   generateStore.loadBook('', '');
   generateStore.phase.value = 'IDLE';
-  generateStore.errorMessage.value = null;
+  // Step 20: errorMessage is fileStore-owned — seeded STALE so every success
+  // path below proves the clear-on-entry (beginBookTransition) / clear-on-close.
+  fileStore.errorMessage.value = 'stale';
   generateStore.dirtySummary.value = { changed: [] } as never;
   generateStore.blankBookJustCreated.value = false;
   generateStore.isRegenerating.value = true; // flows must reset it
@@ -107,12 +108,18 @@ describe('FileStore initial state', () => {
     expect(fileStore.exportProgress.value).toBe(0.42);
   });
 
-  it('owns NO identity signals — bookId/buildId/phase/errorMessage are generateStore-only (no fork)', () => {
+  it('owns errorMessage (Step 20) but NO identity signals — bookId/buildId/phase stay generateStore-only (no fork)', () => {
     const exportKeys = Object.keys(fileStore);
+    // Step 20: the file-flow error signal is fileStore-owned.
+    expect(exportKeys).toContain('errorMessage');
+    // Shared session identity must NOT be re-declared here.
     expect(exportKeys).not.toContain('bookId');
     expect(exportKeys).not.toContain('buildId');
     expect(exportKeys).not.toContain('phase');
-    expect(exportKeys).not.toContain('errorMessage');
+  });
+
+  it('generateStore no longer exports errorMessage (Step 20 physical separation)', () => {
+    expect(Object.keys(generateStore)).not.toContain('errorMessage');
   });
 
   it('throws a composition error when used unwired', async () => {
@@ -141,7 +148,8 @@ describe('importBookFromFile', () => {
     expect(generateStore.buildId.value).toBe('bd1');
     expect(generateStore.phase.value).toBe('SCENE_READY');
     expect(fileStore.navigationEvent.value).toBe('play');
-    expect(generateStore.errorMessage.value).toBeNull();
+    // clear-on-entry proved: the seeded stale error is gone
+    expect(fileStore.errorMessage.value).toBeNull();
     // position anchored at the cover
     expect(position.value).toMatchObject({ chapterId: 'ch1', sceneId: 'sc-cover', unitIndex: 0 });
     // player warmed through the seam
@@ -193,7 +201,7 @@ describe('importBookFromFile', () => {
     await fileStore.importBookFromFile(new File(['x'], 'broken.vbook'));
 
     expect(generateStore.phase.value).toBe('IDLE');
-    expect(generateStore.errorMessage.value).toBe('boom');
+    expect(fileStore.errorMessage.value).toBe('boom');
     expect(generateStore.bookId.value).toBe('');
     expect(fileStore.navigationEvent.value).toBeNull();
   });
@@ -236,7 +244,7 @@ describe('openBookById', () => {
     await fileStore.openBookById('ghost');
 
     expect(generateStore.phase.value).toBe('IDLE');
-    expect(generateStore.errorMessage.value).toBe('Book not found');
+    expect(fileStore.errorMessage.value).toBe('Book not found');
     expect(generateStore.bookId.value).toBe('');
   });
 });
@@ -265,7 +273,7 @@ describe('createBlankBook', () => {
 
     expect(id).toBeNull();
     expect(generateStore.phase.value).toBe('IDLE');
-    expect(generateStore.errorMessage.value).toBe('no server');
+    expect(fileStore.errorMessage.value).toBe('no server');
   });
 });
 
@@ -282,7 +290,8 @@ describe('closeBook', () => {
     expect(generateStore.bookId.value).toBe('');
     expect(generateStore.buildId.value).toBe('');
     expect(generateStore.phase.value).toBe('IDLE');
-    expect(generateStore.errorMessage.value).toBeNull();
+    // clear-on-close proved: the seeded stale error is gone
+    expect(fileStore.errorMessage.value).toBeNull();
     expect(fileStore.importMessages.value).toEqual([]);
     expect(fileStore.navigationEvent.value).toBeNull();
     expect(generateStore.dirtySummary.value).toBeNull();
@@ -399,7 +408,6 @@ describe('shared session identity (no fork, cross-store interaction)', () => {
         bookId: generateStore.bookId,
         buildId: generateStore.buildId,
         phase: generateStore.phase,
-        errorMessage: generateStore.errorMessage,
         dirtySummary: generateStore.dirtySummary,
         blankBookJustCreated: generateStore.blankBookJustCreated,
         loadBook: generateStore.loadBook,
@@ -414,5 +422,101 @@ describe('shared session identity (no fork, cross-store interaction)', () => {
     expect(clearVBookProgress).toHaveBeenCalled();
     expect(generateStore.isRegenerating.value).toBe(false);
     wireRealSeams();
+  });
+});
+
+// ═════════════ Step 20 — errorMessage ownership (audit §31) ═════════════
+
+describe('errorMessage ownership — Step 20 error-preservation matrix', () => {
+  it('1. file operation failure → error visible (import)', async () => {
+    postMultipart.mockRejectedValue(new Error('boom'));
+    await fileStore.importBookFromFile(new File(['x'], 'broken.vbook'));
+    expect(fileStore.errorMessage.value).toBe('boom');
+  });
+
+  it('2. new book transition → error cleared (beginBookTransition clear-on-entry)', async () => {
+    fileStore.errorMessage.value = 'stale error';
+    // A successful open is the "new transition": it must clear on entry.
+    getJson.mockImplementation((path) =>
+      path === '/book/b9' ? Promise.resolve({ manifest: { book_id: 'b9', build_id: 'bd9' }, scene_list: [{ chapter_id: 'c', scene_id: 's', type: 'cover' }] })
+        : path === '/book/b9/assets-state' ? Promise.resolve({ has_assets: true })
+        : Promise.reject(new Error('404 ' + path))
+    );
+    await fileStore.openBookById('b9');
+    expect(fileStore.errorMessage.value).toBeNull();
+  });
+
+  it('3. close → error cleared (clear-on-close)', () => {
+    fileStore.errorMessage.value = 'stale error';
+    fileStore.closeBook();
+    expect(fileStore.errorMessage.value).toBeNull();
+  });
+
+  it('4. create failure → correct error text', async () => {
+    postJson.mockRejectedValue(new Error('no server'));
+    const id = await fileStore.createBlankBook();
+    expect(id).toBeNull();
+    expect(fileStore.errorMessage.value).toBe('no server');
+  });
+
+  it('5. open failure → correct error text (fallback for empty message)', async () => {
+    getJson.mockRejectedValue(new Error(''));
+    await fileStore.openBookById('ghost');
+    expect(fileStore.errorMessage.value).toBe('Book not found');
+  });
+
+  it('6. import failure → correct error text (fallback for empty message)', async () => {
+    postMultipart.mockRejectedValue(new Error(''));
+    await fileStore.importBookFromFile(new File(['x'], 'broken.vbook'));
+    expect(fileStore.errorMessage.value).toBe('Import failed');
+  });
+
+  it('every writer lives in fileStore: all flows write THE fileStore signal (no seam indirection)', async () => {
+    // beginBookTransition (clear) + import failure (set) both hit the SAME
+    // module-local signal object — observable as clear-then-set on one ref.
+    postMultipart.mockRejectedValue(new Error('boom'));
+    fileStore.errorMessage.value = null;
+    await fileStore.importBookFromFile(new File(['x'], 'broken.vbook'));
+    expect(fileStore.errorMessage.value).toBe('boom');
+    // restoreBookSession writes NO error (catch = console.warn + loadBook('',''))
+    getJson.mockRejectedValue(new Error('offline'));
+    await fileStore.restoreBookSession();
+    expect(fileStore.errorMessage.value).toBe('boom'); // untouched by restore
+  });
+});
+
+// ═════════════ Step 20 — cancel regression (audit §30.4/§31) ═════════════
+// The old generateStore cancel-settle cleared errorMessage (null-over-null in
+// every reachable state — §30.4). These tests freeze the post-Step-20 truth:
+// cancel settle changes isRegenerating + phase and MUST NOT touch the
+// file-flow error signal.
+
+describe('cancel regression — generation cancel never touches file error state (Step 20)', () => {
+  it('file-flow error → generation cancel → settle keeps the file error (§30.4 reachability guard)', async () => {
+    // 1. A file-flow error exists…
+    fileStore.errorMessage.value = 'boom';
+    // 2. …and cancelGeneration is invoked (the error is UNREACHABLE for cancel:
+    //    bookId is empty after the failed flow → early return, so the settle
+    //    never runs — the file error survives untouched). This pins the §30.4
+    //    reachability argument as a behavior guard, not just a comment.
+    generateStore.loadBook('', '');
+    await generateStore.cancelGeneration();
+    expect(fileStore.errorMessage.value).toBe('boom');
+    // settle never ran: the backend cancel request never fired (early return)
+    expect(postJson).not.toHaveBeenCalled();
+  });
+
+  it('generation cancel settle changes isRegenerating + phase and NOT file error state', async () => {
+    generateStore.loadBook('b1', 'bd1'); // cancel reachable (book open)
+    generateStore.isRegenerating.value = true;
+    generateStore.phase.value = 'GENERATING';
+    fileStore.errorMessage.value = 'stale-but-unreachable-for-cancel';
+    postJson.mockResolvedValue({} as never);
+
+    await generateStore.cancelGeneration();
+
+    expect(generateStore.isRegenerating.value).toBe(false); // settle ran
+    expect(generateStore.phase.value).toBe('IDLE');          // settle ran
+    expect(fileStore.errorMessage.value).toBe('stale-but-unreachable-for-cancel'); // file error untouched
   });
 });

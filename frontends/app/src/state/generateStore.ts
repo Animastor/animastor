@@ -8,7 +8,9 @@
 // The File-screen slice (import/open/create/close flows + import/export
 // bookkeeping) moved to state/fileStore.ts (audit blocker B1 split) — this
 // store keeps ONLY the shared session identity (bookId/buildId + loadBook) and
-// the shared status signals (phase/errorMessage) written by both slices.
+// the shared status signal (phase) written by both slices. `errorMessage` is
+// fileStore-owned since Step 20 (audit §31) — generation has NO ownership of
+// the file-flow error state.
 //
 // IDENTITY PACKAGE EXTRACTION (web-generator-extraction-audit.md §21, Step
 // 12): the identity contour — bookId/buildId signals, loadBook, the persisted
@@ -231,12 +233,17 @@ export function markImportIncomplete(): void { progressTracking.importCompleteRe
 
 // ═══════════════════════════════════════════════════════════════
 //  SHARED BOOK-SESSION STATUS (audit B6 — single source of truth)
-//  `phase`/`errorMessage` are written by BOTH slices: the File flows
-//  (now in state/fileStore.ts — LOADING_BOOK / IMPORTING_TXT / SCENE_READY /
-//  IDLE + error) and the generation slice below (GENERATING on restore,
-//  SCENE_READY on build finish, IDLE on cancel). AppShell reads `phase` as the
-//  desktop bounce mirror, GeneratePage mirrors it too. The signals stay HERE;
-//  fileStore writes them through the injected session seam — never a fork.
+//  `phase` is written by BOTH slices: the File flows (now in state/fileStore.ts
+//  — LOADING_BOOK / IMPORTING_TXT / SCENE_READY / IDLE) and the generation
+//  slice below (GENERATING on restore, SCENE_READY on build finish, IDLE on
+//  cancel). AppShell reads `phase` as the desktop bounce mirror, GeneratePage
+//  mirrors it too. The signal stays HERE; fileStore writes it through the
+//  injected session seam — never a fork.
+//
+//  `errorMessage` is NOT here: it is fileStore-owned since Step 20 (audit
+//  §31) — its writers were all file flows, and the single generation write
+//  (the old cancel settle clear) was a provable null-over-null in every
+//  reachable state (§30.4) and was removed with the declaration.
 // ═══════════════════════════════════════════════════════════════
 
 export type PlayerPhase =
@@ -244,7 +251,6 @@ export type PlayerPhase =
   | 'SCENE_READY' | 'PLAYING' | 'PAUSED' | 'IMPORTING_TXT';
 
 export const phase = signal<PlayerPhase>('IDLE');
-export const errorMessage = signal<string | null>(null);
 
 // ═══════════════════════════════════════════════════════════════
 //  GENERATE SCREEN STATE (stage 4) — 1:1 with GenerateViewModel
@@ -678,11 +684,16 @@ function teardownGenerationSessionLocal(): void {
  *  (Step 14A, §24): `await` yields to the event loop, so anything a consumer
  *  (signal effect, poll tick, SSE event) runs while the request is in flight
  *  MUST observe the pre-cancel state — `phase` must not flip to IDLE before
- *  the backend confirmed cancellation. Restores that contract exactly. */
+ *  the backend confirmed cancellation. Restores that contract exactly.
+ *
+ *  Step 20 (audit §31): the old third leg `errorMessage = null` is GONE — the
+ *  signal is fileStore-owned now. The write was provably redundant: it was a
+ *  null-over-null in every state reachable by the cancel early-return
+ *  (`bookId` non-empty; any file-flow failure also empties identity, §30.4).
+ *  Observable cancel semantics are unchanged. */
 function settleGenerationSessionAfterCancel(): void {
   isRegenerating.value = false;
   phase.value = 'IDLE';
-  errorMessage.value = null;
 }
 
 /** Stop all generation (Stop All button). Composition — observable order is
@@ -755,7 +766,8 @@ export async function checkAndRestoreGenerationState(): Promise<void> {
 //  importBookFromFile / openBookById / closeBook / createBlankBook /
 //  restoreBookSession and the File screen bookkeeping signals
 //  (importMessages/isExporting/exportProgress/navigationEvent) now live in
-//  state/fileStore.ts. Shared state (bookId/buildId/phase/errorMessage +
-//  the persisted session) stays HERE as the single source of truth; fileStore
-//  writes it through the seams wired in app/fileAdapters.ts.
+//  state/fileStore.ts. Shared state (bookId/buildId + phase + the persisted
+//  session) stays HERE as the single source of truth; fileStore writes it
+//  through the seams wired in app/fileAdapters.ts. `errorMessage` is
+//  fileStore-owned (Step 20, audit §31) and no longer passes through here.
 // ═══════════════════════════════════════════════════════════════

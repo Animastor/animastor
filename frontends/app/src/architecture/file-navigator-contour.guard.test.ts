@@ -301,21 +301,23 @@ describe('Shared guards', () => {
     expect(consumers.sort()).toEqual(FILE_CONSUMERS_ALLOWED);
   });
 
-  it('No shared-state duplication — fileStore does not re-export bookId/buildId/phase/errorMessage', () => {
+  it('No shared-state duplication — fileStore does not re-export bookId/buildId/phase (errorMessage is fileStore-owned since Step 20)', () => {
     const src = requireRaw(FILE_STORE);
-    // These shared signals live in generateStore; fileStore must not create
-    // separate exports that would fork the session identity.
-    expect(src).not.toMatch(/export const (bookId|buildId|phase|errorMessage)\b/);
-    expect(src).not.toMatch(/export let (bookId|buildId|phase|errorMessage)\b/);
+    // The shared session identity signals live in generateStore; fileStore must
+    // not create separate exports that would fork the session identity.
+    // (errorMessage left the shared set in Step 20 — it is fileStore-owned.)
+    expect(src).not.toMatch(/export const (bookId|buildId|phase)\b/);
+    expect(src).not.toMatch(/export let (bookId|buildId|phase)\b/);
   });
 });
 
 describe('B1 split guards — fileStore ownership + cycle dissolution (file-module-extraction-audit.md)', () => {
-  it('B1 — fileStore owns NO identity: bookId/buildId/phase/errorMessage are not re-declared there', () => {
+  it('B1 — fileStore owns NO identity: bookId/buildId/phase are not re-declared there (errorMessage file-owned since Step 20)', () => {
     const src = requireRaw(FILE_STORE);
     // A fork would re-declare these signals; fileStore must only receive them
-    // through the injected session seam.
-    expect(src).not.toMatch(/export const (bookId|buildId|phase|errorMessage)\b/);
+    // through the injected session seam. errorMessage is no longer part of the
+    // shared identity set (Step 20 physical separation, audit §31).
+    expect(src).not.toMatch(/export const (bookId|buildId|phase)\b/);
     expect(src).toMatch(/interface SessionSeam/); // the seam contract exists
   });
 

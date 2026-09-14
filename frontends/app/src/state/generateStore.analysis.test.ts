@@ -42,7 +42,6 @@ import {
   applyAnalysisEvent,
   bookId,
   cancelGeneration,
-  errorMessage,
   generationStatus,
   isRegenerating,
   loadLayerConfig,
@@ -150,18 +149,20 @@ describe('host SSE seam — analysis events through the domain router', () => {
 //  The pre-Step-14 cancelGeneration performed its state writes in exactly
 //  two phases separated by `await postJson(...)`:
 //    pre-await : status→IDLE, tracking reset, analysis freeze (teardown)
-//    post-await: isRegenerating=false, phase=IDLE, errorMessage=null (settle)
+//    post-await: isRegenerating=false, phase=IDLE (settle)
 //  `await` yields to the event loop — anything a consumer (signal effect,
 //  poll tick, SSE event) runs while the request is in flight MUST observe
 //  the pre-cancel state. This suite freezes that split: a future refactor
 //  that moves the settle writes BEFORE the await (or teardown AFTER it)
 //  fails here.
+//  Step 20 (audit §31): the old third settle write `errorMessage = null` is
+//  GONE — the signal is fileStore-owned; cancel no longer touches it. The
+//  file-error/cancel interaction is pinned in state/fileStore.test.ts.
 describe('cancelGeneration — observable state ordering (Step 14A)', () => {
   const preCancel = {
     generationStatus: 'RUNNING' as const,
     isRegenerating: true,
     phase: 'GENERATING' as const,
-    errorMessage: 'stale error' as string | null,
   };
 
   beforeEach(() => {
@@ -169,14 +170,12 @@ describe('cancelGeneration — observable state ordering (Step 14A)', () => {
     generationStatus.value = preCancel.generationStatus;
     isRegenerating.value = preCancel.isRegenerating;
     phase.value = preCancel.phase;
-    errorMessage.value = preCancel.errorMessage;
   });
 
   afterEach(() => {
     generationStatus.value = 'IDLE';
     isRegenerating.value = false;
     phase.value = 'IDLE';
-    errorMessage.value = null;
     resetAnalysisProgress();
   });
 
@@ -185,11 +184,10 @@ describe('cancelGeneration — observable state ordering (Step 14A)', () => {
       generationStatus: generationStatus.value,
       isRegenerating: isRegenerating.value,
       phase: phase.value,
-      errorMessage: errorMessage.value,
     };
   }
 
-  it('does NOT settle phase/errorMessage/isRegenerating before the cancel request resolves', async () => {
+  it('does NOT settle phase/isRegenerating before the cancel request resolves', async () => {
     const { postJson } = await import('../api/client');
     let resolveRequest!: () => void;
     const requestPromise = new Promise<void>((res) => { resolveRequest = res; });
@@ -211,7 +209,6 @@ describe('cancelGeneration — observable state ordering (Step 14A)', () => {
       generationStatus: 'IDLE', // teardown leg ran BEFORE the request
       isRegenerating: true,     // settle leg did NOT run early
       phase: 'GENERATING',      // settle leg did NOT run early
-      errorMessage: 'stale error',
     });
     // …and while the request is in flight the settle writes have still NOT
     // happened — observers must see the pre-cancel state.
@@ -219,17 +216,16 @@ describe('cancelGeneration — observable state ordering (Step 14A)', () => {
       generationStatus: 'IDLE',
       isRegenerating: true,
       phase: 'GENERATING',
-      errorMessage: 'stale error',
     });
 
     resolveRequest();
     await done;
-    // After the request resolves the settle legs produce the OLD end state.
+    // After the request resolves the settle legs produce the OLD end state
+    // (minus the removed errorMessage leg — fileStore-owned since Step 20).
     expect(snapshot()).toEqual({
       generationStatus: 'IDLE',
       isRegenerating: false,
       phase: 'IDLE',
-      errorMessage: null,
     });
   });
 
@@ -243,7 +239,6 @@ describe('cancelGeneration — observable state ordering (Step 14A)', () => {
         generationStatus: 'IDLE',
         isRegenerating: false,
         phase: 'IDLE',
-        errorMessage: null,
       });
       expect(warn).toHaveBeenCalledWith(
         'cancelGeneration: backend call failed:', 'network down',

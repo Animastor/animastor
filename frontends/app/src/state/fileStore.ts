@@ -23,8 +23,11 @@
 //    build finish), and read by AppShell as the desktop bounce mirror
 //    (audit B6). One shared signal, two writers — the File-owned values are
 //    written through this seam, the signal object stays host-owned.
-//  - `errorMessage` — cancelGeneration() (generation slice) clears it for both
-//    surfaces; keeping the signal in the host avoids a behavior change.
+//  - `errorMessage` — fileStore-OWNED since Step 20 (audit §31): every writer
+//    is a file flow (beginBookTransition / import / open / create / close); the
+//    sole reader is FilePage via the by-reference FileSessionPort. Generation
+//    no longer touches it — the old cancel-settle clear was provably a
+//    null-over-null in every reachable state (audit §30.4).
 //  - `dirtySummary` / `blankBookJustCreated` — consumed by EditPage / AppShell.
 //  - The persisted localStorage session (currentBook key + per-user stash) is
 //    owned by @animastor/web-book-session since the Step 12 physical extraction
@@ -66,6 +69,11 @@ export type FileNavigationEvent = 'play' | 'generate' | null;
 
 // ── File-owned signals (moved verbatim from generateStore's stage-3 slice) ──
 export const importMessages = signal<string[]>([]);
+/** File-flow error message (Step 20 physical separation, audit §31): the sole
+ *  production owner is THIS module — every writer is a file flow below, the
+ *  sole reader is FilePage through the by-reference FileSessionPort. The old
+ *  generateStore declaration + cancel-settle clear are gone. */
+export const errorMessage = signal<string | null>(null);
 export const isExporting = signal(false);
 export const exportProgress = signal(0);
 export const navigationEvent = signal<FileNavigationEvent>(null);
@@ -124,7 +132,6 @@ export interface SessionSeam {
   readonly buildId: Signal<string>;
   /** Shared phase signal — File flows write their values through it. */
   readonly phase: Signal<FilePhase>;
-  readonly errorMessage: Signal<string | null>;
   /** Edit dirty indicator — cleared on import/open/create/close. */
   readonly dirtySummary: Signal<unknown>;
   /** AI-bubble flag — set by createBlankBook, consumed by AppShell. */
@@ -169,7 +176,7 @@ function beginBookTransition(): void {
   generationReset.markImportIncomplete();
   session.dirtySummary.value = null;
   session.phase.value = 'LOADING_BOOK';
-  session.errorMessage.value = null;
+  errorMessage.value = null;
   importMessages.value = [];
   navigationEvent.value = null;
 }
@@ -203,7 +210,7 @@ export async function importBookFromFile(file: File): Promise<void> {
     }
   } catch (e) {
     session.phase.value = 'IDLE';
-    session.errorMessage.value = (e as Error).message || 'Import failed';
+    errorMessage.value = (e as Error).message || 'Import failed';
   }
 }
 
@@ -300,7 +307,7 @@ export async function openBookById(param: string): Promise<void> {
     navigationEvent.value = scenes.length && assets?.has_assets ? 'play' : 'generate';
   } catch (e) {
     session.phase.value = 'IDLE';
-    session.errorMessage.value = (e as Error).message || 'Book not found';
+    errorMessage.value = (e as Error).message || 'Book not found';
   }
 }
 
@@ -315,7 +322,7 @@ export function closeBook(): void {
   generationReset.setRegenerating(false);
   session.loadBook('', ''); // also clears the persisted session
   session.phase.value = 'IDLE';
-  session.errorMessage.value = null;
+  errorMessage.value = null;
   importMessages.value = [];
   navigationEvent.value = null;
   session.dirtySummary.value = null;
@@ -349,7 +356,7 @@ export async function createBlankBook(): Promise<string | null> {
     return bId;
   } catch (e) {
     session.phase.value = 'IDLE';
-    session.errorMessage.value = (e as Error).message || 'Failed to create book';
+    errorMessage.value = (e as Error).message || 'Failed to create book';
     return null;
   }
 }
