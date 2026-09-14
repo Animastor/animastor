@@ -406,3 +406,235 @@ The next blocker for full "web-generator" extraction is the **identity split** (
 ---
 
 *Step-1 change (in-repo domain split) executed and documented; Step-2 change (physical package extraction) executed and documented on this branch. Package: packages/animastor-web-generator/ (@animastor/web-generator). Old in-repo contour deleted.*
+
+---
+
+## 12. Step 3 — Identity / Orchestration Audit
+
+**Status:** AUDIT ONLY — no code changes.  
+**Date:** 2026-09-14  
+**Branch:** `c21.4-physically-extract-analysis-from-backend`  
+**Baseline commit:** `1fad085e` (Step 2 complete — generation-progress extracted)  
+**Purpose:** Determine which parts of `generateStore.ts` can be safely extracted as the next architectural layer, separately analyzing identity and orchestration concerns.
+
+---
+
+### 12.1 generateStore.ts functional decomposition (858 LOC)
+
+| Lines | Block | Category | What it does | Who owns the data |
+|---|---|---|---|---|
+| 23–45 | Imports | — | host + package imports | — |
+| 47–59 | Types + PlaybackPrepared | UI/Event | `GenerationStatus`, `PlaybackPrepared` interface, `SceneRef` re-export | generateStore |
+| 61–67 | Identity signals | **Identity** | `bookId`, `buildId`, `blankBookJustCreated` signals | generateStore |
+| 69–80 | Playback event bus | **Event** | `onPlaybackPrepared` / `emitPlaybackPrepared` | generateStore |
+| 82–143 | Nav-icon status | UI | `generationStatus` signal + SUCCESS pulse timer (module-scope `setTimeout`/`setInterval`) | generateStore |
+| 145–202 | Persisted session | **Identity** | `persistBookSession`, `clearBookSession`, `stashBookSessionForUser`, `restoreStashedBookSessionForUser`, `loadBook` | generateStore |
+| 204–208 | Edit dirty indicator | **Identity** | `dirtySummary` signal | generateStore |
+| 210–242 | File slice seams | **Seam** | `stopGenerationSession`, `setRegenerating`, `bumpVBookPollToken`, `markImportIncomplete` | generateStore |
+| 254–259 | Phase / error | **Identity** | `phase`, `errorMessage` signals (dual-written by fileStore + generateStore) | generateStore (fileStore writes through SessionSeam) |
+| 261–306 | Generate screen signals | **UI/Store** | `vbookProgress`, `isRegenerating`, `vbookAnalysisProgress`, analysis re-exports | generateStore |
+| 307–370 | Layer config | **Orchestration** | `loadLayerConfig`, `persistLayerConfig`, `refreshAssetsState` + signals | generateStore |
+| 383–450 | Timer + Progress panel | **Orchestration** | `generationTimer`, `progressTracking` state objects, `computeProgressRows` wrapper | generateStore (wraps @animastor/web-generator) |
+| 452–498 | VBook progress | **Orchestration** | `updateVBookProgress`, `checkVBookAgentStatus`, `clearVBookProgress` | generateStore |
+| 500–552 | SSE progress stream | **Transport** | `startProgressStream`, `stopProgressStream`, `runProgressStream`, `handleProgressEvent` | generateStore |
+| 554–847 | Generation actions | **Orchestration** | `startGeneration`, `startVBookGeneration`, `pollVBookProgress`, `applyGenerationResults`, `cancelGeneration`, `cancelTask`, `checkAndRestoreGenerationState` | generateStore |
+
+---
+
+### 12.2 Identity boundary analysis
+
+#### 12.2.1 Identity inventory
+
+| Signal/function | Defined at | Written by | Read by (production) | Category |
+|---|---|---|---|---|
+| `bookId` | generateStore:61 | `loadBook` | GeneratePage, EditPage, AiAssistantPage, SettingsPage, AppShell, main.tsx, playerAdapters, navigatorAdapters, fileAdapters (via SessionSeam), generateStore internal | Session identity |
+| `buildId` | generateStore:62 | `loadBook`, `startGeneration` | EditPage, AppShell (via fileAdapters), playerAdapters, navigatorAdapters, fileAdapters (via SessionSeam), generateStore internal | Session identity |
+| `loadBook(id, build)` | generateStore:197 | — | fileAdapters (via SessionSeam), stashBookSessionForUser (internal) | Identity mutator |
+| `stashBookSessionForUser` | generateStore:175 | — | authStore.logout() | Auth→identity edge |
+| `restoreStashedBookSessionForUser` | generateStore:188 | — | authStore.login() | Auth→identity edge |
+| `phase` | generateStore:258 | fileStore (via SessionSeam), generateStore | AppShell, generateStore internal | Dual-writer |
+| `errorMessage` | generateStore:259 | fileStore (via SessionSeam), generateStore | generateStore internal | Dual-writer |
+| `dirtySummary` | generateStore:207 | fileStore (via SessionSeam) | EditPage | File-owned |
+| `blankBookJustCreated` | generateStore:67 | fileStore (via `createBlankBook`) | AppShell | File-owned |
+| `onPlaybackPrepared` | generateStore:72 | — | playerAdapters, navigatorAdapters, EditPage, GeneratePage | Event bus |
+| `emitPlaybackPrepared` | generateStore:78 | generateStore (applyGenerationResults) | — | Event bus producer |
+| `generationStatus` | generateStore:63 | generateStore | AppShell, generateStore internal | UI status |
+
+#### 12.2.2 Identity verdict: NOT READY
+
+**Reasons:**
+
+1. **bookId/buildId are read by 10+ host files** (5 pages, 4 adapters, 1 main, 1 state store) — all as direct signal reads. Moving them to a separate package means every consumer must go through an adapter or port. The blast radius is the entire host app.
+
+2. **Auth stash/restore is a hard edge**: `authStore.ts` directly imports `stashBookSessionForUser`/`restoreStashedBookSessionForUser` from `generateStore`. This is the pre-existing audit §3.2 blocker 2. Extracting identity would require authStore to go through a port — but authStore is the auth module, and adding an auth port would invert the dependency direction (auth would depend on the identity package).
+
+3. **phase/errorMessage are dual-writer signals**: both `fileStore` (via `SessionSeam`) and `generateStore` write to them. The signals must remain in one place (the host) as the single source of truth. Splitting them across packages would fork the source of truth.
+
+4. **Persistence is tightly coupled**: `persistBookSession`/`clearBookSession` use `localStorage` directly, and `stashBookSessionForUser`/`restoreStashedBookSessionForUser` use `localStorage` with user-scoped keys. This is web-platform-specific persistence that belongs in the host.
+
+5. **No suitable existing package**: there is no `@animastor/session` or `@animastor/identity` package. Creating one would be a new package, not a mechanical extraction — violating the audit constraint.
+
+#### 12.2.3 What could theoretically move to a session package (but NOT recommended now)
+
+| What | Portability | Problem |
+|---|---|---|
+| `bookId`/`buildId` signals | Technically moveable | 10+ direct consumers; every one needs an adapter |
+| `loadBook` | Technically moveable | Would become a port function; callers are fileAdapters + stash |
+| `persistBookSession`/`clearBookSession` | Moveable | localStorage — web-specific, but portable as a storage port |
+| `stashBookSessionForUser`/`restoreStashedBookSessionForUser` | Moveable | authStore would need a port to call them |
+| `phase`/`errorMessage` | NOT moveable | Dual-writer; must stay host-side as single source of truth |
+| `dirtySummary`/`blankBookJustCreated` | NOT moveable | Written by fileStore through seams; belong to File contour |
+
+---
+
+### 12.3 Orchestration boundary analysis
+
+#### 12.3.1 Orchestration inventory
+
+| Function | Reads | Writes | Calls | Dependencies |
+|---|---|---|---|---|
+| `startGeneration(req)` | `bookId` | `generationStatus`, `isRegenerating`, `progressTracking.newGenerationPending`, `buildId`, `phase`, `dirtySummary` | `postJson`, `refreshAssetsState`, `startProgressStream`, `startTimer` | api/client, timer, SSE, position |
+| `startVBookGeneration()` | `bookId` | `generationStatus`, `isRegenerating`, `progressTracking.*`, `vbookProgress` | `getJson`, `postJsonLong`, `pollVBookProgress`, `startProgressStream`, `startTimer` | api/client, timer, SSE |
+| `pollVBookProgress(bId, token)` | `bookId`, `vbookProgress`, `isRegenerating`, `progressTracking.importCompleteReceived`, `generationTimer` | `vbookProgress`, `generationStatus`, `isRegenerating` | `getJson`, `applyGenerationResults` | api/client, timer |
+| `applyGenerationResults()` | `isRegenerating`, `bookId`, `buildId`, `position` | `generationStatus` (via `stopTimer`) | `getJson`, `sceneRefs`, `navigateTo`, `emitPlaybackPrepared` | api/client, position, player event |
+| `cancelGeneration()` | `bookId`, `isRegenerating`, `hasAnyProgress()` | `generationStatus`, `progressTracking`, `isRegenerating`, `phase`, `errorMessage` | `postJson`, `stopTimer`, `stopProgressStream`, `resetProgressState`, `applyGenerationResults` | api/client, timer, SSE |
+| `cancelTask(type, taskId)` | `bookId` | — | `postJson`, `clearVBookProgress` | api/client |
+| `checkAndRestoreGenerationState()` | `bookId`, `isRegenerating`, `generationTimer` | `isRegenerating`, `generationStatus`, `phase` | `getJson`, `startTimer`, `startProgressStream`, `resetProgressState` | api/client, timer, SSE |
+| `loadLayerConfig()` | `bookId` | `audioEnabled`, `imageEnabled`, `videoEnabled`, `vbookEnabled`, `analysisMode`, `analysisParallelism` | `getJson` | api/client |
+| `checkVBookAgentStatus()` | `bookId`, `vbookProgress` | `vbookProgress` | `getJson` | api/client |
+
+#### 12.3.2 Orchestration verdict: NOT READY
+
+**Reasons:**
+
+1. **Every orchestration function reads `bookId`**: the identity signal is the first thing each function checks. Without an identity port, orchestration cannot be separated from identity.
+
+2. **Orchestration writes to host-owned signals**: `startGeneration` writes to `generationStatus`, `isRegenerating`, `phase`, `buildId`, `dirtySummary`. These signals are read by AppShell, EditPage, GeneratePage, and fileAdapters. Moving orchestration to a package would require all signal writes to go through ports — a significant adapter surface.
+
+3. **applyGenerationResults has deep host coupling**: it calls `navigateTo` (positionStore), `emitPlaybackPrepared` (event bus), `sceneRefs` (api/models), and reads `position.value.chapterId`. This function bridges generation completion to navigation and playback — it crosses multiple host boundaries.
+
+4. **SSE stream management is host-specific**: `startProgressStream`/`stopProgressStream` use `AbortController`, `setTimeout`, and the `sse` transport from api/client. The reconnection loop with exponential backoff is transport-specific logic that could theoretically be a port, but the SSE adapter is tightly coupled to the store's signals.
+
+5. **Timer state is already delegated**: `generationTimer` lives in generateStore and is passed to @animastor/web-generator. The timer is a thin wrapper — not worth extracting separately.
+
+#### 12.3.3 What could theoretically move to a generation-orchestration package (but NOT recommended now)
+
+| What | Portability | Problem |
+|---|---|---|
+| `startGeneration` | Technically moveable via ports | Needs bookId, writes to 6+ signals, calls api/client |
+| `startVBookGeneration` / `pollVBookProgress` | Technically moveable via ports | Long async chain with token-based cancellation, writes to 4+ signals |
+| `cancelGeneration` / `cancelTask` | Technically moveable | Writes to 5+ signals, calls api/client |
+| `loadLayerConfig` / `persistLayerConfig` | Most portable | Reads bookId, writes to 6 signals, calls api/client — cleanest candidate |
+| `checkAndRestoreGenerationState` | Technically moveable | Reads bookId, writes to 3 signals, calls api/client |
+| SSE stream management | Partially moveable | Needs AbortController port, writes to signals via ProgressEventSink |
+| `applyGenerationResults` | NOT moveable without major refactoring | Bridges generation → navigation → playback (3 host boundaries) |
+
+---
+
+### 12.4 Dependency graph
+
+#### 12.4.1 generateStore → ... (outgoing)
+
+```
+generateStore
+├── @preact/signals          (signal)
+├── @animastor/web-generator (domain functions + types)
+├── api/client               (getJson, postJson, postJsonLong, putJson, sse)
+├── api/models               (types + sceneRefs value)
+├── state/positionStore      (navigateTo, position)
+├── app/i18n                 (vbookStageLabel)
+```
+
+#### 12.4.2 ... → generateStore (incoming — production only)
+
+```
+state/authStore              → stashBookSessionForUser, restoreStashedBookSessionForUser
+app/fileAdapters.ts          → bookId, buildId, phase, errorMessage, dirtySummary,
+                                blankBookJustCreated, loadBook, emitPlaybackPrepared,
+                                resetProgressState, clearVBookProgress, setRegenerating,
+                                bumpVBookPollToken, markImportIncomplete, stopGenerationSession
+app/playerAdapters.ts        → bookId, buildId, onPlaybackPrepared
+app/navigatorAdapters.ts     → bookId, buildId, onPlaybackPrepared
+app/AppShell.tsx              → generationStatus, bookId, phase, blankBookJustCreated
+main.tsx                     → bookId
+pages/GeneratePage.tsx       → bookId, phase, vbookProgress, isRegenerating,
+                                audioEnabled, imageEnabled, videoEnabled, vbookEnabled,
+                                setAudioEnabled, setImageEnabled, setVideoEnabled, setVBookEnabled,
+                                startGeneration, startVBookGeneration, cancelGeneration, cancelTask,
+                                checkAndRestoreGenerationState, checkVBookAgentStatus,
+                                computeProgressRows, resetGenerationStatus, onPlaybackPrepared,
+                                liveElapsedSeconds, formatTimerText
+pages/EditPage.tsx           → bookId, buildId, dirtySummary, onPlaybackPrepared
+pages/AiAssistantPage.tsx    → bookId
+pages/SettingsPage.tsx       → bookId, resetProgressState
+```
+
+#### 12.4.3 Cycles
+
+- **generateStore ⇄ playbackStore**: DISSOLVED (guard-pinned). `playbackStore` imports `onPlaybackPrepared` from generateStore — one directed edge. `generateStore` does NOT import playbackStore.
+- **generateStore ⇄ fileStore**: DISSOLVED via seams. fileStore receives identity + generation reset through injected `SessionSeam` / `GenerationResetSeam`. No direct imports.
+- **generateStore ⇄ authStore**: ONE DIRECTIONAL. `authStore` imports `stashBookSessionForUser`/`restoreStashedBookSessionForUser` from generateStore. `generateStore` does NOT import authStore. This is the pre-existing documented edge (§3.2 blocker 2).
+- **No other cycles** exist in the state/ module graph.
+
+---
+
+### 12.5 Existing ports/adapters patterns
+
+The codebase already uses a ports/adapters pattern for other extracted packages:
+
+| Package | Adapter file | Pattern |
+|---|---|---|
+| `@animastor/web-player` | `app/playerAdapters.ts` | `PlayerPorts` contract — session, generation, position, invalidations, http, shellMode, i18n, icons |
+| `@animastor/web-file` | `app/fileAdapters.ts` | `FilePorts` contract — session, actions, http, i18n, toast, navigation, openRequests, deepLink, icons |
+| `@animastor/web-navigator` | `app/navigatorAdapters.ts` | `NavigatorPorts` contract — bookSource, position, http |
+| `@animastor/web-editor` | `app/fileAdapters.ts` (shared) | Uses FilePorts from web-file |
+| `@animastor/web-settings` | `app/workerAdapters.ts` | `WorkerPorts` contract — api, ui, icons |
+| `@animastor/web-local-ai` | `app/localAiAdapters.ts` | `LocalAiPorts` contract — api, i18n, ui, settings |
+
+**Common pattern:** Each package defines its own `*Ports` interface. A single adapter file in `app/` wires host infrastructure to the ports. The package never imports host modules directly.
+
+---
+
+### 12.6 Candidate boundaries assessment
+
+| Boundary | Verdict | Reason |
+|---|---|---|
+| **Identity (bookId/buildId/loadBook/session)** | **NOT READY** | 10+ direct signal consumers across pages/adapters; auth hard edge; phase/errorMessage dual-writer; no suitable existing package; localStorage persistence is web-specific |
+| **Auth stash/restore** | **NOT READY** | Only 2 functions, called only by authStore — but extracting them alone creates an identity package dependency for authStore, inverting the auth→identity direction |
+| **Orchestration (startGeneration/VBook/cancel)** | **NOT READY** | Every function reads bookId (identity dependency); writes to 6+ host signals; applyGenerationResults bridges 3 host boundaries; SSE stream is host-specific |
+| **Layer config (load/persist/refresh)** | **READY WITH ADAPTER** (cleanest candidate) | Reads bookId, writes to 6 signals, calls api/client. Could become a `GenerationConfigPorts` contract. But the signals it writes to are also read by other code — extraction requires the signals to move too or remain host-owned |
+| **SSE stream** | **NOT READY** | Transport-specific (AbortController, setTimeout), writes to signals via ProgressEventSink — already delegated to @animastor/web-generator for routing |
+| **Timer** | **READY** (already delegated) | `generationTimer` is already a state object owned by generateStore, passed to @animastor/web-generator. The wrapper functions are trivial. |
+
+---
+
+### 12.7 Recommended next extraction step
+
+**No extraction is recommended at this time.** The identity and orchestration blockers are structural:
+
+1. The identity signals (`bookId`/`buildId`) are the most widely consumed exports of generateStore (10+ direct production consumers). Extracting them would require a ports/adapter layer for every consumer — a host-wide refactoring, not a mechanical cut.
+
+2. The orchestration functions are deeply coupled to identity (they all read `bookId` first) and to host signals (they write to `generationStatus`, `isRegenerating`, `phase`, `vbookProgress`, etc.). Extracting them as a package would require injecting all these signals through ports — a significant adapter surface with no existing precedent in the codebase for this scale.
+
+3. The auth→identity edge (`authStore → stashBookSessionForUser`) is a hard coupling that cannot be removed without an auth port — which would invert the dependency direction.
+
+4. The `phase`/`errorMessage` dual-writer contract (fileStore + generateStore both write) means these signals must remain in one place as the single source of truth.
+
+**If extraction is pursued in the future, the recommended sequence is:**
+
+1. **First:** Define `GenerationPorts` (identity read port + transport port + event port) — a new interfaces file, not a package.
+2. **Second:** Split generateStore so orchestration reads identity through the port, not direct signal access.
+3. **Third:** Only then can orchestration be extracted as a package — with identity staying host-side permanently.
+
+---
+
+### 12.8 Verdict
+
+**Identity boundary: NOT READY**  
+**Orchestration boundary: NOT READY**  
+
+The overall `@animastor/web-generator` extraction remains **NOT READY** for the full contour. The generation-progress slice is **PHYSICALLY EXTRACTED / READY** (§11). The identity and orchestration blockers are structural and cannot be resolved through mechanical extraction — they require an architectural design decision about where session identity lives in the host-package boundary.
+
+---
+
+*Step-3 identity/orchestration audit completed on this branch; no code changes, no packages created, no behavior modified.*
