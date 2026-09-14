@@ -1100,20 +1100,139 @@ The layer-config logic (load/persist/assets-state) is now a standalone NPM packa
 
 ### 14.7 Next safe extraction slice
 
-With layer-config extracted, the next candidate is **cancel lifecycle** (`cancelGeneration` / `cancelTask`):
-- Writes to 5 state callbacks through `GenerationProgressPort` + `GenerationStatePort`
-- Calls transport port (`postJson`)
-- Stops SSE stream (port)
-- No identity read beyond bookId (port)
-- ~50 LOC, self-contained
-
-Or **SSE orchestration** (stream lifecycle):
-- Host owns start/stop/reconnect/epoch
-- Orchestration iterates events and routes through @animastor/web-generator
-- ~60 LOC, depends on SSE port design
-
-Both are READY WITH ADAPTER. Cancel lifecycle is slightly safer (fewer moving parts).
+With layer-config extracted, the next candidates were evaluated:
+- **cancel lifecycle** — **NOT READY** (see §15)
+- **SSE orchestration** — the most promising remaining candidate
 
 ---
 
 *Step-5 layer-config extraction completed on this branch; package created, host wired, all tests pass.*
+
+---
+
+## 15. Step 6 — Generation Cancel / Session Teardown Audit
+
+**Status:** NOT READY — audit-only, no extraction  
+**Date:** 2026-09-14  
+**Branch:** `c21.4-physically-extract-analysis-from-backend`  
+**Baseline commit:** `1809f554` (Step 5 complete — layer-config extracted)  
+**Purpose:** Evaluate whether cancel/teardown lifecycle can be extracted through GenerationPorts.
+
+---
+
+### 15.1 Cancel/teardown inventory
+
+| Function | LOC | Exported | External consumers |
+|---|---|---|---|
+| `cancelGeneration()` | 28 | yes | GeneratePage |
+| `cancelTask(type, taskId?)` | 16 | yes | GeneratePage |
+| `stopGenerationSession()` | 7 | yes | fileAdapters (via GenerationResetSeam) |
+| `stopProgressStream()` | 4 | yes (but no external imports) | internal only |
+| `stopTimer()` | 3 | no | internal only |
+| `bumpVBookPollToken()` | 1 | yes | fileAdapters (via GenerationResetSeam) |
+| `resetProgressState()` | 2 | yes | fileAdapters, SettingsPage |
+| `setRegenerating(v)` | 1 | yes | fileAdapters (via GenerationResetSeam) |
+| `markImportIncomplete()` | 1 | yes | fileAdapters (via GenerationResetSeam) |
+
+---
+
+### 15.2 Module-scope state dependencies
+
+Every stop/bump/reset function mutates module-scope state owned by generateStore:
+
+| State | Type | Mutated by | Why it blocks extraction |
+|---|---|---|---|
+| `sseController` | `AbortController \| null` | `stopProgressStream`, `startProgressStream` | Host resource — package can't own |
+| `sseEpoch` | `number` | `stopProgressStream`, `startProgressStream` | Monotonic guard — host-owned |
+| `vbookPollToken` | `number` | `cancelGeneration`, `cancelTask`, `stopGenerationSession`, `bumpVBookPollToken` | Cancellation token — host-owned |
+| `progressTracking` | `ProgressTrackingState` | `resetProgressState`, `markImportIncomplete` | Host-owned state object |
+| `generationTimer` | `GenerationTimerState` | `stopTimer` | Host-owned state object |
+
+Extracting would require passing **5 mutable state objects** as port parameters. The package would become a thin orchestrator calling back into host-owned state — adding indirection without simplifying.
+
+---
+
+### 15.3 Cancel sequence analysis
+
+**`cancelGeneration()` — 13 distinct operations:**
+1. Read `bookId.value` (identity)
+2. `setGenerationStatus('IDLE')` (host signal write)
+3. `progressTracking.newGenerationPending = false` (host state mutation)
+4. `stopTimer()` → `stopGenerationTimer(generationTimer)` (host state mutation)
+5. `stopProgressStream()` → `sseEpoch++`, `sseController.abort()` (host resource)
+6. `resetProgressState()` → `resetProgressTracking(progressTracking)` (host state mutation)
+7. `vbookPollToken++` (host module-scope mutation)
+8. `resetAnalysisProgress()` → `vbookAnalysisProgress.value = createInitialAnalysisProgress()` (host signal write)
+9. `postJson(...)` (transport)
+10. `isRegenerating.value = false` (host signal write)
+11. `phase.value = 'IDLE'` (host signal write — dual-writer with fileStore)
+12. `errorMessage.value = null` (host signal write — dual-writer with fileStore)
+13. `if (hasAnyProgress()) await applyGenerationResults()` (bridges to navigation + playback)
+
+Of 13 operations, **11 are direct host state mutations or resource management**. Only 1 is transport (the API call). The remaining 1 is the `applyGenerationResults` bridge which crosses into navigation + playback.
+
+---
+
+### 15.4 `applyGenerationResults` in cancel path
+
+`cancelGeneration` calls `applyGenerationResults()` at the end (line 792–794) when there's any in-flight progress. This function:
+- Fetches `GET /book/:id` → BookData
+- Extracts sceneRefs
+- Checks position and anchors if empty
+- Emits `playbackPrepared`
+
+This bridges generation → navigation → playback — the same boundary identified in Step 4 §13.4. It cannot be extracted without the navigation + playback ports AND the position-anchoring logic.
+
+---
+
+### 15.5 `cancelTask` analysis
+
+`cancelTask` is simpler (16 LOC):
+- Reads `bookId.value`
+- If `type === 'vbook'`: clears VBook progress, bumps poll token
+- Calls `postJson(...)` to cancel the worker
+
+But it still mutates host state (`clearVBookProgress`, `vbookPollToken++`). The vbook branch adds conditional logic tied to host-owned signals.
+
+---
+
+### 15.6 Extraction verdict: why NOT READY
+
+| Blocker | Severity | Explanation |
+|---|---|---|
+| **Module-scope state** | **critical** | 5 host-owned mutable state objects must be passed as parameters — the package becomes a thin wrapper calling back into host state |
+| **applyGenerationResults bridge** | **critical** | cancelGeneration ends by bridging to navigation + playback — can't extract without extracting those boundaries too |
+| **phase/errorMessage dual-writer** | **moderate** | cancelGeneration writes `phase = 'IDLE'` and `errorMessage = null` — these signals are shared with fileStore |
+| **11/13 operations are host mutations** | **structural** | The function is本质上 a host-side state teardown sequence with 1 API call — not logic that benefits from extraction |
+| **No new capability unlocked** | **design** | Unlike layer-config (which isolates a read/write API concern), cancel is pure state cleanup — extraction adds indirection without simplifying |
+
+---
+
+### 15.7 What would make cancel extraction READY
+
+1. **Move SSE resources to an explicit state object** (like `ProgressTrackingState`): `SseStreamState { controller, epoch }` owned by host, passed to package
+2. **Move poll token to an explicit state object**: `PollState { token }` owned by host
+3. **Remove applyGenerationResults from cancel path**: host calls it after package returns
+4. **Split cancel into "request" (API) and "teardown" (state)**: package handles the API call, host handles the state resets
+
+Steps 1–2 are mechanical but change the host's internal structure. Step 3 changes behavior (the applyGenerationResults call would move to the caller). Step 4 is the cleanest path but requires rethinking the cancel flow.
+
+---
+
+### 15.8 Recommendation
+
+**Skip cancel extraction.** The cost (5 state objects + host refactoring) outweighs the benefit (removing ~50 LOC of straightforward sequential calls from generateStore).
+
+**Next best candidate: SSE orchestration** — the stream lifecycle (start/stop/reconnect) has a cleaner boundary: host owns the `AbortController` + reconnect loop, package routes events through `@animastor/web-generator`. The SSE port is already designed in Step 4 §13.5. This would extract ~60 LOC with a cleaner port boundary.
+
+---
+
+### 15.9 Verdict
+
+**generation-cancel/session-teardown = NOT READY** (5 blockers, all structural)
+
+**web-generator = NOT READY** (identity/auth/phase blockers unchanged; cancel adds 5 new module-scope state blockers)
+
+---
+
+*Step-6 cancel/teardown audit completed on this branch; no extraction, no code changes, no behavior modified.*
