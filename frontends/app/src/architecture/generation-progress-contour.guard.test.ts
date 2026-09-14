@@ -152,6 +152,37 @@ describe('Generation-progress package extraction — host ownership contract', (
     expect(store).not.toMatch(/^let (generationCompleted|newGenerationPending|importCompleteReceived|timerStartedAt|finalElapsedSeconds)\b/m);
   });
 
+  it('Step 17: nav-pulse lifetime lives in ONE explicit NavPulseState (no bare module-scope lets)', () => {
+    const store = requireRaw(HOST_STORE);
+    // The explicit state object with a single owner.
+    expect(store).toMatch(/interface NavPulseState\s*\{/);
+    expect(store).toMatch(/statusTimer: ReturnType<typeof setTimeout> \| null/);
+    expect(store).toMatch(/watchdog: ReturnType<typeof setInterval> \| null/);
+    expect(store).toMatch(/successSince: number/);
+    expect(store).toMatch(/const navPulse = createNavPulseState\(\)/);
+    // setGenerationStatus arms/clears exclusively through the explicit object.
+    expect(store).toContain('navPulse.statusTimer');
+    expect(store).toContain('navPulse.watchdog');
+    expect(store).toContain('navPulse.successSince');
+    // The bare module-scope let trio is GONE — from every host source file.
+    for (const f of allSourceFiles()) {
+      if (!f.endsWith('.ts') && !f.endsWith('.tsx')) continue;
+      const src = requireRaw(f);
+      for (const bare of ['navStatusTimer', 'navWatchdog', 'successSince']) {
+        expect(
+          src.match(new RegExp(`^let ${bare}\\b`, 'm')),
+          `${f}: module-scope 'let ${bare}' found — nav-pulse lifetime must live in the explicit NavPulseState object (audit §28)`,
+        ).toBeNull();
+      }
+    }
+    // Single definition site.
+    const definers = allSourceFiles()
+      .filter((f) => !f.includes('.test.'))
+      .filter((f) => requireRaw(f).includes('interface NavPulseState'))
+      .sort();
+    expect(definers, 'NavPulseState must have exactly one definition site').toEqual([HOST_STORE]);
+  });
+
   it('generateStore no longer re-exports all domain types — they come from the package', () => {
     const store = requireRaw(HOST_STORE);
     // The old index.ts re-exports are gone; the host now imports from the package.

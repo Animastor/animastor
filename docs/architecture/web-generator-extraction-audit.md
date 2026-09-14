@@ -2679,3 +2679,84 @@ Remaining blockers (exact):
 ---
 
 *Step-16 cancel/session-teardown deep re-audit completed on this branch; audit-only — no production code, no packages, no API changes, no new guards; dead cancel-finalize branch documented behavior-neutrally.*
+
+---
+
+## 28. Step 17 — NavPulseState Preparation (PREP EXECUTED)
+
+**Status:** PREP EXECUTED — the last three bare module-scope lifetime `let`s in generateStore are gone; nav-pulse semantics byte-identical (regression-tested). Preparation only — no package, no extraction, no API/behavior/timing change.  
+**Date:** 2026-09-14  
+**Branch:** `c21.4-physically-extract-analysis-from-backend`  
+**HEAD (baseline):** `74ea2f3e6163f3bf9d8642fb3f718b0551258fd2` ("audit(web): re-audit generation cancel teardown boundary" — Step 16 complete)  
+**Parent:** `2108b3c7b75fec67306297af2aee0414ee212f8a` ("docs(architecture): audit installer extraction readiness" — installer audit landed between Step 16 and Step 17; contains no web-generator changes: 1 file, `docs/architecture/installer-extraction-audit.md`)  
+**diff parent..HEAD (audited baseline):** exactly 1 file — the web-generator audit doc (Step 16). No production changes in the baseline commit.
+
+### 28.1 What was replaced
+
+| Before (bare module-scope) | After (explicit, single owner) |
+|---|---|
+| `let navStatusTimer: Timeout \| null` | `NavPulseState.statusTimer` |
+| `let navWatchdog: Interval \| null` | `NavPulseState.watchdog` |
+| `let successSince = 0` | `NavPulseState.successSince` |
+
+```ts
+interface NavPulseState {
+  statusTimer: ReturnType<typeof setTimeout> | null;
+  watchdog: ReturnType<typeof setInterval> | null;
+  successSince: number;   // wall-clock anchor of the last SUCCESS
+}
+const navPulse = createNavPulseState();  // generateStore — the ONLY owner
+```
+
+### 28.2 Readers/writers audit (pre-change)
+
+All access is module-internal: `setGenerationStatus` (the sole writer — arms/clears everything), `clearNavStatusTimer`, `armNavResetTimer`, `ensureNavWatchdog`, the timeout callback (`if SUCCESS → resetGenerationStatus`), the watchdog callback (`if elapsed ≥ 22s → resetGenerationStatus`), `resetGenerationStatus` (exported; GeneratePage's no-active-work effect). No other file references any of the three bindings (grep-verified). `setGenerationStatus` is also the VBook package's `ports.state.setGenerationStatus` binding and the teardown leg's `setGenerationStatus('IDLE')` — the replacement is 1:1, so all these consumers are untouched.
+
+### 28.3 Semantics preserved (regression-tested)
+
+Pulse ~12s + hold ~10s → auto-reset at 22s total; wall-clock `successSince` anchor (deadline never slides on re-arm); 1s self-healing watchdog that stops as soon as the status leaves SUCCESS (no eternal interval); background-tab throttling covered by the watchdog; Android animator parity unchanged; timings unchanged.
+
+### 28.4 Race/order matrix (verified by the new regression suite)
+
+| Scenario | Verified behavior |
+|---|---|
+| SUCCESS → IDLE (22s) | auto-reset fires exactly at the deadline (21_999ms still SUCCESS, +1ms IDLE) |
+| SUCCESS → SUCCESS (re-arm) | exactly ONE timer: old timeout cleared on re-arm; a stale timeout never resets the NEW SUCCESS; new deadline is 22s from the re-arm (wall-clock anchor) |
+| SUCCESS → RUNNING (restart) | pulse timers cleared; no late auto-reset 30s later |
+| SUCCESS → IDLE (manual reset) then timeout/watchdog callbacks fire | inert — callbacks check current status |
+| cancel during SUCCESS | teardown leg's `setGenerationStatus('IDLE')` invalidates the pulse; watchdog stops |
+| generation restart during SUCCESS | RUNNING clears timers; watchdog stops (not ticking forever) |
+
+### 28.5 Cancel/teardown impact
+
+`teardownGenerationSessionLocal` → `setGenerationStatus('IDLE')` → `clearNavStatusTimer` + watchdog stop — the teardown contour's interaction with the nav pulse now goes through explicit state. **The Step-16 blocker #2 (nav-pulse timer triple is bare module-scope) is RESOLVED.** No hidden lifetime bindings remain anywhere in the cancel/session-teardown contour: every mutable lifetime is now an explicit, single-owner object (`sseStream`, `vbookPollState`, `generationTimer`, `progressTracking`, `navPulse`).
+
+### 28.6 Guards + tests
+
+- Guard (extended `generation-progress-contour.guard.test.ts`, +1 assertion): `NavPulseState` interface with the three fields, `createNavPulseState()` singleton, exclusive `navPulse.*` access in `setGenerationStatus`, the bare `^let navStatusTimer|navWatchdog|successSince` bindings GONE from every host source file, single definition site. (Placed in the existing generation-progress guard — same contour; a separate file would duplicate the raw-source harness.)
+- New regression suite `state/generateStore.navpulse.test.ts` (7 tests, real store + mocked transport + fake timers): drives SUCCESS through the REAL finalize path (`startGeneration` → poll ticks → 10s expiry → `onGenerationFinalized`), pinning the full §28.4 matrix.
+
+### 28.7 Verdict re-evaluation (Step-16 blockers revised)
+
+| Step-16 blocker | Status after Step 17 |
+|---|---|
+| 1. Settle leg writes B6 dual-writer signals | **OPEN** (§25 unchanged — needs the session-status merge design) |
+| 2. Nav-pulse timer triple bare module-scope | **RESOLVED** (this step) |
+| 3. Value question: only extractable piece is the ~15-LOC stateless cancel request leg | **OPEN** — extraction reduces LOC, not ownership complexity |
+
+All ten §27.6 criteria now hold mechanically for the contour's state, but the substantive blockers reduce to B6 and the value question. **Verdict: NO NEXT PHYSICAL EXTRACTION YET** — after NavPulseState there is no remaining preparation that increases readiness: what blocks extraction is (a) the B6 session-status design and (b) the absence of a boundary whose extraction would genuinely simplify ownership. The honest remaining options are the B6 merge design first, or formally closing the web-generator extraction program with the cancel/request leg left host-side deliberately.
+
+### 28.8 Verification
+
+| Check | Result |
+|---|---|
+| Architecture guards (all 9 files, incl. extended generation-progress + session-status) | PASS |
+| Frontend suite | **183/183 PASS** (14 files; +7 nav-pulse regression tests) |
+| Frontend typecheck (`tsc --noEmit`) | CLEAN |
+| Frontend build (`vite build`) | GREEN (405 KB JS) |
+| GitHub Combined Status | statuses: [] — no independent CI confirmation (local checks are not CI) |
+| Production behavior | unchanged — timings, orderings, Android parity, cancel semantics byte-identical |
+
+---
+
+*Step-17 NavPulseState preparation completed on this branch; explicit state object created, semantics regression-tested, Step-16 blocker #2 resolved. No package created, no extraction performed.*

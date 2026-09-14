@@ -105,25 +105,40 @@ export function emitPlaybackPrepared(prep: PlaybackPrepared): void {
 const SUCCESS_PULSE_MS = 12_000;
 const SUCCESS_HOLD_MS = 10_000;
 const SUCCESS_TOTAL_MS = SUCCESS_PULSE_MS + SUCCESS_HOLD_MS;
-let navStatusTimer: ReturnType<typeof setTimeout> | null = null;
-let navWatchdog: ReturnType<typeof setInterval> | null = null;
-/** Wall-clock time of the last SUCCESS set. The auto-reset deadline is anchored
- *  to this timestamp (not to "now" at each arming), so tab-switch navigation or
- *  a re-armed one-shot timer can never push the SUCCESS → IDLE transition
- *  indefinitely into the future. */
-let successSince = 0;
+
+// Explicit host-owned pulse state (Step 17 prep — audit §28): the former bare
+// module-scope `let` trio (`navStatusTimer` / `navWatchdog` / `successSince`)
+// folded into ONE explicit object with a single owner — the last hidden
+// lifetime bindings in the cancel/teardown contour (§27.1). Semantics are
+// byte-identical: wall-clock anchor, one-shot 22s auto-reset, a 1s
+// self-healing watchdog that stops as soon as the status leaves SUCCESS
+// (never ticking forever), and clearTimeout-on-rearm so an old timeout can
+// never reset a NEW SUCCESS.
+interface NavPulseState {
+  statusTimer: ReturnType<typeof setTimeout> | null;
+  watchdog: ReturnType<typeof setInterval> | null;
+  /** Wall-clock time of the last SUCCESS set. The auto-reset deadline is anchored
+   *  to this timestamp (not to "now" at each arming), so tab-switch navigation or
+   *  a re-armed one-shot timer can never push the SUCCESS → IDLE transition
+   *  indefinitely into the future. */
+  successSince: number;
+}
+function createNavPulseState(): NavPulseState {
+  return { statusTimer: null, watchdog: null, successSince: 0 };
+}
+const navPulse = createNavPulseState();
 
 function clearNavStatusTimer(): void {
-  if (navStatusTimer != null) {
-    clearTimeout(navStatusTimer);
-    navStatusTimer = null;
+  if (navPulse.statusTimer != null) {
+    clearTimeout(navPulse.statusTimer);
+    navPulse.statusTimer = null;
   }
 }
 
 function armNavResetTimer(): void {
   clearNavStatusTimer();
-  navStatusTimer = setTimeout(() => {
-    navStatusTimer = null;
+  navPulse.statusTimer = setTimeout(() => {
+    navPulse.statusTimer = null;
     if (generationStatus.value === 'SUCCESS') resetGenerationStatus();
   }, SUCCESS_TOTAL_MS);
 }
@@ -134,10 +149,10 @@ function armNavResetTimer(): void {
  *  it self-heals as soon as timers resume — exactly when the user can see the
  *  icon again). The green indicator can never be left stuck. */
 function ensureNavWatchdog(): void {
-  if (navWatchdog != null) return;
-  navWatchdog = setInterval(() => {
+  if (navPulse.watchdog != null) return;
+  navPulse.watchdog = setInterval(() => {
     if (generationStatus.value !== 'SUCCESS') return;
-    if (Date.now() - successSince >= SUCCESS_TOTAL_MS) resetGenerationStatus();
+    if (Date.now() - navPulse.successSince >= SUCCESS_TOTAL_MS) resetGenerationStatus();
   }, 1000);
 }
 
@@ -145,16 +160,16 @@ function setGenerationStatus(status: GenerationStatus): void {
   clearNavStatusTimer();
   generationStatus.value = status;
   if (status === 'SUCCESS') {
-    successSince = Date.now();
+    navPulse.successSince = Date.now();
     armNavResetTimer();
     ensureNavWatchdog();
   } else {
-    successSince = 0;
+    navPulse.successSince = 0;
     // Watchdog is only needed while SUCCESS is on screen; stop it when the
     // status leaves SUCCESS so it is not left ticking forever in the module.
-    if (navWatchdog != null) {
-      clearInterval(navWatchdog);
-      navWatchdog = null;
+    if (navPulse.watchdog != null) {
+      clearInterval(navPulse.watchdog);
+      navPulse.watchdog = null;
     }
   }
 }
