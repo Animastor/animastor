@@ -1,6 +1,6 @@
 # Web Generator — Extraction Audit (Re-verification)
 
-**Status:** Step-12 identity PHYSICALLY EXTRACTED — `@animastor/web-book-session` created at `packages/animastor-web-book-session/`, verdict PHYSICALLY EXTRACTED / READY (§21); Step-11 identity module preparation EXECUTED (§20); Step-10 identity/session re-audit verdict PREPARATION REQUIRED (§19); Step-9 VBook agent lifecycle extraction COMPLETED — `@animastor/web-generator-vbook` PHYSICALLY EXTRACTED / READY (see §18)  
+**Status:** Step-13 re-audit complete: NO NEXT PHYSICAL EXTRACTION YET (§22); Step-12 identity PHYSICALLY EXTRACTED — `@animastor/web-book-session` created at `packages/animastor-web-book-session/`, verdict PHYSICALLY EXTRACTED / READY (§21); Step-11 identity module preparation EXECUTED (§20); Step-10 identity/session re-audit verdict PREPARATION REQUIRED (§19); Step-9 VBook agent lifecycle extraction COMPLETED — `@animastor/web-generator-vbook` PHYSICALLY EXTRACTED / READY (see §18)  
 **Date:** 2026-09-14  
 **Branch:** `c21.4-physically-extract-analysis-from-backend`  
 **Baseline commit:** `d3403ca1` ("docs(web): align SSE reconnect lifecycle comments" — Step 7 complete; Step-8 re-audit base)  
@@ -14,6 +14,7 @@
 **Step-10 change:** identity/session boundary re-audited post-Step-9 (§19) — verdict PREPARATION REQUIRED; recommended prep step: in-repo identity module split before any `web-book-session` package cut  
 **Step-11 change:** prep step P1 EXECUTED (§20) — identity contour physically moved to in-repo `state/bookSession.ts`; generateStore re-exports 1:1; package cut is now mechanical  
 **Step-12 change:** physical package `@animastor/web-book-session` created at `packages/animastor-web-book-session/` (see §21); the in-repo `state/bookSession.ts` contour deleted; identity verdict PHYSICALLY EXTRACTED / READY  
+**Step-13 change:** post-identity re-audit of the remaining host contour (§22) — no new extraction boundary found; overall verdict remains NOT READY; GenerationPorts verdict KEEP; next candidate: NONE ("NO NEXT PHYSICAL EXTRACTION YET")  
 **Target package:** `@animastor/web-generator`  
 **Target location:** `packages/animastor-web-generator/` (CREATED — physical extraction completed)  
 **Re-verification of:** `web-next-extraction-reconnaissance.md` (§3.1, verdict "NOT READY")  
@@ -1919,3 +1920,244 @@ Regression coverage preserved unmodified: auth logout→stash+clear, login→res
 ---
 
 *Step-12 physical extraction of the book session identity completed on this branch; package created, host wired, old in-repo contour deleted, all tests/guards/typecheck/build green.*
+
+---
+
+## 22. Step 13 — Final Re-Audit of the Remaining "web-generator" Extraction Boundary (post identity extraction)
+
+**Status:** AUDIT ONLY — no production code changes, no packages created, no files moved, no API changed.  
+**Date:** 2026-09-14  
+**Branch:** `c21.4-physically-extract-analysis-from-backend`  
+**HEAD:** `9c5b36fa11a281186836b6204f170ae45186f55d` ("refactor(web): physically extract book session" — Step 12 complete)  
+**Parent:** `e35348c566e54c8bccb953ba2c2728738bb63742` ("docs(architecture): audit remaining backend extraction candidates")  
+**Commits ahead:** 1 (the exact `parent → HEAD` diff was audited, NOT a wide historical baseline)  
+**Changed files (parent → HEAD):** 18 — the Step-12 extraction commit: `docs/architecture/web-generator-extraction-audit.md`, `frontends/app/package.json` + `package-lock.json`, `book-session-package-contour.guard.test.ts` (new; old `book-session-contour.guard.test.ts` deleted), `generation-progress-contour.guard.test.ts` (updated identity pins), `frontends/app/src/state/generateStore.ts` (−28 lines of identity body → re-exports), `frontends/app/src/state/fileStore.ts` (`readPersistedBookSession` consumption), and the new `packages/animastor-web-book-session/` tree (src/index.ts, test/guard.test.ts, test/bookSession.test.ts, tsconfig, tsup, vitest configs, package.json + lockfile, LICENSE, README).
+
+### 22.1 generateStore.ts — new object of analysis (694 LOC at `9c5b36fa`)
+
+`generateStore` is now a pure **host composition/facade**: 100% of decision-rich orchestration slices live in packages. Remaining blocks:
+
+| Lines | Block | Category | Ownership after Step 12 |
+|---|---|---|---|
+| 22–59 | Imports + types (`GenerationStatus`, `PlaybackPrepared`, `SceneRef` re-export) | host composition | generateStore |
+| 61–66 | Identity re-exports (`bookId`, `buildId`, `loadBook`, stash pair, `setGenerationBuildId`, `readPersistedBookSession`) | **Identity** | **`@animastor/web-book-session`** (1:1 re-export; generateStore declares nothing) |
+| 67–79 | `blankBookJustCreated` + playback event bus (`onPlaybackPrepared`/`emitPlaybackPrepared`) | host composition (event bus) | generateStore |
+| 82–155 | Nav-icon SUCCESS pulse machinery (`generationStatus` + pulse/hold/watchdog timers) | UI status | generateStore |
+| 157–167 | `dirtySummary` | host shared state | generateStore |
+| 170–246 | File-slice seams (`stopGenerationSession`, `setRegenerating`, `bumpVBookPollToken`, `markImportIncomplete`) + `vbookPollState` | host composition (seams) | generateStore |
+| 249–262 | `phase`/`errorMessage` (B6 shared session status) | cross-slice shared status | generateStore (fileStore writes via SessionSeam) |
+| 265–345 | Generate-screen signals (`vbookProgress`, `isRegenerating`, analysis progress, layer-config signals, `loadLayerConfig`/`persistLayerConfig`/`refreshAssetsState` wrappers) | host composition | generateStore (domain in `@animastor/web-generator-config`) |
+| 347–412 | Timer + progress-tracking state objects, `computeProgressRows` wrapper | host composition | generateStore (domain in `@animastor/web-generator`) |
+| 414–474 | VBook agent composition (`vbookAgentPorts` + 2 delegation fns, `clearVBookProgress`) | host composition | generateStore (decisions in `@animastor/web-generator-vbook`) |
+| 476–528 | SSE stream host wiring (`startProgressStream`/`stopProgressStream`, epoch + AbortController, `progressEventSink`) | transport composition | generateStore (reconnect/routing in `@animastor/web-generator-sse`) |
+| 530–551 | `startGeneration` | generation orchestration (host) | generateStore |
+| 553–607 | `applyGenerationResults` | generation orchestration (host) | generateStore |
+| 609–644 | `cancelGeneration` | cancel/teardown (host) | generateStore |
+| 646–658 | `cancelTask` | cancel/teardown (host) | generateStore |
+| 660–683 | `checkAndRestoreGenerationState` | restore re-arming (host) | generateStore |
+
+#### A. Identity — re-verified
+
+Zero identity ownership remains in `generateStore.ts` (grep-verified at HEAD):
+
+| Token | Physical location | Host sites |
+|---|---|---|
+| `export const bookId = signal` / `export const buildId = signal` | `packages/animastor-web-book-session/src/index.ts:51–52` ONLY | 0 in `frontends/app/src` (playbackStore's own `bookId`/`buildId` are the player package's internal projection, not session identity — distinct, pre-existing, package-guarded) |
+| `export function loadBook` | book-session package:117 ONLY | 0 in host src |
+| `bookId.value =` / `buildId.value =` (session identity) | book-session package:118–119, 129 ONLY | 0 in host src |
+| `BOOK_STORE_KEY` / `animastor:currentBook` literal | book-session package ONLY | 0 in host production src (only test-file keys) |
+| localStorage session write path (`persistBookSession`/`clearBookSession`/stash keys) | book-session package ONLY | 0 in host src |
+| `stashBookSessionForUser` / `restoreStashedBookSessionForUser` | book-session package ONLY | consumed via re-export |
+| `setGenerationBuildId` (controlled 2nd writer) | book-session package:128 ONLY | called from `startGeneration` |
+
+**Ownership: `@animastor/web-book-session`.** No duplicate identity implementation, no fork, one signal graph. Identity boundary: **CLOSED — PHYSICALLY EXTRACTED / READY** (§21 verdict re-confirmed at HEAD).
+
+#### B. Generation orchestration — remaining flows
+
+| Flow | Domain decision content | Host composition content | State writes | Transport | Navigation/playback | Ports available | Physically extractable without a giant interface? |
+|---|---|---|---|---|---|---|---|
+| `startGeneration` (530–551) | minimal: request mapping (`rebuild_all: true`) + build_id capture + dirty count mapping | RUNNING arming, `newGenerationPending`, timer/stream start, `phase`/`dirtySummary` writes, assets refresh | `generationStatus`, `isRegenerating`, `progressTracking`, `phase`, `dirtySummary` | 1 POST `/regenerate` | none | GenerationStatePort/IdentityPort/TransportPort exist in generationPorts.ts (design-only) | **NO** — writes the B6 dual-writer `phase` + file-owned `dirtySummary`; body is ~20 LOC mostly host arming → extraction = thin adapter |
+| `checkAndRestoreGenerationState` (660–683) | restore-if-active-workers decision (2 signals merged) | full session re-arm (timer/SSE/status/tracking/`phase`) | 5 host writes | 2 GET (progress-panel, worker counts) | none | transport+state callbacks | **NO** — it is host re-composition of already-extracted parts; extraction = artificial wrapper |
+| `cancelGeneration` (609–644) | backend cancel call only | 11/13 ops are host state teardown incl. B6 `phase`/`errorMessage` writes + `applyGenerationResults` bridge | 9 host writes | 1 POST `/cancel-generation` | via `applyGenerationResults` | progress port exists (design-only) | **NO** — see §22.2 |
+| `cancelTask` (646–658) | none (pass-through payload) | vbook branch token bump + `clearVBookProgress` | 2 host writes | 1 POST `/cancel-worker` | none | poll contract exists (in use) | **NO** — thin transport adapter |
+| `stopGenerationSession` (201–208) | none | teardown composition over host-owned resources | token/SSE/timer/status/progress | none | none | n/a (host seam consumed by fileStore) | **NO** — pure host seam |
+| `applyGenerationResults` (553–607) | anchor-position decision + zero-scenes guard | fetch+sceneRefs binding, playback emit | none direct | 1 GET `/book/:id` | `navigateTo` + `emitPlaybackPrepared` | navigation/playback ports designed only | **NO** — see §22.4 |
+
+**Verdict: no remaining flow satisfies the "no giant interface" test.** Each flow is either (a) dominated by host state writes to dual-writer/file-owned signals, or (b) a thin transport adapter. Extracting any of them today creates an artificial wrapper around host state — the exact outcome the audit constraint forbids.
+
+### 22.2 Cancel / session teardown — re-audit (Step-6 blockers re-checked)
+
+Current inventory of the nine teardown-relevant lifetimes:
+
+| Concern | Physical owner | Explicit state? |
+|---|---|---|
+| SSE lifetime (AbortController + epoch) | generateStore (`startProgressStream`/`stopProgressStream`) | NO — two module-scope bindings (`sseController`, `sseEpoch`) |
+| VBook poll lifetime | generateStore (`vbookPollState = createVBookPollState()`) | YES — explicit object |
+| Generation timer | generateStore (`generationTimer`) | YES — explicit object |
+| Progress tracking state | generateStore (`progressTracking`) | YES — explicit object |
+| Generation status (`generationStatus` + nav pulse timers) | generateStore | NO — signal + two module-scope timer handles |
+| Regeneration state (`isRegenerating`) | generateStore | signal only |
+| Cancellation request (`cancelGeneration`/`cancelTask`) | generateStore | — |
+| Teardown (`stopGenerationSession`) | generateStore | — |
+| Stale session protection (epoch + token compares) | generateStore + packages (compare) | mixed |
+
+**Step-6 blocker status (§15.2, re-derived at HEAD):**
+
+1. ~~"SSE controller/epoch are module-scope"~~ — **STILL OPEN** (`sseController`/`sseEpoch` remain bare module-scope `let`s).
+2. ~~"poll token is a module-let"~~ — **RESOLVED at Step 9** (`vbookPollState` explicit object).
+3. "5 mutable state objects must be passed as parameters" — **DOWNGRADED**: 3 of 5 are now explicit objects (`vbookPollState`, `progressTracking`, `generationTimer`); 2 remain module-scope (SSE pair + nav-pulse timer handles).
+4. "applyGenerationResults bridge in cancel path" — **STILL OPEN** (§22.4: still host-side, still bridges navigation+playback).
+5. "phase/errorMessage dual-writer writes in cancel path" — **STILL OPEN** (B6 unchanged).
+
+**Verdict: PREPARATION REQUIRED.** A self-contained physical boundary does NOT yet exist: cancel/teardown writes the B6 dual-writer signals and bridges into `applyGenerationResults` (host legs), and the SSE resource pair is still module-scope. It is no longer NOT READY (Step 9 removed the token blocker and explicit state objects now cover 3 of 5 concerns), but extracting now would produce a package calling back into host state for the majority of its operations. Required prep (in order): (a) `SseStreamState { controller, epoch }` explicit object; (b) resolve the B6 phase/errorMessage ownership; (c) split cancel into "request" (transport) vs "teardown" (host state) with `applyGenerationResults` invoked by the caller, not inside the extracted slice.
+
+### 22.3 `phase` / `errorMessage` — ownership audit
+
+Production writers/readers (grep-verified at HEAD; tests excluded):
+
+| File | Writes | Reads |
+|---|---|---|
+| `state/generateStore.ts` | `phase`: SCENE_READY (startGeneration), IDLE (cancelGeneration), GENERATING (checkAndRestore); `errorMessage`: null (cancelGeneration) | — |
+| `state/fileStore.ts` (via SessionSeam) | `phase`: LOADING_BOOK / IMPORTING_TXT / SCENE_READY / IDLE; `errorMessage`: set on 3 failure paths, null on 3 flows | — |
+| `app/fileAdapters.ts` | none (passes the signal objects into the SessionSeam by reference) | wires |
+| `app/AppShell.tsx` | none | `phase` (desktop bounce mirror) |
+| `pages/GeneratePage.tsx` | none | `phase` (currentPhase) |
+| `state/__tests__`, `fileStore.test.ts`, `fileAdapters.test.ts` | tests only | tests only |
+
+**Classification:** `phase`/`errorMessage` are NOT generation state, NOT session status, NOT file-flow status — they are a **cross-slice UI status** shared by two writers (generation slice + file slice) and two readers (AppShell bounce, GeneratePage). The two writer sets are interleaved in time (file flows settle `phase` before/after generation flows write it); a split into per-slice signals would fork the source of truth or require a merge layer with priority semantics — new behavior, not extraction.
+
+**Verdict: HOST-OWNED (stay in generateStore).** There is no natural standalone boundary after the identity extraction: a "session status" package would own two signals written by two host modules — an artificial wrapper. The §19.6-D "phase/error seam" idea is explicitly **rejected** as a next step. No SessionStatusPort created (per constraint). `phase`/`errorMessage` remain the last genuinely cross-slice shared state and are a permanent host concern unless/until a full session-status design exists.
+
+### 22.4 `applyGenerationResults` — re-decomposition (553–607, 55 LOC)
+
+| # | Block | LOC | Production consumers | Dependencies | Ownership | Extraction readiness |
+|---|---|---|---|---|---|---|
+| 1 | Pure/data extraction: guard (`isRegenerating` read → `stopTimer`) + `GET /book/:id` + `sceneRefs(bookData)` + zero-scenes guard | ~14 | computeProgressRows finalize, vbookAgentPorts.onGenerationFinalized, cancelGeneration | api/client getJson, api/models sceneRefs, bookId, generationTimer | transport+pure — same shape as `@animastor/web-generator-config` fns | Extractable, but ~10 LOC of fetch+map — a thin adapter on its own |
+| 2 | Generation result application | ~2 (implicit: none — results are the fetched book itself) | — | — | host | n/a — the "application" IS blocks 3+5 |
+| 3 | Navigation: position anchor (read `position.value.chapterId`, `navigateTo` first cover scene) | ~10 | via callers | positionStore (read+write) | **host only** — reads host-owned position signal | NOT portable without position port + read access |
+| 4 | Playback: `emitPlaybackPrepared({ softRefresh: true })` | ~5 | via callers | playback bus (host) | **host only** — host-owned bus (§6 blocker 4) | NOT portable |
+| 5 | File adapters | 0 | — | — | — | none present |
+| 6 | Host state mutation: `stopTimer` leg + error catch | ~4 | via callers | generationTimer | host | thin |
+
+**Did a small domain core appear?** No. Blocks 3+4+6 (host legs) still outweigh block 1 (extractable core ~10–14 LOC). The function remains a **host composition point by design**: the package side decides WHEN (via `onGenerationFinalized`, §18), the host decides WHAT (navigation + playback). §17.2/§19.7 verdict **re-confirmed: NOT READY as a standalone extraction** — no change post identity extraction; identity was not a dependency of any block. It is correctly host-side behind the `onGenerationFinalized` seam.
+
+### 22.5 GenerationPorts re-evaluation (`frontends/app/src/app/generationPorts.ts`, 147 LOC, unchanged)
+
+Port-by-port reality check against current production wiring:
+
+| Port | Designed | Actual production use today | Status |
+|---|---|---|---|
+| `GenerationIdentityPort` | getBookId/getBuildId getters | superseded — identity is now a package with real signals; consumers read `bookId.value` directly via re-exports; extracted packages use their own slice-local identity ports (`VBookIdentityPort` etc.) | **OBSOLETE for new extractions** (harmless as design record) |
+| `GenerationTransportPort` | getJson/postJson/postJsonLong/putJson | partially realized — slice-local transport ports shipped in vbook/config packages | **SIMPLIFY LATER** |
+| `GenerationSsePort` | startStream/stopStream AsyncIterable | partially realized — `SseStreamPort` shipped in web-generator-sse with a different (callback) shape | **SIMPLIFY LATER** |
+| `GenerationNavigationPort` / `GenerationPlaybackPort` | navigateTo / emitPlaybackPrepared | unused in production; host binds these directly in `applyGenerationResults`/`vbookAgentPorts` | design-only, will be needed if a finalize slice is ever extracted |
+| `GenerationStatePort` | setPhase/setErrorMessage/setGenerationStatus/... | partially realized via slice-local state callbacks (`VBookHostState`) | **SIMPLIFY LATER** |
+| `GenerationConfigPort` | 8 setters | fully superseded — layer-config extraction shipped its own port shape | **OBSOLETE for new extractions** |
+| `GenerationProgressPort` | reset/clear/bump/mark/stop | fully realized as the fileStore `GenerationResetSeam` + host exports | realized in host seams, not here |
+
+**Is GenerationPorts becoming a giant ambient interface?** No — 147 LOC, 8 small interfaces, zero production imports, frozen by `generation-ports.guard.test.ts` (9/9 PASS). It is a design record, not an ambient dependency. Its slice-local realizations (ProgressRowContext, VBookAgentPorts, SseStreamPort, config ports) proved the port mechanics; the composite bundle is now largely covered by shipped reality.
+
+**Verdict: KEEP** (as design documentation; do NOT delete — guards pin it and §13 design intent is referenced by shipped package ports). Sub-verdicts: `GenerationIdentityPort`/`GenerationConfigPort` = OBSOLETE as future guidance; transport/SSE/state = SIMPLIFY LATER (prefer the shipped slice-local port shapes as templates); navigation/playback = KEEP for a potential future finalize-slice. **SPLIT LATER not required** — the file already IS the split, and no orchestration package imports it.
+
+### 22.6 Dependency / consumer graph (current HEAD)
+
+```
+generateStore (host facade, 694 LOC)
+ ├─ identity  → @animastor/web-book-session   (re-exports; +fileStore consumes readPersistedBookSession)
+ ├─ progress  → @animastor/web-generator      (computeProgressRows, analysis, timer domain)
+ ├─ config    → @animastor/web-generator-config (layer-config + assets domain)
+ ├─ SSE       → @animastor/web-generator-sse  (runSseStream; host keeps AbortController/epoch)
+ ├─ VBook     → @animastor/web-generator-vbook (vbookAgentPorts; decisions in package)
+ └─ remaining host orchestration: startGeneration, checkAndRestoreGenerationState,
+    cancelGeneration, cancelTask, stopGenerationSession, applyGenerationResults,
+    nav-icon pulse, playback bus, B6 phase/errorMessage, file-slice seams
+```
+
+Package-internal edges (acyclic): `web-generator-vbook → web-generator`; `web-generator-sse → web-generator`; config/book-session depend on nothing but `@preact/signals`.
+
+- **Reverse dependencies:** none — no package imports generateStore or any host module (grep-verified; web-player/web-navigator reference generateStore only in comments; they receive identity/`onPlaybackPrepared` through host adapters).
+- **Cycles:** none. The former generateStore⇄playbackStore cycle stays dissolved (playbackStore now lives in web-player; fileStore's `player` seam carries the release call). generateStore does not import playbackStore.
+- **Deep imports:** zero — all host consumption is through package roots (guard-pinned).
+- **Duplicated implementations:** zero identity duplicates (§22.1-A); `animastor:currentBook` literal exists only in the package + test files.
+- **Host-only responsibilities:** identity re-export surface, B6 phase/errorMessage, playback bus, nav-icon pulse, cancel/teardown, `applyGenerationResults` composition, `checkAndRestoreGenerationState` re-arming, file-slice seams.
+- **Remaining package candidates:** none that pass the no-artificial-wrapper test (§22.1-B).
+
+### 22.7 Production consumer audit
+
+All 10 direct production consumers of `generateStore`, re-derived at HEAD:
+
+| Consumer | Consumes | Why it still depends on the host store | Future package-API migration | Extraction risk if generateStore were extracted whole NOW |
+|---|---|---|---|---|
+| `pages/GeneratePage.tsx` | ~20 symbols: signals + all actions + timer helpers | The Generate screen IS the generation slice's UI | could move with a UI extraction; not valuable alone | premature — would drag the B6 cluster into a package |
+| `app/AppShell.tsx` | `bookId`, `generationStatus`, `phase`, `blankBookJustCreated` | cross-slice shell mirrors (nav pulse + bounce) | could consume a status package — none exists | would force a SessionStatus design prematurely |
+| `app/fileAdapters.ts` | 14 symbols incl. identity by reference | the SessionSeam/GenerationResetSeam composition root | partially replaceable by book-session package imports today | premature — seams are the deliberate B1/B6 boundary |
+| `app/playerAdapters.ts` / `app/navigatorAdapters.ts` | `bookId`, `buildId`, `onPlaybackPrepared` | PlayerPorts/NavigatorPorts wiring | identity via package + bus via port — feasible later | would invert the producer bus |
+| `pages/EditPage.tsx` | `bookId`, `buildId`, `dirtySummary`, `onPlaybackPrepared` | dirty indicator + soft-refresh subscription | identity via package feasible; bus stays host | would drag the bus into the package |
+| `pages/SettingsPage.tsx` | `bookId`, `resetProgressState` | clear-cache flow resets generation tracking | needs the progress seam to exist as package API | thin, but depends on host state object |
+| `pages/AiAssistantPage.tsx` | `bookId` | book-scoped AI context | identity via package — feasible NOW | low risk but zero value alone |
+| `state/authStore.ts` | stash pair (via re-export) | login/logout session isolation | could import the book-session package directly | would invert auth→identity only if the bus moved too |
+| `main.tsx` | `bookId` | login re-entry guard | identity via package — feasible NOW | low risk |
+| `state/fileStore.ts` | no direct import — injected seams only | deliberate B1/B6 seam boundary | n/a (already port-shaped) | n/a |
+
+**Risk assessment:** extracting the REMAINING generateStore whole today would force every consumer through a giant ambient interface covering identity re-exports + B6 signals + bus + seams — precisely the artificial-wrapper outcome. The consumers that could already migrate to `@animastor/web-book-session` directly (AiAssistantPage, main.tsx, authStore) are micro-migrations with no architectural gain while generateStore remains their composition point.
+
+### 22.8 Architecture guards — currency check
+
+| Guard | Reflects current architecture? | Updated in this commit? |
+|---|---|---|
+| `generation-progress-contour.guard.test.ts` | YES — re-pinned to the `@animastor/web-book-session` re-export surface (Step 12) | NO (current) |
+| `book-session-package-contour.guard.test.ts` | YES — 15 rules over the physical package + host consumption graph (Step 12) | NO (current) |
+| `generation-ports.guard.test.ts` | YES — still pins the design-only status correctly (no production imports of the ports file) | NO (current) |
+| `vbook-contour.guard.test.ts` | YES — pins `applyGenerationResults` host-side, root-only consumption, explicit poll state | NO (current) |
+| `file-navigator-contour.guard.test.ts` | YES — file/navigator boundaries unchanged by identity extraction | NO (current) |
+| `player-contour.guard.test.ts` | YES — player boundary unchanged | NO (current) |
+| `local-ai-contour.guard.test.ts` | YES — unrelated contour, unchanged | NO (current) |
+
+All 8 host architecture guards pass (within the 159/159 frontend run). No guard rewrite required: the guards reflect the post-Step-12 architecture accurately.
+
+### 22.9 Verification (exact, at `9c5b36fa`)
+
+| Check | Result |
+|---|---|
+| `git rev-parse HEAD` / `HEAD~1` | `9c5b36fa…` / `e35348c5…`; diff audited is exactly `e35348c5 → 9c5b36fa` (18 files) |
+| Identity ownership grep (signals/loadBook/key/buildId writes) | 0 host production sites; 1 physical owner (package) |
+| localStorage session grep | package only + test keys; theme/AppShell use unrelated keys |
+| `applyGenerationResults` consumers grep | 1 definition (host), 3 host call sites, 1 package seam, guards pin host-side |
+| phase/errorMessage writers/readers grep | generateStore (4 phase writes, 1 errorMessage write) + fileStore via seam (14 writes); readers AppShell/GeneratePage |
+| Production import graph | 10 direct consumers + fileStore seams; zero package→host edges; zero deep imports; zero cycles |
+| Existing architecture tests | 8/8 guard files PASS |
+| Frontend tests | **159/159 PASS** (13 files) |
+| Package tests (`@animastor/web-book-session`) | **28/28 PASS** (25 unit + guard) |
+| Frontend typecheck (`tsc --noEmit`) | CLEAN |
+| Frontend build (`vite build`) | GREEN (405 KB JS) |
+| GitHub Combined Status | statuses: [] — no independent CI confirmation available at this HEAD |
+| Production code changes in this Step-13 commit | NONE (audit doc only) |
+
+### 22.10 Verdicts summary
+
+| Question | Verdict |
+|---|---|
+| Identity ownership | **PHYSICALLY EXTRACTED / READY** — `@animastor/web-book-session` is the single owner; generateStore is a re-export surface |
+| Cancel / session teardown | **PREPARATION REQUIRED** — SSE resource pair still module-scope; B6 writes + applyGenerationResults bridge inside cancel; 3 of 5 Step-6 state blockers resolved |
+| `phase`/`errorMessage` | **HOST-OWNED (stay)** — cross-slice UI status, dual-writer; no natural package boundary; SessionStatusPort rejected |
+| `applyGenerationResults` | **NOT READY standalone** — host legs (navigation anchor + playback emit + timer) still dominate; extractable core ~10–14 LOC thin adapter; correctly host-side behind `onGenerationFinalized` |
+| GenerationPorts | **KEEP** — design record, guard-pinned, not ambient; identity/config ports obsolete as guidance, transport/SSE/state = simplify later |
+| Remaining orchestration flows | **NOT extractable individually** — each is host-state-dominated or a thin adapter |
+| **Next extraction candidate** | **NO NEXT PHYSICAL EXTRACTION YET** |
+| Overall `@animastor/web-generator` | **NOT READY** — identity extraction did NOT unlock the remaining contour; what remains is host composition + the B6 dual-writer cluster + cancel/restore composition with no decision-rich, single-consumer slice left |
+
+### 22.11 Blockers for full `web-generator` extraction (current, exact)
+
+1. **phase/errorMessage dual-writer (B6)** — cross-slice UI status written by generation + file slices, read by AppShell/GeneratePage; splitting or packaging forks the source of truth (§22.3).
+2. **Host composition core** — `startGeneration`/`checkAndRestoreGenerationState`/`cancelGeneration`/`cancelTask`/`stopGenerationSession` are host-state-dominated sequences (§22.1-B); extraction yields wrappers, not packages.
+3. **applyGenerationResults host legs** — position anchor + playback emit are host-only concerns; the extractable core is too thin to justify a package (§22.4).
+4. **SSE resource pair** — `sseController`/`sseEpoch` remain module-scope; a `SseStreamState` object is the mechanical prerequisite for any future teardown slice (§22.2).
+5. **Producer bus inversion risk** — `onPlaybackPrepared` is consumed by Player/Navigator/Edit through host adapters; moving the producer inverts the dependency direction (§6 blocker 4, unchanged).
+
+### 22.12 Recommended next step
+
+None — **"NO NEXT PHYSICAL EXTRACTION YET."** Every decision-rich slice (progress domain, layer-config, SSE reconnect, VBook agent lifecycle, identity/session) is now physically extracted and guard-pinned. The remaining contour is host composition whose extraction would create artificial wrappers around host state. If a future step wants mechanical progress, the only honest prerequisite work is: (1) an explicit `SseStreamState` object (prep, not extraction), and (2) a cross-slice session-status design that resolves B6 without forking `phase`/`errorMessage`. Until one of those lands, the "web-generator" extraction program is **complete for now**: 5 packages extracted (web-generator, web-generator-config, web-generator-sse, web-generator-vbook, web-book-session), all boundaries guard-pinned, overall verdict NOT READY (and stable).
+
+---
+
+*Step-13 final re-audit completed on this branch; audit-only — no production code, no packages, no file moves, no API changes, no guard rewrites. Only this document changed.*
