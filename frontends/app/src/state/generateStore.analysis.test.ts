@@ -28,6 +28,7 @@ vi.mock('../api/client', () => ({
   })),
   putJson: vi.fn(async () => ({})),
   postJson: vi.fn(async () => ({})),
+  postJsonLong: vi.fn(async () => ({})),
   deleteJson: vi.fn(async () => ({})),
   getBlob: vi.fn(async () => new Blob([])),
   retryWithBackoff: vi.fn(async (fn: () => Promise<unknown>) => fn()),

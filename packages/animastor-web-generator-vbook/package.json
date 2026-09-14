@@ -1,0 +1,60 @@
+{
+  "name": "@animastor/web-generator-vbook",
+  "version": "0.1.0",
+  "description": "VBook agent lifecycle orchestration for Animastor web frontend. Owns the real VBook decision logic — bootstrap-vs-next-window choice, agent-status polling loop, paused/inactive/safety-cap terminal-state classification — parameterized by injected capabilities (identity getter, HTTP transport, poll state, host callbacks). No host stores, signals, api/client, navigation, or playback dependencies; SSE initiation arrives as an injected callback and finalization hands back to the host via onGenerationFinalized.",
+  "keywords": [
+    "animastor",
+    "generator",
+    "vbook",
+    "agent",
+    "lifecycle",
+    "orchestration",
+    "preact",
+    "web-ui",
+    "frontend",
+    "domain-logic",
+    "ports-and-adapters"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+  },
+  "dependencies": {
+    "@animastor/web-generator": "file:../animastor-web-generator"
+  },
+  "devDependencies": {
+    "happy-dom": "^20.14.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Animastor/animastor.git",
+    "directory": "packages/animastor-web-generator-vbook"
+  }
+}

@@ -23,7 +23,7 @@
 import { signal } from '@preact/signals';
 import { getJson, postJson, postJsonLong, putJson, sse } from '../api/client';
 import type {
-  BookData, BookStatus, DiffSummary,
+  BookData, DiffSummary,
   ProgressPanelResponse, RegenerateResponse, WorkerCounts,
 } from '../api/models';
 import {
@@ -36,13 +36,18 @@ import type { SceneRef } from '../api/models';
 import { navigateTo, position } from './positionStore';
 import { vbookStageLabel } from '../app/i18n';
 import {
-  applyAgentStatus, applyAnalysisEvent, analysisOverallPercent as analysisOverallPercentDomain,
-  computeProgressRows as computeProgressRowsDomain, createAnalyzingVBookProgress,
-  createGenerationTimer, createIdleVBookProgress, createInitialAnalysisProgress,
-  createProgressTrackingState, elapsedSeconds, formatTimerText,
+  applyAnalysisEvent, analysisOverallPercent as analysisOverallPercentDomain,
+  computeProgressRows as computeProgressRowsDomain, createGenerationTimer, createIdleVBookProgress,
+  createInitialAnalysisProgress, createProgressTrackingState, elapsedSeconds, formatTimerText,
   hasAnyProgress as hasAnyProgressDomain, resetProgressTracking,
   startGenerationTimer, stopGenerationTimer,
 } from '@animastor/web-generator';
+import {
+  checkAgentStatus as checkVBookAgentStatusDomain,
+  createVBookPollState,
+  startVBookGeneration as startVBookGenerationDomain,
+} from '@animastor/web-generator-vbook';
+import type { VBookAgentPorts } from '@animastor/web-generator-vbook';
 import type {
   AgentStatusLike, AnalysisProgress, AnalysisStatus, AnalysisTaskRow,
   GenerationTimerState, ProgressEventSink, ProgressPanelState, ProgressTrackingState,
@@ -223,12 +228,17 @@ export function setDirtySummary(s: DiffSummary | null): void { dirtySummary.valu
 //  fileStore's `player` seam — this module no longer imports playbackStore.
 // ═══════════════════════════════════════════════════════════════
 
+// VBook poll-session state (host-owned, explicit object). Declared before the
+// seams because they bump the token; the full agent-ports composition that
+// consumes it lives below (see "VBook agent lifecycle").
+const vbookPollState = createVBookPollState();
+
 /** Full generation-session teardown used by fileStore.closeBook: stops the
  *  SSE progress stream + wall-clock timer, invalidates the VBook agent poll,
  *  clears in-flight worker tracking and the nav-icon generation status.
  *  (Previously inlined in the File-slice closeBook.) */
 export function stopGenerationSession(): void {
-  vbookPollToken++;
+  vbookPollState.token++;
   stopProgressStream();
   stopTimer();
   setGenerationStatus('IDLE');
@@ -238,9 +248,10 @@ export function stopGenerationSession(): void {
 /** Mirror isRegenerating (File open flows reset it before a new transition). */
 export function setRegenerating(v: boolean): void { isRegenerating.value = v; }
 
-/** Invalidate an in-flight VBook agent poll (module-scope token bump — the
- *  poller aborts on token mismatch; used by every File open flow). */
-export function bumpVBookPollToken(): void { vbookPollToken++; }
+/** Invalidate an in-flight VBook agent poll (poll-token bump on the explicit
+ *  VBookPollState — the poller aborts on token mismatch; used by every File
+ *  open flow). */
+export function bumpVBookPollToken(): void { vbookPollState.token++; }
 
 /** Mark the SSE import_complete handshake as not-yet-received so a stale
  *  latch from the previous import can't instantly finish the next poll. */
@@ -445,42 +456,54 @@ export function computeProgressRows(
   }, panel, vbookProg, labels);
 }
 
-// ── VBook agent status → structured VBookProgress ──
-// (pure mapping lives in generationProgress/vbookProgress.ts applyAgentStatus)
-function updateVBookProgress(status: AgentStatusLike): void {
-  vbookProgress.value = applyAgentStatus(vbookProgress.value, status);
-}
+// ── VBook agent lifecycle (host composition over @animastor/web-generator-vbook) ──
+// The orchestration DECISIONS (bootstrap-vs-next-window, agent-status merge,
+// paused/inactive/safety-cap terminal classification, stale-token aborts)
+// physically live in packages/animastor-web-generator-vbook. THIS store is
+// only the composition seam: it binds host-owned capabilities (identity
+// getter, api/client transport, poll-token authority, signal reads/writes,
+// timer + SSE stream starts) into the package's ports. The poll token
+// authority is the explicit VBookPollState object declared with the File
+// seams above — bumpVBookPollToken / stopGenerationSession / cancelTask
+// write it; the package's loops read it through the poll contract.
+const vbookAgentPorts: VBookAgentPorts = {
+  identity: { getBookId: () => bookId.value },
+  transport: { getJson, postJsonLong },
+  poll: {
+    getPollToken: () => vbookPollState.token,
+    bumpPollToken: () => { return ++vbookPollState.token; },
+  },
+  state: {
+    getVBookProgress: () => vbookProgress.value,
+    setVBookProgress: (p) => { vbookProgress.value = p; },
+    setGenerationStatus,
+    getIsRegenerating: () => isRegenerating.value,
+    setIsRegenerating: (v) => { isRegenerating.value = v; },
+    setNewGenerationPending: (v) => { progressTracking.newGenerationPending = v; },
+    setImportCompleteReceived: (v) => { progressTracking.importCompleteReceived = v; },
+    getImportCompleteReceived: () => progressTracking.importCompleteReceived,
+  },
+  lifecycle: {
+    startTimer,
+    stopTimer,
+    startStream: startProgressStream,
+    onVBookCleared: clearVBookProgress,
+    // Host-owned finalization leg (applyGenerationResults stays HERE):
+    // fetch/extract final book state, position/anchor checks, navigation
+    // decision, playback notification. The package decides WHEN the window
+    // finalized; the host decides WHAT happens next.
+    onGenerationFinalized: () => applyGenerationResults(),
+  },
+};
 
 /** Poll /agent-status once and update vbookProgress (checkVBookAgentStatus). */
 export async function checkVBookAgentStatus(): Promise<VBookProgress> {
-  const bid = bookId.value;
-  if (!bid) return vbookProgress.value;
-  try {
-    const status = await getJson<{
-      active: boolean; session_status?: string | null; progress_msg?: string | null; step_type?: string | null;
-      window_total_scenes?: number | null; window_size?: number | null;
-      window_scene_index?: number | null; created_scenes?: number | null;
-      window_start_scene?: number | null; total_scenes?: number | null; window_index?: number | null;
-    }>(`/book/${encodeURIComponent(bid)}/agent-status`);
-    // 'paused' = the CURRENT window finished and the agent is idle, waiting for
-    // the user to press "Генерировать далее" (manual continuation) — that is a
-    // terminal state for this window, so it counts as inactive and finalizes
-    // COMPLETED with the real window counter (e.g. "3/3", not "1/1").
-    if (status.active && status.progress_msg != null) {
-      updateVBookProgress(status);
-    } else if (!status.active) {
-      const current = vbookProgress.value;
-      if (current.stage === 'ANALYZING' || current.stage === 'CREATING_SCENES') {
-        // The agent just finished — re-read the now-saved window counters
-        // (window_total_scenes from window_data) before marking COMPLETED, so
-        // the final counter reflects the real window size (e.g. "3/3", or
-        // "2/2" for a partial final window), not the mid-pipeline estimate.
-        if (status.progress_msg != null) updateVBookProgress(status);
-        vbookProgress.value = { ...vbookProgress.value, stage: 'COMPLETED' };
-      }
-    }
-  } catch { /* keep current */ }
-  return vbookProgress.value;
+  return checkVBookAgentStatusDomain(vbookAgentPorts);
+}
+
+/** Start VBook AI-agent generation (bootstrap / bootstrap-next-window + poll). */
+export async function startVBookGeneration(): Promise<void> {
+  await startVBookGenerationDomain(vbookAgentPorts);
 }
 
 export function clearVBookProgress(): void {
@@ -587,144 +610,6 @@ export async function startGeneration(req: GenerationRequest): Promise<Generatio
   }
 }
 
-let vbookPollToken = 0;
-
-/** Start VBook AI-agent generation (bootstrap / bootstrap-next-window + poll). */
-export async function startVBookGeneration(): Promise<void> {
-  const bid = bookId.value;
-  if (!bid) return;
-  setGenerationStatus('RUNNING');
-  // VBook is part of the same generation session as the GPU stages — mark the
-  // session regenerating (mirrors startGeneration) so the shared wall-clock
-  // timer is NOT stopped when the VBook agent finishes while audio/image/video
-  // stages are still running (Android GenerateViewModel fix, 1:1 parity).
-  isRegenerating.value = true;
-  progressTracking.newGenerationPending = true;
-  vbookProgress.value = createAnalyzingVBookProgress();
-  // Manual per-window mode: one click = one window = one generation. The timer
-  // always starts fresh for the new window (no survival across windows); the
-  // previous window's finalise already stopped it.
-  startTimer();
-  startProgressStream(bid);
-  progressTracking.importCompleteReceived = false;
-  const token = ++vbookPollToken;
-  try {
-    const status = await getJson<BookStatus>(`/book/${encodeURIComponent(bid)}/status`).catch(() => null);
-    const needsBootstrap = status?.ready !== true;
-    // These routes BLOCK for the whole AI window (minutes) — a 30s default
-    // timeout would abort them client-side while the backend keeps generating,
-    // freezing the progress block and timer. Use the long timeout (15 min,
-    // matching the Android OkHttp config).
-    if (needsBootstrap) {
-      await postJsonLong(`/book/${encodeURIComponent(bid)}/bootstrap`);
-    } else {
-      await postJsonLong(`/book/${encodeURIComponent(bid)}/bootstrap-next-window`);
-    }
-    await pollVBookProgress(bid, token);
-  } catch (e) {
-    if (token !== vbookPollToken) return;
-    console.warn('startVBookGeneration failed:', (e as Error).message);
-    // A client-side abort (timeout/network blip) does NOT stop the backend
-    // agent — the bootstrap route keeps processing the window. Before tearing
-    // the progress UI down, reconcile with the real agent state: if it is still
-    // running, keep the block + timer alive and let the poller track it to
-    // completion. Only tear down on a genuine failure (no active session).
-    try {
-      const status = await getJson<{ active: boolean; session_status?: string | null }>(`/book/${encodeURIComponent(bid)}/agent-status`);
-      // Keep the UI alive if the agent is still running, or if the window
-      // already finished (paused) — pollVBookProgress finalizes a paused
-      // window immediately with the real counter (green "3/3").
-      if (status.active || status.session_status === 'paused') {
-        await pollVBookProgress(bid, token);
-        return;
-      }
-    } catch { /* agent-status unavailable — fall through to teardown */ }
-    clearVBookProgress();
-    stopTimer();
-  }
-}
-
-async function pollVBookProgress(bId: string, token: number): Promise<void> {
-  let consecutiveInactive = 0;
-  const maxInactive = 2;
-  // Safety net against a stuck backend (agent-status reports active forever).
-  // NOT a generation deadline: the loop terminates on its own once the agent
-  // reports inactive twice. Long multi-window runs must never be cut short by
-  // this cap, so it sits far above any realistic generation.
-  const maxPollMs = 60 * 60 * 1000;
-  const startTime = Date.now();
-  let safetyCapTripped = false;
-  while (consecutiveInactive < maxInactive) {
-    if (token !== vbookPollToken) return;
-    if (progressTracking.importCompleteReceived) {
-      vbookProgress.value = { ...vbookProgress.value, stage: 'COMPLETED' };
-      break;
-    }
-    if (Date.now() - startTime > maxPollMs) {
-      safetyCapTripped = true;
-      break;
-    }
-    await new Promise((r) => setTimeout(r, 2000));
-    if (token !== vbookPollToken) return;
-    try {
-      const status = await getJson<{
-        active: boolean; session_status?: string | null; progress_msg?: string | null; step_type?: string | null;
-        window_total_scenes?: number | null; window_size?: number | null;
-        window_scene_index?: number | null; created_scenes?: number | null;
-        window_start_scene?: number | null; total_scenes?: number | null; window_index?: number | null;
-      }>(`/book/${encodeURIComponent(bId)}/agent-status`);
-      // 'paused' = the current window is complete; the agent is idle, waiting
-      // for the user to press "Генерировать далее" (manual continuation — one
-      // window per click). Finalize this window immediately with the real
-      // counter (e.g. "3/3") — never auto-advance to the next window.
-      if (status.session_status === 'paused') {
-        if (status.progress_msg != null) updateVBookProgress(status);
-        vbookProgress.value = { ...vbookProgress.value, stage: 'COMPLETED' };
-        break;
-      }
-      if (status.active && status.progress_msg != null) {
-        consecutiveInactive = 0;
-        updateVBookProgress(status);
-      } else if (!status.active) {
-        consecutiveInactive++;
-        if (status.progress_msg != null) updateVBookProgress(status);
-        if (consecutiveInactive >= maxInactive) {
-          vbookProgress.value = { ...vbookProgress.value, stage: 'COMPLETED' };
-        }
-      } else {
-        consecutiveInactive = 0;
-      }
-    } catch {
-      consecutiveInactive++;
-      await new Promise((r) => setTimeout(r, 3000));
-    }
-  }
-  if (token !== vbookPollToken) return;
-  // If the safety cap tripped, probe the real agent state before deciding: a
-  // still-running agent must NOT be finalised (SUCCESS + stopTimer would freeze
-  // the timer mid-generation) — the 1.5s panel poll + checkVBookAgentStatus keep
-  // tracking it. But if the agent actually finished (backend stuck reporting
-  // active), finalise normally so the generation is not left dangling.
-  if (safetyCapTripped) {
-    console.warn('pollVBookProgress: safety cap reached — probing agent state');
-    try {
-      const status = await getJson<{ active: boolean }>(`/book/${encodeURIComponent(bId)}/agent-status`);
-      if (!status.active) {
-        vbookProgress.value = { ...vbookProgress.value, stage: 'COMPLETED' };
-        setGenerationStatus('SUCCESS');
-        if (!isRegenerating.value) stopTimer();
-        await applyGenerationResults();
-        return;
-      }
-    } catch { /* leave UI alive */ }
-    console.warn('pollVBookProgress: agent still active after safety cap — leaving UI alive');
-    return;
-  }
-  setGenerationStatus('SUCCESS');
-  if (!isRegenerating.value) stopTimer();
-  await applyGenerationResults();
-}
-
 /**
  * Apply whatever generation results are available — refresh the player with the
  * latest scenes (soft refresh). Port of applyGenerationResults: builds the scene
@@ -771,7 +656,7 @@ export async function cancelGeneration(): Promise<void> {
   stopTimer();
   stopProgressStream();
   resetProgressState();
-  vbookPollToken++;
+  vbookPollState.token++;
   // Parallel AI Analysis (Milestone #2): when the user cancels mid-run,
   // any in-flight analysis rows must be frozen as 'cancelled' so the UI
   // stops spinning. Backend will publish a 'cancelled' SSE event for
@@ -798,7 +683,7 @@ export async function cancelTask(type: string, taskId?: string | null): Promise<
   if (!bId) return;
   if (type === 'vbook') {
     clearVBookProgress();
-    vbookPollToken++;
+    vbookPollState.token++;
   }
   try {
     await postJson(`/book/${encodeURIComponent(bId)}/cancel-worker`, {

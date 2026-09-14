@@ -1,16 +1,20 @@
 # Web Generator — Extraction Audit (Re-verification)
 
-**Status:** Step-8 orchestration re-audit COMPLETED (audit-only; VBook agent slice identified as the next physical extraction — READY, see §17)  
+**Status:** Step-9 VBook agent lifecycle extraction COMPLETED — `@animastor/web-generator-vbook` PHYSICALLY EXTRACTED / READY (see §18)  
 **Date:** 2026-09-14  
 **Branch:** `c21.4-physically-extract-analysis-from-backend`  
 **Baseline commit:** `d3403ca1` ("docs(web): align SSE reconnect lifecycle comments" — Step 7 complete; Step-8 re-audit base)  
+**Step-9 baseline commit:** `8fa60273` ("docs(web): align extraction audit header" — Step 8 audit complete)  
 **Original re-verification baseline:** `066ddaae` ("arch(orchestration): physically extract orchestration package")  
 **Step-1 change:** in-repo `generation-progress` domain module extracted (see §9) — **no package created**  
 **Step-2 change:** physical package `@animastor/web-generator` created at `packages/animastor-web-generator/` (see §11); old in-repo contour deleted  
+**Step-5 change:** physical package `@animastor/web-generator-config` created (see §14)  
+**Step-7 change:** physical package `@animastor/web-generator-sse` created (see §16)  
+**Step-9 change:** physical package `@animastor/web-generator-vbook` created at `packages/animastor-web-generator-vbook/` (see §18); VBook orchestration deleted from generateStore  
 **Target package:** `@animastor/web-generator`  
 **Target location:** `packages/animastor-web-generator/` (CREATED — physical extraction completed)  
 **Re-verification of:** `web-next-extraction-reconnaissance.md` (§3.1, verdict "NOT READY")  
-**Context:** Verdict re-checked at current HEAD through Step 8 (§17) — after the generation-progress (Step 2), layer-config (Step 5), and SSE orchestration (Step 7) extractions; next slice: VBook agent lifecycle (`@animastor/web-generator-vbook`, §17.3).
+**Context:** Verdict re-checked at current HEAD through Step 9 (§18) — after the generation-progress (Step 2), layer-config (Step 5), SSE orchestration (Step 7), and VBook agent lifecycle (Step 9) extractions.
 
 ---
 
@@ -1270,7 +1274,7 @@ Steps 1–2 are mechanical but change the host's internal structure. Step 3 chan
 
 ## 17. Step 8 — Remaining Orchestration Re-Audit (post SSE/cancel/layer-config)
 
-**Status:** AUDIT ONLY — no code changes, no extraction.  
+**Status:** AUDIT ONLY — no code changes, no extraction. **Step 9 (VBook extraction per §17.3) is now EXECUTED — see §18.**  
 **Date:** 2026-09-14  
 **Branch:** `c21.4-physically-extract-analysis-from-backend`  
 **Baseline commit:** `d3403ca1` (Step 7 complete — SSE orchestration extracted + reconnect lifecycle fixed)  
@@ -1383,3 +1387,116 @@ Decomposition as requested:
 ---
 
 *Step-8 audit completed on this branch; no code changes, no packages created, no behavior modified. Only this document updated.*
+
+---
+
+## 18. Step 9 — VBook Agent Lifecycle Extraction (DONE)
+
+**Status:** PHYSICALLY EXTRACTED / READY  
+**Date:** 2026-09-14  
+**Branch:** `c21.4-physically-extract-analysis-from-backend`  
+**Baseline commit:** `8fa60273` (Step 8 audit complete — VBook slice identified as READY)  
+**Purpose:** Physically extract the VBook agent lifecycle (`checkVBookAgentStatus` + `startVBookGeneration` + `pollVBookProgress` + `updateVBookProgress`, ~166 LOC of generateStore) into `@animastor/web-generator-vbook`, per the §17.3 boundary.
+
+### 18.1 Package: `@animastor/web-generator-vbook`
+
+**Location:** `packages/animastor-web-generator-vbook/`
+
+```
+packages/animastor-web-generator-vbook/
+├── package.json        # @animastor/web-generator-vbook 0.1.0 (dep: @animastor/web-generator file:)
+├── tsconfig.json       # pure TS (no JSX)
+├── tsup.config.ts      # ESM + dts
+├── vitest.config.ts    # happy-dom
+├── LICENSE             # MIT
+├── src/
+│   ├── index.ts        # lifecycle + ports + explicit VBookPollState (no README yet — mirrors sse package shape)
+│   └── models.ts       # vendored wire types (AgentStatusWire, BookStatusWire)
+└── test/
+    ├── vbook.test.ts   # 24 unit tests (mocked ports, zero host imports)
+    └── guard.test.ts   # 16 architecture guard assertions
+```
+
+**What was extracted (REAL orchestration logic, not a wrapper):**
+
+| Function (package export) | Origin (generateStore) | Decision logic that traveled |
+|---|---|---|
+| `checkAgentStatus(ports)` | `checkVBookAgentStatus` (lines 455–484) | one `/agent-status` poll; active-with-message merge vs inactive-finalize classification (ANALYZING/CREATING_SCENES→COMPLETED with real window counters); transport-error tolerance |
+| `updateVBookProgress(state, status)` | `updateVBookProgress` (450–452) | agent→progress merge (delegates the pure mapping to web-generator's `applyAgentStatus`, writes via callback) |
+| `startVBookGeneration(ports, config?)` | `startVBookGeneration` (593–645) | bootstrap-vs-bootstrap-next-window decision (`/book/:id/status` → `ready !== true`); long-timeout POST kick; session arming order (RUNNING, isRegenerating, newGenerationPending, ANALYZING, timer, stream, import-latch reset); abort reconciliation (active/paused agent → keep polling; genuinely dead → teardown); stale-token abort |
+| `pollVBookProgress(ports, bookId, token, config?)` | `pollVBookProgress` (647–726) | 2s loop; import-handshake finalization; `paused` window finalization with real counter; inactive×2 finalization; transient-error continuation; 60min safety cap + agent re-probe (still-active → leave alive); SUCCESS + conditional timer stop + `onGenerationFinalized` handoff; stale-token exit at every checkpoint |
+
+**Port surface (slice-local — no changes to `generationPorts.ts`):**
+
+- `VBookIdentityPort.getBookId()` — the only identity access
+- `VBookTransportPort` — `getJson` (agent-status/book status) + `postJsonLong` (blocking bootstrap routes); NO direct api/client
+- `VBookPollState` / `VBookPollContract` — explicit poll state (replaces module-global `vbookPollToken`); host-owned, passed by reference/callback
+- `VBookHostState` — get/set VBookProgress, setGenerationStatus, get/set isRegenerating, setNewGenerationPending, get/set importCompleteReceived
+- `VBookLifecycleCallbacks` — `startTimer`, `stopTimer`, `startStream(bookId)` (host's `startProgressStream` — SSE NOT re-implemented), `onVBookCleared`, **`onGenerationFinalized()`** (host binds to `applyGenerationResults`)
+- `VBookPollConfig` — injectable tuning (poll/error intervals, maxInactive, maxPollMs)
+
+### 18.2 Host boundary after extraction
+
+**Host-owned (unchanged, `state/generateStore.ts` 852 → 740 LOC):**
+- `vbookProgress` signal (+ `clearVBookProgress` seam)
+- Poll-token authority: explicit `vbookPollState = createVBookPollState()`; `bumpVBookPollToken`/`stopGenerationSession`/`cancelGeneration`/`cancelTask` write it
+- Timer ownership (`generationTimer` instance; `startTimer`/`stopTimer` wrappers)
+- SSE AbortController/epoch lifecycle (`startProgressStream`/`stopProgressStream` + `@animastor/web-generator-sse`)
+- **`applyGenerationResults()` — stays host-side entirely** (fetch/extract final book state, position/anchor check, `navigateTo`, `emitPlaybackPrepared`); the package calls it only via the injected `onGenerationFinalized`
+- All fileAdapters seams, identity/auth/phase cluster (unchanged blockers §6)
+- `computeProgressRows` wrapper (unchanged)
+
+**Host wiring:** `vbookAgentPorts: VBookAgentPorts` — a pure composition object (identity getter, `{getJson, postJsonLong}`, poll contract over `vbookPollState`, signal-bound state callbacks, lifecycle hooks). `checkVBookAgentStatus`/`startVBookGeneration` remain exported from generateStore as one-line delegations — GeneratePage and every other consumer are untouched.
+
+### 18.3 Dependency direction (verified)
+
+```
+frontends/app (generateStore)
+  → @animastor/web-generator-vbook → @animastor/web-generator
+  → @animastor/web-generator-sse   → @animastor/web-generator
+  → @animastor/web-generator-config
+```
+
+- Package imports ONLY `@animastor/web-generator` (applyAgentStatus, createAnalyzingVBookProgress, types) — mirrors the sse→generator shape
+- Forbidden and verified absent: generateStore, api/client, authStore, fileStore, playbackStore, positionStore, app/*, pages/*, `@preact/signals`, other `@animastor/*`
+- No module-global mutable state in the package (`let`-scan guard); the poll token is explicit
+- No SSE implementation inside the package (guard: no AsyncIterable/reconnect/backoff) — stream initiation is the injected `startStream` callback
+- Production consumer count: exactly 1 (generateStore; via root entry only — no deep imports)
+- No reverse dependency (web-generator does not import web-generator-vbook)
+- GeneratePage public surface unchanged (still imports from generateStore)
+
+### 18.4 Tests and guards
+
+| Suite | Tests | Status |
+|---|---|---|
+| `packages/…-vbook/test/vbook.test.ts` (unit: agent status success/error, progress update, generation request/bootstrap choice, polling success/continuation/error, stale poll/session cancellation, successful finalization, onGenerationFinalized callback, teardown reconciliation) | 24 | PASS |
+| `packages/…-vbook/test/guard.test.ts` (forbidden imports, dependency direction, no signals, no module-global mutable state, explicit polling state, no SSE dup, transport-only-via-port) | 16 | PASS |
+| `frontends/app/src/architecture/vbook-contour.guard.test.ts` (NEW: root-only consumption, single production consumer, test-mock discipline, host ownership tokens, applyGenerationResults host-side, no duplicate implementation tokens, explicit poll state, no reverse deps, GeneratePage surface) | 13 | PASS |
+| `frontends/app/` (all suites incl. generateStore.analysis, fileStore, auth-book-session, existing guards) | 137 | PASS |
+| web-generator / web-generator-sse / web-generator-config packages | 69 + 16 + 22 | PASS |
+
+Typecheck: clean (package + frontend). Build: vite green (405 KB JS bundle). No new dependency cycles (grep-verified both directions).
+
+### 18.5 Deviations / notes
+
+- `generateStore.analysis.test.ts` mock of `../api/client` gained `postJsonLong` (the host ports composition now references it at module scope) — mock-surface addition only, no behavior change.
+- Host `stopGenerationSession`/`bumpVBookPollToken`/`cancelTask`/`cancelGeneration` now bump `vbookPollState.token` (explicit object) instead of the old module-let — identical semantics for the poller (token compare), and fileAdapters seams are untouched.
+- Package `pollVBookProgress` accepts `VBookPollConfig` (injectable intervals) — production call sites use the defaults (2s/3s/×2/60min), preserving existing behavior exactly.
+- The four lifecycle functions ARE all extracted — no wrapper-only outcome; the blocker clause (§17 instruction 16) was not triggered.
+
+### 18.6 Verdict
+
+**VBook agent lifecycle: PHYSICALLY EXTRACTED / READY.** The real orchestration decisions live in `@animastor/web-generator-vbook`; generateStore keeps only capability composition + host-owned state application.
+
+**Remaining generateStore slices (re-confirmed from §17.4):**
+- `startGeneration` — NOT READY alone (thin adapter; 20 LOC pre-call state + POST + result mapping; writes the dual-writer `phase`/`dirtySummary` cluster)
+- `checkAndRestoreGenerationState` — NOT READY (host re-composition of already-extracted parts + 2 GETs)
+- `cancelGeneration`/`cancelTask` — NOT READY (§15: 11/13 host mutations)
+- Nav-icon SUCCESS pulse — NOT READY/low value (UI-coupled)
+- Identity/auth/phase cluster — NOT READY (permanent until a session design exists, §6)
+
+**Overall `@animastor/web-generator` full extraction: NOT READY** — the remaining contour is host-owned state application (identity, phase/errorMessage dual-writer, session teardown, restore re-arming) with no further decision-rich, single-consumer slice. The next blocker for any further extraction is the **identity/session split** (§6, Steps 2–3 of the minimal preparation sequence) — everything short of it is now extracted.
+
+---
+
+*Step-9 VBook agent lifecycle extraction completed on this branch; package created, host wired, old implementation deleted, all tests/guards/typecheck/build green.*
