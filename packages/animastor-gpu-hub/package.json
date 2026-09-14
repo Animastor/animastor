@@ -4,6 +4,9 @@
   "description": "Animastor GPU Hub — standalone HTTP orchestration boundary between the backend and GPU workers. Job queue (Redis), task dispatch/result callbacks, worker onboarding artifacts. Job Protocol v2 is consumed from the canonical @animastor/contracts package.",
   "main": "server.js",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=18"
   },
