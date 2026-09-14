@@ -1,6 +1,6 @@
 # Web Generator — Extraction Audit (Re-verification)
 
-**Status:** Step-9 VBook agent lifecycle extraction COMPLETED — `@animastor/web-generator-vbook` PHYSICALLY EXTRACTED / READY (see §18)  
+**Status:** Step-10 identity/session re-audit complete — verdict **PREPARATION REQUIRED** (§19); Step-9 VBook agent lifecycle extraction COMPLETED — `@animastor/web-generator-vbook` PHYSICALLY EXTRACTED / READY (see §18)  
 **Date:** 2026-09-14  
 **Branch:** `c21.4-physically-extract-analysis-from-backend`  
 **Baseline commit:** `d3403ca1` ("docs(web): align SSE reconnect lifecycle comments" — Step 7 complete; Step-8 re-audit base)  
@@ -11,10 +11,11 @@
 **Step-5 change:** physical package `@animastor/web-generator-config` created (see §14)  
 **Step-7 change:** physical package `@animastor/web-generator-sse` created (see §16)  
 **Step-9 change:** physical package `@animastor/web-generator-vbook` created at `packages/animastor-web-generator-vbook/` (see §18); VBook orchestration deleted from generateStore  
+**Step-10 change:** identity/session boundary re-audited post-Step-9 (§19) — verdict PREPARATION REQUIRED; recommended prep step: in-repo identity module split before any `web-book-session` package cut  
 **Target package:** `@animastor/web-generator`  
 **Target location:** `packages/animastor-web-generator/` (CREATED — physical extraction completed)  
 **Re-verification of:** `web-next-extraction-reconnaissance.md` (§3.1, verdict "NOT READY")  
-**Context:** Verdict re-checked at current HEAD through Step 9 (§18) — after the generation-progress (Step 2), layer-config (Step 5), SSE orchestration (Step 7), and VBook agent lifecycle (Step 9) extractions.
+**Context:** Verdict re-checked at current HEAD through Step 10 (§19) — after the generation-progress (Step 2), layer-config (Step 5), SSE orchestration (Step 7), and VBook agent lifecycle (Step 9) extractions.
 
 ---
 
@@ -1500,3 +1501,197 @@ Typecheck: clean (package + frontend). Build: vite green (405 KB JS bundle). No 
 ---
 
 *Step-9 VBook agent lifecycle extraction completed on this branch; package created, host wired, old implementation deleted, all tests/guards/typecheck/build green.*
+
+---
+
+## 19. Step 10 — Identity / Session Boundary Re-Audit (post VBook extraction)
+
+**Status:** AUDIT ONLY — no code changes, no extraction.  
+**Date:** 2026-09-14  
+**Branch:** `c21.4-physically-extract-analysis-from-backend`  
+**Baseline commit:** `913e0d0d` ("refactor(web): extract VBook agent lifecycle" — Step 9 complete)  
+**Purpose:** Re-verify the last remaining `web-generator` blocker (identity/session ownership) against actual HEAD code after Step 9 physically removed the VBook lifecycle from generateStore. All prior claims (§3.2, §12.2, §17.4) re-derived from current source, not carried over.
+
+**What changed after Step 9 (verified):**
+1. generateStore is now 740 LOC of pure host composition — every decision-rich orchestration slice (progress, layer-config, SSE reconnect, VBook agent flow) is in a package. Identity/session + phase/errorMessage + seams is what REMAINS.
+2. The `onGenerationFinalized` seam (§18) confirmed the §17.3 prediction: `applyGenerationResults` is now invoked from exactly one package seam plus the cancel path — its boundary did NOT get cleaner (see §19.7); still host-side.
+3. Identity blocker blast radius UNCHANGED by Step 9: same 10 direct production consumers, same auth edge, same dual-writer. No consumer of identity moved or disappeared.
+4. NEW datum: three extracted packages now reach identity only through injected `getBookId()`-shaped ports (`web-generator-config` IdentityPort, `web-generator-vbook` VBookIdentityPort). The package-side precedent for an identity read-port is proven in production — this materially lowers the risk of prep step P1 (§19.8).
+
+### 19.1 Identity inventory (readers / writers / callers / dependencies)
+
+| Capability | Defined | Writers | Readers / callers (production) | Store/module deps | API calls | Lifecycle assumptions | Portable via port? | Multiple writers? | Hidden coupling |
+|---|---|---|---|---|---|---|---|---|---|
+| `bookId` signal | generateStore:64 | `loadBook` only (single write path) | GeneratePage, EditPage, AiAssistantPage, SettingsPage, AppShell, main.tsx, playerAdapters, navigatorAdapters, fileAdapters (SessionSeam ×2), authStore (indirect via stash), generateStore internals | `@preact/signals`; persistence side-effect via loadBook | none directly | empty string = no book; set before any generation/open flow | Read-port yes (proven pattern); signal itself host-owned | No (1 writer fn; stash calls loadBook('', '')) | none found — reads are point-in-time |
+| `buildId` signal | generateStore:65 | `loadBook` AND `startGeneration` (res.build_id) — **2 distinct writers** | EditPage, playerAdapters, navigatorAdapters, fileAdapters (SessionSeam), AppShell (via fileAdapters), generateStore internals | `@preact/signals` | written from `/book/:id/regenerate` response | empty = no build yet; NOT persisted-check key; stale after reload until next generation | Partially — see §19.4 | **Yes (2 writers)** | generation-owned: only startGeneration assigns a NEW build id |
+| `loadBook(id, build)` | generateStore:207 | — | fileAdapters (wires SessionSeam), fileStore flows ×7 call sites (import/open/close/create/restore), stashBookSessionForUser | writes bookId+buildId, persists or clears localStorage | none | the ONLY sanctioned identity mutator; '' clears | No — mutator must stay with the signals | n/a | persisted-session write path is inseparable from it |
+| `persistBookSession` / `clearBookSession` | generateStore:164–171 | loadBook (indirect) | — | `localStorage['animastor:currentBook']` | none | survives reload; try/catch tolerated | Yes (storage port) but see §19.3 | No | key literal duplicated in fileStore.ts:361 (READ-ONLY, sync comment) |
+| `restoreBookSession` | fileStore.ts:227 | calls `session.loadBook` ×4 | main.tsx:37 (boot) + main.tsx:81 (post-login effect) | fileStore seams; reads localStorage key directly (declared read-only) | `GET /book/:id/status`, `GET /books`, `GET /book/:id` | boot-time, races deep-link/import (double-checks `session.bookId.value`) | No — File-flow logic + transport + navigation | No | localStorage read duplicated with a sync contract, not a fork |
+| `stashBookSessionForUser` | generateStore:185 | authStore.logout (sole caller) | authStore:76 | localStorage live key + `:user:<uid>` stash key; calls loadBook('','') | none | logout must not leak session into guest context | Technically yes (pure storage fn) but see §19.3 | No | the auth→identity hard edge (§3.2 blocker 2) |
+| `restoreStashedBookSessionForUser` | generateStore:198 | authStore.login (sole caller) | authStore:37 | localStorage live key + stash key | none | never clobbers a live session | Same as above | No | same auth edge |
+| localStorage ownership | generateStore (write path) + fileStore (read-only restore read) + authStore (zero direct access) | loadBook, stash, restore-stash | restoreBookSession (fileStore) | `animastor:currentBook`, `animastor:currentBook:user:<uid>` | none | key contract documented + test-pinned | See §19.3 | **Yes (3 modules touch the key)** | the ONLY cross-module shared-mutable-state outside signals |
+| book/session validation | fileStore.restoreBookSession | — | main.tsx | transport + identity seam | status/books/book GETs | server is validation truth; localStorage is only a hint | No — belongs with restore flow | No | — |
+
+**Identity inventory verdict:** single-writer identity core (`bookId`/`loadBook`/persistence) is port-shaped and prep-able; the un-portable remainder is the auth stash pair (host lifecycle) and restoreBookSession (File-flow logic already in the right owner).
+
+### 19.2 phase / errorMessage inventory
+
+| Aspect | `phase` | `errorMessage` |
+|---|---|---|
+| Defined | generateStore:272 (`signal<PlayerPhase>`) | generateStore:274 |
+| Writers | fileStore via SessionSeam ×10 sites (LOADING_BOOK/IMPORTING_TXT/SCENE_READY/IDLE) + generateStore ×3 sites (SCENE_READY startGeneration:602, IDLE cancelGeneration:673, GENERATING checkAndRestore:721) | fileStore ×4 sites (set on import/open/create failure, clear on begin/close) + generateStore ×1 site (cancelGeneration:674) |
+| Readers | AppShell:14 (desktop bounce mirror — `playerPhase.value === 'SCENE_READY'` fallback), GeneratePage:10 (render mirror) | fileStore error paths only; no page reads it directly |
+| Classification | **NOT identity.** It is a shared cross-slice session-status concern: its value union spans the File lifecycle (LOADING_BOOK, IMPORTING_TXT) and the generation lifecycle (GENERATING). Neither slice owns the union. | Same — an error channel shared by both slices |
+| Dual-writer blocker? | Yes, still (audit B6 unchanged) — 2 writers across 2 modules, 14 write sites total | Yes, still — 2 writers, 5 write sites |
+| Separable from identity? | **Yes — conceptually independent.** No identity function reads or writes phase; the coupling is purely co-location in generateStore since the B1 split. | Same |
+| Minimal seam for future extraction | A `SessionStatusPort` (setPhase/setErrorMessage callbacks) wired to host signals — fileStore already models this shape as the `phase`/`errorMessage` fields of SessionSeam; generation slice would adopt the same pattern. No generationPorts change needed (constraint respected). | Same seam |
+| Verdict | Separate shared session-state concern — a candidate `@animastor/web-session-status` slice ONLY AFTER identity lands; extracting it first just moves the co-location problem | Same |
+
+**phase/errorMessage verdict:** they are NOT part of the identity/session boundary; they are an independent dual-writer blocker. They do not block the identity prep step (P1) and should not be bundled into an identity package (that would grow the blast radius for no ownership gain).
+
+### 19.3 localStorage — can persistence be physically extracted?
+
+| Operation | Current location | Owner candidate |
+|---|---|---|
+| current book key (`animastor:currentBook`) | generateStore:157 (constant) + fileStore.ts:361 (duplicate, read-only, sync-comment contract) | identity module |
+| user stash key (`animastor:currentBook:user:<uid>`) | generateStore:182 | identity module |
+| save (`persistBookSession`) | generateStore:164 | identity module |
+| clear (`clearBookSession`) | generateStore:169 | identity module |
+| restore (cold-start, server-validated) | fileStore.restoreBookSession:227 | **stays with File flows** — it is transport + navigation + playback-warming logic, not persistence |
+| login/logout isolation (stash/restore-stash) | generateStore:185/198, called by authStore | **stays host-side** — auth lifecycle ownership (§19.5) |
+
+**Assessment:** A storage-port extraction of just save/clear/keys WITHOUT the auth lifecycle yields a package of ~25 LOC with 2 call sites (loadBook + stash pair) that immediately need the auth edge injected back in as a port. That is a wrapper, not a boundary — **NOT READY** as a standalone cut. localStorage extraction is only meaningful as part of a full identity/session module (candidate A) where persistence, signals, loadBook, and the stash contract travel together.
+
+### 19.4 buildId — identity or generation-owned?
+
+Traced at HEAD:
+
+| Question | Answer |
+|---|---|
+| Where created | `loadBook(bId, build)` param — set by fileStore flows from `bookData.manifest.build_id` / import response; AND `startGeneration` (generateStore:601) assigning `res.build_id` from the regenerate response |
+| Where modified | Only those 2 writers (verified by grep: `buildId.value =` has exactly 2 sites) |
+| Where read | EditPage (5 sites — reload/dirty flows), playerAdapters + navigatorAdapters (ports), fileAdapters SessionSeam, applyGenerationResults (playbackPrepared payload), restoreBookSession |
+| Persistence owner | **None of its own.** Persisted only as part of the `{id, build}` JSON blob written by loadBook — buildId has no independent persistence lifecycle |
+| Used outside generation | Yes — Edit/player/navigator consume it for cache keys and content-addressed reloads |
+| Needed by a future identity package? | **Only partially.** Its READ side belongs with book identity (consumers treat `bookId+buildId` as one session tuple — SessionSeam already models them together). Its WRITE side (regenerate response assignment) is generation-owned |
+
+**Verdict: buildId is a hybrid.** NOT auto-mergeable with bookId: it has a second writer inside generation (startGeneration) and no independent persistence. The correct treatment: identity package owns the signal + read port + persistence blob; generation keeps writing through a `setBuildId` callback (already shaped as `GenerationStatePort.setBuildId` in generationPorts.ts §13.2). This keeps both writers intact with no source-of-truth fork.
+
+### 19.5 GenerationPorts coverage check (§13.2 vs current needs)
+
+| Identity/session capability | Covered by existing ports? | Gap |
+|---|---|---|
+| bookId read | Yes — `GenerationIdentityPort.getBookId()` (proven by 2 packages in production) | — |
+| buildId read | Yes — `getBuildId()` | — |
+| buildId write (startGeneration) | Yes — `GenerationStatePort.setBuildId` | — |
+| loadBook (identity mutation) | **No — and should NOT be added.** Mutation stays host-owned (§13.1.1); a port would invite packages to fork identity | intentional |
+| persist/clear session | No | storage port only needed INSIDE the identity module (§19.3) — not in generationPorts |
+| stash/restore-stash | No | auth-owned; belongs to a session contract, not GenerationPorts |
+| restoreBookSession | No | File-flow-owned; already behind SessionSeam |
+| phase/errorMessage write | Yes — `GenerationStatePort.setPhase/setErrorMessage` | — |
+
+**Verdict: no new generationPorts.ts interfaces are required** for the identity boundary. The existing 8 ports are correctly scoped. Adding loadBook/stash ports would turn GenerationPorts into the giant ambient interface the Step-4 design explicitly forbids. If identity is extracted, it gets its OWN contract file (e.g. `BookSessionPorts` inside the new module) — consistent with how web-generator-vbook defined slice-local `VBookAgentPorts` rather than extending generationPorts.
+
+### 19.6 Candidate extraction boundaries
+
+| Variant | What leaves | What stays host | Ports needed | Consumers to migrate | Production consumer count | Reverse-dep risk | Verdict |
+|---|---|---|---|---|---|---|---|
+| **A. `@animastor/web-book-session`** (identity signals + loadBook + persistence + stash pair + buildId signal) | ~70 LOC of generateStore identity block | restoreBookSession (fileStore), authStore, phase/errorMessage, all seams | BookSessionPorts (storage + auth hooks) — separate contract | ALL 10 direct consumers switch to package entry or adapters; authStore switches to adapter | 10 direct + 3 package adapters + authStore | LOW if host adapters re-export the same signals (by-reference identity preserved); HIGH if consumers bind values directly | REAL improvement — but only after P1 prep; direct cut today is a host-wide refactor |
+| **B. `@animastor/web-book-identity`** (bookId/buildId signals + loadBook only; persistence and stash stay host) | ~15 LOC | persistence, stash, auth edge | none beyond read ports | same 10 consumers | 10 + adapters | same as A but splits the identity module's cohesion in half — persistence and loadBook are inseparable (loadBook IS the persistence write path) | REJECTED: thin wrapper by construction; splits what must travel together |
+| **C. `@animastor/web-session`** (persistence + stash + keys only; signals stay host) | ~25 LOC | signals, loadBook | storage port + auth port | loadBook + authStore | 2 call sites | none (host keeps everything meaningful) | REJECTED: wrapper with auth edge injected back in (§19.3); zero ownership gain |
+| **D. phase/error shared session seam package** | phase/errorMessage signals | writers (fileStore + generateStore) | SessionStatusPort | AppShell, GeneratePage, fileAdapters | 2 readers, 14+5 write sites | Would fork the B6 single-source-of-truth unless both writers adopt the port simultaneously | REJECTED for now: real concern but independent of identity; smaller value than A; revisit after A |
+| **E. Combination A+D** | identity + phase/error | auth, file flows | BookSessionPorts + SessionStatusPort | everything above | max blast radius | forks two contracts at once | REJECTED as one step: two independent boundaries in a single cut; violates the one-slice-per-step discipline that made Steps 5/7/9 landable |
+
+### 19.7 applyGenerationResults — re-confirmed post Step 9
+
+Re-verified at HEAD (generateStore:621–647):
+
+| Part | Still host-bound? |
+|---|---|
+| `isRegenerating` read + stopTimer | host state |
+| `GET /book/:id` + `sceneRefs` | transport — same shape as web-generator-config fns |
+| zero-scenes guard | pure decision |
+| position anchor (`position.value.chapterId` + `navigateTo`) | **host-only** — positionStore signal read |
+| `emitPlaybackPrepared` | **host-only** — bus ownership (§6 blocker 4) |
+
+**Status: NOT READY — unchanged by Step 9.** The `onGenerationFinalized` seam did NOT clean up its boundary: it changed WHO calls applyGenerationResults (the vbook package decides WHEN), not WHAT the function depends on (position signal + playback bus are still host legs). Callers today: computeProgressRows finalize callback, vbookAgentPorts lifecycle, cancelGeneration:676. A marginally cleaner seam now exists in theory — an `onGenerationFinalized`-style callback for the cancel path too — but that reshuffles callers without removing either host leg; extraction would still yield a thin fetch/sceneRefs adapter (§17.2 verdict re-confirmed). NOT extracting.
+
+### 19.8 Verdict: **B — PREPARATION REQUIRED**
+
+The identity/session slice (variant A) is real and correctly shaped, but a physical package cut today would touch all 10 direct consumers in one commit — a host-wide refactor, not a mechanical extraction. One minimal preparation step closes the gap:
+
+**Preparation step P1 — in-repo identity module split (no package, no behavior change):**
+1. Move the identity block out of generateStore into `state/bookSession.ts` (new in-repo module): `bookId`, `buildId`, `loadBook`, `persistBookSession`, `clearBookSession`, `userStashKey`, `stashBookSessionForUser`, `restoreStashedBookSessionForUser`, both localStorage key constants.
+2. generateStore imports and re-exports them 1:1 — ALL 10 direct consumers, authStore, fileAdapters seams, and every guard token (`export const bookId` etc. — generation-progress-contour.guard pins those tokens in generateStore) remain untouched.
+3. fileStore's read-only `BOOK_STORE_KEY` duplicate is re-pointed at the new module's exported constant (sync contract becomes a compile-time fact).
+4. Add a contour guard: bookSession module imports nothing from generateStore (kills any future cycle), only generateStore + fileAdapters import it, localStorage access for book keys exists ONLY there.
+5. Guard note: authStore still imports the stash pair via its generateStore import (re-export preserves the edge) — the auth→identity edge stays host-internal, one-directional, test-pinned.
+
+**Why this unlocks variant A:** after P1 the identity slice physically exists as a dependency-clean, zero-host-reach module with exactly one consumer surface (generateStore re-export + fileAdapters wiring). The package cut becomes mechanical: move `state/bookSession.ts` → `packages/animastor-web-book-session/`, keep the re-exports. Measured against the audit's own bar (like §10's five checks): zero host reach in the moved code, no hidden state (signals are explicit), tests travel (`auth-book-session.test.ts` already tests the stash contract in isolation), no host-only dependencies (localStorage + signals only), port contracts already proven by two packages in production.
+
+**After P1, variant A extraction spec:**
+- package name: `@animastor/web-book-session` at `packages/animastor-web-book-session/`
+- production entry points: `bookId`, `buildId`, `loadBook`, `stashBookSessionForUser`, `restoreStashedBookSessionForUser` (+ key constants for the host adapter)
+- ports: `BookSessionStoragePort` (getItem/setItem/removeItem — injectable for tests), `BookSessionAuthHooks` (none needed inside the package — stash fns are called BY auth, not the reverse)
+- host responsibilities: re-export from generateStore (consumer surface unchanged), fileAdapters SessionSeam wiring, authStore call sites (unchanged), restoreBookSession (stays in fileStore)
+- dependency direction: `frontends/app → @animastor/web-book-session` only; the package imports `@preact/signals` + storage port; NO host imports
+- expected consumers: generateStore (re-export), fileAdapters (SessionSeam), authStore (via generateStore re-export), test files (2)
+- architecture guard: package guard (no host imports, no api/client, no app/*) + host contour guard update (identity tokens now re-exported, localStorage book-key access only in the package)
+
+### 19.9 Blockers (current, exact)
+
+1. **10 direct production consumers** of bookId/buildId read the signals directly (5 pages, 3 adapters, AppShell, main.tsx) — a package cut today is a host-wide refactor (resolved by P1 re-export strategy).
+2. **authStore → generateStore hard edge** (stash pair import, authStore:6) — cannot move to a package without inverting auth→identity (resolved by P1: edge stays host-internal via re-export).
+3. **phase/errorMessage dual-writer** (B6) — NOT an identity concern (§19.2) but still blocks the FULL web-generator verdict; must stay single-source-of-truth host-side.
+4. **localStorage key contract spread across 3 modules** (generateStore write, fileStore read-only restore read, authStore indirect) — P1 step 3 collapses the constant to one definition.
+5. **buildId dual-writer** (loadBook + startGeneration) — resolved by design in §19.4: signal travels, generation write goes through the existing setBuildId callback shape.
+6. **restoreBookSession lives in fileStore with its own transport + navigation calls** — correctly owned; identity package must NOT absorb it (it would recreate a fileStore→identity-package reverse edge).
+
+### 19.10 Dependency graph (identity cluster, at HEAD)
+
+```
+                    ┌──────────────────────────────────────────────┐
+                    │                generateStore                  │
+                    │  bookId/buildId/phase/errorMessage signals    │
+                    │  loadBook + persistence + stash/restore       │
+                    │  onPlaybackPrepared bus, seams, orchestration │
+                    └──────┬───────────────────────────┬───────────┘
+                           │ implements                │ re-export surface
+              ┌────────────▼───────────┐   ┌───────────▼────────────────────┐
+              │ fileAdapters (host)    │   │ 10 direct consumers:           │
+              │  SessionSeam wiring    │   │  AppShell, main.tsx,           │
+              │  fileStore seams       │   │  GeneratePage, EditPage,       │
+              └────────────┬───────────┘   │  AiAssistantPage, SettingsPage,│
+                           │ by reference  │  playerAdapters,               │
+              ┌────────────▼───────────┐   │  navigatorAdapters             │
+              │ fileStore              │   └────────────────────────────────┘
+              │  restoreBookSession    │
+              │  (reads localStorage   │
+              │   key READ-ONLY)       │
+              └────────────────────────┘
+state/authStore ──stash/restore-stash──▶ generateStore   (hard edge, one-directional)
+packages (config, vbook) ──getBookId() port──▶ host      (proven read-port pattern)
+```
+
+No cycles involving identity. The only inbound state-module edge is authStore (documented, guarded).
+
+### 19.11 Overall status update
+
+| Contour | Verdict |
+|---|---|
+| generation-progress (`@animastor/web-generator`) | PHYSICALLY EXTRACTED / READY (§11) |
+| layer-config (`@animastor/web-generator-config`) | PHYSICALLY EXTRACTED / READY (§14) |
+| SSE orchestration (`@animastor/web-generator-sse`) | PHYSICALLY EXTRACTED / READY (§16) |
+| VBook agent lifecycle (`@animastor/web-generator-vbook`) | PHYSICALLY EXTRACTED / READY (§18) |
+| **identity/session (`@animastor/web-book-session`)** | **PREPARATION REQUIRED (§19.8) — P1 in-repo split, then mechanical cut** |
+| phase/error shared session seam | NOT READY (independent dual-writer concern; §19.2/§19.6-D) |
+| cancel/teardown, startGeneration, checkAndRestore, nav-pulse, applyGenerationResults | NOT READY (unchanged; §15, §17.4, §19.7) |
+| **web-generator full extraction** | **NOT READY** — blocked on the P1 → A sequence and the phase/error dual-writer; after P1+A the remaining host core is phase/errorMessage + seams + cancel/restore composition |
+
+### 19.12 Recommended next step
+
+**Step 11: execute preparation step P1** — in-repo `state/bookSession.ts` identity module split per §19.8, with the contour guard. No package, no behavior change, all 10 consumers untouched via re-exports. Then Step 12: mechanical `@animastor/web-book-session` package cut per the §19.8 spec.
+
+---
+
+*Step-10 identity/session boundary re-audit completed on this branch; audit-only — no production code, no packages, no behavior modified. Only this document changed.*
