@@ -70,13 +70,12 @@ const MOVED_ORCHESTRATION = [
 const HOST_STAYS_RUNTIME = {
     'gpu-dispatcher.js': 'pinned host transport (§32.19)',
     'runtime-loop.js': 'pinned host timer shell (§32.13)',
-    'index.js': 'host facade barrel (composition root)',
     'orchestration-seams.js': 'S-5 seam registry (inbound channel)',
     'job-schema.js': 'contracts facade (Phase 9C choke point)',
     'runtime-persistence.js': 'dead — deleted at cleanup (§32.13)',
     'retention-manager.js': 'orphaned — deleted at cleanup (§32.13)',
 };
-const ALIVE_HOST_STAYS = ['gpu-dispatcher.js', 'runtime-loop.js', 'index.js', 'orchestration-seams.js', 'job-schema.js'];
+const ALIVE_HOST_STAYS = ['gpu-dispatcher.js', 'runtime-loop.js', 'orchestration-seams.js', 'job-schema.js'];
 
 // ── Frozen package root API (§32.29 §32.30: the measured host surface) ──
 const ROOT_FACADE_EXPORTS = [

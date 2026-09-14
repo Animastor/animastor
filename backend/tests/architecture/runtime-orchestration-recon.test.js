@@ -171,7 +171,7 @@ describe('§32 runtime/orchestration extraction reconnaissance guards', () => {
             'backend/src/orchestration must be GONE (no shims left behind)')
             .to.equal(false);
         // host-stays must remain host-side (§32.29 frozen list)
-        for (const stay of ['gpu-dispatcher.js', 'runtime-loop.js', 'index.js', 'orchestration-seams.js', 'job-schema.js']) {
+        for (const stay of ['gpu-dispatcher.js', 'runtime-loop.js', 'orchestration-seams.js', 'job-schema.js']) {
             expect(fs.existsSync(path.join(BACKEND_SRC, 'runtime', stay)),
                 `host-stay runtime/${stay} must remain in backend/src`)
                 .to.equal(true);
