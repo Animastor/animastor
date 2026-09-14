@@ -12,8 +12,9 @@
 //      only — no deep imports).
 //   3. No host file imports deep paths: @animastor/web-generator/src/...
 //   4. Host ownership unchanged — generateStore keeps identity
-//      (bookId/buildId), loadBook, stash/restore, phase/errorMessage,
-//      onPlaybackPrepared.
+//      (bookId/buildId — owned by state/bookSession.ts since the Step 11
+//      identity module split and re-exported 1:1), loadBook, stash/restore,
+//      phase/errorMessage, onPlaybackPrepared.
 //   5. generateStore owns the domain state objects (progressTracking,
 //      generationTimer) and passes them explicitly.
 //   6. No reverse dependency: the package must not import host stores,
@@ -126,10 +127,16 @@ describe('Generation-progress package extraction — host ownership contract', (
   it('generateStore keeps the identity/auth/event surface (nothing moved out of the host)', () => {
     const store = requireRaw(HOST_STORE);
     for (const token of [
-      'export const bookId', 'export const buildId', 'export function loadBook',
-      'export function stashBookSessionForUser', 'export function restoreStashedBookSessionForUser',
-      'export function onPlaybackPrepared', 'export const phase',
-      'export const errorMessage', 'export function emitPlaybackPrepared',
+      // bookId/buildId/loadBook/stash/restore are OWNED by state/bookSession.ts
+      // (Step 11 identity split) and RE-EXPORTED from generateStore 1:1 —
+      // the consumer surface is unchanged.
+      'bookId, buildId, loadBook,',
+      'stashBookSessionForUser, restoreStashedBookSessionForUser,',
+      "} from './bookSession';",
+      'export const phase',
+      'export const errorMessage',
+      'export function onPlaybackPrepared',
+      'export function emitPlaybackPrepared',
     ]) {
       expect(store, `generateStore must keep: ${token}`).toContain(token);
     }

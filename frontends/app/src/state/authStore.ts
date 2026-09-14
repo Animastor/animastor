@@ -68,8 +68,8 @@ export async function logout(): Promise<void> {
   try {
     await postJson<unknown>('/auth/logout', {});
   } catch { /* logout is idempotent server-side; cookie clear best-effort */ }
-  // Current book session isolation: the live session (localStorage
-  // 'animastor:currentBook' + open-book signals) must NOT survive into the
+  // Current book session isolation: the live session (localStorage currentBook
+  // key + open-book signals) must NOT survive into the
   // anonymous/guest context — otherwise a browser refresh would re-open the
   // previous user's book. Ownership is unchanged; the session is merely
   // stashed per-user by stashBookSessionForUser().

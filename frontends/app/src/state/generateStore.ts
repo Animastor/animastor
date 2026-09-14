@@ -10,16 +10,14 @@
 // store keeps ONLY the shared session identity (bookId/buildId + loadBook) and
 // the shared status signals (phase/errorMessage) written by both slices.
 //
-// GENERATION-PROGRESS DOMAIN SPLIT (web-generator-extraction-audit.md §4.3.1,
-// Step 1 of the preparation sequence): the pure/near-pure progress logic —
-// applyAnalysisEvent/analysisOverallPercent/resetAnalysisProgress (analysis
-// state machine), computeProgressRows + tracking Maps/latches, the analysis/
-// progress SSE event routing, and the generation-timer math — physically
-// lives in state/generationProgress/ and is parameterized by EXPLICIT state
-// objects (progressTracking, generationTimer) owned HERE. This store remains
-// the host: identity (bookId/buildId), loadBook/persistence/stash-restore,
-// phase/errorMessage (SessionSeam contract), onPlaybackPrepared, transport
-// (api/client) and the VBook orchestration actions. No behavior changed.
+// IDENTITY MODULE SPLIT (web-generator-extraction-audit.md §20, Step 11 prep
+// P1): the identity contour — bookId/buildId signals, loadBook, the persisted
+// session (localStorage write path + key constants), and the per-user
+// stash/restore pair — now physically lives in state/bookSession.ts. This
+// module RE-EXPORTS it 1:1 so every existing consumer (pages, adapters,
+// main.tsx, authStore, fileStore seams, guards, tests) is untouched. buildId
+// has two legal writers: loadBook (identity/file flows) and startGeneration
+// via the controlled setGenerationBuildId adapter — no fork, one signal.
 import { signal } from '@preact/signals';
 import { getJson, postJson, postJsonLong, putJson, sse } from '../api/client';
 import type {
@@ -35,6 +33,18 @@ import { sceneRefs } from '../api/models';
 import type { SceneRef } from '../api/models';
 import { navigateTo, position } from './positionStore';
 import { vbookStageLabel } from '../app/i18n';
+// ── Identity contour (owned by state/bookSession.ts — re-exported 1:1) ──
+// Single source of truth for book identity; this module is only a
+// consumption/re-export surface so existing consumer imports keep resolving.
+export {
+  bookId, buildId, loadBook,
+  stashBookSessionForUser, restoreStashedBookSessionForUser,
+  setGenerationBuildId, readPersistedBookSession,
+} from './bookSession';
+export type { PersistedBookSession } from './bookSession';
+import {
+  bookId, buildId, setGenerationBuildId,
+} from './bookSession';
 import {
   applyAnalysisEvent, analysisOverallPercent as analysisOverallPercentDomain,
   computeProgressRows as computeProgressRowsDomain, createGenerationTimer, createIdleVBookProgress,
@@ -68,8 +78,6 @@ export interface PlaybackPrepared {
   softRefresh?: boolean;
 }
 
-export const bookId = signal('');
-export const buildId = signal('');
 export const generationStatus = signal<GenerationStatus>('IDLE');
 /** Set to true after createBlankBook() succeeds, cleared when the user
  *  navigates to AI or dismisses the bubble. Used by the toolbar AI helper
@@ -152,64 +160,11 @@ function setGenerationStatus(status: GenerationStatus): void {
 
 export function resetGenerationStatus(): void { setGenerationStatus('IDLE'); }
 
-// ── Persisted book session (localStorage) ──
-// The open book survives a page reload / app restart: loadBook() writes it,
-// closeBook() clears it, and restoreBookSession() (called from main.tsx on
-// boot) re-validates it against the server and falls back to the most recent
-// server book (GET /api/v1/books) — so a book imported on another device (e.g.
-// the web app) shows up here too. Mirrors SharedPreferences bookId/buildId on
-// Android (GenerateViewModel.persistBookId).
-const BOOK_STORE_KEY = 'animastor:currentBook';
-
-function persistBookSession(id: string, build: string): void {
-  try {
-    localStorage.setItem(BOOK_STORE_KEY, JSON.stringify({ id, build }));
-  } catch { /* storage unavailable */ }
-}
-function clearBookSession(): void {
-  try { localStorage.removeItem(BOOK_STORE_KEY); } catch { /* ignore */ }
-}
-
-// ── Per-user session stash (logout/login isolation) ──
-// The live session belongs to whoever is currently viewing. Logging out must
-// never leak the previous authenticated user's open book into the anonymous /
-// guest context, so the session is stashed under a user-scoped key and the
-// live key is cleared. The stash lets the SAME user get their book back on
-// next login (book ownership in the DB is untouched).
-function userStashKey(userId: string): string {
-  return `${BOOK_STORE_KEY}:user:${userId}`;
-}
-
-/** Logout: stash the current book session for `userId` and clear the live
- *  session + open-book signals. No-op stash when nothing is open. */
-export function stashBookSessionForUser(userId: string | null | undefined): void {
-  const raw = (() => { try { return localStorage.getItem(BOOK_STORE_KEY); } catch { return null; } })();
-  if (userId) {
-    try {
-      if (raw) localStorage.setItem(userStashKey(userId), raw);
-      else localStorage.removeItem(userStashKey(userId));
-    } catch { /* storage unavailable */ }
-  }
-  loadBook('', '');
-}
-
-/** Login: re-attach the book session this user had open before their last
- *  logout, unless a live session already exists (never clobber a newer one). */
-export function restoreStashedBookSessionForUser(userId: string | null | undefined): void {
-  if (!userId) return;
-  try {
-    if (localStorage.getItem(BOOK_STORE_KEY)) return;
-    const raw = localStorage.getItem(userStashKey(userId));
-    if (raw) localStorage.setItem(BOOK_STORE_KEY, raw);
-  } catch { /* storage unavailable */ }
-}
-
-export function loadBook(id: string, build: string = ''): void {
-  bookId.value = id;
-  buildId.value = build;
-  if (id) persistBookSession(id, build);
-  else clearBookSession();
-}
+// ── Persisted book session ──
+// MOVED to state/bookSession.ts (Step 11 identity module split): the
+// localStorage write path, the key constants, the stash pair, and the
+// controlled setGenerationBuildId adapter all live there now. This store
+// consumes identity through the re-exports above — no inline copy remains.
 
 // ── Edit dirty indicator (GenerateViewModel.dirtySummary) ──
 // Populated from the /regenerate response summary (server-computed book diff) and
@@ -598,7 +553,7 @@ export async function startGeneration(req: GenerationRequest): Promise<Generatio
       chapter_id: req.chapterId,
       scene_id: req.sceneId,
     });
-    if (res.build_id) buildId.value = res.build_id;
+    if (res.build_id) setGenerationBuildId(res.build_id);
     phase.value = 'SCENE_READY';
     dirtySummary.value = res.summary ?? null;
     const dirty = res.dirty_scenes?.length ?? 0;

@@ -26,9 +26,10 @@
 //  - `errorMessage` — cancelGeneration() (generation slice) clears it for both
 //    surfaces; keeping the signal in the host avoids a behavior change.
 //  - `dirtySummary` / `blankBookJustCreated` — consumed by EditPage / AppShell.
-//  - The persisted localStorage session (`animastor:currentBook` + per-user
-//    stash) stays with `loadBook` in generateStore (authStore stash contract,
-//    guarded by state/__tests__/auth-book-session.test.ts).
+//  - The persisted localStorage session (currentBook key + per-user stash) is
+//    owned by state/bookSession.ts since the Step 11 identity module split
+//    (authStore stash contract, guarded by
+//    state/__tests__/auth-book-session.test.ts + the bookSession contour guard).
 //
 // generateStore ↔ playbackStore cycle: this split REMOVES the File leg of it.
 // The old generateStore.closeBook() imported playbackStore.closeBook solely to
@@ -50,6 +51,7 @@ import type {
 import { sceneRefs } from '../api/models';
 import type { SceneRef } from '../api/models';
 import { navigateTo, clearPosition } from './positionStore';
+import { readPersistedBookSession } from './bookSession';
 
 /** File-local structural mirror of the shared phase union (host adapter
  *  bridges it to generateStore's `phase` signal — NOT a separate value). */
@@ -228,18 +230,13 @@ export async function restoreBookSession(): Promise<boolean> {
   const { playbackPrepared, session } = seams();
   if (session.bookId.value) return false;
 
-  // 1. Persisted session. (Storage contract: generateStore owns the key and
-  // the write path via loadBook; this read only decides whether a restore is
-  // possible at all — no second write path exists.)
+  // 1. Persisted session. (Storage contract: state/bookSession.ts owns the key
+  // and the write path via loadBook; this read only decides whether a restore
+  // is possible at all — no second write path exists.)
   let id: string | null = null;
   let bld = '';
-  try {
-    const raw = localStorage.getItem(BOOK_STORE_KEY);
-    if (raw) {
-      const p = JSON.parse(raw) as { id?: string; build?: string };
-      if (p.id) { id = p.id; bld = p.build ?? ''; }
-    }
-  } catch { /* ignore */ }
+  const persisted = readPersistedBookSession();
+  if (persisted) { id = persisted.id; bld = persisted.build; }
 
   // 2. Validate against the server.
   if (id) {
@@ -357,7 +354,6 @@ export async function createBlankBook(): Promise<string | null> {
   }
 }
 
-/** MUST stay in sync with generateStore's BOOK_STORE_KEY — the localStorage
- *  session contract is host-owned (written via session.loadBook; this constant
- *  is only read by restoreBookSession to decide whether a restore exists). */
-const BOOK_STORE_KEY = 'animastor:currentBook';
+// The localStorage session contract lives in state/bookSession.ts (Step 11
+// identity module split): BOOK_STORE_KEY + the write path are owned there;
+// restoreBookSession reads it through the read-only readPersistedBookSession().
