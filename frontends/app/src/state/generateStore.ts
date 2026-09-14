@@ -40,7 +40,7 @@ import {
   computeProgressRows as computeProgressRowsDomain, createAnalyzingVBookProgress,
   createGenerationTimer, createIdleVBookProgress, createInitialAnalysisProgress,
   createProgressTrackingState, elapsedSeconds, formatTimerText,
-  hasAnyProgress as hasAnyProgressDomain, resetProgressTracking, routeProgressEvent,
+  hasAnyProgress as hasAnyProgressDomain, resetProgressTracking,
   startGenerationTimer, stopGenerationTimer,
 } from '@animastor/web-generator';
 import type {
@@ -498,39 +498,41 @@ export function clearVBookProgress(): void {
 //  Advisory push channel; the 1.5s progress-panel poll reconciles.
 // ═══════════════════════════════════════════════════════════════
 
+import { runSseStream } from '@animastor/web-generator-sse';
+import type { SseStreamPort } from '@animastor/web-generator-sse';
+
 let sseController: AbortController | null = null;
 let sseEpoch = 0;
+
+const sseStreamPort: SseStreamPort = {
+  start(bId: string) {
+    if (!sseController) sseController = new AbortController();
+    return sse(`/book/${encodeURIComponent(bId)}/progress-stream`, sseController.signal);
+  },
+  stop() {
+    sseController?.abort();
+    sseController = null;
+  },
+};
 
 export function startProgressStream(bId: string): void {
   stopProgressStream();
   if (!bId) return;
-  const epoch = ++sseEpoch;
-  const controller = new AbortController();
-  sseController = controller;
-  void runProgressStream(bId, epoch, controller);
+  ++sseEpoch;
+  sseController = new AbortController();
+  void runSseStream(
+    sseStreamPort,
+    () => sseEpoch,
+    progressEventSink,
+    progressTracking,
+    bId,
+  );
 }
 
 export function stopProgressStream(): void {
   sseEpoch++;
   sseController?.abort();
   sseController = null;
-}
-
-async function runProgressStream(bId: string, epoch: number, controller: AbortController): Promise<void> {
-  let attempt = 0;
-  while (epoch === sseEpoch && !controller.signal.aborted) {
-    try {
-      for await (const ev of sse(`/book/${encodeURIComponent(bId)}/progress-stream`, controller.signal)) {
-        if (epoch !== sseEpoch) return;
-        if (ev.data) handleProgressEvent(ev.data);
-      }
-      // Stream closed — reconnect (server keeps it open; close = drop).
-    } catch { /* will retry below */ }
-    if (epoch !== sseEpoch || controller.signal.aborted) return;
-    const delayMs = Math.min(15_000, 1000 * (1 << Math.min(attempt, 4)));
-    attempt++;
-    await new Promise((r) => setTimeout(r, delayMs));
-  }
 }
 
 // Analysis/progress SSE event routing (JSON parse + dispatch) lives in
@@ -542,10 +544,6 @@ const progressEventSink: ProgressEventSink = {
   setAnalysisProgress: (p) => { vbookAnalysisProgress.value = p; },
   setVBookProgress: (p) => { vbookProgress.value = p; },
 };
-
-function handleProgressEvent(data: string): void {
-  routeProgressEvent(progressEventSink, progressTracking, data);
-}
 
 // ═══════════════════════════════════════════════════════════════
 //  GENERATION ACTIONS (GenerateViewModel equivalents)

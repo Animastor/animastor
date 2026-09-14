@@ -17,6 +17,7 @@
     "@animastor/web-file": "file:../../packages/animastor-web-file",
     "@animastor/web-generator": "file:../../packages/animastor-web-generator",
     "@animastor/web-generator-config": "file:../../packages/animastor-web-generator-config",
+    "@animastor/web-generator-sse": "file:../../packages/animastor-web-generator-sse",
     "@animastor/web-local-ai": "file:../../packages/animastor-web-local-ai",
     "@animastor/web-navigator": "file:../../packages/animastor-web-navigator",
     "@animastor/web-player": "file:../../packages/animastor-web-player",

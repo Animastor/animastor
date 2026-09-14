@@ -1236,3 +1236,31 @@ Steps 1–2 are mechanical but change the host's internal structure. Step 3 chan
 ---
 
 *Step-6 cancel/teardown audit completed on this branch; no extraction, no code changes, no behavior modified.*
+
+---
+
+## 16. Step-7 — SSE Orchestration Extraction (DONE)
+
+**Packages created:**
+- `packages/animastor-web-generator-sse/` — `runSseStream` + `handleProgressEvent` + types
+
+**Boundary:**
+- Package imports ONLY `@animastor/web-generator` (for `routeProgressEvent`, `ProgressEventSink`, `ProgressTrackingState`)
+- Host owns: `AbortController`, `sseEpoch`, `sseController`, `progressEventSink`, `progressTracking`
+- Package owns: reconnect loop, epoch checking, event routing via domain
+
+**Host wiring:**
+- `generateStore.ts` creates a `SseStreamPort` adapter wrapping `sse()` from `api/client`
+- `startProgressStream` delegates to `runSseStream(port, getEpoch, sink, tracking, bookId)`
+- `stopProgressStream` bumps epoch + aborts controller (same as before)
+- Dead `handleProgressEvent` wrapper + unused `routeProgressEvent` import removed
+
+**Test results:**
+- Package: 17 tests (11 SSE + 6 guard) — all pass
+- Frontend: 124 tests — all pass
+- Typecheck: clean
+
+**What was extracted:** ~60 LOC of reconnect loop, epoch-guarded iteration, and backoff logic
+**What remains in host:** AbortController lifecycle, epoch counter, signal bridge, `progressEventSink` adapter
+
+*Step-7 SSE orchestration extraction completed; package created, host wired, all tests pass.*
