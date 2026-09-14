@@ -265,7 +265,9 @@ describe('Step 14 prep — cancel: request vs session teardown boundary', () => 
     const leg = store.slice(store.indexOf('function teardownGenerationSessionLocal(): void'));
     const legBody = leg.slice(0, leg.indexOf('\n}'));
     expect(legBody).not.toMatch(/\bpostJson\b|\bgetJson\b|\bputJson\b|\bpostJsonLong\b/);
-    // It owns the documented host-state reset sequence (behavior parity).
+    // It owns the documented PRE-AWAIT reset sequence (behavior parity with
+    // the old cancelGeneration — Step 14A: the settle writes live in their
+    // own post-await leg and must NOT creep back in here).
     for (const token of [
       "setGenerationStatus('IDLE')",
       'progressTracking.newGenerationPending = false',
@@ -274,24 +276,57 @@ describe('Step 14 prep — cancel: request vs session teardown boundary', () => 
       'resetProgressState()',
       'vbookPollState.token++',
       'resetAnalysisProgress()',
-      'isRegenerating.value = false',
-      "phase.value = 'IDLE'",
-      'errorMessage.value = null',
     ]) {
       expect(legBody, `teardown leg must own: ${token}`).toContain(token);
     }
+    for (const token of ['isRegenerating.value = false', "phase.value = 'IDLE'", 'errorMessage.value = null']) {
+      expect(
+        legBody,
+        `teardown leg must NOT own: ${token} — that write ran AFTER the await in the old cancelGeneration (Step 14A ordering contract)`,
+      ).not.toContain(token);
+    }
   });
 
-  it('cancelGeneration composes teardown → request → conditional finalization (no hidden bridge)', () => {
+  it('the post-request settle leg owns exactly the OLD post-await writes (Step 14A ordering)', () => {
+    const store = requireRaw(HOST_STORE);
+    expect(store).toMatch(/function settleGenerationSessionAfterCancel\(\): void/);
+    const leg = store.slice(store.indexOf('function settleGenerationSessionAfterCancel(): void'));
+    const legBody = leg.slice(0, leg.indexOf('\n}'));
+    // Exactly the three writes the old cancelGeneration performed after await.
+    expect(legBody).toContain('isRegenerating.value = false');
+    expect(legBody).toContain("phase.value = 'IDLE'");
+    expect(legBody).toContain('errorMessage.value = null');
+    // No transport, no teardown bleed-in.
+    expect(legBody).not.toMatch(/\bpostJson\b|\bgetJson\b|\bstopTimer\b|\bstopProgressStream\b|\bresetProgressState\b/);
+  });
+
+  it('cancelGeneration composes teardown → request → settle → conditional finalization (no hidden bridge)', () => {
     const store = requireRaw(HOST_STORE);
     const fn = store.slice(store.indexOf('export async function cancelGeneration(): Promise<void>'));
     const body = fn.slice(0, fn.indexOf('\n}'));
     expect(body).toContain('teardownGenerationSessionLocal()');
     expect(body).toContain('await requestCancelGeneration(bId)');
+    // Step 14A: the settle writes happen AFTER the request resolves — never
+    // before the await (the old cancelGeneration observable contract).
+    expect(body).toContain('settleGenerationSessionAfterCancel()');
     // The navigation/playback bridge is NOT owned by the request contour —
     // it is an explicit host finalization leg after the request returns.
     expect(body).toContain('applyGenerationResults()');
     expect(body).not.toMatch(/\bpostJson\b/);
+  });
+
+  it('cancel call order is source-pinned: pre-await teardown, await request, post-await settle (Step 14A)', () => {
+    const store = requireRaw(HOST_STORE);
+    const fn = store.slice(store.indexOf('export async function cancelGeneration(): Promise<void>'));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+    const iTeardown = body.indexOf('teardownGenerationSessionLocal()');
+    const iRequest = body.indexOf('await requestCancelGeneration(bId)');
+    const iSettle = body.indexOf('settleGenerationSessionAfterCancel()');
+    const iFinalize = body.indexOf('applyGenerationResults()');
+    expect(iTeardown).toBeGreaterThanOrEqual(0);
+    expect(iTeardown).toBeLessThan(iRequest);
+    expect(iRequest).toBeLessThan(iSettle);
+    expect(iSettle).toBeLessThan(iFinalize);
   });
 
   it('cancelTask still carries no hidden teardown of the shared session', () => {
@@ -307,7 +342,7 @@ describe('Step 14 prep — cancel: request vs session teardown boundary', () => 
       if (f === HOST_STORE) continue;
       const src = requireRaw(f);
       expect(src, `${f}: reaches into the cancel request/teardown legs`).not.toMatch(
-        /requestCancelGeneration|teardownGenerationSessionLocal/,
+        /requestCancelGeneration|teardownGenerationSessionLocal|settleGenerationSessionAfterCancel/,
       );
     }
   });

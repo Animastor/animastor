@@ -617,16 +617,15 @@ export async function applyGenerationResults(): Promise<void> {
   }
 }
 
-// ── Cancel: request vs local session teardown (Step 14 prep, §23) ──
+// ── Cancel: request vs local session teardown (Step 14 prep, §23; ordering
+// contract fixed in Step 14A, §24) ──
 // The future extracted cancel contour owns ONLY the backend cancellation
 // request (transport). Everything else — signal writes, timer/stream teardown,
 // poll-token invalidation — is LOCAL SESSION TEARDOWN and stays host
 // composition. The navigation/playback bridge (applyGenerationResults) is NOT
 // part of a future cancel contour: the host finalization leg runs after the
-// request returns, exactly as before. Composition order is preserved
-// (teardown → request → conditional finalization); the only micro-reorder is
-// that isRegenerating/phase/errorMessage settle before the HTTP call instead
-// of after it — same inputs, no cross-function state dependency.
+// settle legs, exactly as before. The pre-await/post-await split of the
+// state writes is PART of the preserved observable contract — see §24.
 
 /** Backend cancellation request ONLY (transport; no host-state writes). */
 async function requestCancelGeneration(bId: string): Promise<void> {
@@ -637,7 +636,12 @@ async function requestCancelGeneration(bId: string): Promise<void> {
   }
 }
 
-/** Local session teardown ONLY (host state resets; no transport calls). */
+/** Local session teardown legs that the OLD cancelGeneration ran BEFORE the
+ *  backend cancellation request (transport-free): worker-tracking reset, poll
+ *  invalidation, analysis freeze, timer/stream stop, status → IDLE.
+ *  Observable-order contract (Step 14A, §24): these legs are SYNCHRONOUS and
+ *  stateless w.r.t. the request result — they ran before `await postJson` in
+ *  the pre-Step-14 code and MUST keep running before it. */
 function teardownGenerationSessionLocal(): void {
   setGenerationStatus('IDLE');
   progressTracking.newGenerationPending = false;
@@ -652,19 +656,31 @@ function teardownGenerationSessionLocal(): void {
   // timers by clearing the signal. New events from the orchestrator
   // will re-populate the signal on the next run.
   resetAnalysisProgress();
+}
+
+/** Post-request settle legs — the ONLY host-state writes the OLD
+ *  cancelGeneration performed AFTER `await postJson(...)` resolved
+ *  (Step 14A, §24): `await` yields to the event loop, so anything a consumer
+ *  (signal effect, poll tick, SSE event) runs while the request is in flight
+ *  MUST observe the pre-cancel state — `phase` must not flip to IDLE before
+ *  the backend confirmed cancellation. Restores that contract exactly. */
+function settleGenerationSessionAfterCancel(): void {
   isRegenerating.value = false;
   phase.value = 'IDLE';
   errorMessage.value = null;
 }
 
-/** Stop all generation (Stop All button). Composition: local teardown →
- *  backend cancel request → host finalization (navigation/playback bridge —
- *  deliberately NOT owned by the request leg). */
+/** Stop all generation (Stop All button). Composition — observable order is
+ *  byte-compatible with the pre-Step-14 cancelGeneration: pre-await teardown
+ *  legs → backend cancel request → post-await settle legs (phase/error) →
+ *  conditional host finalization (navigation/playback bridge — deliberately
+ *  NOT owned by the request leg). */
 export async function cancelGeneration(): Promise<void> {
   const bId = bookId.value;
   if (!bId) return;
   teardownGenerationSessionLocal();
   await requestCancelGeneration(bId);
+  settleGenerationSessionAfterCancel();
   if (hasAnyProgress()) {
     await applyGenerationResults();
   }

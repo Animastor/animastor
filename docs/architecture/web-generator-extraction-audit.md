@@ -2288,3 +2288,71 @@ All other guards unchanged and passing (package boundaries, identity ownership, 
 ---
 
 *Step-14 boundary preparation completed on this branch; SseStreamState created, cancel split into request/teardown legs, guards strengthened, behavior preserved. No package created, no API changed, no behavior modified.*
+
+---
+
+## 24. Step 14A — Preserve Cancel Observable Ordering (review fix)
+
+**Status:** FIX EXECUTED — the Step-14 cancel split is retained; the observable ordering of host-state writes is restored to the pre-Step-14 `cancelGeneration` contract. No package, API, endpoint, or architecture change.  
+**Date:** 2026-09-14  
+**Branch:** `c21.4-physically-extract-analysis-from-backend`  
+**Baseline HEAD:** `0effeb0d8fff226b65c5e8aacaf8cc6fc890460f` (Step 14 prep commit)  
+**Parent:** `acf7bf301ba477a733ad51857e785ec4dd929eb8` (Step 13 audit)
+
+### 24.1 The observable-order finding
+
+Re-deriving the OLD `cancelGeneration` at the parent (`acf7bf30`) showed its writes ran in two phases separated by `await postJson(...)`:
+
+| Phase | Old writes (in order) |
+|---|---|
+| pre-await (before the request) | `setGenerationStatus('IDLE')`, `newGenerationPending=false`, `stopTimer`, `stopProgressStream`, `resetProgressState`, `vbookPollState.token++`, `resetAnalysisProgress` |
+| `await postJson('/cancel-generation')` | — request in flight — |
+| post-await (after the request resolves) | `isRegenerating=false`, `phase='IDLE'`, `errorMessage=null` |
+| finalization | `if (hasAnyProgress()) applyGenerationResults()` |
+
+The Step-14 refactor moved the post-await writes INTO `teardownGenerationSessionLocal()` — i.e. BEFORE the await. That was a real behavioral risk, not a cosmetic reorder: **`await` yields to the event loop**, so any consumer running while the request is in flight (a signal effect, the 1.5s progress-panel poll tick, an SSE event handler) could observe `phase='IDLE'`/`errorMessage=null`/`isRegenerating=false` before the backend confirmed cancellation — something the old code never allowed (e.g. AppShell's bounce mirror or GeneratePage could react one tick early). The "single-threaded host" argument does not cover this: single-threaded ≠ no interleaving across `await`.
+
+### 24.2 What was changed
+
+The three post-await writes got their own leg; the two-leg separation survives:
+
+```
+cancelGeneration (composition, signature unchanged)
+  1. teardownGenerationSessionLocal()   — pre-await legs (sync; status/tracking/analysis/timer/stream/token)
+  2. await requestCancelGeneration(bId) — backend request (transport-only, unchanged)
+  3. settleGenerationSessionAfterCancel() — post-await legs (isRegenerating=false, phase='IDLE', errorMessage=null)
+  4. if (hasAnyProgress()) await applyGenerationResults() — host finalization (unchanged)
+```
+
+The observable order is now byte-compatible with the parent implementation: pre-await teardown → request in flight (state frozen at pre-cancel values for `phase`/`errorMessage`/`isRegenerating`) → post-await settle → conditional finalization. The request leg remains stateless/transport-only (Step-14 contour intact); the settle leg is host composition, as it always was.
+
+### 24.3 Why `await` is the boundary for observable state
+
+Between `teardownGenerationSessionLocal()` and `requestCancelGeneration`'s resolution, `cancelGeneration` is suspended and the event loop runs freely: pending signal effects, poll timers, and SSE callbacks execute during that window. Any state written before the await is therefore observable by those consumers while the request is still unresolved. Writes performed after the await are observable only after the backend call settled (or failed). The pre-await/post-await split of the OLD code is thus part of its observable contract, and the composition must reproduce it — which step 3 above now does.
+
+### 24.4 Regression tests (in `state/generateStore.analysis.test.ts`)
+
+1. **"does NOT settle phase/errorMessage/isRegenerating before the cancel request resolves"** — the mocked `postJson` snapshots the full state at request start and the test snapshots it again while the request is deliberately left unresolved. Pins: teardown legs ran BEFORE the request (`generationStatus` already `IDLE`), and `isRegenerating`/`phase`/`errorMessage` still hold their PRE-cancel values both at request start and while in flight; after resolving, the end state equals the old `cancelGeneration`'s. A future refactor that hoists the settle writes above the await fails here.
+2. **"settles to the old end state even when the cancel request FAILS"** — rejected `postJson` still produces `isRegenerating=false`/`phase='IDLE'`/`errorMessage=null` and the warn log, matching the old error-tolerant path.
+
+### 24.5 Guard updates (no new files)
+
+`generation-progress-contour.guard.test.ts` — Step-14 group extended: the teardown leg must NOT contain the three settle writes (with an explicit "Step 14A ordering contract" failure message); a new `settleGenerationSessionAfterCancel` leg is pinned to own EXACTLY those three writes and nothing else; the composition assertion now requires teardown → await request → settle → finalization order (index-compared in source); the private-leg reachability ban includes the settle leg.
+
+### 24.6 Step-14 validity
+
+The Step-14 architecture preparation remains valid unchanged: `SseStreamState` untouched; `requestCancelGeneration` still transport-only; `teardownGenerationSessionLocal` still transport-free; `applyGenerationResults` still not owned by the cancel contour; no packages touched (`web-book-session`, `web-generator`, `web-generator-vbook`, `web-generator-sse`, `web-generator-config`); GenerationPorts, endpoints, navigation/playback, identity — unchanged. Only the intra-host write ordering was corrected back to the original contract.
+
+### 24.7 Verification
+
+| Check | Result |
+|---|---|
+| Architecture guards (generation-progress, vbook — incl. new ordering pins) | PASS |
+| `generateStore.analysis.test.ts` (incl. 2 new ordering regression tests) | 7/7 PASS |
+| Full frontend suite | PASS (15 test files, +2 tests) |
+| Frontend typecheck (`tsc --noEmit`) | CLEAN |
+| Frontend build (`vite build`) | GREEN |
+
+---
+
+*Step-14A cancel observable-ordering fix completed; the Step-14 request/teardown separation retained, post-await settle order restored, regression-tested and guard-pinned.*
