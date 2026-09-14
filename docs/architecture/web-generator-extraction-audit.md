@@ -2556,3 +2556,126 @@ Unchanged by the correction (fresh inventory found no real contradiction beyond 
 ---
 
 *Step-15A inventory correction completed; documentation counts reconciled to the mechanical count, session-status pins relocated to their own boundary guard; production code unchanged.*
+
+---
+
+## 27. Step 16 — Cancel / Session-Teardown Deep Re-Audit (post Step 14/14A)
+
+**Status:** AUDIT ONLY — no production code changed, no packages created, no API/port changes, no new guards (justified in §27.7).  
+**Date:** 2026-09-14  
+**Branch:** `c21.4-physically-extract-analysis-from-backend`  
+**HEAD (baseline):** `45cebb37df3aef1da417593ae253adbd5a84aa1c` ("docs(web): correct session status audit inventory" — Step 15A complete)  
+**Parent:** `259380bbab08b793214ea5224f5e598326a252b1` (Step 15)  
+**diff parent..HEAD (audited baseline):** 3 files — audit doc, generation-progress-contour.guard.test.ts (relocation), session-status-contour.guard.test.ts (new guard). No production changes in the baseline.  
+**generateStore.ts:** 746 LOC.
+
+### 27.1 Production inventory — module-scope mutable lifetime state (complete)
+
+| State | Kind | Owner | Extraction-safe? |
+|---|---|---|---|
+| `playbackPreparedListeners` (Set) | module const | playback bus (host) | NO — host event bus (§6 blocker 4) |
+| `navStatusTimer`, `navWatchdog`, `successSince` | **3 bare module-scope `let`s** | nav-icon SUCCESS pulse | NO — browser timer semantics pinned to Android animator parity (§17.4); `setGenerationStatus` arms/clears them, so the cancel teardown leg touches them transitively |
+| `vbookPollState` | explicit object (Step 9) | host | YES |
+| `generationTimer` | explicit object (Step 1) | host | YES (as state) |
+| `progressTracking` | explicit object (Step 1) | host | YES (as state) |
+| `sseStream` (`SseStreamState`) | explicit object (Step 14) | host | YES (as state) |
+| `vbookAgentPorts`, `sseStreamPort`, `progressEventSink` | const composition adapters | host | n/a (bind host capabilities) |
+
+The Step-13 blocker "SSE pair is module-scope" is RESOLVED (§23.1). The remaining bare `let`s are exactly the three nav-pulse handles — the only hidden lifetime state left in the teardown contour.
+
+### 27.2 Cancel lifecycle reconstruction (`cancelGeneration`, verbatim semantics)
+
+**Phase 0 — sync pre-await (`teardownGenerationSessionLocal`):**
+1. `setGenerationStatus('IDLE')` — also clears `navStatusTimer` (pulse cannot fire on a cancelled run)
+2. `progressTracking.newGenerationPending = false`
+3. `stopTimer()` — freezes wall-clock timer
+4. `stopProgressStream()` — `sseStream.epoch++` + `AbortController.abort()` + `controller=null` (kills the SSE reconnect loop: package checks `getEpoch() !== epoch` at 3 checkpoints incl. post-backoff-sleep, and the aborted stream throws into its catch → stale check → return)
+5. `resetProgressState()` — clears the 3 task Maps + `generationCompleted` (deliberately does NOT clear `importCompleteReceived` — domain invariant, §9.5)
+6. `vbookPollState.token++` — kills any in-flight VBook poll loop (token compare in `@animastor/web-generator-vbook`)
+7. `resetAnalysisProgress()` — freezes per-task analysis rows
+
+**Phase 1 — during `await requestCancelGeneration(bId)` (event loop open):**
+- Live async actors and their fate: SSE loop → dead (epoch mismatch); VBook poll → dead (token mismatch); GeneratePage 1.5s progress-panel poll → alive but reads `generationStatus='IDLE'` → renders idle/hidden rows (harmless); `checkAndRestoreGenerationState` (2.5s delayed) → early-returns because `isRegenerating` is still `true` during the in-flight window (no re-arm race); fileStore flows → not racing (user-initiated, same click context). **No live actor can re-arm the session during the request.**
+
+**Phase 2 — post-success (`settleGenerationSessionAfterCancel`, Step 14A-pinned):** `isRegenerating=false`, `phase='IDLE'`, `errorMessage=null`. **Step-14A guarantee verified in source + regression tests + guards: no post-await settlement happens before the request resolves.**
+
+**Phase 3 — error path:** `requestCancelGeneration` catches + warns; settle legs run unchanged (old error-tolerant behavior; regression-tested).
+
+**Phase 4 — finalization:** `if (hasAnyProgress()) await applyGenerationResults()`.
+
+**NEW FINDING — the cancel→finalize bridge is a dead branch:** `hasAnyProgress()` reads only `taskReadyFloor`/`taskCompletedAt`, which `resetProgressState()` cleared in Phase 0. The condition can therefore never be true at Phase 4 — in the ORIGINAL pre-Step-14 code exactly as in today's composition (same ordering). `applyGenerationResults` is effectively **never invoked from the cancel path**. This is behavior-neutral documentation (no change allowed), but it removes the last substantive objection to separating cancel from result application: the "bridge" exists only as an ordering-pinned no-op. (Its guard pins stay — they protect the ordering contract, which is still observable if anyone reorders the legs.)
+
+Stale-session protections: epoch (SSE) + token (VBook) compares live in the packages; authority is explicit host state — both survive cancel and remain host-invalidated. No other stale-protection exists (none needed: single-window app).
+
+### 27.3 SSE lifetime — is `SseStreamState` sufficient as an extraction boundary?
+
+| Aspect | Status |
+|---|---|
+| controller/epoch ownership | explicit, single owner, passable by reference — YES |
+| start/stop through the state | YES (guards pin it) |
+| stale-stream protection | epoch compare inside `runSseStream` (package) — YES |
+| reconnect / normal close / error close | all inside `runSseStream` (package) — already extracted |
+| cancel racing SSE callback | covered: epoch bump + abort + 3-checkpoint stale check |
+| restart racing old callback | covered: `startProgressStream` = stop (epoch++) + start (epoch++) → old loop's captured epoch differs |
+| hidden lifetime handles | NONE remain in the SSE contour (the only lets are nav-pulse) |
+
+**Conclusion:** the SSE *machinery* is already in `@animastor/web-generator-sse`; what remains host-side is ~30 LOC of glue (state object + transport port adapter binding `api/client.sse` + two wrappers). The glue owns no decisions. An "SSE session" extraction would move glue into the package that already owns the loop — artificial. **SseStreamState is sufficient as a BOUNDARY RECORD, not as an extraction target.**
+
+### 27.4 Timer / polling / progress lifetime table
+
+| Concern | Owner | Lifetime | Invalidation | Stale protection | Async race | Extraction-safe? |
+|---|---|---|---|---|---|---|
+| Generation timer | host (`generationTimer`) | start→stop within one run | teardown/finalize/package stop | n/a (no loop) | none (sync reads) | state yes; lifecycle interwoven with host flows |
+| Progress tracking | host (`progressTracking`) | one generation run | `resetProgressState` (teardown/restore/Settings) | `importCompleteReceived` deliberately survives resets (host `markImportIncomplete` owns it) | none (sync) | state yes; the partial-reset invariant is a host contract |
+| VBook poll | host (`vbookPollState`) + package loop | poll loop while agent active | token bump (teardown/cancelTask/seam) | token compare in package | loop dies on mismatch | YES (proven, Step 9) |
+| Generation-status timers | host (3 bare `let`s) | SUCCESS pulse ~22s | self-clearing + watchdog + `setGenerationStatus` | `successSince` wall-clock anchor | watchdog self-heal | **NO** — presentation-coupled |
+| Regeneration state | host (`isRegenerating` signal) | one run | settle leg / finalize / file seams | gates `checkAndRestore` early-return | settled only post-await (14A) | NO — B6-adjacent host composition |
+
+Explicit-state alone is NOT deemed sufficient (per constraint): `generationTimer`/`progressTracking` are extraction-safe as *state*, but their lifecycle decisions (when to start/stop/reset) are distributed across host flows (startGeneration, checkAndRestore, teardown leg, finalize paths) — moving the object without the decision points changes nothing.
+
+### 27.5 `applyGenerationResults` — boundary re-check
+
+- **Callers (3):** `computeProgressRows` finalize (host, `void`), `vbookAgentPorts.onGenerationFinalized` (package seam — the package decides WHEN), `cancelGeneration` Phase 4 (**dead branch** — §27.2, never fires).
+- **Reads:** `isRegenerating` (stopTimer leg), `bookId`, `position.value.chapterId`, `buildId.value`; fetches `GET /book/:id` + `sceneRefs`.
+- **Writes:** no signal writes; effects only — `navigateTo` (position anchor) + `emitPlaybackPrepared` (playback bus).
+- **Relation to cancel:** none in practice (dead branch). Cancel/teardown and result application are already cleanly separated in the composition (Step 14/14A).
+- **Verdict: stays a host-only bridge** — navigation/playback legs are host-only concerns (§22.4 re-confirmed); moving it would invert the producer bus. No extraction, and the dead cancel branch is documented, not "cleaned up" (behavior constraint).
+
+### 27.6 Boundary candidates (A–D) vs the 10 readiness criteria
+
+| Criterion | A. keep in generateStore | B. transport-only cancel request | C. reusable session-lifecycle/teardown mechanism | D. full `web-generator-cancel` / `web-generation-session` package |
+|---|---|---|---|---|
+| 1. single natural responsibility | yes (status quo) | **yes** (2 stateless endpoints) | partial (lifecycle spans flows) | no (cancel+teardown+settle+finalize = 3 concerns) |
+| 2. lifecycle ownership expressible | yes | yes (stateless) | partial — `setGenerationStatus` is entangled with nav-pulse lets | no |
+| 3. no giant GenerationPorts | yes | **yes** (IdentityPort+TransportPort, config-package shape) | no — 5 state objects + ~8 callbacks + B6 writes | no — worse |
+| 4. no package→host reverse dep | n/a | achievable | achievable but the settle leg pulls B6 signals in | not without a giant port |
+| 5. async ordering preserved | n/a | yes (stateless, no ordering) | must replicate the pre-await/post-await split (14A proved this fragile) | same risk, larger surface |
+| 6. cancellation semantics | kept | kept | kept | kept |
+| 7. stale-session protection | kept | kept (authority stays host) | kept | kept |
+| 8. host stays composition root | yes | yes | thin | no — package owns composition |
+| 9. guard-pinnable | yes | yes | hard | hard |
+| 10. reduces ownership complexity | — | **marginal** (~15 LOC of stateless transport) | **no** — indirection around host state | **no** — wrapper |
+| Verdict | baseline | technically READY, marginal value | NOT READY | NOT READY |
+
+Compatibility: B mirrors `@animastor/web-generator-config`'s IdentityPort+TransportPort shape and touches none of sse/vbook/book-session; C/D would duplicate the vbook package's poll-state pattern and force B6 through a port (rejected in §22.3/§25).
+
+### 27.7 Guards
+
+No new guard added: every invariant found this step is either already pinned (Step 14/14A cancel composition + ordering; SSE explicit state; session-status writer set) or is behavior documentation that must NOT be pinned as architecture (the dead `hasAnyProgress` branch — pinning it would freeze a latent no-op into a contract). The existing guards were re-run and cover the found boundary.
+
+### 27.8 Verdict
+
+**PREPARATION REQUIRED** (for the cancel/session-teardown contour as a whole).
+
+Blockers that DID disappear since Step 13/14: SSE module-scope pair (→ `SseStreamState`), poll-token module-let (→ explicit state, Step 9), the "hidden bridge" objection (applyGenerationResults proven never to fire from cancel — dead branch), and the ordering fragility (14A pinned).
+
+Remaining blockers (exact):
+1. **Settle leg writes the B6 dual-writer signals** (`phase`/`errorMessage`) — the teardown contour cannot move until the session-status ownership/merge design exists (§25 blockers 1–3 unchanged).
+2. **Nav-pulse timer triple (`navStatusTimer`/`navWatchdog`/`successSince`) is bare module-scope** and transitively touched by `setGenerationStatus` inside the teardown leg — a `NavPulseState` explicit object (mechanical, mirrors `SseStreamState`) is the remaining prep within reach.
+3. **Value question:** even after prep, the only cleanly extractable piece is the stateless transport request leg (~15 LOC, variant B) — extraction would reduce LOC, not ownership complexity (criterion 10 fails for B, which is why it was not extracted in Step 14 and is not recommended now).
+
+**Recommended next step:** (a) `NavPulseState` explicit-object prep (the last mechanical prep available), and (b) the B6 session-status merge design — after which the honest decision is between variant B extraction or formally closing the web-generator extraction program as complete.
+
+---
+
+*Step-16 cancel/session-teardown deep re-audit completed on this branch; audit-only — no production code, no packages, no API changes, no new guards; dead cancel-finalize branch documented behavior-neutrally.*
