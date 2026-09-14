@@ -1,24 +1,34 @@
-// @vitest-environment happy-dom
-// BookSession identity module unit tests (Step 11 identity module split —
-// web-generator-extraction-audit.md §20).
+// BookSession identity package unit tests (Step 12 physical extraction —
+// web-generator-extraction-audit.md §21; tests moved from the Step-11
+// in-repo contour, state/__tests__/bookSession.test.ts).
 //
-// Proves behavior equivalence with the pre-split generateStore identity block:
-// loadBook persist/clear semantics, buildId controlled write, the read-only
-// persisted-session view, and the auth stash/restore pair — against a real
-// localStorage (happy-dom). No store imports: this module is dependency-free.
+// Prove behavior equivalence with the original generateStore identity block
+// (pre Step-11): loadBook persist/clear semantics, buildId controlled write,
+// the read-only persisted-session view, and the auth stash/restore pair —
+// against real localStorage (happy-dom). Zero host imports: the package is
+// dependency-clean.
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   bookId, buildId, loadBook, setGenerationBuildId,
   readPersistedBookSession, stashBookSessionForUser, restoreStashedBookSessionForUser,
   BOOK_STORE_KEY,
-} from '../bookSession';
+} from '../src';
 
 const stashKey = (uid: string) => `${BOOK_STORE_KEY}:user:${uid}`;
 
 beforeEach(() => {
   localStorage.clear();
   loadBook('', '');
+});
+
+describe('initial identity', () => {
+  it('starts empty with no persisted session', () => {
+    // beforeEach already reset via loadBook('',''); assert the factory state
+    // of a fresh module instance is the same shape (signals are `signal('')`).
+    expect(BOOK_STORE_KEY).toBe('animastor:currentBook');
+    expect(readPersistedBookSession()).toBeNull();
+  });
 });
 
 describe('loadBook — the single sanctioned identity mutator', () => {
@@ -38,7 +48,7 @@ describe('loadBook — the single sanctioned identity mutator', () => {
     expect(JSON.parse(localStorage.getItem(BOOK_STORE_KEY)!)).toEqual({ id: 'b2', build: '' });
   });
 
-  it('clears the signals AND the persisted session when the id is empty', () => {
+  it("loadBook('', '') clears the signals AND the persisted session", () => {
     loadBook('b1', 'bd1');
     expect(localStorage.getItem(BOOK_STORE_KEY)).not.toBeNull();
 
@@ -67,7 +77,7 @@ describe('setGenerationBuildId — the controlled generation-side writer', () =>
     expect(buildId.value).toBe('bd-new');
     expect(bookId.value).toBe('b1');
     // The persisted blob keeps the OLD build: the generation write path does
-    // not re-persist (identical to the pre-split `buildId.value = res.build_id`).
+    // not re-persist (identical to the pre-extraction `buildId.value = res.build_id`).
     expect(JSON.parse(localStorage.getItem(BOOK_STORE_KEY)!)).toEqual({ id: 'b1', build: 'bd1' });
   });
 
@@ -93,7 +103,7 @@ describe('readPersistedBookSession — read-only view for fileStore.restoreBookS
     expect(readPersistedBookSession()).toBeNull();
   });
 
-  it('returns null for corrupt JSON (tolerated, same as the pre-split try/catch)', () => {
+  it('returns null for corrupt JSON (tolerated, same as the pre-extraction try/catch)', () => {
     localStorage.setItem(BOOK_STORE_KEY, '{not json');
 
     expect(readPersistedBookSession()).toBeNull();
@@ -151,8 +161,9 @@ describe('restoreStashedBookSessionForUser — login re-attach', () => {
     restoreStashedBookSessionForUser('u1');
 
     expect(JSON.parse(localStorage.getItem(BOOK_STORE_KEY)!)).toEqual({ id: 'x9', build: 'b2' });
-    // note: signals are NOT updated here — matching the pre-split behavior;
-    // the session is re-attached on the next restoreBookSession() validation.
+    // note: signals are NOT updated here — matching the pre-extraction
+    // behavior; the session is re-attached on the next restoreBookSession()
+    // validation (fileStore-owned).
     expect(bookId.value).toBe('');
   });
 
@@ -170,5 +181,44 @@ describe('restoreStashedBookSessionForUser — login re-attach', () => {
     restoreStashedBookSessionForUser(undefined);
 
     expect(localStorage.getItem(BOOK_STORE_KEY)).toBeNull();
+  });
+});
+
+describe('storage failure — graceful behavior (try/catch parity)', () => {
+  it('loadBook does not throw when persistence fails; signals still update', () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota exceeded');
+    });
+    try {
+      expect(() => loadBook('b1', 'bd1')).not.toThrow();
+      expect(bookId.value).toBe('b1');
+      expect(buildId.value).toBe('bd1');
+    } finally {
+      setItem.mockRestore();
+    }
+  });
+
+  it('loadBook clear path does not throw when removeItem fails', () => {
+    const removeItem = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new Error('storage unavailable');
+    });
+    try {
+      expect(() => loadBook('', '')).not.toThrow();
+      expect(bookId.value).toBe('');
+    } finally {
+      removeItem.mockRestore();
+    }
+  });
+
+  it('stash tolerates a failing live-key read (treated as no open session)', () => {
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('storage unavailable');
+    });
+    try {
+      expect(() => stashBookSessionForUser('u1')).not.toThrow();
+      expect(bookId.value).toBe(''); // loadBook('', '') still ran
+    } finally {
+      getItem.mockRestore();
+    }
   });
 });

@@ -1,36 +1,37 @@
-// BookSession — the shared book-identity contour (Step 11 identity module
-// preparation, web-generator-extraction-audit.md §19.8 prep step P1 / §20).
+// ═══════════════════════════════════════════════════════════════
+//  @animastor/web-book-session — public API entry point
+// ═══════════════════════════════════════════════════════════════
+//  Book session identity contour (web-generator-extraction-audit
+//  §20.8 spec / §21, Step 12 — physically extracted from the host).
+//  This package is the SINGLE OWNER of the book session identity:
 //
-// This module is the SINGLE OWNER of the book session identity:
-//   - `bookId` / `buildId` signals (one source of truth — no fork)
+//   - `bookId` / `buildId` signals — one source of truth, no fork
 //   - `loadBook(id, build)` — the only sanctioned identity mutator
-//   - the persisted localStorage session (write path + key constants)
+//   - the persisted localStorage session (write path + key contract)
 //   - the per-user stash/restore pair used by authStore on logout/login
 //
-// It is deliberately dependency-free: imports ONLY @preact/signals. No
-// authStore, no generateStore, no fileStore, no api/client, no app/* — the
-// module must be liftable 1:1 into packages/animastor-web-book-session/
-// without re-architecture (§19.8: "the package cut becomes mechanical").
+//  Deliberately dependency-minimal: the only runtime dependency is
+//  @preact/signals. No host stores, api/client, app/*, pages/*, and no
+//  other @animastor/* packages.
 //
-// What stays OUTSIDE this boundary (Step 10 §19 verdicts):
-//   - `phase` / `errorMessage` — shared cross-slice session-status concern,
-//     dual-writer (fileStore SessionSeam + generation slice); stays in
-//     generateStore (audit B6).
-//   - `restoreBookSession()` — File-flow orchestration (server validation +
-//     fallback + player warming); stays in fileStore, which reads the
-//     persisted session through `readPersistedBookSession()` (read-only —
-//     this module keeps the only write path).
+//  What stays OUTSIDE this package (Step 10 §19 / Step 11 §20 verdicts):
+//   - `phase` / `errorMessage` — shared cross-slice session-status
+//     concern (dual-writer B6 contract); host-owned in generateStore.
+//   - `restoreBookSession()` — File-flow orchestration (server
+//     validation + /books fallback + player warming + race handling);
+//     fileStore reads the persisted session through the read-only
+//     readPersistedBookSession() — the write path stays here.
+//   - auth login/logout lifecycle decisions — authStore's; it calls
+//     the stash pair, this package never imports authStore.
 //   - `applyGenerationResults()` — generation finalization; host-side.
-//   - auth login/logout lifecycle decisions — authStore's; it may call
-//     stashBookSessionForUser / restoreStashedBookSessionForUser, but this
-//     module never imports authStore (no reverse dependency).
 //
-// buildId hybrid ownership (Step 10 §19.4): the signal + its persistence
-// blob are identity-owned, but `startGeneration` assigns a fresh build id
-// from the regenerate response. That second legitimate writer goes through
-// the controlled `setGenerationBuildId()` adapter — there is still exactly
-// ONE `buildId` signal and exactly TWO legal writers (loadBook + the
-// adapter), never a second source of truth.
+//  buildId hybrid ownership (§19.4): the signal + its persistence blob
+//  are identity-owned, but startGeneration assigns a fresh build id
+//  from the regenerate response. That second legitimate writer goes
+//  through the controlled setGenerationBuildId() adapter — exactly ONE
+//  buildId signal and exactly TWO legal writers, never a fork.
+// ═══════════════════════════════════════════════════════════════
+
 import { signal } from '@preact/signals';
 
 // ── Storage keys (the ONLY definition site of the session key contract) ──
@@ -66,7 +67,7 @@ function clearBookSession(): void {
 }
 
 /** Read-only view of the persisted session for fileStore.restoreBookSession.
- *  Returns null when the key is absent or corrupt. This module keeps the
+ *  Returns null when the key is absent or corrupt. This package keeps the
  *  ONLY write path (loadBook / stash) — restore decisions stay file-side. */
 export function readPersistedBookSession(): PersistedBookSession | null {
   try {
@@ -85,7 +86,7 @@ export function readPersistedBookSession(): PersistedBookSession | null {
 // live key is cleared. The stash lets the SAME user get their book back on
 // next login (book ownership in the DB is untouched).
 // authStore remains the OWNER of the login/logout lifecycle: it decides WHEN
-// these are called; this module only performs the session persistence
+// these are called; this package only performs the session persistence
 // operation itself — and never imports authStore.
 
 /** Logout: stash the current book session for `userId` and clear the live

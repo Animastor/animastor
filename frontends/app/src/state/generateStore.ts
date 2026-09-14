@@ -10,14 +10,15 @@
 // store keeps ONLY the shared session identity (bookId/buildId + loadBook) and
 // the shared status signals (phase/errorMessage) written by both slices.
 //
-// IDENTITY MODULE SPLIT (web-generator-extraction-audit.md §20, Step 11 prep
-// P1): the identity contour — bookId/buildId signals, loadBook, the persisted
+// IDENTITY PACKAGE EXTRACTION (web-generator-extraction-audit.md §21, Step
+// 12): the identity contour — bookId/buildId signals, loadBook, the persisted
 // session (localStorage write path + key constants), and the per-user
-// stash/restore pair — now physically lives in state/bookSession.ts. This
-// module RE-EXPORTS it 1:1 so every existing consumer (pages, adapters,
-// main.tsx, authStore, fileStore seams, guards, tests) is untouched. buildId
-// has two legal writers: loadBook (identity/file flows) and startGeneration
-// via the controlled setGenerationBuildId adapter — no fork, one signal.
+// stash/restore pair — is now PHYSICALLY OWNED by the
+// @animastor/web-book-session package. This module RE-EXPORTS it 1:1 so every
+// existing consumer (pages, adapters, main.tsx, authStore, fileStore seams,
+// guards, tests) is untouched. buildId has two legal writers: loadBook
+// (identity/file flows) and startGeneration via the controlled
+// setGenerationBuildId adapter — no fork, one signal.
 import { signal } from '@preact/signals';
 import { getJson, postJson, postJsonLong, putJson, sse } from '../api/client';
 import type {
@@ -33,18 +34,18 @@ import { sceneRefs } from '../api/models';
 import type { SceneRef } from '../api/models';
 import { navigateTo, position } from './positionStore';
 import { vbookStageLabel } from '../app/i18n';
-// ── Identity contour (owned by state/bookSession.ts — re-exported 1:1) ──
+// ── Identity contour (owned by @animastor/web-book-session — re-exported 1:1) ──
 // Single source of truth for book identity; this module is only a
 // consumption/re-export surface so existing consumer imports keep resolving.
 export {
   bookId, buildId, loadBook,
   stashBookSessionForUser, restoreStashedBookSessionForUser,
   setGenerationBuildId, readPersistedBookSession,
-} from './bookSession';
-export type { PersistedBookSession } from './bookSession';
+} from '@animastor/web-book-session';
+export type { PersistedBookSession } from '@animastor/web-book-session';
 import {
   bookId, buildId, setGenerationBuildId,
-} from './bookSession';
+} from '@animastor/web-book-session';
 import {
   applyAnalysisEvent, analysisOverallPercent as analysisOverallPercentDomain,
   computeProgressRows as computeProgressRowsDomain, createGenerationTimer, createIdleVBookProgress,
@@ -161,10 +162,11 @@ function setGenerationStatus(status: GenerationStatus): void {
 export function resetGenerationStatus(): void { setGenerationStatus('IDLE'); }
 
 // ── Persisted book session ──
-// MOVED to state/bookSession.ts (Step 11 identity module split): the
+// MOVED to @animastor/web-book-session (Step 12 physical extraction): the
 // localStorage write path, the key constants, the stash pair, and the
 // controlled setGenerationBuildId adapter all live there now. This store
-// consumes identity through the re-exports above — no inline copy remains.
+// consumes identity through the package re-exports above — no inline copy
+// remains in the host.
 
 // ── Edit dirty indicator (GenerateViewModel.dirtySummary) ──
 // Populated from the /regenerate response summary (server-computed book diff) and

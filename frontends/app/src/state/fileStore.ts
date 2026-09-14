@@ -27,9 +27,9 @@
 //    surfaces; keeping the signal in the host avoids a behavior change.
 //  - `dirtySummary` / `blankBookJustCreated` — consumed by EditPage / AppShell.
 //  - The persisted localStorage session (currentBook key + per-user stash) is
-//    owned by state/bookSession.ts since the Step 11 identity module split
+//    owned by @animastor/web-book-session since the Step 12 physical extraction
 //    (authStore stash contract, guarded by
-//    state/__tests__/auth-book-session.test.ts + the bookSession contour guard).
+//    state/__tests__/auth-book-session.test.ts + the book-session package guard).
 //
 // generateStore ↔ playbackStore cycle: this split REMOVES the File leg of it.
 // The old generateStore.closeBook() imported playbackStore.closeBook solely to
@@ -51,7 +51,7 @@ import type {
 import { sceneRefs } from '../api/models';
 import type { SceneRef } from '../api/models';
 import { navigateTo, clearPosition } from './positionStore';
-import { readPersistedBookSession } from './bookSession';
+import { readPersistedBookSession } from '@animastor/web-book-session';
 
 /** File-local structural mirror of the shared phase union (host adapter
  *  bridges it to generateStore's `phase` signal — NOT a separate value). */
@@ -230,9 +230,9 @@ export async function restoreBookSession(): Promise<boolean> {
   const { playbackPrepared, session } = seams();
   if (session.bookId.value) return false;
 
-  // 1. Persisted session. (Storage contract: state/bookSession.ts owns the key
-  // and the write path via loadBook; this read only decides whether a restore
-  // is possible at all — no second write path exists.)
+  // 1. Persisted session. (Storage contract: @animastor/web-book-session owns
+  // the key and the write path via loadBook; this read only decides whether a
+  // restore is possible at all — no second write path exists.)
   let id: string | null = null;
   let bld = '';
   const persisted = readPersistedBookSession();
@@ -354,6 +354,7 @@ export async function createBlankBook(): Promise<string | null> {
   }
 }
 
-// The localStorage session contract lives in state/bookSession.ts (Step 11
-// identity module split): BOOK_STORE_KEY + the write path are owned there;
-// restoreBookSession reads it through the read-only readPersistedBookSession().
+// The localStorage session contract is owned by the
+// @animastor/web-book-session package (Step 12 physical extraction):
+// BOOK_STORE_KEY + the write path live there; restoreBookSession reads it
+// through the read-only readPersistedBookSession().

@@ -1,6 +1,6 @@
 # Web Generator — Extraction Audit (Re-verification)
 
-**Status:** Step-11 identity module preparation EXECUTED — in-repo `state/bookSession.ts` contour created, `@animastor/web-book-session` now READY FOR PHYSICAL EXTRACTION (§20); Step-10 identity/session re-audit verdict PREPARATION REQUIRED (§19); Step-9 VBook agent lifecycle extraction COMPLETED — `@animastor/web-generator-vbook` PHYSICALLY EXTRACTED / READY (see §18)  
+**Status:** Step-12 identity PHYSICALLY EXTRACTED — `@animastor/web-book-session` created at `packages/animastor-web-book-session/`, verdict PHYSICALLY EXTRACTED / READY (§21); Step-11 identity module preparation EXECUTED (§20); Step-10 identity/session re-audit verdict PREPARATION REQUIRED (§19); Step-9 VBook agent lifecycle extraction COMPLETED — `@animastor/web-generator-vbook` PHYSICALLY EXTRACTED / READY (see §18)  
 **Date:** 2026-09-14  
 **Branch:** `c21.4-physically-extract-analysis-from-backend`  
 **Baseline commit:** `d3403ca1` ("docs(web): align SSE reconnect lifecycle comments" — Step 7 complete; Step-8 re-audit base)  
@@ -13,6 +13,7 @@
 **Step-9 change:** physical package `@animastor/web-generator-vbook` created at `packages/animastor-web-generator-vbook/` (see §18); VBook orchestration deleted from generateStore  
 **Step-10 change:** identity/session boundary re-audited post-Step-9 (§19) — verdict PREPARATION REQUIRED; recommended prep step: in-repo identity module split before any `web-book-session` package cut  
 **Step-11 change:** prep step P1 EXECUTED (§20) — identity contour physically moved to in-repo `state/bookSession.ts`; generateStore re-exports 1:1; package cut is now mechanical  
+**Step-12 change:** physical package `@animastor/web-book-session` created at `packages/animastor-web-book-session/` (see §21); the in-repo `state/bookSession.ts` contour deleted; identity verdict PHYSICALLY EXTRACTED / READY  
 **Target package:** `@animastor/web-generator`  
 **Target location:** `packages/animastor-web-generator/` (CREATED — physical extraction completed)  
 **Re-verification of:** `web-next-extraction-reconnaissance.md` (§3.1, verdict "NOT READY")  
@@ -1813,3 +1814,108 @@ Remaining blockers for FULL `@animastor/web-generator` extraction (unchanged by 
 ---
 
 *Step-11 identity module preparation completed on this branch; in-repo contour created, host re-wired via re-exports, behavior preserved, all tests/guards/typecheck/build green. No NPM package created.*
+
+---
+
+## 21. Step 12 — Physical Extraction of `@animastor/web-book-session` (DONE)
+
+**Status:** PHYSICALLY EXTRACTED / READY — the package is the single physical owner of the book session identity; no NPM publication performed (workspace `file:` dependency, same as the other extracted packages).  
+**Date:** 2026-09-14  
+**Branch:** `c21.4-physically-extract-analysis-from-backend`  
+**Baseline commit:** `25bd1b95` (Step 11 complete — in-repo identity contour READY)  
+**Purpose:** Execute the §20.8 mechanical cut — move the existing isolated identity contour into a workspace package without re-architecture.
+
+### 21.1 Package: `@animastor/web-book-session`
+
+**Location:** `packages/animastor-web-book-session/`
+
+```
+packages/animastor-web-book-session/
+├── package.json        # @animastor/web-book-session 0.1.0 (dep: @preact/signals ^1.3.0)
+├── tsconfig.json       # pure TS (no JSX), mirrors web-generator-vbook
+├── tsup.config.ts      # ESM + dts
+├── vitest.config.ts    # happy-dom
+├── LICENSE             # MIT
+├── README.md           # owns / does-NOT-own / dependency rules
+├── src/
+│   └── index.ts        # the identity contour, moved VERBATIM from state/bookSession.ts
+└── test/
+    ├── bookSession.test.ts  # 25 unit tests (real localStorage, zero host imports)
+    └── guard.test.ts        # 3 architecture guard assertions
+```
+
+**What physically lives in the package (single owner):**
+
+| Export | Role |
+|---|---|
+| `bookId` / `buildId` signals | the ONE source of truth for book identity |
+| `loadBook(id, build)` | the only sanctioned identity mutator (persist on non-empty id, clear on empty) |
+| `persistBookSession` / `clearBookSession` (private) | the localStorage write path |
+| `BOOK_STORE_KEY` | the key contract (`animastor:currentBook`) — ONE definition site |
+| `userStashKey` (private) + `stashBookSessionForUser` / `restoreStashedBookSessionForUser` | per-user stash pair (`animastor:currentBook:user:<uid>`) |
+| `readPersistedBookSession()` | read-only persisted-session view (fileStore's restore consumes this) |
+| `setGenerationBuildId(build)` | the controlled second buildId writer |
+| `PersistedBookSession` type | minimal identity type |
+
+**Dependency direction (verified):**
+
+```
+frontends/app (generateStore, fileStore) → @animastor/web-book-session → @preact/signals
+authStore → generateStore (re-export) → @animastor/web-book-session   (unchanged direction)
+```
+
+Package external imports: exactly `['@preact/signals']` (guard-pinned both inside the package and from the host guard). No host modules, no api/client, no app/*, no pages/*, no other `@animastor/*`.
+
+### 21.2 Host boundary after extraction
+
+**Host-owned (unchanged):** `phase`/`errorMessage` (B6 dual-writer contract, in generateStore), `restoreBookSession()` (fileStore — server validation + `/books` fallback + player warming + race handling), `applyGenerationResults()` (generateStore), auth login/logout lifecycle decisions (authStore), all generation orchestration, playback, navigation, all other seams.
+
+**generateStore:** compatibility re-exports ONLY (`bookId`, `buildId`, `loadBook`, `stashBookSessionForUser`, `restoreStashedBookSessionForUser`, `setGenerationBuildId`, `readPersistedBookSession`, `PersistedBookSession`) + the `setGenerationBuildId(res.build_id)` adapter call in startGeneration. No signal declaration, no persistence body, no stash body, no key constant (guard-pinned).
+
+**fileStore:** consumes `readPersistedBookSession()` from the package root; the inline localStorage read AND the read-only key duplicate are gone; `restoreBookSession` untouched.
+
+**Consumers:** ZERO source changes — all 10 direct consumers + authStore + 2 test files still import from `./generateStore` and receive THE SAME signal objects by reference. GenerationPorts untouched.
+
+### 21.3 Boundaries preserved (no new owners)
+
+- **buildId hybrid:** package owns the signal; `loadBook` (identity/file flows) + `setGenerationBuildId` (generation flow) remain the only two legal writers; no direct `buildId.value =` in generateStore; the adapter does not re-persist (pre-extraction parity); `GenerationStatePort.setBuildId` untouched.
+- **auth:** `authStore → generateStore (re-export) → package`; authStore keeps login/logout decisions and owns zero identity state; the package cannot import authStore (its import list is pinned to `@preact/signals` only).
+- **File:** `restoreBookSession()` stays in fileStore; it reads identity ONLY through the package's public API — no second storage implementation.
+- **phase/errorMessage:** NOT extracted, no SessionStatusPort created; still host-owned dual-writer signals (guard-pinned absent from the package).
+- **No new module-global mutable state:** the package's only mutable bindings are the two exported signals.
+
+### 21.4 Guards
+
+| Guard | Assertions |
+|---|---|
+| `packages/animastor-web-book-session/test/guard.test.ts` (NEW) | external imports exactly `[@preact/signals]`; no host modules / api/client / other `@animastor/*`; each identity definition exists exactly ONCE; no phase/errorMessage; no restoreBookSession export; no module-global `let`/`var` |
+| `frontends/app/src/architecture/book-session-package-contour.guard.test.ts` (NEW) | all 15 rules: single owner; generateStore re-exports but declares no identity signals / no persistence / no stash bodies / no key; no direct buildId write; setter-only generation writes; fileStore storage-implementation-free with restoreBookSession in place; package imports only `@preact/signals` (real fs scan of the shipped package source — no reverse dependency); auth boundary unchanged; no duplicate production identity implementation anywhere in src/; no state module consumes the package except generateStore + fileStore; no host test imports the package directly |
+| `generation-progress-contour.guard.test.ts` (UPDATED) | identity token pins now verify the re-export surface from `@animastor/web-book-session` |
+| `book-session-contour.guard.test.ts` (Step-11 in-repo guard) | DELETED — superseded by the package guard |
+
+### 21.5 Tests and verification
+
+| Check | Result |
+|---|---|
+| Package unit tests (`test/bookSession.test.ts`) — initial empty identity, loadBook persist/clear/overwrite, setGenerationBuildId (no re-persist parity), readPersistedBookSession (present/absent/corrupt/id-less/read-only), stash (move+clear, stale removal, null userId), restore-stash (re-attach, no clobber, null), storage-failure graceful paths (setItem/removeItem/getItem throwing) | 25/25 PASS |
+| Package guard | 3/3 PASS (28 tests total in package) |
+| Frontend suite (incl. auth-book-session, fileStore, fileAdapters, all 8 guards) | 159/159 PASS |
+| Frontend typecheck | CLEAN |
+| Frontend vite build | GREEN (405 KB JS) |
+| Workspace/lockfile consistency | `frontends/app/package.json` + `package-lock.json` updated (`file:../../packages/animastor-web-book-session` dependency + link entry); package lockfile committed |
+| Production import graph | generateStore + fileStore import the package root only; zero deep imports; old `state/bookSession.ts` deleted |
+| Duplicate-identity scan | exactly one physical implementation (the package); one key literal; one loadBook |
+
+Regression coverage preserved unmodified: auth logout→stash+clear, login→restore, fileStore restore flows, generation build_id update (via fileStore.test + auth-book-session.test against the re-export surface), page reload/session persistence.
+
+### 21.6 Verdict
+
+**Identity/session: PHYSICALLY EXTRACTED / READY.**
+
+`@animastor/web-book-session` is the single physical owner of `bookId`/`buildId`/`loadBook`/session persistence/stash — confirmed by guards on BOTH sides of the boundary (package internals + host consumption graph) and by tests proving behavior equivalence. The §20.8 criterion held: this step was a file move + import rewiring, not new architecture.
+
+**Overall `@animastor/web-generator` full extraction: NOT READY** (unchanged) — the remaining host core is the phase/errorMessage dual-writer cluster (B6), cancel/teardown, checkAndRestoreGenerationState, and applyGenerationResults composition (§19.9, §15, §17.4). The next candidate boundary, if pursued, is the phase/error shared session-status seam (§19.6-D) — now that identity is out, it is the last cross-slice shared state in generateStore.
+
+---
+
+*Step-12 physical extraction of the book session identity completed on this branch; package created, host wired, old in-repo contour deleted, all tests/guards/typecheck/build green.*

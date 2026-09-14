@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@animastor/web-ai-chat": "file:../../packages/animastor-web-ai-chat",
+    "@animastor/web-book-session": "file:../../packages/animastor-web-book-session",
     "@animastor/web-editor": "file:../../packages/animastor-web-editor",
     "@animastor/web-file": "file:../../packages/animastor-web-file",
     "@animastor/web-generator": "file:../../packages/animastor-web-generator",

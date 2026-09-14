@@ -120,19 +120,20 @@ describe('Generation-progress package extraction — host consumption', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3. Host ownership unchanged (identity stays generateStore's)
+// 3. Host ownership unchanged (identity surface stays generateStore's)
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('Generation-progress package extraction — host ownership contract', () => {
   it('generateStore keeps the identity/auth/event surface (nothing moved out of the host)', () => {
     const store = requireRaw(HOST_STORE);
     for (const token of [
-      // bookId/buildId/loadBook/stash/restore are OWNED by state/bookSession.ts
-      // (Step 11 identity split) and RE-EXPORTED from generateStore 1:1 —
-      // the consumer surface is unchanged.
+      // bookId/buildId/loadBook/stash/restore are OWNED by the
+      // @animastor/web-book-session package (Step 12 physical extraction,
+      // in-repo at Step 11) and RE-EXPORTED from generateStore 1:1 — the
+      // consumer surface is unchanged.
       'bookId, buildId, loadBook,',
       'stashBookSessionForUser, restoreStashedBookSessionForUser,',
-      "} from './bookSession';",
+      "} from '@animastor/web-book-session';",
       'export const phase',
       'export const errorMessage',
       'export function onPlaybackPrepared',
