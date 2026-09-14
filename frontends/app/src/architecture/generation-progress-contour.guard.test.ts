@@ -347,3 +347,53 @@ describe('Step 14 prep — cancel: request vs session teardown boundary', () => 
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. Step 15 audit — B6 session-status writer set + last-writer-wins contract
+//    (docs/architecture/web-generator-extraction-audit.md §25). Audit-only:
+//    these assertions freeze the DOCUMENTED writer/reader surface so an
+//    undocumented third writer cannot appear silently. They do NOT move
+//    ownership.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Step 15 audit — session-status (phase/errorMessage) writer set', () => {
+  it('phase/errorMessage have exactly TWO documented writers and one owner', () => {
+    // Owner: generateStore (the signals are declared there — B6).
+    const store = requireRaw(HOST_STORE);
+    expect(store).toMatch(/export const phase = signal<PlayerPhase>\('IDLE'\)/);
+    expect(store).toMatch(/export const errorMessage = signal<string \| null>\(null\)/);
+    // Sole second writer: fileStore, exclusively through the SessionSeam
+    // (`session.phase.value` / `session.errorMessage.value`) — never its own
+    // signal, never a third module.
+    const fileStore = requireRaw('state/fileStore.ts');
+    expect(fileStore).toContain('session.phase.value');
+    expect(fileStore).toContain('session.errorMessage.value');
+    expect(fileStore).not.toMatch(/export const (phase|errorMessage)\b/);
+  });
+
+  it('no production module outside generateStore/fileStore writes the shared status', () => {
+    for (const f of allSourceFiles()) {
+      if (f.includes('.test.')) continue;
+      if (f !== HOST_STORE && f !== 'state/fileStore.ts') {
+        const src = requireRaw(f);
+        expect(
+          src.match(/^\s*(session\.)?phase\.value\s*=/m),
+          `${f}: undocumented phase writer found — B6 writer set is generateStore + fileStore only`,
+        ).toBeNull();
+        expect(
+          src.match(/^\s*(session\.)?errorMessage\.value\s*=/m),
+          `${f}: undocumented errorMessage writer found — B6 writer set is generateStore + fileStore only`,
+        ).toBeNull();
+      }
+    }
+  });
+
+  it('the errorMessage declaration stays adjacent to phase (one boundary, audit §25.5)', () => {
+    const store = requireRaw(HOST_STORE);
+    const iPhase = store.indexOf('export const phase = signal');
+    const iError = store.indexOf('export const errorMessage = signal');
+    expect(iPhase).toBeGreaterThanOrEqual(0);
+    expect(iError).toBeGreaterThan(iPhase);
+    expect(iError - iPhase).toBeLessThan(400); // same file section, one boundary
+  });
+});

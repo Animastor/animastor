@@ -2356,3 +2356,150 @@ The Step-14 architecture preparation remains valid unchanged: `SseStreamState` u
 ---
 
 *Step-14A cancel observable-ordering fix completed; the Step-14 request/teardown separation retained, post-await settle order restored, regression-tested and guard-pinned.*
+
+---
+
+## 25. Step 15 — B6 Session-Status Boundary Audit ("phase" / "errorMessage")
+
+**Status:** AUDIT ONLY — no production code changed, no packages created, no ownership moved. Only this document + audit-oriented guard pins.  
+**Date:** 2026-09-14  
+**Branch:** `c21.4-physically-extract-analysis-from-backend`  
+**HEAD (baseline):** `325cb794ff689848ff4c31969f5bd81345ef1a29` ("fix(web): preserve generation cancel state ordering" — Step 14A complete)  
+**Parent:** `0effeb0d8fff226b65c5e8aacaf8cc6fc890460f` (Step 14 prep)  
+**diff parent..HEAD (audited baseline):** exactly 4 files — generateStore.ts (settle-leg split), generateStore.analysis.test.ts (ordering regression tests), generation-progress-contour.guard.test.ts (ordering pins), audit doc. The Step-14A commit contained no other changes.
+
+### 25.1 Writer / reader inventory (complete, production, grep-verified at `325cb794`)
+
+**Owner of the signal objects:** `generateStore.ts` (lines 227–232: `export const phase = signal<PlayerPhase>('IDLE')`, `export const errorMessage = signal<string | null>(null)`). Type is a structural mirror in fileStore (`FilePhase`) — a TYPE alias only, not a second value.
+
+**Writers — `phase` (18 production write sites total):**
+
+| # | File | Function | Value | Lifecycle event | Pre/post-await | Concurrent mutators |
+|---|---|---|---|---|---|---|
+| 1 | fileStore | `beginBookTransition` (171) | `LOADING_BOOK` | any File open flow starts (import/open/blank) | sync (pre-await) | any in-flight generation poll effects |
+| 2 | fileStore | `beginBookTransition` (172) | `errorMessage=null` | same | sync | — |
+| 3 | fileStore | `importBookFromFile` (193) | `SCENE_READY` or `IDLE` | vbook import done (scenes fetched) | post-await (after POST + GET) | generation poll if a generation was running |
+| 4 | fileStore | `importBookFromFile` (198) | `IMPORTING_TXT` | TXT path, pre-assets-check | post-await | — |
+| 5 | fileStore | `importBookFromFile` (201) | `SCENE_READY`/`IDLE` | TXT path done (assets fetched) | post-await | — |
+| 6 | fileStore | `importBookFromFile` (205–206) | `IDLE` + error message | import failure catch | post-await (failure) | — |
+| 7 | fileStore | `restoreBookSession` (273) | `SCENE_READY`/`IDLE` | cold-start restore load done | post-await (2 GETs) | deep-link/import race guarded by bookId re-checks |
+| 8 | fileStore | `openBookById` (299) | `SCENE_READY`/`IDLE` | open-by-id done (assets fetched) | post-await | — |
+| 9 | fileStore | `openBookById` (302–303) | `IDLE` + error | open failure catch | post-await (failure) | — |
+| 10 | fileStore | `closeBook` (317–318) | `IDLE`, `errorMessage=null` | book closed (Create-New card / Settings delete) | sync (post `stopGenerationSession`) | — |
+| 11 | fileStore | `createBlankBook` (347) | `SCENE_READY` | blank book created + loaded | post-await | — |
+| 12 | fileStore | `createBlankBook` (351–352) | `IDLE` + error | blank creation failure | post-await (failure) | — |
+| 13 | generateStore | `startGeneration` (572) | `SCENE_READY` | `/regenerate` accepted (build_id captured) | post-await | poll effects see SCENE_READY while RUNNING |
+| 14 | generateStore | `settleGenerationSessionAfterCancel` (669–670) | `IDLE`, `errorMessage=null` | cancel request RESOLVED (Step 14A contract) | **post-await (pinned)** | none (Step 14A regression tests) |
+| 15 | generateStore | `checkAndRestoreGenerationState` (730) | `GENERATING` | restore found active workers | post-await (2 GETs) | — |
+
+**Writers — `errorMessage` (6 sites):** fileStore #2/#6/#9/#10/#12 (above: `null` on begin/close, message on 3 failure paths) + generateStore #14 (`null` on cancel settle). **No generation-failure path writes a message** — generation errors surface via `generationStatus='ERROR'` + GeneratePage's own fetch error handling; only File-flow failures use `errorMessage` today.
+
+**Readers (production):**
+
+| Reader | File | What it does | Order-dependent? |
+|---|---|---|---|
+| AppShell `playerPhase` | AppShell.tsx:117 | deep-link `/file`+`/navigate` bounce fallback: `SCENE_READY → '/play'` else `'/generate'` — reads whatever the LAST settling flow wrote; the primary path uses a fresh `GET /book`, phase is only the documented FALLBACK ("which import/restore already settled") | YES — explicitly consumes last-writer-wins semantics |
+| GeneratePage `currentPhase` | GeneratePage.tsx:59,186,207,283–287 | `isGenerating = GENERATING ‖ LOADING_BOOK ‖ isRegenerating` — gates active-worker detection, summary text, poll gap coverage; reads BOTH slices' values (a file import's `LOADING_BOOK` suppresses generation UI identically to its own `GENERATING`) | YES — depends on file-flow values; writers' order matters during interleavings |
+| FilePage (web-file package) `phaseNow` | packages/animastor-web-file/src/FilePage.tsx:75–95 | status line: error > export > importing > loading; `sceneReady` gate for export/media; **reads `GENERATING` as "loading"** — i.e. the generation slice's value is part of the File screen's contract | YES |
+| fileAdapters | fileAdapters.ts:32,55,75 | passes signal objects by reference into SessionSeam/FilePorts (wiring, no reads) | n/a |
+| `settled at parent acf7bf30` consumer check | — | playbackStore (web-player) does NOT read the shared `phase` — it has its own internal `uiState.phase` projection (verified: package comment-only references to generateStore) | — |
+
+**Set/reset helpers:** only the seam-level ones (`setRegenerating`, `stopGenerationSession`, `markImportIncomplete`) — none write `phase`/`errorMessage` directly except through the flows above. No setter exists for phase/errorMessage (deliberately — §19.2/§20.5 guard forbids one in the identity module).
+
+### 25.2 Reconstructed state machine (event → prev → writer → new → observable consequence)
+
+| Event | Prev phase | Writer | New phase | Consumers | Observable consequence |
+|---|---|---|---|---|---|
+| loadBook via import (vbook, scenes>0) | any | fileStore #1,#3 | LOADING_BOOK → SCENE_READY | FilePage status, GeneratePage isGenerating (loading) | UI shows loading then ready; bounce fallback would pick `/play` |
+| loadBook via import (vbook, scenes=0) | any | fileStore #1,#3 | LOADING_BOOK → IDLE | same | ready → `/generate` navigation decision |
+| import TXT | any | fileStore #1,#4,#5 | LOADING_BOOK → IMPORTING_TXT → SCENE_READY/IDLE | FilePage (importing→loading stages), GeneratePage | two-stage loading visible on File screen |
+| import failure | any | fileStore #6 | → IDLE + errorMessage | FilePage error line (error > all) | error shown on File screen until next flow clears it |
+| restore session (cold start) | IDLE | fileStore #7 | → SCENE_READY/IDLE | AppShell fallback, GeneratePage | user "has" a book without explicit action |
+| open by id / deep link | any | fileStore #8/#9 | → SCENE_READY/IDLE (+error) | same as import | — |
+| blank book create | any | fileStore #11/#12 | → SCENE_READY (+AI bubble flag) | GeneratePage, AppShell | Edit-ready state |
+| generation start | any (typically SCENE_READY) | generateStore #13 | → SCENE_READY (unchanged value; status→RUNNING separately) | GeneratePage (isRegenerating drives UI) | phase is NOT the generation-progress signal — status is |
+| generation progress (SSE/poll) | — | **no phase writer** | — | GeneratePage via vbookProgress/rows | progress lives OUTSIDE phase — only restore writes GENERATING |
+| restore finds active workers | any | generateStore #15 | → GENERATING | GeneratePage isGenerating, FilePage loading | re-arm after backend restart |
+| generation success | GENERATING/IDLE | computeProgressRows finalize (no phase write — SUCCESS is `generationStatus`) | unchanged | GeneratePage SUCCESS pulse | phase and status diverge by design |
+| generation cancel (Step 14A) | any | generateStore #14 | → IDLE + errorMessage=null, POST-await split | GeneratePage stops, FilePage loading ends | **settle only AFTER request resolves** (regression-pinned) |
+| close/reset | any | fileStore #10 (+ teardown leg) | → IDLE + errorMessage=null | all readers | full reset, generation status→IDLE via `stopGenerationSession` |
+
+**Interleavings file ↔ generation (the cases that matter):**
+
+1. **Import while a generation runs** (user opens another book mid-generation): fileStore #1 writes `LOADING_BOOK` immediately (sync), THEN `beginBookTransition` bumps the poll token + `stopGenerationSession` is NOT called here — but `resetProgressState`/`clearVBookProgress`/`bumpVBookPollToken` kill the poll loop; the old generation's SSE events stop being routed (epoch bump only on explicit stream stop — but token kill stops the poller; SSE events keep routing until `stopProgressStream`… mitigated because `import_complete`/`generation_complete` latches were reset and `importMessages` cleared). The `LOADING_BOOK` write is intentionally IMMEDIATE so a bounce/GUI never shows the old book as ready. Then #3 settles SCENE_READY for the NEW book. A late in-flight generation write (#13/#15) after that would clobber the new book's phase — but no such writer exists post-transition: `startGeneration` requires a user action, `checkAndRestore` early-returns while `isRegenerating` … which was just set `false` by the seam. **This is the sharpest edge**: a `checkAndRestoreGenerationState` tick (2.5s-delayed, mounted GeneratePage) racing an import could see `isRegenerating=false` and re-arm `GENERATING` for the NEW book if the backend still reports active workers for it — last-writer-wins absorbs this (the value converges to whatever the backend actually reports for the CURRENT bookId).
+2. **Cancel while an import runs**: cancel settles `IDLE` post-await (14A); if the import settled `SCENE_READY` first, cancel's `IDLE` wins last → FilePage shows idle/error-free for a book that IS ready. Reverse order: import settles after cancel → SCENE_READY wins. **Both orders are observable and accepted today** — the UI converges because FilePage/GeneratePage re-derive from bookId+fetches on the next tick.
+3. **Restore racing import** (documented in fileStore): guarded by explicit `session.bookId.value` re-checks, not by phase.
+
+**Conclusion:** the "last writer defines the observable session status" rule is NOT an accident — AppShell's documented fallback comment ("which import/restore already settled"), FilePage reading `GENERATING` as loading, and GeneratePage reading `LOADING_BOOK` as generating all DEPEND on it. Convergence after races comes from re-derivation (bookId + fresh fetches), not from a priority scheme. **It is part of the public behavior → documented as the B6 contract, and pinned by the new guard assertions (§25.6).** Ownership cannot be changed safely without changing that contract.
+
+### 25.3 Ownership variants
+
+| Criterion | A. fileStore owns | B. generateStore owns (status quo) | C. separate SessionStatus boundary |
+|---|---|---|---|
+| Writers that move | fileStore writes natively; generateStore's 3 sites need an injected seam (fileStore → generateStore port) | none move | ALL 15 sites move behind ports on BOTH sides |
+| Readers that change | AppShell/GeneratePage/FilePage must consume fileStore (or a new export) — FilePage is in the web-file package whose ports.ts already carries `phase`/`errorMessage` by reference (would keep working) | unchanged | all readers re-point to the module/package |
+| Seams/ports needed | a GenerationStatusSeam (generateStore writing fileStore-owned signals) — inverts today's SessionSeam direction; authStore untouched | none | a full write-port API (setPhase/setError/stepTransitions) + a read API — the "SessionStatusPort" the Step-13 audit already rejected |
+| Observable ordering | **changes**: cancel (#14, generateStore) and checkAndRestore (#15) would cross a seam — still same-tick, but the writer set splits across modules; interleaving semantics preserved only if seam calls are synchronous (they would be) | unchanged | unchanged IF all writes go through sync ports; but any package-ization adds await/delivery decisions |
+| Cycles | fileStore→(new port)←generateStore is fine, but fileStore already consumes generateStore via injected seams (no import) — A adds a SECOND cross-direction seam pair (generateStore writing fileStore state) = bidirectional seam coupling | none | module must be imported by both stores + wired in fileAdapters; no cycle if dependency-neutral |
+| Compatibility with packages | web-file's ports.session already exposes phase/errorMessage — A actually FITS the web-file port shape; web-book-session unaffected (identity ≠ status, §19.2); web-generator unaffected | fits (status quo) | a new package beside web-book-session; duplicates its "host-owned signals consumed via ports" pattern but for TWO writer modules |
+| API/ports to introduce | GenerationStatusSeam (~3 methods) | none | SessionStatusPorts: write (6+ transition methods or raw set), read hooks, possibly transition validation — a real API surface for 2 signals |
+| Verdict | **WORSE than B**: solves nothing (the dual-writer remains, just seam-routed), adds an inverted seam, and mis-locates ownership — File flows are not "the session"; they are one of TWO flows that settle status | **keep** | **NOT justified today**: the boundary owns 2 signals + 15 write sites spread across two flows with interleaved, order-dependent semantics (§25.2) — packaging it now creates a state-pass-through, not a domain |
+
+**C deep-dive — would `@animastor/web-session-status` be a natural boundary?**
+- What it would own: the 2 signals + a transition table. What transitions does it OWN? None of its own — every transition is initiated by a flow (file or generation); the module would hold no decision logic, only storage + (maybe) validation. That is the definition of an ambient state object.
+- Ports needed: read (AppShell/GeneratePage/FilePage) + write (both stores) — i.e. every consumer gets a port to what is currently a direct signal read. Blast radius: 4+ files, 3 packages' worth of port surfaces.
+- Domain-neutral? Only by being EMPTY of logic — a neutral container. To have logic it would need to know about generation (GENERATING/restore semantics) AND file flows (LOADING_BOOK/IMPORTING_TXT) — at which point it imports both domains' concepts and becomes a coupling hub.
+- Giant-ambient-object risk: **high** — exactly the "artificial wrapper around host state" the extraction rules forbid.
+- **No natural physical boundary exists today.** A session-status boundary becomes natural only if (a) transitions gain real decision logic (e.g. priority/merge rules replacing last-writer-wins), or (b) a third writer flow appears. Neither holds at this HEAD.
+
+### 25.4 errorMessage — part of session status or flow-local error?
+
+Facts: `errorMessage` is written ONLY on file-flow failures (3 sites) and cleared on file-flow starts/close + cancel settle. Generation failures do NOT write it (they use `generationStatus='ERROR'` + local page state). Reader: FilePage (error line) only — AppShell and GeneratePage do NOT read it.
+
+So: `phase` = genuinely shared cross-slice session status (6 values spanning both flows, 2 readers across packages). `errorMessage` = **effectively file-flow-local error display state that happens to live beside `phase`**, plus one clearing write from the cancel settle (Step 14A order-preserved).
+
+**Could they be split (phase=session status; errorMessage=file-flow local)?** Yes, mechanically: move `errorMessage` into fileStore's File-owned signals (it already owns `importMessages`), update FilePage's `ports.session` read (web-file ports.ts change — package boundary edit, NOT production behavior), keep the cancel-settle `errorMessage=null` as a fileStore seam call or drop it (it only clears file-flow errors, and `closeBook`/`beginBookTransition` already clear them on every transition). Consequences: SessionSeam shrinks by one signal; the B6 surface shrinks to `phase` alone; web-file package ports + tests change; behavior identical (the clear-on-cancel write is redundant with the next begin-transition). **Assessment: a real, small, honest simplification — but it touches the web-file package's public port and 3 test files, and it changes nothing about the remaining B6 dual-writer on `phase`. Not executed in this audit-only step; recorded as the first candidate IF a future step is authorized to touch web-file's port surface.** Until then, both signals stay co-located as ONE boundary (guard-pinned adjacency, §25.6).
+
+### 25.5 Race / interleaving semantics — the contract
+
+- `await` boundaries: all 15 writes are synchronous signal writes; their POSITION relative to their flow's awaits is the observable contract (Step 14A pinned the cancel one; fileStore's writes are position-pinned by fileStore.test.ts expectations).
+- Signal effects/timers/SSE callbacks: can run between any two awaits — they observe whatever the last writer wrote (verified: GeneratePage reads `phase.value` in render; AppShell reads it in an effect fallback; FilePage in render). No debounce, no merge layer exists.
+- The rule "**last writer defines observable session status; races converge via re-derivation (bookId + fresh fetches), not via priority**" is therefore part of public behavior. → **Documented as the B6 contract.** Ownership change requires replacing last-writer-wins with an explicit merge/priority design FIRST — that design does not exist.
+- Proof that ownership cannot be changed safely today: variants A and C both preserve last-writer-wins only by keeping all writes synchronous through seams — they relocate the same signals without improving any property the contract lacks, while adding indirection.
+
+### 25.6 Guards (audit-oriented additions only)
+
+`generation-progress-contour.guard.test.ts` — +3 assertions in 1 new group (Step 15): the phase/errorMessage declarations stay adjacent in generateStore (one boundary); fileStore writes exclusively via `session.phase.value`/`session.errorMessage.value` (never its own declaration — already pinned elsewhere, now asserted together); **no production module outside {generateStore, fileStore} writes phase/errorMessage** (undocumented third writer fails with a message pointing at §25). No existing guard rewritten; identity owner (web-book-session), package boundaries, reverse-dependency bans, and Step 14/14A cancel guards all unchanged and re-verified passing.
+
+### 25.7 Verification
+
+| Check | Result |
+|---|---|
+| Architecture guards (generation-progress 24, vbook 13, book-session-package, file-navigator, ports, player, local-ai) | PASS |
+| Full frontend suite | **175/175 PASS** (13 files; +3 audit assertions) |
+| Frontend typecheck (`tsc --noEmit`) | CLEAN |
+| Frontend build (`vite build`) | GREEN (405 KB JS) |
+| Production code changes in this Step-15 commit | **NONE** — tests/guards + audit doc only |
+| GitHub Combined Status | statuses: [] — no independent CI confirmation |
+
+### 25.8 Verdicts
+
+| Question | Verdict |
+|---|---|
+| Is there a natural `web-session-status` package boundary? | **NO** — the boundary would own zero decision logic and two signals written by two flows with order-dependent interleavings; it would be an ambient state pass-through (§25.3-C) |
+| Best owner among A/B/C | **B — generateStore keeps ownership** (status quo): the generation slice already hosts the shared-state cluster (status, isRegenerating), fileStore already reaches it through the SessionSeam by reference, and A/C add seams without changing any property |
+| Can ownership change safely today? | **NO** — last-writer-wins is public behavior (AppShell fallback, FilePage GENERATING-as-loading, GeneratePage LOADING_BOOK-as-generating); replacing it requires a merge/priority design that does not exist |
+| errorMessage split candidate | **REAL but NOT EXECUTED** — errorMessage is de-facto file-flow-local; a split touches the web-file package port surface and shrinks B6 to `phase` alone; recorded as the first candidate for a future authorized step (§25.4) |
+| **B6 session-status boundary** | **NOT READY** for extraction; ownership stays host-side in generateStore |
+| **Next physical extraction candidate** | **NO NEXT PHYSICAL EXTRACTION YET** — consistent with Steps 13/14; the only recorded future candidates are (1) the errorMessage split (needs web-file port touch) and (2) a session-status merge design if last-writer-wins is ever deemed insufficient |
+
+### 25.9 Blockers (B6, now precise)
+
+1. **Last-writer-wins is load-bearing public behavior** — three readers across two packages depend on it; no merge/priority design exists to replace it (§25.5).
+2. **errorMessage is mis-scoped but co-located** — splitting it requires touching the `@animastor/web-file` package's public ports surface (§25.4).
+3. **15 write sites across two flows** — any boundary must either port all of them or inherit them; both outcomes are wrappers today (§25.3).
+4. Unchanged from Step 13: producer-bus inversion risk and nav-pulse/regeneration host coupling remain outside this boundary.
+
+---
+
+*Step-15 B6 session-status boundary audit completed on this branch; audit-only — no production behavior changed, no packages created, ownership unchanged; last-writer-wins documented as the B6 contract and guard-pinned.*
