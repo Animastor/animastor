@@ -1,0 +1,59 @@
+{
+  "name": "@animastor/web-generator",
+  "version": "0.1.0",
+  "description": "Generation-progress domain slice for Animastor web frontend — the pure/near-pure analysis state machine, progress panel rows, SSE event routing, and generation timer. Host capabilities (identity, transport, phase, auth, i18n, navigation) arrive via the injected ProgressRowContext and ProgressEventSink contracts; the package never imports host stores, api/client, app-level UI, or signals. Package-free domain logic extracted from the generation-progress contour.",
+  "keywords": [
+    "animastor",
+    "generator",
+    "progress",
+    "analysis",
+    "preact",
+    "web-ui",
+    "frontend",
+    "domain-logic",
+    "ports-and-adapters"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+  },
+  "devDependencies": {
+    "happy-dom": "^20.14.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Animastor/animastor.git",
+    "directory": "packages/animastor-web-generator"
+  },
+  "homepage": "https://github.com/Animastor/animastor/tree/main/packages/animastor-web-generator#readme",
+  "bugs": {
+    "url": "https://github.com/Animastor/animastor/issues"
+  }
+}
