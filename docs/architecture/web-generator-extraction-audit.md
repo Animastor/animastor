@@ -1,6 +1,6 @@
 # Web Generator — Extraction Audit (Re-verification)
 
-**Status:** Step-2 physical package extraction EXECUTED (this document updated after the change)  
+**Status:** Step-4 GenerationPorts boundary design COMPLETED (design-only; no production extraction)  
 **Date:** 2026-09-14  
 **Branch:** `c21.4-physically-extract-analysis-from-backend`  
 **Baseline commit:** `066ddaae` ("arch(orchestration): physically extract orchestration package")  
@@ -17,7 +17,7 @@
 
 The Generator contour is **NOT READY** for full physical package extraction at current HEAD. The verdict from the previous reconnaissance is **unchanged**, but the risk surface has shifted: the generateStore⇄playbackStore cycle is dissolved, the store has no router or `@animastor/*` dependencies, and API access is a pure transport layer. What remains is the **identity blocker**: `generateStore` is the host-owned source of truth for session identity (`bookId`/`buildId`), written and read by 10+ host files, 3 extracted packages (via adapters), auth stash/restore, and the fileStore session seam.
 
-A **domain-first slice** (analysis/progress pure logic) was READY WITH CONDITIONS at baseline — **Step 1 is now EXECUTED** (§9): the slice physically exists as the in-repo module `state/generationProgress/` with parameterized state, independent unit tests, and a contour guard. **Step 2 is now EXECUTED** (§11): the slice has been physically extracted into `@animastor/web-generator` at `packages/animastor-web-generator/`, the old in-repo contour deleted, and the host wired to consume the package root. The generation-progress domain is now **PHYSICALLY EXTRACTED / READY**.
+A **domain-first slice** (analysis/progress pure logic) was READY WITH CONDITIONS at baseline — **Step 1 is now EXECUTED** (§9): the slice physically exists as the in-repo module `state/generationProgress/` with parameterized state, independent unit tests, and a contour guard. **Step 2 is now EXECUTED** (§11): the slice has been physically extracted into `@animastor/web-generator` at `packages/animastor-web-generator/`, the old in-repo contour deleted, and the host wired to consume the package root. The generation-progress domain is now **PHYSICALLY EXTRACTED / READY**. **Step 4 is now COMPLETED** (§13): GenerationPorts boundary interfaces are designed — 8 small, focused port interfaces define the exact capabilities a future orchestration package would consume. Dependency direction verified clean. Best next extraction slice identified: `loadLayerConfig / persistLayerConfig`.
 
 **Key findings:**
 - **2,553 LOC** core contour (4 files), ~30 signals in one store
@@ -638,3 +638,327 @@ The overall `@animastor/web-generator` extraction remains **NOT READY** for the 
 ---
 
 *Step-3 identity/orchestration audit completed on this branch; no code changes, no packages created, no behavior modified.*
+
+---
+
+## 13. Step 4 — GenerationPorts Boundary Design
+
+**Status:** DESIGN ONLY — no production extraction performed.  
+**Date:** 2026-09-14  
+**Branch:** `c21.4-physically-extract-analysis-from-backend`  
+**Baseline commit:** `175c38b5` (Step 3 complete — identity/orchestration audit)  
+**Purpose:** Define the GenerationPorts interfaces that a future orchestration package would consume, verify dependency direction, and identify the safest next extraction slice.
+
+**Step 4 is design-only; no production extraction performed.**
+
+---
+
+### 13.1 Capability ownership audit
+
+Every capability in `generateStore.ts` is classified by current owner, future owner, and whether a port is needed.
+
+#### 13.1.1 Identity / session
+
+| Capability | Current owner | Future owner | Port needed? | Why |
+|---|---|---|---|---|
+| `getBookId()` | generateStore (signal read) | host (signal owner) | **Read-only port** | Orchestration needs bookId for API paths and playbackPrepared; must not hold the signal |
+| `getBuildId()` | generateStore (signal read) | host (signal owner) | **Read-only port** | Same as bookId — orchestration reads at call time |
+| `loadBook()` | generateStore | host (permanent) | **No** | Identity mutator; host-owned, never called by orchestration |
+| `persistBookSession()` / `clearBookSession()` | generateStore | host (permanent) | **No** | localStorage persistence — host-only |
+| `stashBookSessionForUser()` / `restoreStashedBookSessionForUser()` | generateStore | host (permanent) | **No** | auth→identity hard edge; stays host-side |
+
+#### 13.1.2 Generation state
+
+| Capability | Current owner | Future owner | Port needed? | Why |
+|---|---|---|---|---|
+| `phase` (read) | generateStore | host (signal owner) | **No read port** | Orchestration does NOT read phase — UI reads it |
+| `phase` (write) | generateStore + fileStore (dual) | host (permanent) | **Callback port** | Orchestration sets phase on generation start/finish |
+| `errorMessage` (write) | generateStore | host | **Callback port** | Orchestration sets error on failure |
+| `generationStatus` (write) | generateStore | host | **Callback port** | Orchestration sets RUNNING/IDLE/SUCCESS/ERROR |
+| `isRegenerating` (write) | generateStore | host | **Callback port** | Orchestration sets true/false |
+| `buildId` (write) | generateStore (startGeneration) | host | **Callback port** | Orchestration receives new buildId from API |
+| `dirtySummary` (write) | generateStore (startGeneration) | host | **Callback port** | Orchestration receives from API response |
+| `vbookProgress` (write) | generateStore | host | **No** | Written by @animastor/web-generator adapter already |
+
+#### 13.1.3 Transport
+
+| Capability | Current owner | Future owner | Port needed? | Why |
+|---|---|---|---|---|
+| `getJson` / `postJson` / `postJsonLong` / `putJson` | api/client (host) | host (permanent) | **Transport port** | Orchestration makes API calls; host provides fetch implementation |
+| `sse()` | api/client (host) | host (permanent) | **SSE port** | Host owns AbortController, reconnect loop, epoch guard |
+| `AbortController` | generateStore (module-scope) | host | **Inside SSE port** | Host manages stream lifecycle |
+
+#### 13.1.4 Navigation
+
+| Capability | Current owner | Future owner | Port needed? | Why |
+|---|---|---|---|---|
+| `navigateTo()` | positionStore (host) | host (permanent) | **Navigation port** | Orchestration anchors position after generation |
+| `position` (read) | positionStore (host) | host | **No** | The "if no position, anchor at first scene" logic stays host-side in applyGenerationResults |
+
+#### 13.1.5 Playback
+
+| Capability | Current owner | Future owner | Port needed? | Why |
+|---|---|---|---|---|
+| `onPlaybackPrepared` / `emitPlaybackPrepared` | generateStore | host (permanent) | **Playback port (emit only)** | Orchestration emits event; Player subscribes via PlayerPorts.generation |
+
+#### 13.1.6 Layer config
+
+| Capability | Current owner | Future owner | Port needed? | Why |
+|---|---|---|---|---|
+| `loadLayerConfig()` | generateStore | orchestration | **Config port (callbacks)** | Orchestration fetches + writes through host callbacks |
+| `persistLayerConfig()` | generateStore | orchestration | **Config port (callbacks)** | Same — writes through host callbacks |
+| `audioEnabled` / `imageEnabled` / `videoEnabled` / `vbookEnabled` (write) | generateStore | host (signal owner) | **Callback port** | Orchestration writes through port |
+| `analysisMode` / `analysisParallelism` (write) | generateStore | host | **Callback port** | Orchestration writes through port |
+
+#### 13.1.7 Progress / session management
+
+| Capability | Current owner | Future owner | Port needed? | Why |
+|---|---|---|---|---|
+| `resetProgressState()` | generateStore | host | **Progress port** | Orchestration calls on cancel/close |
+| `clearVBookProgress()` | generateStore | host | **Progress port** | Same |
+| `bumpVBookPollToken()` | generateStore | host | **Progress port** | Same |
+| `markImportIncomplete()` | generateStore | host | **Progress port** | Same |
+| `stopGenerationSession()` | generateStore | host | **Progress port** | Same |
+
+#### 13.1.8 Timer
+
+| Capability | Current owner | Future owner | Port needed? | Why |
+|---|---|---|---|---|
+| `generationTimer` state object | generateStore (owns instance) | host (permanent) | **No** | Already delegated to @animastor/web-generator via explicit state |
+| `startTimer()` / `stopTimer()` | generateStore (thin wrappers) | orchestration | **No** | Trivial wrappers; orchestration can call start/stopGenerationTimer directly |
+| `formatTimerText()` / `liveElapsedSeconds()` | @animastor/web-generator | @animastor/web-generator | **No** | Domain functions, already extracted |
+
+---
+
+### 13.2 Proposed port interfaces
+
+Eight small, focused interfaces — one per capability group. Defined in `frontends/app/src/app/generationPorts.ts`:
+
+```typescript
+// Read-only identity (orchestration reads, never writes)
+interface GenerationIdentityPort {
+  getBookId(): string;
+  getBuildId(): string;
+}
+
+// JSON HTTP transport (orchestration calls, host provides fetch)
+interface GenerationTransportPort {
+  getJson<T>(path: string): Promise<T>;
+  postJson<T>(path: string, body?: unknown): Promise<T>;
+  postJsonLong<T>(path: string, body?: unknown): Promise<T>;
+  putJson<T>(path: string, body: unknown): Promise<T>;
+}
+
+// SSE stream (host owns AbortController + reconnect)
+interface GenerationSsePort {
+  startStream(bookId: string): AsyncIterable<string>;
+  stopStream(): void;
+}
+
+// Navigation (write direction only)
+interface GenerationNavigationPort {
+  navigateTo(p: { chapterId: string | null; sceneId: string | null; ... }): void;
+}
+
+// Playback event (fire-and-forget emit)
+interface GenerationPlaybackPort {
+  emitPlaybackPrepared(prep: { bookId: string; buildId: string; scenes: unknown[]; ... }): void;
+}
+
+// State callbacks (orchestration writes through host-owned signals)
+interface GenerationStatePort {
+  setPhase(phase: string): void;
+  setErrorMessage(msg: string | null): void;
+  setGenerationStatus(status: 'IDLE' | 'RUNNING' | 'ERROR' | 'SUCCESS'): void;
+  setIsRegenerating(v: boolean): void;
+  setBuildId(buildId: string): void;
+  setDirtySummary(summary: unknown): void;
+}
+
+// Layer config callbacks (orchestration writes through host callbacks)
+interface GenerationConfigPort {
+  setAudioEnabled(v: boolean): void;
+  setImageEnabled(v: boolean): void;
+  setVideoEnabled(v: boolean): void;
+  setVBookEnabled(v: boolean): void;
+  setAnalysisMode(mode: 'sequential' | 'parallel'): void;
+  setAnalysisParallelism(n: number): void;
+  setLayerConfigLoaded(v: boolean): void;
+  setAnalysisConfigLoaded(v: boolean): void;
+}
+
+// Progress / session management callbacks
+interface GenerationProgressPort {
+  resetProgressState(): void;
+  clearVBookProgress(): void;
+  bumpVBookPollToken(): void;
+  markImportIncomplete(): void;
+  stopGenerationSession(): void;
+}
+
+// Composite (optional — orchestration can use individual or bundle)
+interface GenerationPorts {
+  identity: GenerationIdentityPort;
+  transport: GenerationTransportPort;
+  sse: GenerationSsePort;
+  navigation: GenerationNavigationPort;
+  playback: GenerationPlaybackPort;
+  state: GenerationStatePort;
+  config: GenerationConfigPort;
+  progress: GenerationProgressPort;
+}
+```
+
+**Design principles:**
+- All interfaces are plain TypeScript types — no `@preact/signals`, no DOM, no framework
+- Orchestration reads identity through getters (not signal references)
+- Orchestration writes state through callbacks (not direct signal mutation)
+- The host decides how callbacks map to signals — orchestration is unaware
+- No composite `getGenerateStore()` or `getState()` — each capability is individually typed
+
+---
+
+### 13.3 Dependency direction
+
+```
+host (generateStore) ──implements──▶ GenerationPorts
+future orchestration ──depends on──▶ GenerationPorts
+                                    ──depends on──▶ @animastor/web-generator
+```
+
+**Verified absent:**
+- `orchestration → generateStore` — orchestration never imports the host store
+- `generateStore → orchestration` — host provides the implementation, does not depend on the port contract
+- `orchestration → authStore` — no auth dependency
+- `orchestration → fileStore` — no file dependency
+- `orchestration → positionStore` — navigation through port, not direct import
+- `orchestration → playerAdapters` / `navigatorAdapters` — playback through port
+- `orchestration → api/client` — transport through port
+- `orchestration → @preact/signals` — all interfaces are plain TS
+
+---
+
+### 13.4 `applyGenerationResults` boundary
+
+**Current implementation** (generateStore.ts:742–769):
+1. Stop timer (if not regenerating)
+2. Fetch `GET /book/:id` → `BookData`
+3. Extract `sceneRefs(bookData)`
+4. If no position → anchor at first cover scene via `navigateTo()`
+5. Emit `playbackPrepared` with softRefresh=true
+
+**Responsibility split:**
+
+| Responsibility | Owner | Port |
+|---|---|---|
+| Fetch book data + extract scenes | orchestration | transport port |
+| Stop timer | orchestration | (calls domain timer directly) |
+| Check position + anchor if empty | **host** (stays in `applyGenerationResults`) | navigation port (called by host) |
+| Emit playbackPrepared | orchestration | playback port |
+
+**Verdict:** The "if no position, anchor at first scene" logic (lines 759–764) is a host-side concern because it reads `position.value.chapterId` — a host-owned signal. The cleanest split: orchestration handles generation completion + scene extraction + playbackPrepared emission; the host wraps it with position anchoring. The orchestration package does NOT need to read `position`.
+
+**Minimal port:** `GenerationPlaybackPort.emitPlaybackPrepared` covers the orchestration's output. Position anchoring stays host-side.
+
+---
+
+### 13.5 SSE boundary
+
+**Current SSE architecture:**
+
+| Component | Owner | Responsibility |
+|---|---|---|
+| `startProgressStream(bId)` / `stopProgressStream()` | generateStore (module-scope) | AbortController lifecycle, epoch guard |
+| `runProgressStream(bId, epoch, controller)` | generateStore | Reconnection loop with exponential backoff |
+| `handleProgressEvent(data)` | generateStore → @animastor/web-generator | JSON parse + dispatch via `routeProgressEvent` |
+| ProgressEventSink | generateStore (module-level adapter) | Binds domain router to host signals |
+
+**Proposed split:**
+
+| Responsibility | Owner | Port |
+|---|---|---|
+| SSE lifecycle (start/stop/reconnect/epoch) | **host** | SSE port (startStream / stopStream) |
+| Progress event routing | orchestration | (uses `routeProgressEvent` from @animastor/web-generator) |
+| Signal binding (ProgressEventSink) | **host** | (implemented in the adapter) |
+
+**Orchestration SSE port** exposes only:
+- `startStream(bookId)` → `AsyncIterable<string>` (yields raw SSE data)
+- `stopStream()` → void
+
+The host manages AbortController, reconnect, epoch guard, and yielding. Orchestration iterates the async iterable and routes events through `routeProgressEvent` (already in @animastor/web-generator).
+
+---
+
+### 13.6 Candidate extraction slices
+
+| Slice | LOC est. | Verdict | Why |
+|---|---|---|---|
+| `loadLayerConfig` / `persistLayerConfig` | ~80 | **READY WITH ADAPTER** | Reads bookId (port), writes 8 signals through callbacks, calls transport port. Cleanest boundary: no SSE, no playback, no navigation. |
+| SSE orchestration | ~60 | **READY WITH ADAPTER** | Transport port + ProgressEventSink already exist. Needs SSE port design (§13.5). |
+| Generation lifecycle (start/cancel/restore) | ~300 | **NOT READY** | Writes to 6+ state callbacks, reads identity, calls transport + SSE. Requires all ports to be implemented simultaneously — high blast radius. |
+| VBook lifecycle (start/poll/cancel) | ~200 | **NOT READY** | Same as generation lifecycle + long polling + token-based cancellation. |
+| `applyGenerationResults` | ~30 | **NOT READY** | Bridges generation → navigation → playback. Position anchoring is host-side; playback emission is orchestration. Split requires both ports. |
+| Cancel lifecycle | ~50 | **READY WITH ADAPTER** | Simpler than full lifecycle: writes to 5 state callbacks, calls transport + SSE stop. But depends on progress ports being defined. |
+
+---
+
+### 13.7 Recommended next extraction slice
+
+**`loadLayerConfig` / `persistLayerConfig`** — the safest, smallest extraction candidate.
+
+**Why it is safest:**
+1. **Self-contained**: 2 async functions + 8 signal writes, no SSE, no playback, no navigation
+2. **Clear port boundary**: reads bookId through identity port, writes through config port callbacks, calls transport port
+3. **No event bus dependency**: does not emit playbackPrepared
+4. **No dual-writer conflict**: fileStore never writes to layer config signals
+5. **Testable in isolation**: mock the 3 ports (identity, transport, config), verify the functions
+6. **Low blast radius**: 80 LOC, affects only GeneratePage layer-config toggle chips
+
+**Remaining blockers for this slice:**
+- The 8 config signal writes must go through `GenerationConfigPort` callbacks
+- `loadLayerConfig` must read `bookId` through `GenerationIdentityPort.getBookId()`
+- Both functions must call transport through `GenerationTransportPort`
+- The host adapter (`app/generationAdapters.ts`) must wire the ports
+
+---
+
+### 13.8 Architecture guard
+
+Added `architecture/generation-ports.guard.test.ts` (9 assertions):
+1. `generationPorts.ts` exists
+2. No forbidden imports (signals, stores, packages, api/client)
+3. No `@preact/signals` usage (strips comment lines)
+4. No `api/client` imports
+5. No `state/*` store imports
+6. No page/component imports
+7. `generateStore` does NOT import `generationPorts.ts` (host provides, not depends)
+8. All exports are interfaces (no runtime values)
+9. No function implementations (only method signatures)
+
+---
+
+### 13.9 Verdict
+
+**GenerationPorts design: READY**
+
+Eight small, focused port interfaces are proposed. Dependency direction is clean (host → ports, orchestration → ports). No cycles. No dependency inversion.
+
+**Current ownership blockers (unchanged from §12.7):**
+1. `bookId`/`buildId` read by 10+ host files — identity stays host-side permanently
+2. `authStore → generateStore` hard edge — auth stash/restore stays host-side
+3. `phase`/`errorMessage` dual-writer — stays in one place (host)
+4. `onPlaybackPrepared` producer — bus stays host-side
+
+**Best next extraction slice: `loadLayerConfig` / `persistLayerConfig`**
+
+**applyGenerationResults: SPLIT** — generation completion (fetch + scene extract + playback emit) goes orchestration; position anchoring stays host-side.
+
+**SSE boundary: SPLIT** — lifecycle (start/stop/reconnect) stays host; event routing goes orchestration (via @animastor/web-generator's `routeProgressEvent`).
+
+**Cycles:** none
+
+**Tests:** 9/9 guard tests pass; 10/10 existing generation-progress guard tests pass
+
+---
+
+*Step-4 GenerationPorts boundary design completed on this branch; no production extraction performed. The ports file and guard are design artifacts — no runtime behavior changed.*
