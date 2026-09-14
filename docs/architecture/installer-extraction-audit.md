@@ -250,10 +250,11 @@ packages/animastor-installer/
 │   ├── compatibility-resolver.js, uninstaller.js
 │   └── io/, term/, progress/, state/
 ├── ai/install-manifests/           git mv from backend/ai/install-manifests
+│                                   (backend/ai/workflows STAYS host-side — §10.1)
 ├── tests/                          git mv from backend/tests/installer-*.test.js
 │   ├── mocha config / test script
 │   └── *.test.js (updated require paths)
-└── README.md                       (optional)
+└── README.md
 ```
 
 ### 6.2 Public API (index.js)
@@ -420,6 +421,61 @@ Add architecture test: `packages/animastor-installer/tests/architecture/installe
 13. Update syntax-smoke.sh (optional)
 14. `npm test` / `npm run lint` — verify
 15. Commit: `refactor(extraction): move installer to packages/animastor-installer`
+
+### 10.1 WORKFLOWS STAY HOST-SIDE (seam-work correction)
+
+`backend/ai/workflows` is **NOT an installer asset** — it must NOT move into
+the package. Evidence:
+
+- `backend/src/backend.cjs:721` — the backend runtime loads these workflows at
+  startup (`workflowLoader.configure({ workflowsDir: path.join(__dirname, '../ai/workflows') })`);
+  startup is FATAL without them.
+- `packages/animastor-generation/src/providers/comfyui-provider.js` — the
+  generation package resolves the same workflow ids for job dispatch.
+- Manifest data (`repository_path: "backend/ai/workflows/..."`) is
+  repo-root-relative; the engine resolves it against REPO_ROOT (dev) and the
+  `animastor-installer` tar prefix (tarball) — both stay valid only while
+  workflows live at `backend/ai/workflows` (see IB-G14).
+
+Moving workflows into `packages/animastor-installer/ai/workflows/` would:
+create a reverse dependency (backend runtime → installer package filesystem),
+break the engine's dev-checkout repository_path candidate, and change the
+frozen tar entry prefix `animastor-installer/backend/ai/workflows/`.
+
+**Corrected extraction layout:**
+
+```
+packages/animastor-installer/
+├── package.json
+├── README.md
+├── src/installer/           ← git mv from backend/src/installer
+├── ai/install-manifests/    ← git mv from backend/ai/install-manifests
+└── tests/                   ← git mv from backend/tests/installer-*.test.js
+
+backend/ai/workflows/        ← STAYS (shared host asset, hub still COPYs it)
+```
+
+The hub Dockerfile workflow COPY source is UNCHANGED by extraction.
+
+### 10.2 Seam-work state (this commit)
+
+- `packages/animastor-installer/` skeleton exists (package.json + README).
+  Package name `@animastor/installer`, version 0.0.0 (not published),
+  engines node >=20, zero runtime dependencies.
+- Architecture guards added:
+  `backend/tests/architecture/installer-package-boundary.test.js` (IB-G1..IB-G14).
+  IB-G4 freezes the pre-extraction consumer baseline (exactly
+  `worker-setup-routes.cjs -> ../installer/setup-contract`) and enforces
+  ZERO internal-path imports post-extraction; IB-G6 then requires the
+  `@animastor/installer` specifier.
+- Dependency classification (IB-G1/G2/G3, programmatic scan of 31 files):
+  - Node builtins only: `child_process`, `crypto`, `fs`, `os`, `path`, `readline`
+  - Package-internal relative requires: 45 (all resolve inside the installer dir)
+  - npm dependencies: ZERO
+  - backend-host dependencies: ZERO (blockers: none found)
+  - Filesystem/artifact contracts: `/app/artifacts/install-manifests`
+    (baked-in), `/app/artifacts/worker-bundle` (probe), `backend/ai/workflows`
+    via repository_path candidates (host asset, stays host-side).
 
 ---
 
