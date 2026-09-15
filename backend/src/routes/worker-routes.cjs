@@ -203,9 +203,9 @@ module.exports = function(app, redis) {
             return res.status(400).json({ error: `name is required (max ${MAX_NAME_LEN} chars)` });
         }
         const workerType = typeof body.worker_type === 'string' ? body.worker_type : '';
-        if (!workerRepo.WORKER_TYPES().includes(workerType)) {
+        if (!workerRepo.WORKER_TYPES.includes(workerType)) {
             return res.status(400).json({
-                error: `worker_type must be one of: ${workerRepo.WORKER_TYPES().join(', ')}`,
+                error: `worker_type must be one of: ${workerRepo.WORKER_TYPES.join(', ')}`,
             });
         }
         // Mode: 'private' (default) or 'share' with explicit confirmation.
