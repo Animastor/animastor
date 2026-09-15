@@ -11,8 +11,12 @@ RUN mkdir -p /staging/artifacts/{worker-bundle,workflows,installer-src,install-m
 
 COPY ${WORKER_BUNDLE_SRC}/         /staging/artifacts/worker-bundle/
 COPY backend/ai/workflows/         /staging/artifacts/workflows/
-COPY backend/src/installer/        /staging/artifacts/installer-src/
-COPY backend/ai/install-manifests/ /staging/artifacts/install-manifests/
+# Installer extraction: source lives in packages/animastor-installer/src/installer,
+# canonical version package.json at the package root. Two COPYs combine into the
+# SAME flat installer-src/ layout as before — hub code and tar prefixes unchanged.
+COPY packages/animastor-installer/src/installer/ /staging/artifacts/installer-src/
+COPY packages/animastor-installer/package.json   /staging/artifacts/installer-src/package.json
+COPY packages/animastor-installer/ai/install-manifests/ /staging/artifacts/install-manifests/
 
 # ── Stage 2: GPU Hub runtime ────────────────────────────────────────────────
 FROM node:20-slim

@@ -3,9 +3,6 @@
   "version": "0.1.0",
   "description": "Animastor backend",
   "main": "src/backend.cjs",
-  "bin": {
-    "animastor-installer": "src/installer/cli.js"
-  },
   "type": "commonjs",
   "scripts": {
     "start": "node src/backend.cjs",
@@ -22,6 +19,7 @@
     "@animastor/assistant": "file:../packages/animastor-assistant",
     "@animastor/editor": "file:../packages/animastor-editor",
     "@animastor/generation": "file:../packages/animastor-generation",
+    "@animastor/installer": "file:../packages/animastor-installer",
     "@animastor/orchestration": "file:../packages/animastor-orchestration",
     "@animastor/parser": "file:../packages/animastor-parser",
     "@animastor/player": "file:../packages/animastor-player",

@@ -165,7 +165,8 @@ describe('Install Manifest — loader & validator', () => {
 
         it('baseline_sha256 values match the canonical production workflow files (no drift)', () => {
             const all = manifest.loadAllManifests();
-            const workflowsRoot = path.join(__dirname, '..', 'ai', 'workflows');
+            // workflows remain host-side at backend/ai/workflows (repo checkout)
+            const workflowsRoot = path.join(__dirname, '..', '..', '..', 'backend', 'ai', 'workflows');
             for (const m of Object.values(all)) {
                 for (const wf of m.workflows.artifacts) {
                     expect(wf.baseline_sha256, `${m.profile.id}: ${wf.id} baseline_sha256`).to.match(/^[0-9a-f]{64}$/);

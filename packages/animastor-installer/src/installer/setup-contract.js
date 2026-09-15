@@ -35,7 +35,7 @@ const { planModelDownload } = require('./download-planner');
 // Versions & registries (single source of truth for the contract)
 // ---------------------------------------------------------------------------
 // Versions are READ from canonical sources — never duplicated here:
-//   installer     → backend/src/installer/package.json   (getInstallerVersion)
+//   installer     → packages/animastor-installer/package.json (getInstallerVersion)
 //   worker bundle → packages/animastor-worker/worker/package.json (hub probe
 //                   first, repo fallback via getWorkerBundleVersion)
 //   workflows     → manifest revision + baseline_sha256  (content-addressed)
@@ -44,7 +44,7 @@ const { planModelDownload } = require('./download-planner');
 /** Read the canonical installer version from the installer's package.json. */
 function getInstallerVersion() {
     try {
-        const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+        const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8'));
         return typeof pkg.version === 'string' && pkg.version ? pkg.version : null;
     } catch (_) {
         return null;
@@ -67,12 +67,12 @@ function getWorkerBundleVersion() {
         // Canonical repo location (packages/animastor-worker/worker) with the
         // legacy worker/worker fallback for pre-relocation checkouts — see
         // installer/worker-bundle-source.js. Resolved against THIS module dir
-        // (backend/src/installer → repo root): inside the monorepo that is the
-        // repo root; inside a distributed installer package it is the package
-        // root, mirroring the repo layout.
+        // (packages/animastor-installer/src/installer → repo root): inside the
+        // monorepo that is the repo root; inside a distributed installer package
+        // it is the extraction parent, mirroring the repo layout.
         const candidates = [
-            path.join(__dirname, '..', '..', '..', 'packages', 'animastor-worker', 'worker', 'package.json'),
-            path.join(__dirname, '..', '..', '..', 'worker', 'worker', 'package.json'),
+            path.join(__dirname, '..', '..', '..', '..', 'packages', 'animastor-worker', 'worker', 'package.json'),
+            path.join(__dirname, '..', '..', '..', '..', 'worker', 'worker', 'package.json'),
         ];
         for (const file of candidates) {
             try {
@@ -580,6 +580,22 @@ function getPlatformArtifacts({ platform = 'linux', registry = defaultRegistry, 
 // ---------------------------------------------------------------------------
 
 /**
+ * Host-side canonical workflows root candidates (first existing wins).
+ * backend/ai/workflows is a SHARED HOST ASSET — it never ships inside this
+ * package (the backend runtime loads it at startup and the generation
+ * package resolves the same ids), so the projection resolves it relative to
+ * the package location:
+ *   dev monorepo / repo-layout distribution — <repo>/backend/ai/workflows
+ *   backend container (npm-installed package)             — /app/ai/workflows
+ *   legacy package-adjacent layout (MANIFEST_ROOT sibling) — last resort
+ */
+const WORKFLOW_ROOT_CANDIDATES = [
+    path.join(__dirname, '..', '..', '..', '..', 'backend', 'ai', 'workflows'),
+    path.join(__dirname, '..', '..', '..', '..', '..', 'ai', 'workflows'),
+    path.join(MANIFEST_ROOT, '..', 'workflows'),
+];
+
+/**
  * UI-safe workflow metadata (task §8). Baseline workflows are EDITABLE
  * starting points — never immutable. No resolver internals, no repository
  * paths; download_url is the public hub endpoint.
@@ -590,7 +606,12 @@ function getPlatformArtifacts({ platform = 'linux', registry = defaultRegistry, 
  * manifest revision — the canonical workflow artifact version.
  */
 function listWorkflowArtifacts({ profileId = null, registry = defaultRegistry, workflowsRoot = null } = {}) {
-    const root = workflowsRoot || path.join(MANIFEST_ROOT, '..', 'workflows');
+    let root = workflowsRoot;
+    if (!root) {
+        root = WORKFLOW_ROOT_CANDIDATES.find((candidate) => {
+            try { return fs.existsSync(candidate); } catch (_) { return false; }
+        }) || WORKFLOW_ROOT_CANDIDATES[0];
+    }
     const manifests = registry.all();
     const out = [];
     for (const id of Object.keys(manifests).sort()) {

@@ -1,7 +1,7 @@
 // ======================================================
 // Private Worker Setup Contract — projection unit tests (Phase 3)
 // ======================================================
-// Pure-logic coverage for backend/src/installer/setup-contract.js:
+// Pure-logic coverage for packages/animastor-installer/src/installer/setup-contract.js:
 //
 //   Profiles      — real manifests projected; hidden/internal not exposed
 //   Methods       — Linux available (installer draft), Windows/Docker planned
@@ -290,7 +290,7 @@ describe('Setup contract — projections (unit)', () => {
 
     describe('versions — single source of truth', () => {
         it('installer version is read from the canonical installer package.json', () => {
-            const canonical = require('../src/installer/package.json');
+            const canonical = require('../package.json');
             expect(sc.getInstallerVersion()).to.equal(canonical.version);
             expect(sc.getInstallerVersion()).to.match(/^\d+\.\d+\.\d+$/);
         });
@@ -298,7 +298,7 @@ describe('Setup contract — projections (unit)', () => {
         it('worker bundle version is read from the canonical worker package.json', () => {
             // resolved via helpers — canonical packages/animastor-worker/worker
             const canonical = require(path.join(
-                require('./architecture/helpers').WORKER_BUNDLE_DIR, 'package.json'
+                path.join(__dirname, '..', '..', '..', 'packages', 'animastor-worker', 'worker', 'package.json')
             ));
             expect(sc.getWorkerBundleVersion()).to.equal(canonical.version);
         });

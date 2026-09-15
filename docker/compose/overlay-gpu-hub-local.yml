@@ -20,5 +20,10 @@ services:
       # Worker bundle source: packages/animastor-worker/worker/
       - ./packages/animastor-worker/worker:/app/worker-bundle:ro
       - ./backend/ai/workflows:/app/workflows:ro
-      - ./backend/src/installer:/app/installer-src:ro
-      - ./backend/ai/install-manifests:/app/install-manifests:ro
+      # Installer extraction: source + manifests live in the installer package
+      # (mount TARGETS are frozen — the hub resolves artifacts there).
+      - ./packages/animastor-installer/src/installer:/app/installer-src:ro
+      # Canonical installer version source — the hub reads installer-src/package.json
+      # (the Dockerfile bakes it into the same flat location).
+      - ./packages/animastor-installer/package.json:/app/installer-src/package.json:ro
+      - ./packages/animastor-installer/ai/install-manifests:/app/install-manifests:ro

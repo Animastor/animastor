@@ -28,7 +28,7 @@ const platforms = require('../src/installer/platform');
 const docker = require('../src/installer/platform/deployment/docker');
 const native = require('../src/installer/platform/deployment/native');
 
-const REPO_ROOT = path.join(__dirname, '..', '..');
+const REPO_ROOT = path.join(__dirname, '..', '..', '..');
 const DOCKER_DIR = path.join(REPO_ROOT, 'docker', 'worker');
 
 describe('docker deployment adapter', () => {

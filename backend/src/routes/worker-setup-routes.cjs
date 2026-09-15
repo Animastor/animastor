@@ -24,8 +24,9 @@
 //   - setup/workers/:id answers one indistinct 404 for foreign/unknown ids
 //     (no existence oracle);
 //   - all metadata is projected from canonical installer manifests by
-//     installer/setup-contract.js — raw manifests, internal source URLs,
-//     resolver internals and credentials never leave the backend;
+//     @animastor/installer (setup-contract public API) — raw manifests,
+//     internal source URLs, resolver internals and credentials never leave
+//     the backend;
 //   - download URLs are origin-relative constants authored by the backend;
 //     the client cannot supply or alter them.
 //
@@ -34,7 +35,7 @@
 
 const workerRepo = require('../storage/postgres/repositories/worker-repo');
 const config = require('../config/runtime-config');
-const setupContract = require('../installer/setup-contract');
+const setupContract = require('@animastor/installer').setupContract;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

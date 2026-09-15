@@ -108,6 +108,11 @@ services:
       # it as '@animastor/player'; this read-only mount resolves it
       # in-container (backend build context = ./backend, file: dependency).
       - ./packages/animastor-player:/app/node_modules/@animastor/player:ro
+      # Extraction: GPU Worker installer package. The backend requires it as
+      # '@animastor/installer' (setup contract public API); this read-only
+      # mount resolves it in-container (backend build context = ./backend,
+      # file: dependency).
+      - ./packages/animastor-installer:/app/node_modules/@animastor/installer:ro
     depends_on:
       postgres:
         condition: service_healthy

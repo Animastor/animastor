@@ -43,7 +43,7 @@ const {
 
 const BUNDLE_DIR = WORKER_BUNDLE_DIR;
 const CONTRACTS_IMPL_PATH = path.join(REPO_ROOT, 'packages', 'animastor-contracts', 'src', 'job-protocol-v2.js');
-const MANIFEST_ROOT = path.join(REPO_ROOT, 'backend', 'ai', 'install-manifests');
+const MANIFEST_ROOT = path.join(REPO_ROOT, 'packages', 'animastor-installer', 'ai', 'install-manifests');
 
 const RUNTIME_FILES = [
     'worker.cjs',

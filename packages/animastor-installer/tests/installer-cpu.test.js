@@ -649,7 +649,7 @@ test('16a. D1: real manifest ComfyUI source is reference-grade and requires cons
 // `overrides.httpResults` / `overrides.execResults` are merged OVER the
 // defaults so individual tests can re-mock specific URLs/commands.
 function createRealManifestEngineIo(overrides = {}) {
-    const repoRootReal = path.resolve(__dirname, '..', '..');
+    const repoRootReal = path.resolve(__dirname, '..', '..', '..');
     const base = {
         execResults: {
             'nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits': { code: 1, stdout: '', stderr: 'no devices' },
@@ -1416,7 +1416,7 @@ collectAsync('24. engine: adopt partial root + COMFY_PORT + worker start (end-to
     const manifestMod = require('../src/installer/install-manifest');
     const manifests = [manifestMod.loadManifest('audio/qwen-tts')];
     const DUMMY_TOKEN = 'wrk.adopt-test-token';
-    const repoRootReal = path.resolve(__dirname, '..', '..');
+    const repoRootReal = path.resolve(__dirname, '..', '..', '..');
     // Partial root: venv + models + custom_nodes present, ComfyUI missing
     const { io, calls, fs } = createMockIo({
         files: {
@@ -1567,7 +1567,7 @@ collectAsync('25. engine: re-run heals a present-but-broken node (deps retry + m
         Qwen3TTSRoleBank: {}, Qwen3TTSAdvancedDialogue: {}, Qwen3TTSScriptProcessor: {},
         SaveAudioMP3: {},
     };
-    const repoRootReal = path.resolve(__dirname, '..', '..');
+    const repoRootReal = path.resolve(__dirname, '..', '..', '..');
     const workflowContent = (f) => realFs.readFileSync(path.join(repoRootReal, `backend/ai/workflows/${f}`), 'utf8');
     const { io, calls, fs } = createRealManifestEngineIo({
         files: {

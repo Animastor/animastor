@@ -67,6 +67,9 @@ if [ $# -eq 0 ]; then
     # Player package (physical extraction — see
     # docs/architecture/PLAYER_ROUTE_SPLIT_CHECKLIST.md).
     PLAYER_SRC="$ROOT_DIR/packages/animastor-player"
+    # Installer package (physical extraction — see
+    # docs/architecture/installer-extraction-audit.md).
+    INSTALLER_SRC="$ROOT_DIR/packages/animastor-installer"
 
     if [ -d "$BACKEND_SRC" ]; then
         check_dir "backend/src" "$BACKEND_SRC"
@@ -85,6 +88,9 @@ if [ $# -eq 0 ]; then
     fi
     if [ -d "$PLAYER_SRC" ]; then
         check_dir "player" "$PLAYER_SRC"
+    fi
+    if [ -d "$INSTALLER_SRC" ]; then
+        check_dir "installer" "$INSTALLER_SRC"
     fi
 else
     for area in "$@"; do
@@ -107,6 +113,9 @@ else
                 ;;
             player)
                 check_dir "player" "$ROOT_DIR/packages/animastor-player"
+                ;;
+            installer)
+                check_dir "installer" "$ROOT_DIR/packages/animastor-installer"
                 ;;
             *)
                 echo -e "${YELLOW}Unknown area: ${area}${NC}"

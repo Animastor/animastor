@@ -1318,7 +1318,8 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
 
   // Versions have ONE canonical source each (no manual duplication):
   //   worker bundle → packages/animastor-worker/worker/package.json (WORKER_BUNDLE_DIR)
-  //   installer     → backend/src/installer/package.json (INSTALLER_SRC_DIR)
+  //   installer     → packages/animastor-installer/package.json, baked into
+  //   installer-src/package.json by the Dockerfile (INSTALLER_SRC_DIR)
   // The hub reads them at request time; config overrides exist for tests.
   function readCanonicalVersion(dir, fallbackName) {
     try {
@@ -1339,7 +1340,12 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   }
 
   function installerMeta() {
-    const canonical = readCanonicalVersion(INSTALLER_SRC_DIR, "animastor-installer");
+    // Version source: the canonical installer package.json. In containers it
+    // is baked into INSTALLER_SRC_DIR by the Dockerfile; in a repo checkout
+    // it lives at the package root (packages/animastor-installer/) — check
+    // both so dev hub runs resolve the same canonical version.
+    const canonical = readCanonicalVersion(INSTALLER_SRC_DIR, "animastor-installer")
+      || readCanonicalVersion(path.join(INSTALLER_SRC_DIR, "..", ".."), "animastor-installer");
     return {
       version: config.INSTALLER_VERSION || (canonical && canonical.version) || null,
       name: (canonical && canonical.name) || "animastor-installer",
@@ -1638,7 +1644,8 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
   // (src/installer/*, ai/install-manifests/*, packages/animastor-worker/
   // worker/*) so install-manifest.js and the engine resolve their inputs
   // without modification. The version comes
-  // from the canonical backend/src/installer/package.json — never hardcoded
+  // from the canonical installer package.json (baked installer-src/, dev:
+  // packages/animastor-installer/package.json) — never hardcoded
   // here. No Worker Key, no .env, no credentials.
   function buildInstallerArtifact() {
     const meta = installerMeta();
@@ -1672,7 +1679,7 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     // The engine deploys the worker bundle from
     // <installer>/packages/animastor-worker/worker/ — the canonical repo
     // layout, resolved by the engine through
-    // backend/src/installer/worker-bundle-source.js (canonical first, legacy
+    // src/installer/worker-bundle-source.js (canonical first, legacy
     // `worker/worker` fallback). Without these files a distributed
     // installer could never install the worker offline — the install on the
     // GPU machine would always fail with "could not obtain bundle files".

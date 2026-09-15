@@ -98,7 +98,7 @@ describe('Phase 10T.1: resolveArtifactDir resolution order', () => {
 
 describe('Phase 10T.1: Installer MANIFEST_ROOT resolution', () => {
   it('checks /app/artifacts/install-manifests before repo path', () => {
-    const src = read('backend/src/installer/install-manifest.js');
+    const src = read('packages/animastor-installer/src/installer/install-manifest.js');
     expect(src).to.include("path.join('/app', 'artifacts', 'install-manifests')");
     expect(src).to.include('MANIFEST_ROOT');
   });
@@ -108,7 +108,7 @@ describe('Phase 10T.1: Installer MANIFEST_ROOT resolution', () => {
 
 describe('Phase 10T.1: Installer getWorkerBundleVersion resolution', () => {
   it('checks /app/artifacts/worker-bundle/package.json before repo path', () => {
-    const src = read('backend/src/installer/setup-contract.js');
+    const src = read('packages/animastor-installer/src/installer/setup-contract.js');
     expect(src).to.include("path.join('/app', 'artifacts', 'worker-bundle', 'package.json')");
     expect(src).to.include('getWorkerBundleVersion');
   });
@@ -172,8 +172,10 @@ describe('Phase 10T.1: local-dev overlay mounts', () => {
       // canonical worker bundle source (relocated with the package)
       './packages/animastor-worker/worker',
       './backend/ai/workflows',
-      './backend/src/installer',
-      './backend/ai/install-manifests',
+      // installer extraction: source + canonical version + manifests
+      './packages/animastor-installer/src/installer',
+      './packages/animastor-installer/package.json',
+      './packages/animastor-installer/ai/install-manifests',
     ];
     for (const s of frozenSources) {
       expect(overlay, `mount source ${s} missing from local overlay`).to.include(s);

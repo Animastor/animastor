@@ -50,7 +50,7 @@ const uninstaller = require('./uninstaller');
 // ---------------------------------------------------------------------------
 
 const CLI_ROOT = path.resolve(__dirname, '..', '..');
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
+const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..');
 
 /**
  * The platform adapter is auto-detected ONCE at CLI startup. An unsupported
@@ -997,7 +997,7 @@ async function cmdRebootComfyUI(flags) {
 
 async function main() {
     const args = parseArgs(process.argv);
-    const pkg = require('./package.json');
+    const pkg = require('../../package.json');
     console.log(`animastor-installer v${pkg.version} (platform: ${PLATFORM_RUNTIME.platform}, deployment: ${PLATFORM_RUNTIME.deployment})`);
     printPlatformNotices();
     switch (args.command) {

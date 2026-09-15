@@ -5,25 +5,25 @@ verification, and management.
 
 ## Status
 
-**Pre-extraction skeleton.** The production source still lives at
-`backend/src/installer/`. This package will be populated during the
-physical extraction step.
+**Extracted.** The production source physically lives here
+(`packages/animastor-installer/src/installer/`); the backend consumes it as
+the `@animastor/installer` package (`file:` dependency). npm publish is a
+separate later step.
 
-## Structure (after extraction)
+## Structure
 
 ```
 packages/animastor-installer/
-├── package.json
-├── src/installer/          ← git mv from backend/src/installer
+├── package.json            @animastor/installer 0.1.0, Node >=20, zero runtime deps
+├── src/installer/
 │   ├── cli.js              CLI entry (detect/plan/install/verify/resume/uninstall)
-│   ├── index.js            Public API entry
+│   ├── index.js            Public API entry (10 exports, incl. setupContract)
 │   ├── setup-contract.js   Host-facing projection (UI-safe DTOs)
 │   ├── engine/             Core runtime (installers, fetchers, state, workflows)
 │   ├── platform/           Platform adapters (linux/windows, docker/native)
 │   └── ...
-├── ai/
-│   └── install-manifests/  ← git mv from backend/ai/install-manifests
-└── tests/                  ← git mv from backend/tests/installer-*.test.js
+├── ai/install-manifests/   Manifest profiles (MANIFEST_ROOT fallback, relative to __dirname)
+└── tests/                  mocha/chai package tests (npm test)
 ```
 
 `backend/ai/workflows` is a **shared host asset** (the backend runtime and the
@@ -38,32 +38,29 @@ candidates (repo root + tarball prefix), never package-locally.
 | `manifest` | Install manifest loading and validation |
 | `resolver` | Compatibility resolver |
 | `workflows` | Workflow artifact management |
-| `downloads` | Download planner |
-| `plan` | Interactive install plan |
-| `safety` | Safety rules and secret redaction |
-| `verification` | Post-install verification reporting |
-| `engine` | Core installation engine |
-| `uninstaller` | Uninstall orchestration |
-| `setupContract` | Host-facing UI projection (for backend routes) |
+| `downloads` | Download planning |
+| `plan` | Install planning |
+| `safety` | Safety rules |
+| `verification` | Verification reports |
+| `engine` | Install engine |
+| `uninstaller` | Uninstall flows |
+| `setupContract` | Host-facing setup contract (backend worker-setup routes) |
 
 ## CLI
 
-```bash
-animastor-installer detect     # Detect environment
-animastor-installer plan       # Generate install plan
-animastor-installer install    # Perform installation
-animastor-installer verify     # Verify installation
-animastor-installer resume     # Resume interrupted install
-animastor-installer uninstall  # Remove installation
+`animastor-installer` (package `bin` → `src/installer/cli.js`).
+
+## Manifest resolution (MANIFEST_ROOT contract)
+
+1. `/app/artifacts/install-manifests` (baked container layout)
+2. `packages/animastor-installer/ai/install-manifests` (repo-dev, resolved
+   relative to `__dirname` — package-relative fallback, no env var)
+
+## GPU Hub tarball contract (unchanged prefixes)
+
 ```
-
-## Runtime Contract
-
-- **Node >= 20** required
-- **Zero npm dependencies** — only Node builtins (fs, path, os, crypto, child_process, readline)
-- **MANIFEST_ROOT**: baked-in `/app/artifacts/install-manifests` (container) or `__dirname/../../ai/install-manifests` (package-relative fallback)
-- **Tarball layout**: `animastor-installer/src/installer/{cli.js, ...}` + `ai/install-manifests/` + `backend/ai/workflows/`
-
-## License
-
-Proprietary — Animastor
+animastor-installer/src/installer/...
+animastor-installer/ai/install-manifests/...
+animastor-installer/backend/ai/workflows/...
+animastor-installer/packages/animastor-worker/worker/...
+```

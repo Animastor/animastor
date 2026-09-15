@@ -27,7 +27,7 @@ const platforms = require('../src/installer/platform');
 const workerMod = require('../src/installer/engine/worker');
 const { createMemoryFs } = require('../src/installer/engine/io');
 
-const REPO_ROOT = path.join(__dirname, '..', '..');
+const REPO_ROOT = path.join(__dirname, '..', '..', '..');
 
 // ---------------------------------------------------------------------------
 // Mock io helper (memory fs + scripted exec)
@@ -117,7 +117,7 @@ describe('platform adapter selection', () => {
 
     it('windows adapter is selected WITHOUT loading Linux-only code (isolated process)', () => {
         const script = `
-            const platforms = require('${path.join(REPO_ROOT, 'backend/src/installer/platform')}');
+            const platforms = require('${path.join(REPO_ROOT, 'packages/animastor-installer/src/installer/platform')}');
             const a = platforms.getPlatformAdapter('windows');
             const loaded = Object.keys(require.cache).filter((k) => /platform[\\\\/]linux\\.js$/.test(k));
             if (loaded.length > 0) { console.error('LINUX MODULE LOADED: ' + loaded.join(',')); process.exit(1); }
@@ -130,7 +130,7 @@ describe('platform adapter selection', () => {
 
     it('linux adapter is selected WITHOUT loading Windows-only code (isolated process)', () => {
         const script = `
-            const platforms = require('${path.join(REPO_ROOT, 'backend/src/installer/platform')}');
+            const platforms = require('${path.join(REPO_ROOT, 'packages/animastor-installer/src/installer/platform')}');
             const a = platforms.getPlatformAdapter('linux');
             const loaded = Object.keys(require.cache).filter((k) => /platform[\\\\/]windows\\.js$/.test(k));
             if (loaded.length > 0) { console.error('WINDOWS MODULE LOADED: ' + loaded.join(',')); process.exit(1); }
@@ -367,7 +367,7 @@ describe('windows worker flow (mocked platform commands)', () => {
 // ---------------------------------------------------------------------------
 
 describe('bootstrap platform selection', () => {
-    const { buildBootstrapScript, buildWindowsBootstrapScript } = require('../../packages/animastor-gpu-hub/bootstrap');
+    const { buildBootstrapScript, buildWindowsBootstrapScript } = require('../../animastor-gpu-hub/bootstrap');
 
     it('the bash launcher keeps its credential rejection and checksum gates', () => {
         const s = buildBootstrapScript({ hubUrl: 'https://hub.example/gpu', profile: 'image/qwen-image', mode: 'managed' });
@@ -413,8 +413,8 @@ describe('bootstrap platform selection', () => {
 // ---------------------------------------------------------------------------
 
 describe('hub GET /installer platform selection', () => {
-    const { createMockRedis } = require('./mocks/redis-mock');
-    const { buildHubApp } = require('../../packages/animastor-gpu-hub/gpu-hub');
+    const { createMockRedis } = require('../../../backend/tests/mocks/redis-mock');
+    const { buildHubApp } = require('../../animastor-gpu-hub/gpu-hub');
 
     async function startHub() {
         const stubSrc = fs.mkdtempSync(path.join(os.tmpdir(), 'plat-hub-'));
@@ -424,9 +424,9 @@ describe('hub GET /installer platform selection', () => {
             redis: createMockRedis(),
             config: {
                 INSTALLER_SRC_DIR: stubSrc,
-                WORKER_BUNDLE_DIR: require('./architecture/helpers').WORKER_BUNDLE_DIR,
+                WORKER_BUNDLE_DIR: path.join(REPO_ROOT, 'packages', 'animastor-worker', 'worker'),
                 WORKFLOW_DIR: path.join(REPO_ROOT, 'backend', 'ai', 'workflows'),
-                INSTALLER_MANIFESTS_DIR: path.join(REPO_ROOT, 'backend', 'ai', 'install-manifests'),
+                INSTALLER_MANIFESTS_DIR: path.join(REPO_ROOT, 'packages', 'animastor-installer', 'ai', 'install-manifests'),
             },
             fetchImpl: async () => ({ ok: true, status: 200 }),
             intervals: false,

@@ -27,8 +27,11 @@ const REPO_ROOT = path.join(__dirname, '..', '..');
 const REAL_WORKER_DIR = require('./architecture/helpers').WORKER_BUNDLE_DIR;
 const REAL_WORKER_SOURCE = path.join(REAL_WORKER_DIR, 'worker.cjs');
 const REAL_WORKFLOW_DIR = path.join(REPO_ROOT, 'backend', 'ai', 'workflows');
-const REAL_INSTALLER_SRC = path.join(REPO_ROOT, 'backend', 'src', 'installer');
-const REAL_MANIFESTS = path.join(REPO_ROOT, 'backend', 'ai', 'install-manifests');
+const REAL_INSTALLER_SRC = path.join(REPO_ROOT, 'packages', 'animastor-installer', 'src', 'installer');
+const REAL_MANIFESTS = path.join(REPO_ROOT, 'packages', 'animastor-installer', 'ai', 'install-manifests');
+// Canonical installer version source — the package root package.json
+// (the hub bakes it into installer-src/package.json).
+const INSTALLER_PKG_JSON = require('../../packages/animastor-installer/package.json');
 
 const ARTIFACT_CONFIG = {
     BACKEND_URL: 'http://backend.test',
@@ -334,7 +337,7 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
             const res = await fetch(`${hub.base}/installer/bundle`);
             expect(res.status).to.equal(200);
             expect(res.headers.get('content-type')).to.contain('application/gzip');
-            expect(res.headers.get('x-animastor-artifact-version')).to.equal(require('../src/installer/package.json').version);
+            expect(res.headers.get('x-animastor-artifact-version')).to.equal(INSTALLER_PKG_JSON.version);
             const buf = Buffer.from(await res.arrayBuffer());
             const names = parseTar(zlib.gunzipSync(buf)).map((e) => e.name);
             expect(names).to.include('animastor-installer/src/installer/cli.js');
@@ -356,7 +359,7 @@ describe('GPU hub — setup contract artifacts (Phase 3)', () => {
             const buf = Buffer.from(await (await fetch(`${hub.base}/installer/bundle`)).arrayBuffer());
             const meta = await (await fetch(`${hub.base}/installer/sha256`)).json();
             expect(meta.artifact).to.equal('installer');
-            expect(meta.version).to.equal(require('../src/installer/package.json').version);
+            expect(meta.version).to.equal(INSTALLER_PKG_JSON.version);
             expect(meta.sha256).to.equal(sha256(buf));
             expect(meta.signature).to.equal(null);
         });

@@ -439,7 +439,7 @@ describe('management tools (shared runtime logic)', () => {
         const res = management.installManagementTools(io, {
             toolsDir: '/home/u/animastor/tools',
             nodePath: '/usr/bin/node',
-            cliPath: '/opt/animastor/backend/src/installer/cli.js',
+            cliPath: '/opt/animastor/packages/animastor-installer/src/installer/cli.js',
             statePath: '/home/u/ComfyUI/.animastor-installer/install-state.json',
             root: '/home/u/ComfyUI',
             workerDir: '/home/u/animastor/worker',
@@ -450,7 +450,7 @@ describe('management tools (shared runtime logic)', () => {
             const body = io.fs.readFileSync(f);
             assert.ok(body.startsWith('#!/bin/sh'), `${f} has a shebang`);
             assert.strictEqual(io.fs.readFileSync(`${f}::mode`), 0o755, `${f} is executable`);
-            assert.ok(body.includes(`exec '/usr/bin/node' '/opt/animastor/backend/src/installer/cli.js'`), body);
+            assert.ok(body.includes(`exec '/usr/bin/node' '/opt/animastor/packages/animastor-installer/src/installer/cli.js'`), body);
             assert.ok(body.includes(`--state '/home/u/ComfyUI/.animastor-installer/install-state.json'`));
             assert.ok(body.includes(`--root '/home/u/ComfyUI'`));
             assert.ok(body.includes(`--worker-dir '/home/u/animastor/worker'`));
@@ -467,13 +467,13 @@ describe('management tools (shared runtime logic)', () => {
         const args = {
             toolsDir: '/home/u/animastor/tools',
             nodePath: '/usr/bin/node',
-            cliPath: '/opt/animastor/backend/src/installer/cli.js',
+            cliPath: '/opt/animastor/packages/animastor-installer/src/installer/cli.js',
             statePath: '/s.json',
             root: '/home/u/ComfyUI',
             workerDir: '/home/u/animastor/worker',
         };
         management.installManagementTools(io, args);
-        management.installManagementTools(io, { ...args, cliPath: '/opt/animastor/backend/src/installer/cli.js' });
+        management.installManagementTools(io, { ...args, cliPath: '/opt/animastor/packages/animastor-installer/src/installer/cli.js' });
         assert.strictEqual(io._spawned.length, 0);
         const second = management.installManagementTools(io, args);
         assert.strictEqual(second.files.length, 4);

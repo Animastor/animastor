@@ -9,6 +9,10 @@
  *
  * No installation is performed here; see
  * docs/04-planning/private-worker-installer-phase15.md
+ *
+ * PUBLIC API of @animastor/installer — this is the ONLY supported entry
+ * point for host consumers (e.g. backend routes). Internal paths
+ * (src/installer/<module>) are not part of the package contract.
  */
 
 const manifest = require('./install-manifest');
@@ -20,6 +24,7 @@ const safety = require('./safety-rules');
 const verification = require('./verification-report');
 const engine = require('./engine/engine');
 const uninstaller = require('./uninstaller');
+const setupContract = require('./setup-contract');
 
 module.exports = {
     manifest,
@@ -31,4 +36,5 @@ module.exports = {
     verification,
     engine,
     uninstaller,
+    setupContract,
 };
