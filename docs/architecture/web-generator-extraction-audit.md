@@ -3151,3 +3151,371 @@ Repo-wide sweep of `errorMessage` / `ports.session.errorMessage` / `SessionSeam.
 | Vite build | GREEN (405.50 kB / 118.07 kB gzip) |
 | GitHub Combined Status | statuses: [] — no independent CI confirmation (local checks are not CI) |
 | Commit | single atomic commit; `git diff 83483eab..HEAD` checked — installer workstream (`ea810931`) remains a separate parent commit, not part of Step 20 |
+
+---
+
+## 32. Step 21 — Final Extraction Closure Audit
+
+**Status:** AUDIT ONLY — no production code changed, no packages created, no API changed, no guards rewritten.
+**Date:** 2026-09-15
+**Branch:** `c21.4-physically-extract-analysis-from-backend`
+**HEAD (baseline):** `3b037c41c66d2d11b480e1eb640daddb953efe48` ("refactor(web): move error message ownership to file store" — Step 20 complete)
+**Parent:** `ea810931` (independent installer workstream)
+**Purpose:** Determine whether any remaining responsibility in `generateStore.ts` justifies further physical extraction, or whether the extraction program should close.
+
+---
+
+### 32.1 Source-grounded inventory — generateStore.ts at HEAD (773 LOC)
+
+| Lines | Block | Category | Owner | Notes |
+|---|---|---|---|---|
+| 1–23 | File header comments | documentation | — | boundary notes, audit references |
+| 24–69 | Imports + type exports (`GenerationStatus`, `PlaybackPrepared`, `SceneRef`, `VBookStage`, etc.) | host composition | generateStore | re-exports from packages for backward compat |
+| 42–50 | Identity re-exports (`bookId`, `buildId`, `loadBook`, stash pair, `setGenerationBuildId`, `readPersistedBookSession`) | **Identity** | `@animastor/web-book-session` | 1:1 re-export; zero identity ownership in generateStore |
+| 67–88 | `blankBookJustCreated` signal + playback event bus (`onPlaybackPrepared` / `emitPlaybackPrepared`) | host composition | generateStore | event bus — consumed by player/navigator/edit |
+| 84 | `generationStatus` signal | host UI status | generateStore | nav-icon pulse source |
+| 103–179 | Nav-icon SUCCESS pulse machinery (NavPulseState, timers, watchdog) | host UI status | generateStore | presentation-coupled (Android parity) |
+| 191–193 | `dirtySummary` signal | host shared state | generateStore | consumed by EditPage; written by fileStore via seam |
+| 205–232 | File-slice seams (`stopGenerationSession`, `setRegenerating`, `bumpVBookPollToken`, `markImportIncomplete`) + `vbookPollState` | host composition | generateStore | fileStore consumption surface |
+| 249–253 | `phase` signal (B6 shared session status) | cross-slice shared status | generateStore | dual-writer: generateStore + fileStore via seam |
+| 260–326 | Generate-screen signals (`vbookProgress`, `isRegenerating`, analysis progress, layer-config signals, load/persist/refresh wrappers) | host composition | generateStore | domain in `@animastor/web-generator-config` |
+| 368–435 | Timer + progress-tracking state objects, `computeProgressRows` wrapper | host composition | generateStore | domain in `@animastor/web-generator` |
+| 447–495 | VBook agent composition (`vbookAgentPorts`, delegation fns, `clearVBookProgress`) | host composition | generateStore | decisions in `@animastor/web-generator-vbook` |
+| 500–560 | SSE stream host wiring (`startProgressStream` / `stopProgressStream`, `sseStream` state, `progressEventSink`) | transport composition | generateStore | reconnect/routing in `@animastor/web-generator-sse` |
+| 566–602 | `startGeneration` | generation orchestration | generateStore | 1 POST, state arming |
+| 612–639 | `applyGenerationResults` | generation orchestration | generateStore | navigation + playback bridge |
+| 651–713 | Cancel lifecycle (`requestCancelGeneration`, `teardownGenerationSessionLocal`, `settleGenerationSessionAfterCancel`, `cancelGeneration`) | cancel/teardown | generateStore | Step 14/14A split |
+| 716–731 | `cancelTask` | cancel/teardown | generateStore | worker-specific cancel |
+| 738–761 | `checkAndRestoreGenerationState` | restore re-arming | generateStore | backend-restart recovery |
+
+**Total: 773 LOC.** Identity = 0 (re-export only); domain decisions = in packages; host = composition + seams + B6 + cancel + restore + applyGenerationResults + nav-pulse.
+
+---
+
+### 32.2 A. Already physically extracted
+
+| Package | LOC (approx) | What it owns |
+|---|---|---|
+| `@animastor/web-generator` | ~500 | Analysis state machine, progress rows, SSE routing, timer math, VBook progress mapping |
+| `@animastor/web-generator-config` | ~80 | loadLayerConfig, persistLayerConfig, getAssetsState |
+| `@animastor/web-generator-sse` | ~120 | runSseStream (reconnect loop, epoch guard, backoff) |
+| `@animastor/web-generator-vbook` | ~350 | checkAgentStatus, startVBookGeneration, pollVBookProgress (bootstrap decision, terminal-state classification, stale-token abort) |
+| `@animastor/web-book-session` | ~130 | bookId/buildId signals, loadBook, persistence, stash/restore pair, setGenerationBuildId, readPersistedBookSession |
+
+**All five are guard-pinned. All production consumers are routed through generateStore re-exports or host adapters.**
+
+---
+
+### 32.3 B. Host-owned generation state/logic that must remain
+
+| Concern | Why it stays | LOC |
+|---|---|---|
+| Identity re-exports | generateStore is the consumer-surface facade; 10+ files import from it | ~10 |
+| `phase` signal (B6) | cross-slice dual-writer; last-writer-wins is public behavior (§25.5); no merge/priority design exists | ~5 |
+| `generationStatus` signal + nav-pulse | presentation-coupled (Android animator parity); reads only by AppShell/GeneratePage | ~70 |
+| `onPlaybackPrepared` bus | host-owned event producer; Player/Navigator/Edit subscribe via adapters (§6 blocker 4) | ~15 |
+| `dirtySummary` / `blankBookJustCreated` | consumed by EditPage/AppShell; file flows write through seams | ~5 |
+| File-slice seams | fileStore's injection surface (GenerationResetSeam, SessionSeam, PlayerSeam) | ~30 |
+| `vbookPollState` explicit object | poll-token authority; fileStore + cancel + teardown bump it | ~5 |
+| `sseStream` explicit object | SSE AbortController + epoch; host-owned resource | ~25 |
+| `generationTimer` / `progressTracking` explicit objects | host-owned state objects; passed into package functions | ~10 |
+
+---
+
+### 32.4 C. Remaining seams/orchestration — full inventory
+
+| Element | Owner | Readers | Writers | Async lifecycle | Dependencies | External side effects | Natural boundary | Worth extracting? |
+|---|---|---|---|---|---|---|---|---|
+| `phase` signal | generateStore (shared) | AppShell, GeneratePage, FilePage (by ref) | generateStore (3 sites), fileStore (11 sites) | sync writes; last-writer-wins | `@preact/signals` | bounce mirror, UI status | cross-slice shared — NOT a package boundary | **NO** — zero decision logic; 14 assignment sites across 2 flows |
+| `generationStatus` | generateStore | AppShell, computeProgressRows, vbookAgentPorts | generateStore (setGenerationStatus) | nav-pulse timers (22s auto-reset) | `@preact/signals` | nav-icon color | UI-coupled; presentation only | **NO** — browser timer semantics, 60 LOC of pulse logic |
+| `isRegenerating` | generateStore | GeneratePage, computeProgressRows, checkAndRestore, vbookAgentPorts | generateStore, fileSetore (seam) | sync | `@preact/signals` | UI gate | host composition | **NO** — shared with file seams |
+| `startGeneration` | generateStore | GeneratePage | — | 1 POST + state arming | api/client, timer, SSE, phase, dirtySummary | phase→SCENE_READY, status→RUNNING | host arming + 1 transport call; ~20 LOC core | **NO** — writes B6 dual-writer + file-owned dirtySummary |
+| `applyGenerationResults` | generateStore | computeProgressRows finalize, vbookAgentPorts.onGenerationFinalized, cancelGeneration (dead branch) | — | 1 GET + sceneRefs + position anchor + playback emit | api/client, positionStore, playback bus | navigateTo, emitPlaybackPrepared | host composition bridge (3 host boundaries) | **NO** — host legs dominate; extractable core ~10 LOC thin adapter |
+| `cancelGeneration` | generateStore | GeneratePage | — | teardown (sync) → POST → settle (sync) → conditional finalize | api/client, timer, SSE, poll state, phase, isRegenerating | phase→IDLE, status→IDLE | host state teardown; 1 transport call | **NO** — 11/13 ops are host mutations; B6 settle writes |
+| `cancelTask` | generateStore | GeneratePage | — | 1 POST + vbook branch token bump | api/client, vbookPollState, clearVBookProgress | — | thin transport adapter | **NO** — ~16 LOC |
+| `checkAndRestoreGenerationState` | generateStore | GeneratePage (2.5s delayed) | — | 2 GETs + session re-arm | api/client, timer, SSE, status, isRegenerating | status→GENERATING, phase→GENERATING | host re-composition of already-extracted parts | **NO** — 2 GETs + host state arming |
+| `stopGenerationSession` | generateStore | fileStore (via seam) | — | token bump + stream stop + timer stop + status→IDLE + reset | — | full teardown | host seam (fileStore consumer) | **NO** — pure host seam |
+| nav-pulse (NavPulseState) | generateStore | setGenerationStatus | setGenerationStatus, auto-reset callbacks | setTimeout + setInterval (22s) | browser timers | nav-icon color | presentation-coupled | **NO** — Android parity; 60 LOC |
+| SSE host wiring | generateStore | vbookAgentPorts.startStream, startProgressStream calls | — | AbortController lifecycle, epoch guard | api/client.sse | SSE stream | host resource management | **NO** — already delegated to package; host keeps glue |
+| layer-config wrappers | generateStore | GeneratePage (toggle chips) | — | 1 GET/PUT each | @animastor/web-generator-config | signal writes | thin wrappers over package | **NO** — already extracted; wrappers are 1 LOC each |
+| `computeProgressRows` wrapper | generateStore | GeneratePage, vbookAgentPorts | — | sync | @animastor/web-generator | signal writes + finalize callback | thin host binding | **NO** — binds host state into domain fn |
+| `blankBookJustCreated` | fileStore (via seam) | AppShell | fileStore (createBlankBook) | sync | `@preact/signals` | AI bubble flag | file-owned | **NO** — fileStore already owns it |
+| `dirtySummary` | generateStore | EditPage | fileStore (seam), startGeneration | sync | `@preact/signals` | Edit dirty indicator | host shared state | **NO** — 2 writers; consumed by 1 page |
+
+---
+
+### 32.5 Check the 10 extraction criteria
+
+For each remaining candidate in §32.4:
+
+| Candidate | 1. SRP | 2. Lifecycle | 3. No giant interface | 4. No pkg→host dep | 5. Deterministic async | 6. Cancel semantics | 7. Stale protection | 8. Host = root | 9. Guardable | 10. Reduces complexity |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `phase` signal | FAIL — 0 decision logic, 14 assignment sites | FAIL — 2 flows own lifecycle | FAIL — write-port = giant ambient container | OK | OK | FAIL — settle writes B6 | OK | FAIL — package owns host signals | YES | **FAIL** — pure relocation, not ownership reduction |
+| `generationStatus` + nav-pulse | FAIL — presentation logic, not domain | FAIL — browser timers | OK | OK | OK — sync | OK | OK | FAIL — presentation in package | YES | **FAIL** — 60 LOC of timer parity; no domain value |
+| `startGeneration` | FAIL — writes B6 + dirtySummary | FAIL — depends on 5+ host signals | FAIL — 5+ callbacks needed | OK | OK | N/A | N/A | FAIL — B6 + dirtySummary | YES | **FAIL** — thin arming + 1 POST |
+| `applyGenerationResults` | FAIL — bridges nav+playback+timer | FAIL — host legs dominate | OK | OK | OK | dead branch from cancel | OK | FAIL — position + playback | YES | **FAIL** — extractable core ~10 LOC |
+| `cancelGeneration` | FAIL — teardown+request+settle+finalize | FAIL — B6 settle writes | FAIL — 5+ state objects + B6 | OK | OK — 14A pinned | preserved | OK | FAIL — B6 + finalize bridge | YES | **FAIL** — 11/13 host mutations |
+| `checkAndRestoreGenerationState` | FAIL — host re-composition | FAIL — 2 GETs + re-arm | OK | OK | OK | OK | OK | FAIL — host state arming | YES | **FAIL** — re-arms already-extracted parts |
+| SSE host wiring | FAIL — glue only | OK | OK | OK | OK | OK | OK | YES | YES | **FAIL** — ~30 LOC glue; no decisions |
+| layer-config wrappers | FAIL — 1 LOC each | OK | OK | OK | OK | N/A | N/A | YES | YES | **FAIL** — already extracted; wrappers are trivial |
+| `computeProgressRows` wrapper | FAIL — thin binding | OK | OK | OK | OK | N/A | N/A | YES | YES | **FAIL** — binds host state into domain fn |
+| File-slice seams | FAIL — host seam surface | OK | OK | OK | OK | OK | OK | YES | YES | **FAIL** — composition wiring |
+
+**Criterion #10 verdict for all candidates: FAIL.** Every remaining element is either (a) host-state-dominated composition where extraction yields a thin wrapper calling back into host signals, or (b) a genuinely cross-slice shared concern (`phase`) with zero decision logic that becomes an ambient state container if packaged. No candidate simultaneously satisfies all 10 criteria.
+
+---
+
+### 32.6 Cancel / session final state — lifecycle reconstruction
+
+```
+startGeneration
+  → generationStatus = RUNNING
+  → isRegenerating = true
+  → progressTracking.newGenerationPending = true
+  → timer start + SSE stream start
+  → POST /regenerate
+    → success: phase = SCENE_READY, dirtySummary, buildId update
+    → error: generationStatus = ERROR
+
+VBook path (via @animastor/web-generator-vbook):
+  → checkVBookAgentStatus / startVBookGeneration / pollVBookProgress
+  → onGenerationFinalized → applyGenerationResults
+
+Progress finalize (via computeProgressRows.onGenerationFinalized):
+  → stopProgressStream
+  → vbookProgress.stage = IDLE (if COMPLETED)
+  → generationStatus = SUCCESS
+  → isRegenerating = false
+  → applyGenerationResults()
+
+Cancel path:
+  1. teardownGenerationSessionLocal()          [sync, pre-await]
+     → setGenerationStatus('IDLE')             [clears nav-pulse]
+     → progressTracking.newGenerationPending = false
+     → stopTimer()
+     → stopProgressStream()                    [epoch++ + abort]
+     → resetProgressState()
+     → vbookPollState.token++                  [kills VBook poll]
+     → resetAnalysisProgress()
+  2. await requestCancelGeneration(bId)        [POST /cancel-generation]
+  3. settleGenerationSessionAfterCancel()      [sync, post-await — Step 14A]
+     → isRegenerating = false
+     → phase = 'IDLE'
+  4. if (hasAnyProgress()) await applyGenerationResults()
+     → DEAD BRANCH: resetProgressState() cleared progressTracking in step 1
+```
+
+**Step 14A invariant:** teardown → await request → settle — **VERIFIED** (regression-pinned by `generateStore.analysis.test.ts` + guard assertions in `generation-progress-contour.guard.test.ts`).
+
+**Post Step 20:** settle leg writes `isRegenerating=false` + `phase='IDLE'` only; `errorMessage` is NOT touched (fileStore-owned).
+
+---
+
+### 32.7 applyGenerationResults — detailed analysis
+
+**Callers (3):**
+1. `computeProgressRows.onGenerationFinalized` — host callback (generation success)
+2. `vbookAgentPorts.lifecycle.onGenerationFinalized` — package seam callback (VBook completion)
+3. `cancelGeneration` Phase 4 — **dead branch** (§27.2: `hasAnyProgress()` is false after `resetProgressState()`)
+
+**Reads:**
+- `isRegenerating.value` → `stopTimer()` gate
+- `bookId.value` → fetch path
+- `buildId.value` → playbackPrepared payload
+- `position.value.chapterId` → anchor-position decision
+- `getJson<BookData>(/book/:id)` → transport
+- `sceneRefs(bookData)` → api/models pure fn
+
+**Writes:**
+- `navigateTo(...)` — position anchor (positionStore)
+- `emitPlaybackPrepared(...)` — playback bus (host-owned)
+
+**Network requests:** 1 GET `/book/:id`
+
+**Navigation effects:** anchor at first scene if no position selected
+
+**Playback effects:** emit `PlaybackPrepared` with `softRefresh=true`
+
+**Identity dependencies:** `bookId.value`, `buildId.value` (read-only)
+
+**Generation-state dependencies:** `isRegenerating.value` (read-only gate)
+
+**Classification:** **B. Host-only orchestration bridge.** The extractable core is ~10–14 LOC (fetch + sceneRefs + zero-scenes guard). The host legs (position anchor + playback emit + timer stop) are the majority. Extraction would create a thin adapter indistinguishable from `@animastor/web-generator-config`'s shape. **Not worth a package.**
+
+---
+
+### 32.8 GenerationPorts — current status
+
+**Design:** 8 interfaces in `frontends/app/src/app/generationPorts.ts` (147 LOC, unchanged since Step 4).
+
+| Port | Designed | Realized in production? | Status |
+|---|---|---|---|
+| `GenerationIdentityPort` | getBookId/getBuildId | superseded by `@animastor/web-book-session` | OBSOLETE |
+| `GenerationTransportPort` | getJson/postJson/putJson | realized as slice-local ports in vbook/config packages | SIMPLIFY LATER |
+| `GenerationSsePort` | startStream/stopStream AsyncIterable | realized as `SseStreamPort` (different shape) in web-generator-sse | SIMPLIFY LATER |
+| `GenerationNavigationPort` | navigateTo | unused; host binds directly in applyGenerationResults | design-only |
+| `GenerationPlaybackPort` | emitPlaybackPrepared | unused; host binds directly | design-only |
+| `GenerationStatePort` | setPhase/setError/setStatus/... | partially realized as slice-local state callbacks (VBookHostState) | SIMPLIFY LATER |
+| `GenerationConfigPort` | 8 setters | fully superseded by web-generator-config ports | OBSOLETE |
+| `GenerationProgressPort` | reset/clear/bump/mark/stop | realized as fileStore GenerationResetSeam + host exports | realized in host seams |
+
+**Is GenerationPorts becoming an ambient state container?** No — 147 LOC, 8 small interfaces, zero production imports, guard-pinned. It is a design record, not a runtime dependency.
+
+**Remaining responsibility justifying a new package?** No — the port interfaces that matter are realized as slice-local contracts in the already-extracted packages. The composite bundle is a design document.
+
+**Verdict: KEEP** as design documentation. Do not delete; do not extend.
+
+---
+
+### 32.9 Package dependency graph
+
+```
+frontends/app (generateStore) ──────────────────────────────────────────┐
+  ├─ @animastor/web-book-session    → @preact/signals                  │
+  ├─ @animastor/web-generator       → (pure domain, zero deps)         │
+  ├─ @animastor/web-generator-config → (pure domain, zero deps)        │
+  ├─ @animastor/web-generator-sse   → @animastor/web-generator         │
+  ├─ @animastor/web-generator-vbook → @animastor/web-generator         │
+  └─ host-only: api/client, positionStore, fileStore, authStore, ...   │
+                                                                        │
+  playback/navigation adapters ← host composition root ─────────────────┘
+```
+
+**Cycles:** NONE.
+- generateStore → packages: one-directional
+- packages → host: ZERO (grep-verified; all packages import only their dependencies)
+- web-generator-vbook → web-generator: one-directional
+- web-generator-sse → web-generator: one-directional
+- authStore → generateStore (re-export): one-directional (documented edge)
+- generateStore ⇄ playbackStore: DISSOLVED (guard-pinned)
+- generateStore ⇄ fileStore: DISSOLVED via seams (no direct import)
+
+**Package → host dependencies:** ZERO. All five packages have zero imports from `frontends/app/src/`.
+**Host → package direction:** Correct. Host imports packages; packages never import host.
+**Remaining accidental coupling:** None found. All cross-module state access goes through seams or port callbacks.
+
+---
+
+### 32.10 LOC is not a target
+
+The question is NOT "is generateStore too big?" (773 LOC of pure host composition is normal for a facade module).
+
+The question IS: **"If we leave generateStore as the host orchestration/composition root, is there an architectural problem?"**
+
+**Answer: NO.**
+
+- Identity is cleanly extracted and guard-pinned (0 LOC ownership in generateStore)
+- All 5 domain packages are extracted and guard-pinned
+- The remaining 773 LOC is legitimate host composition: wiring ports to signals, managing lifecycle resources (SSE/ timer/ poll-state/ nav-pulse), and bridging cross-slice concerns (phase, playback, navigation)
+- Every extraction candidate in §32.4 fails criterion #10 (genuinely reduces ownership complexity)
+- No hidden module-scope mutable state remains (all explicit objects: NavPulseState, SseStreamState, VBookPollState, GenerationTimerState, ProgressTrackingState)
+- All architecture guards pass (8 guard files, 201 tests, typecheck clean, build green)
+
+---
+
+### 32.11 Final decision
+
+**EXTRACTION PROGRAM SHOULD CLOSE.**
+
+### Rationale
+
+After 20 steps of systematic extraction:
+
+1. **5 packages physically extracted:** web-generator (progress domain), web-generator-config (layer-config), web-generator-sse (SSE reconnect), web-generator-vbook (VBook agent lifecycle), web-book-session (identity/session)
+
+2. **Every decision-rich orchestration slice is in a package.** The remaining 773 LOC of generateStore is pure host composition — wiring, seams, lifecycle management, and cross-slice bridging. There is no remaining domain logic to extract.
+
+3. **No remaining candidate satisfies the 10 criteria.** Every element in §32.4 is either:
+   - Host-state-dominated (extraction yields a thin wrapper calling back into host signals)
+   - A genuinely cross-slice shared concern with zero decision logic (becomes an ambient state container)
+   - Presentation-coupled (browser timer semantics pinned to Android parity)
+
+4. **The B6 dual-writer (`phase`) is a permanent host concern.** Last-writer-wins is public behavior (AppShell bounce, FilePage GENERATING-as-loading, GeneratePage LOADING_BOOK-as-generating). Replacing it requires a merge/priority design that does not exist and would change observable behavior.
+
+5. **`applyGenerationResults` is a host-only bridge.** Position anchor + playback emit are host concerns. The extractable core is ~10 LOC thin adapter — not worth a package.
+
+6. **Cancel/teardown is host composition by design.** 11/13 operations are host state mutations. The only cleanly extractable piece is the stateless transport request leg (~5 LOC) — extraction reduces LOC, not ownership complexity.
+
+7. **GenerationPorts is a design record, not an ambient container.** Its 8 interfaces are frozen, guard-pinned, and have zero production imports. The slice-local realizations (VBookAgentPorts, SseStreamPort, config ports) are the actual production contracts.
+
+### What is deliberately left host-owned (and why this is intentional, not "unfinished extraction")
+
+| Responsibility | Why it is legitimate host orchestration |
+|---|---|
+| Identity re-exports | generateStore is the consumer-surface facade; 10+ files import from it; the re-export strategy preserves backward compatibility without changing any consumer |
+| `phase` signal (B6) | cross-slice shared status with 2 writers, 3+ readers, last-writer-wins public behavior; no merge/priority design exists |
+| `generationStatus` + nav-pulse | presentation-coupled browser timers pinned to Android animator parity; zero domain logic |
+| `onPlaybackPrepared` bus | host-owned event producer consumed by Player/Navigator/Edit via adapters; moving it inverts the dependency direction |
+| File-slice seams | the deliberate B1/B6 boundary; fileStore's injection surface for generation-reset, session, and player |
+| `applyGenerationResults` | navigation + playback bridge; host-only concerns (position anchor + playback emit); correctly behind `onGenerationFinalized` seam |
+| Cancel/teardown composition | host state teardown sequence; 11/13 ops are signal/resource mutations; B6 settle writes |
+| `checkAndRestoreGenerationState` | host re-composition of already-extracted parts (timer + SSE + status arming) + 2 GETs |
+| SSE host wiring (AbortController/epoch) | host resource management; ~30 LOC glue; no decisions |
+| `vbookPollState` / `generationTimer` / `progressTracking` / `sseStream` explicit objects | host-owned state objects passed by reference; extraction-safe but no value in moving them |
+
+**This is NOT "unfinished extraction."** The extraction program achieved its goal: every domain with decision logic, single responsibility, and a natural package boundary has been physically extracted. What remains is the legitimate composition root that wires those packages to host-owned state and UI.
+
+---
+
+### 32.12 Regression check — Step 20
+
+| Concern | Status | Evidence |
+|---|---|---|
+| fileStore ownership | UNCHANGED | `errorMessage` now fileStore-owned (Step 20); fileStore imports unchanged |
+| generateStore ownership | UNCHANGED | `errorMessage` declaration removed; settle error leg removed; no new ownership added |
+| phase boundary | UNCHANGED | declaration, writers, readers, dual-writer contract — all identical to pre-Step 20 |
+| @animastor/web-file API | UNCHANGED | `FileSessionPort` receives signal by reference; package zero-diff |
+| GenerationPorts | UNCHANGED | design-only file; dead `setErrorMessage` stays; zero production importers |
+| web-book-session | UNCHANGED | identity boundary untouched |
+| cancellation ordering | UNCHANGED | Step 14A contract preserved (teardown → await → settle); error leg was null-over-null |
+| SSE | UNCHANGED | SseStreamState, epoch guard, reconnect loop — all untouched |
+| VBook | UNCHANGED | vbookAgentPorts, poll-token authority — all untouched |
+| playback | UNCHANGED | onPlaybackPrepared bus, emitPlaybackPrepared — all untouched |
+| navigation | UNCHANGED | navigateTo in applyGenerationResults — untouched |
+
+---
+
+### 32.13 Guards — currency check
+
+| Guard | Reflects current architecture? | Step 20 update? |
+|---|---|---|
+| `generation-progress-contour.guard.test.ts` | YES | Updated (settle-leg pin = old writes minus error leg) |
+| `session-status-contour.guard.test.ts` | YES | Rewritten (errorMessage = fileStore-owned, phase = shared two-writer) |
+| `book-session-package-contour.guard.test.ts` | YES | Unchanged |
+| `generation-ports.guard.test.ts` | YES | Unchanged |
+| `vbook-contour.guard.test.ts` | YES | Unchanged |
+| `file-navigator-contour.guard.test.ts` | YES | Updated (no-fork pins scoped to bookId/buildId/phase) |
+| `player-contour.guard.test.ts` | YES | Unchanged |
+| `local-ai-contour.guard.test.ts` | YES | Unchanged |
+
+**All 8 guards pass. No new guard needed.** The existing guards fully fix the architecture at the current state.
+
+---
+
+### 32.14 Verification
+
+| Check | Result |
+|---|---|
+| Architecture guards (8 files) | PASS |
+| Full frontend suite | **201/201 PASS** (15 files) |
+| Frontend typecheck (`tsc --noEmit`) | CLEAN |
+| Vite build | GREEN (405.50 kB / 118.07 kB gzip) |
+| GitHub Combined Status | statuses: [] — no independent CI confirmation |
+| Production code changes in this commit | NONE — audit doc only |
+
+---
+
+### 32.15 Verdicts summary
+
+| Question | Verdict |
+|---|---|
+| Is there a remaining extraction candidate that satisfies all 10 criteria? | **NO** |
+| Is generateStore as host composition root an architectural problem? | **NO** |
+| Are all domain packages extracted and guard-pinned? | **YES** (5 packages) |
+| Is all hidden mutable state converted to explicit objects? | **YES** (5 explicit state objects) |
+| Are all architecture guards current and passing? | **YES** (8 guards) |
+| **Final verdict** | **EXTRACTION PROGRAM SHOULD CLOSE** |
+
+---
+
+*Step-21 final extraction closure audit completed on this branch; audit-only — no production code, no packages, no API changes, no guard rewrites. Only this document changed. The web-generator extraction program is complete.*
