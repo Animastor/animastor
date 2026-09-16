@@ -40,7 +40,7 @@
     "prepublishOnly": "npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
-    "@animastor/web-generator": "file:../animastor-web-generator"
+    "@animastor/web-generator": "^0.1.0"
   },
   "devDependencies": {
     "happy-dom": "^20.14.0",
@@ -56,5 +56,9 @@
     "type": "git",
     "url": "git+https://github.com/Animastor/animastor.git",
     "directory": "packages/animastor-web-generator-sse"
+  },
+  "homepage": "https://github.com/Animastor/animastor/tree/main/packages/animastor-web-generator-sse#readme",
+  "bugs": {
+    "url": "https://github.com/Animastor/animastor/issues"
   }
 }
