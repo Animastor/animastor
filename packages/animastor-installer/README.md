@@ -5,10 +5,10 @@ verification, and management.
 
 ## Status
 
-**Extracted.** The production source physically lives here
+**Published.** The production source physically lives here
 (`packages/animastor-installer/src/installer/`); the backend consumes it as
-the `@animastor/installer` package (`file:` dependency). npm publish is a
-separate later step.
+the `@animastor/installer` package (`file:` dependency), and the package is
+published to npm as `@animastor/installer`.
 
 ## Structure
 

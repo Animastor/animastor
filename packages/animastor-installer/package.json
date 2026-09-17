@@ -1,18 +1,40 @@
 {
   "name": "@animastor/installer",
   "version": "0.1.0",
-  "private": true,
   "description": "Animastor Private GPU Worker installer — self-contained CLI and library for GPU worker setup, verification, and management.",
   "main": "src/installer/index.js",
+  "exports": {
+    ".": "./src/installer/index.js"
+  },
   "bin": {
     "animastor-installer": "src/installer/cli.js"
+  },
+  "files": [
+    "src/",
+    "ai/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node src/installer/cli.js",
+    "test": "mocha --exit tests/**/*.test.js"
   },
   "engines": {
     "node": ">=20"
   },
-  "scripts": {
-    "test": "mocha --exit tests/**/*.test.js"
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Animastor/animastor.git",
+    "directory": "packages/animastor-installer"
+  },
+  "bugs": {
+    "url": "https://github.com/Animastor/animastor/issues"
+  },
+  "homepage": "https://animastor.in",
   "devDependencies": {
     "chai": "^6.2.2",
     "mocha": "^11.7.5"

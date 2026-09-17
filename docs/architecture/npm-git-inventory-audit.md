@@ -1,9 +1,17 @@
 # NPM ↔ Git Inventory Audit
 
-**Date:** 2026-09-17 (rev. 2)
+**Date:** 2026-09-17 (rev. 3)
 **Branch:** `c21.4-physically-extract-analysis-from-backend`
 **Scope:** `packages/` directory
 
+> **Rev. 3 — `@animastor/installer` published.** The installer package was brought up to the
+> common `@animastor/*` publication standard (`"private": true` removed; `publishConfig.access`,
+> `files`, `exports`, `license`, `repository`, `bugs`, `homepage` added; LICENSE added; `ai/`
+> install-manifest data included in the tarball) and published to npm as a **public** scoped
+> package, version `0.1.0` — the current Git version, unmodified. Verified via `npm view`:
+> latest `0.1.0`, tarball sha256-matching the locally packed artifact
+> (`6a49f0818aef6dd5741a3ea28e62ddd61a5729f1`), anonymously downloadable (public access).
+>
 > **Rev. 2 — corrections.** The first revision of this audit (2026-09-16) misclassified
 > `packages/animastor-worker/` as a tooling directory without a `package.json` and listed the npm
 > package `animastor-worker` as "Published but not in Git". Both claims were wrong:
@@ -33,8 +41,8 @@
 | &nbsp;&nbsp;└ nested npm package | 1 (`animastor-worker`, nested at `packages/animastor-worker/worker/`) |
 | &nbsp;&nbsp;└ Non-package inner `package.json` (not a workspace package) | 1 (`packages/animastor-worker/image/worker/package.json`, legacy docker fixture) |
 | Top-level `packages/*/package.json` | 27 |
-| Private / not for NPM (`"private": true`) | 1 (`@animastor/installer`) |
-| **Published & version-matched (MATCH)** | **27 / 27 publishable packages (100%)** |
+| Private / not for NPM (`"private": true`) | **0** |
+| **Published & version-matched (MATCH)** | **28 / 28 publishable packages (100%)** |
 | Published but not in Git | **0** |
 | In Git but not on NPM | **0** |
 | NOT_PUBLISHED (publishable Git package with no npm counterpart) | **0** |
@@ -43,7 +51,9 @@
 
 - 28 directories; 27 have a top-level `package.json`. The 28th (`animastor-worker/`) has its
   `package.json` one level deeper, in `worker/`.
-- The npm-registry view contains **exactly 27 packages**, all of them present in Git — there are
+- All 28 directories contain a publishable npm package and all 28 exist on npm with their exact
+  Git version published as `latest`.
+- The npm-registry view contains **exactly 28 packages**, all of them present in Git — there are
   no npm packages without a Git counterpart.
 - The nested `packages/animastor-worker/image/worker/package.json` (`name: "worker"`, version
   `0.1.0`) is a legacy docker-image fixture; it is not a workspace package and is not published.
@@ -63,7 +73,7 @@
 | `animastor-editor` | `@animastor/editor` | 0.1.0 | ✅ | 0.1.0 | ✅ | **MATCH** |
 | `animastor-generation` | `@animastor/generation` | 0.1.0 | ✅ | 0.1.0 | ✅ | **MATCH** |
 | `animastor-gpu-hub` | `@animastor/gpu-hub` | 0.1.0 | ✅ | 0.1.0 | ✅ | **MATCH** |
-| `animastor-installer` | `@animastor/installer` | 0.1.0 | ❌ (verified 404 on registry) | — | — | **PRIVATE / NOT_FOR_NPM (intentional)** |
+| `animastor-installer` | `@animastor/installer` | 0.1.0 | ✅ | 0.1.0 | ✅ | **MATCH** (published 2026-09-17) |
 | `animastor-orchestration` | `@animastor/orchestration` | 0.1.1 | ✅ | 0.1.1 | ✅ | **MATCH** |
 | `animastor-parser` | `@animastor/parser` | 0.1.0 | ✅ | 0.1.0 | ✅ | **MATCH** |
 | `animastor-player` | `@animastor/player` | 0.1.0 | ✅ | 0.1.0 | ✅ | **MATCH** |
@@ -89,7 +99,7 @@
 
 | Category | What it is | Items |
 |----------|-----------|-------|
-| **Git package** | A publishable npm package under `packages/` with its own `package.json` | 27 (26 top-level + `animastor-worker` nested at `packages/animastor-worker/worker/`) |
+| **Git package** | A publishable npm package under `packages/` with its own `package.json` | 28 (26 top-level + `animastor-worker` nested at `packages/animastor-worker/worker/` + `@animastor/installer`) |
 | **Git tooling directory** | Directory inside a package that carries scripts/tests/fixtures but **no** package root of its own | `packages/animastor-worker/{tools,tests,image,new}` + loose `*.sh` (package-owned tooling of `animastor-worker`) |
 | **NPM package not in the monorepo** | Published npm package with no corresponding directory in `packages/` | **None.** The npm package `animastor-worker` **is** the Git package `packages/animastor-worker/worker/` |
 
@@ -119,44 +129,68 @@ artifact, and its version field is the canonical worker bundle version (see
 
 ---
 
+## `@animastor/installer`: publication (rev. 3)
+
+The package was prepared for publication and published on 2026-09-17:
+
+| Step | Result |
+|------|--------|
+| `"private": true` | removed from `package.json` |
+| `publishConfig.access` | set to `"public"` (scoped package) |
+| `files` | `src/`, `ai/` (install-manifest data — runtime dependency of `MANIFEST_ROOT`), `README.md`, `LICENSE` |
+| `exports` | `".": "./src/installer/index.js"` (in addition to `main`) |
+| `license` / `LICENSE` | MIT; LICENSE file added (was missing in the package directory) |
+| `repository` / `bugs` / `homepage` | `github.com/Animastor/animastor.git` (`directory: packages/animastor-installer`), repo issues, `https://animastor.in` |
+| `file:` dependencies | none in the package itself (the `file:` reference lives in `backend/package.json`, which consumes the package from the repo checkout — that is a workspace setup, not a publication defect) |
+| Version | `0.1.0` — current Git version, **not** bumped |
+| Architecture | unchanged; no API changes; no renames; no new packages |
+| Checks | `npm test` → 304 passing; `node --check` on all `src/**/*.js` → OK; `npm pack --dry-run` → 37 files, 160.5 kB, no `tests/`, `node_modules/`, `package-lock.json`, no secrets |
+| Publication | `@animastor/installer@0.1.0`, public access |
+| Post-publish verification | `npm view @animastor/installer` → latest `0.1.0`; dist tarball shasum `6a49f0818aef6dd5741a3ea28e62ddd61a5729f1` matches the locally packed artifact; tarball anonymously downloadable → public access confirmed |
+
+The tarball intentionally ships `ai/install-manifests/` (3 JSON profiles): the CLI resolves its
+manifest root via `path.join(__dirname, '..', '..', 'ai', 'install-manifests')` as the documented
+package-relative fallback — without this data an installed package could not resolve manifests.
+Repo-only paths (`backend/ai/workflows`, worker bundle source) remain host-side probes with
+container/repo fallbacks and are not part of the tarball.
+
+---
+
 ## Private / Workspace packages (not counted as errors)
 
-| Package | npm name | Reason |
-|---------|----------|--------|
-| `animastor-installer` | `@animastor/installer` | `"private": true` in `package.json`. **Intentional:** the installer is bundled into the Animastor desktop app; it is not published to npm (registry returns 404 for `@animastor/installer`). This is the only `@animastor/*`-scoped package not on npm, and it is not a NOT_PUBLISHED defect. |
-
-There is no ambiguity: no other package in the repo is private, and `@animastor/installer` is the
-only scoped package without an npm release.
+**None.** As of rev. 3 there are no private or workspace-only packages left: `@animastor/installer`
+was the last one and is now published (see above).
 
 ---
 
 ## Unscoped package names (current state — recorded, not changed)
 
-Two public packages deliberately use unscoped npm names instead of `@animastor/*`:
+Three public packages use unscoped npm names instead of `@animastor/*`; this is the current
+intended state:
 
 | Package | npm name | Published | Note |
 |---------|----------|-----------|------|
 | `animastor-ai-connector` | `animastor-ai-connector` | 0.1.0 ✅ | Distributed as a standalone CLI (`bin` entry) to machines outside the Animastor workspace; an unscoped name is friendlier for standalone `npm install` usage. |
 | `animastor-comfyui-workflow-connector` | `animastor-comfyui-workflow-connector` | 0.1.0 ✅ | Published under the unscoped name in the current state; no renaming instruction exists. |
+| `animastor-worker` (nested at `animastor-worker/worker/`) | `animastor-worker` | 2.1.1 ✅ | Unscoped intentionally: standalone GPU operators run `npm install animastor-worker` (documented in the package README). |
 
-**Decision:** this is the current intended state. No automatic renaming was performed and none is
-recommended in this audit; any future migration to `@animastor/*` must preserve the published
-names (deprecate + new major) and is out of scope here. Alongside them, `animastor-worker` is also
-unscoped — for the same standalone-distribution reason (see the resolution section above).
+**Decision:** no automatic renaming was performed and none is recommended in this audit; any future
+migration to `@animastor/*` must preserve the published names (deprecate + new major) and is out of
+scope here.
 
 ---
 
 ## NOT_PUBLISHED packages
 
-**None.** Every publishable (non-private) Git package — 27 of them — has its exact current version
-published on npm as `latest`.
+**None.** Every publishable Git package — 28 of them — has its exact current version published on
+npm as `latest`.
 
 ---
 
 ## Notes
 
-1. **No version mismatches.** Every publishable Git package that exists on npm has its exact Git
-   version published as `latest` (verified field-by-field on 2026-09-17 via `npm view`).
+1. **No version mismatches.** Every Git package that exists on npm has its exact Git version
+   published as `latest` (verified field-by-field on 2026-09-17 via `npm view`).
 2. **`packages/animastor-worker/image/worker/package.json`** (`name: "worker"`, version `0.1.0`,
    ISC license) is a legacy docker-image fixture that predates the zero-dependency bundle. It is
    not a workspace package, is not installed by anything, and must not be published. Recorded here
@@ -166,9 +200,10 @@ published on npm as `latest`.
    ```sh
    find packages -maxdepth 3 -name package.json -not -path "*/node_modules/*"
    npm view <name> version           # for every package name above
-   npm view @animastor/installer version   # → E404 (intentional, private)
+   npm view @animastor/installer     # → latest 0.1.0, public, shasum-matched tarball
    npm view animastor-worker time --json   # publish dates align with git history
    git log --follow -- packages/animastor-worker
+   cd packages/animastor-installer && npm test && npm pack --dry-run
    ```
 
 ---
