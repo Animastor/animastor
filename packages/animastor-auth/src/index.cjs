@@ -51,7 +51,7 @@ const cookies = require('./cookies');
 const { DEFAULT_AUTH_CONFIG, normalizeAuthConfig, normalizeCookieDomain } = require('./auth-config');
 const { AuthError, WorkspaceExpiredError } = require('./auth-errors');
 const password = require('./password');
-const { REQUIRED, assertPort, assertAuthPorts } = require('./ports');
+const { assertAuthPorts } = require('./ports');
 
 module.exports = {
     // factory
@@ -72,7 +72,14 @@ module.exports = {
     // password primitives
     password,
     // port contracts
-    REQUIRED,
-    assertPort,
     assertAuthPorts,
 };
+
+// The frozen public API is the object above: exactly 12 named exports
+// (createAuthService, decideBookAccess, authorizedWorkspace,
+// ANONYMOUS_WORKSPACE, AuthError, WorkspaceExpiredError,
+// DEFAULT_AUTH_CONFIG, normalizeAuthConfig, normalizeCookieDomain,
+// cookies, password, assertAuthPorts). APB-G7 and the package contract
+// tests pin this list — add new capabilities WITH a guard/test update.
+// `REQUIRED`/`assertPort` (ports.js) stay package-internal: hosts assert
+// through assertAuthPorts; direct per-port validation is not public API.

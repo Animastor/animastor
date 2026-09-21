@@ -22,6 +22,7 @@ const { AuthError, WorkspaceExpiredError } = require('../src/auth-errors');
 const { normalizeAuthConfig, normalizeCookieDomain, DEFAULT_AUTH_CONFIG } = require('../src/auth-config');
 const cookies = require('../src/cookies');
 const { assertAuthPorts } = require('../src/ports');
+const pkg = require('../src/index.cjs');
 
 // ── in-memory port fixtures ─────────────────────────────────────────────
 
@@ -567,5 +568,64 @@ describe('auth contract: guest identity lifecycle', () => {
         expect(svc.guestWorkspaceStatus(null)).to.equal('active');
         expect(svc.guestWorkspaceStatus(Date.now() + 1000)).to.equal('active');
         expect(svc.guestWorkspaceStatus(Date.now() - 1000)).to.equal('expired');
+    });
+});
+
+// ==========================================================
+// Public API surface (frozen) — package root ↔ APB-G7 parity
+// ==========================================================
+// The package root export map is the ENTIRE public surface of
+// @animastor/auth (no deep exports). The host boundary guard
+// (backend/tests/architecture/auth-package-boundary.test.js, APB-G7) pins
+// the same list — keep the two in lockstep. REQUIRED/assertPort (ports.js)
+// are intentionally NOT public: hosts assert through assertAuthPorts.
+
+describe('auth contract: package public API (frozen)', () => {
+    const FROZEN_PUBLIC_API = [
+        'createAuthService', 'decideBookAccess', 'authorizedWorkspace',
+        'ANONYMOUS_WORKSPACE', 'AuthError', 'WorkspaceExpiredError',
+        'DEFAULT_AUTH_CONFIG', 'normalizeAuthConfig', 'normalizeCookieDomain',
+        'cookies', 'password', 'assertAuthPorts',
+    ];
+
+    it('exports exactly the frozen public API — no more, no less', () => {
+        expect(Object.keys(pkg).sort()).to.deep.equal([...FROZEN_PUBLIC_API].sort());
+    });
+
+    it('every frozen name is bound to a real capability', () => {
+        expect(typeof pkg.createAuthService).to.equal('function');
+        expect(typeof pkg.decideBookAccess).to.equal('function');
+        expect(typeof pkg.authorizedWorkspace).to.equal('function');
+        expect(pkg.ANONYMOUS_WORKSPACE).to.be.an('object');
+        expect(typeof pkg.AuthError).to.equal('function');
+        expect(typeof pkg.WorkspaceExpiredError).to.equal('function');
+        expect(pkg.DEFAULT_AUTH_CONFIG).to.be.an('object');
+        expect(typeof pkg.normalizeAuthConfig).to.equal('function');
+        expect(typeof pkg.normalizeCookieDomain).to.equal('function');
+        expect(pkg.cookies).to.be.an('object');
+        expect(pkg.password).to.be.an('object');
+        expect(typeof pkg.assertAuthPorts).to.equal('function');
+    });
+
+    it('error contract keeps the frozen status/reason semantics', () => {
+        const e = new pkg.AuthError(403, 'nope', 'forbidden');
+        expect(e).to.be.an.instanceOf(Error);
+        expect(e.status).to.equal(403);
+        expect(e.reason).to.equal('forbidden');
+        const g = new pkg.WorkspaceExpiredError();
+        expect(g).to.be.an.instanceOf(Error);
+        expect(g.status).to.equal(410);
+        expect(g.code).to.equal('workspace_expired');
+        expect(g.message).to.equal('workspace_expired');
+    });
+
+    it('cookie + password namespaces keep the frozen grammar/primitives', () => {
+        expect(pkg.cookies.SESSION_COOKIE_NAME).to.equal('animastor_sid');
+        expect(pkg.cookies.GUEST_COOKIE_NAME).to.equal('animastor_gid');
+        expect(typeof pkg.cookies.sessionCookieHeader).to.equal('function');
+        expect(typeof pkg.cookies.parseCookieHeader).to.equal('function');
+        expect(typeof pkg.password.hashPassword).to.equal('function');
+        expect(typeof pkg.password.verifyPassword).to.equal('function');
+        expect(typeof pkg.password.validatePasswordPolicy).to.equal('function');
     });
 });

@@ -120,16 +120,22 @@ describe('auth package boundary guards (@animastor/auth)', () => {
     });
 
     it('APB-G7: public API surface is frozen (src/index.cjs exports)', () => {
-        const src = readSource(path.join(AUTH_SRC, 'index.cjs'));
+        // The FULL actual public API, pinned exactly (no more, no less).
         const expectedExports = [
             'createAuthService', 'decideBookAccess', 'authorizedWorkspace',
             'ANONYMOUS_WORKSPACE', 'AuthError', 'WorkspaceExpiredError',
             'DEFAULT_AUTH_CONFIG', 'normalizeAuthConfig', 'normalizeCookieDomain',
             'cookies', 'password', 'assertAuthPorts',
         ];
+        const src = readSource(path.join(AUTH_SRC, 'index.cjs'));
         for (const name of expectedExports) {
             expect(src, `index.cjs must export '${name}'`).to.include(name);
         }
+        // Exported-name parity: every property assigned to module.exports in
+        // index.cjs is in the frozen list (catches undeclared additions).
+        const exported = [...src.matchAll(/^\s{4}(\w+),\s*$/gm)].map((m) => m[1]);
+        expect(exported, 'index.cjs export list must match the frozen API exactly')
+            .to.deep.equal(expectedExports);
     });
 
     it('APB-G8: host wiring consumes the @animastor/auth specifier (public API only)', () => {

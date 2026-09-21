@@ -20,7 +20,7 @@
 
 'use strict';
 
-const { createAuthService, normalizeCookieDomain, cookies } = require('@animastor/auth');
+const { createAuthService, normalizeCookieDomain, cookies, password } = require('@animastor/auth');
 const { AuthError, WorkspaceExpiredError } = require('@animastor/auth');
 
 const userRepo = require('../storage/postgres/repositories/user-repo');
@@ -105,6 +105,11 @@ function buildAuthService() {
 }
 
 const authService = buildAuthService();
+// Historical namespace properties on authService (pre-extraction auth-service
+// exported `cookies` and `password` as its own module-level namespaces).
+// Package rebind only — zero domain code in the host.
+authService.cookies = cookies;
+authService.password = password;
 
 module.exports = authService;
 // Exposed for tests + future hosts (host composes, never re-derives).

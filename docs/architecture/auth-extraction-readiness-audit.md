@@ -534,6 +534,15 @@ Dependency direction is strictly one-way (`backend → @animastor/auth`). The pa
 4. **Session/guest token grammars** (`sid.*`/`gst.*` parse/format) still live in the host repositories (they are only used there); if a second host ever needs to mint compatible tokens, lift them into the package as pure helpers (pure move, zero semantic risk).
 5. **`requireAdmin`/`ADMIN_USERNAMES`** stay host middleware (admin-surface policy, §4.2).
 
+### 16.7 Final compatibility fix (post-`41cc9aca`)
+
+Follow-up adjustment after extraction review — no architecture change, no domain code moved:
+
+1. **`authService.cookies` / `authService.password` restored.** The historical module exported these two namespace properties; the physical move had dropped them. They are back as **package rebinds, not copies** — `auth/index.cjs` attaches `cookies` and `password` from `@animastor/auth` onto the wired singleton, and `auth-service.js` re-exports them. Identity pinned by test (`svc.cookies === pkg.cookies`, `svc.password === pkg.password`). No production consumer currently reads them, but the pre-extraction API surface is fully preserved.
+2. **APB-G7 synced with the real public API.** The guard now pins the FULL export list of `src/index.cjs` (12 names, no more — no less) via an export-map parity check. Two never-consumed internals (`REQUIRED`, `assertPort` — fine-grained halves of `assertAuthPorts` with zero external users) were removed from the public surface instead of being frozen into it. The package contract suite gained a runtime mirror test (`Object.keys(pkg)` === frozen list) so the guard and the package cannot drift apart.
+
+Verified unchanged: package boundary hygiene (no `process.env`/Express/PG/backend requires/deep imports), one-way dependency direction, host-side-only PG adapters and domain files (no compatibility copies), `npm-readiness` metadata. Tests at fix time: package 41 passing (37 prior + 4 new public-API tests); auth-mvp/guest-workspace/admin-security 61 passing (incl. 3 new compat-API assertions); architecture suite 976 passing (the 2 pre-existing, unrelated failures remain: installer IB-G15, phase5 T9); syntax smoke green.
+
 ---
 
 ## Appendix A — verdict legend

@@ -528,3 +528,39 @@ describe('Authentication MVP — pre-auth regression (dev books)', () => {
         }
     });
 });
+
+// ==========================================================
+// Post-extraction compatibility API (historical authService surface)
+// ==========================================================
+// auth-service.js is now a shim over @animastor/auth (host wiring in
+// src/auth/index.cjs). These assertions pin the properties the historical
+// module exposed and consumers may still reach for: the `cookies` and
+// `password` namespaces (restored as package rebinds after the physical
+// move), the error classes and the wiring seams.
+describe('Authentication MVP — authService compatibility API (post-extraction)', () => {
+    it('exposes the historical cookies namespace (package rebind)', () => {
+        expect(authService.cookies).to.equal(require('@animastor/auth').cookies);
+        expect(typeof authService.cookies.sessionCookieHeader).to.equal('function');
+        expect(typeof authService.cookies.clearSessionCookieHeader).to.equal('function');
+        expect(typeof authService.cookies.guestCookieHeader).to.equal('function');
+        expect(typeof authService.cookies.clearGuestCookieHeader).to.equal('function');
+        expect(typeof authService.cookies.parseCookieHeader).to.equal('function');
+        expect(authService.cookies.SESSION_COOKIE_NAME).to.equal('animastor_sid');
+        expect(authService.cookies.GUEST_COOKIE_NAME).to.equal('animastor_gid');
+    });
+
+    it('exposes the historical password namespace (package rebind)', () => {
+        expect(authService.password).to.equal(pkg.password);
+        expect(typeof authService.password.hashPassword).to.equal('function');
+        expect(typeof authService.password.verifyPassword).to.equal('function');
+        expect(typeof authService.password.validatePasswordPolicy).to.equal('function');
+    });
+
+    it('exposes the error classes and wiring seams unchanged', () => {
+        expect(authService.AuthError).to.equal(require('@animastor/auth').AuthError);
+        expect(authService.WorkspaceExpiredError).to.equal(require('@animastor/auth').WorkspaceExpiredError);
+        expect(typeof authService.buildAuthService).to.equal('function');
+        expect(typeof authService.buildAuthPorts).to.equal('function');
+        expect(typeof authService.authConfigFromEnv).to.equal('function');
+    });
+});

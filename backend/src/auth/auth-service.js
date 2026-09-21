@@ -6,6 +6,8 @@
 // decision layer, the cookie grammar, the config/error contracts and the
 // scrypt password primitives. The host binding is auth/index.cjs (PG
 // repositories + registration unit-of-work + workspace-ownership + env
+// config) and re-binds the historical `cookies`/`password` namespaces onto
+// repositories + registration unit-of-work + workspace-ownership + env
 // config); this file re-exports the wired singleton so all existing
 // consumers (auth-context, auth-routes, 15+ test suites) keep their require
 // path and behaviour unchanged.
@@ -33,6 +35,11 @@ module.exports = authService;
 // Named re-exports preserved for destructuring consumers.
 module.exports.AuthError = AuthError;
 module.exports.WorkspaceExpiredError = WorkspaceExpiredError;
+// Historical module-level namespaces (package rebinds, not copies):
+// authService.cookies — the frozen cookie grammar; authService.password —
+// the scrypt primitives.
+module.exports.cookies = wired.cookies;
+module.exports.password = wired.password;
 
 // Testing seam: rebuild the singleton with custom ports/config (used by
 // tests; production always uses the env-bound singleton).
