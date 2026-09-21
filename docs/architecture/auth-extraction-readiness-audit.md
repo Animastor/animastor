@@ -493,7 +493,7 @@ Recommended execution size: phases 1–2 are ~1–2 focused sessions (all inside
 | `src/auth-errors.js` | `backend/src/auth/auth-errors.js` | `AuthError` + `WorkspaceExpiredError` |
 | `src/password.js` | `backend/src/auth/password.js` | scrypt primitives (domain-side by architecture: pure `node:crypto`, zero deps) |
 | `src/ports.js` | `backend/src/auth/ports.js` | `assertAuthPorts` port validators |
-| `src/index.cjs` | — | package entrypoint: the ONLY export-map root; 13-name frozen public API |
+| `src/index.cjs` | — | package entrypoint: the ONLY export-map root; 12-name frozen public API (final count after §16.7) |
 | `test/auth-contract.test.js` | `backend/tests/auth-contract.test.js` | 37 contract tests over in-memory ports (moved with the domain) |
 | `package.json` / `README.md` / `LICENSE` / `CHANGELOG.md` | — | assistant/installer conventions: zero runtime deps, `node >=20`, MIT, `publishConfig.access: public`, single `.` export root |
 
@@ -510,7 +510,7 @@ Recommended execution size: phases 1–2 are ~1–2 focused sessions (all inside
 
 ### 16.3 Package boundary (verified by guards)
 
-Dependency direction is strictly one-way (`backend → @animastor/auth`). The package contains **no Express, no PostgreSQL/pg, no `process.env`, no filesystem, no worker-auth, no `backend/src` requires** — its only external require is `node:crypto` (password.js). Verified by the new `backend/tests/architecture/auth-package-boundary.test.js`:
+Dependency direction is strictly one-way (`backend → @animastor/auth`). The package contains **no Express, no PostgreSQL/pg, no `process.env`, no filesystem, no worker-auth, no `backend/src` requires** — its only external require is the `crypto` builtin (password.js; the APB-G3 allowlist also admits `util`, currently unused). Verified by the new `backend/tests/architecture/auth-package-boundary.test.js`:
 
 - **APB-G1** extraction landed, no backend copies; **G2** zero runtime deps; **G3** builtins + intra-package requires only; **G4** no reverse requires into `backend/**`; **G5** no `process.env`/`__dirname`/`require.cache` (comments stripped before scan); **G6** zero host imports of package internals; **G7** frozen export surface; **G8** host wiring uses the package specifier only (no deep-imports); **G9** manifest identity pins; **G10** PG adapters stay host-side; **G11** contract tests in-package, HTTP suites host-side.
 
