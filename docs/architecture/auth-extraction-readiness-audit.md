@@ -543,6 +543,22 @@ Follow-up adjustment after extraction review — no architecture change, no doma
 
 Verified unchanged: package boundary hygiene (no `process.env`/Express/PG/backend requires/deep imports), one-way dependency direction, host-side-only PG adapters and domain files (no compatibility copies), `npm-readiness` metadata. Tests at fix time: package 41 passing (37 prior + 4 new public-API tests); auth-mvp/guest-workspace/admin-security 61 passing (incl. 3 new compat-API assertions); architecture suite 976 passing (the 2 pre-existing, unrelated failures remain: installer IB-G15, phase5 T9); syntax smoke green.
 
+### 16.8 npm publication readiness (2026-09-21)
+
+Comparative audit against the published/prepared `@animastor/*` packages (assistant, player, editor, orchestration, contracts, installer, web-book-session) — no new standard invented:
+
+**Already standard (no changes):** zero runtime deps (`node:crypto` only); single `.` export root, no deep exports; `main` + `exports` agree; `files` = `src/` + README/CHANGELOG/LICENSE (tests NOT in the tarball — the repo-wide rule per player/editor 0.1.0 release notes); MIT + `publishConfig.access: public`; `repository` (git+https, `directory: packages/animastor-auth`) / `homepage` (GitHub tree URL) / `bugs` (GitHub issues); `engines.node >=20` (installer precedent); `test` script in package-local mocha convention; committed `package-lock.json`.
+
+**Fixed for npm readiness:**
+1. README brought to the player/editor level: added **Status** (EXTRACTED 0.1.0), **Requirements** (Node >=20, no runtime deps), **Installation**, a **real-API export table** (all 12 frozen names, `createAuthService` methods, port table) — describing the CURRENT package, not a future one — and a repository-checkout **Development** section; the doc link is absolute (GitHub blob URL; relative links do not resolve on npmjs.com).
+2. CHANGELOG dated (`## 0.1.0 — 2026-09-21`) per the player/editor format.
+
+**Validation:** `npm pack --dry-run` → exactly 12 files (8 `src/*` + package.json/README/CHANGELOG/LICENSE), 16.5 kB, no tests/temp/dev-only/host files. Real-tarball check: packed, installed the `.tgz` into a clean sandbox project and exercised the entrypoint — 12 frozen exports, policy/cookie/config/service-methods smoke green (another-host install without PostgreSQL/Express works).
+
+**Tests at readiness:** package 41 passing; backend auth/integration 61 passing; APB guards 11 passing; syntax smoke green.
+
+**Remaining blockers for `npm publish`:** none technical — the package is publish-ready. Per release convention (cf. `@animastor/vbook-runtime` → player/editor dependency switch), publishing is a maintainer release decision: after publish, the backend's `file:../packages/animastor-auth` seam may be switched to the registry range `^0.1.0` in a separate commit (NOT done here; no publish was performed).
+
 ---
 
 ## Appendix A — verdict legend
