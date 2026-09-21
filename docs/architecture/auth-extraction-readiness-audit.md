@@ -410,6 +410,74 @@ Recommended execution size: phases 1–2 are ~1–2 focused sessions (all inside
 
 ---
 
+## 15. Implementation Phase 1 — Contract Preparation (LANDED)
+
+**Status:** IMPLEMENTED (this section documents the code change that followed the audit). Commit on `c21.4-physically-extract-analysis-from-backend`, parent commit `9cea2a0e`. No npm package created, no physical extraction, no public API change, no schema change, no semantics change.
+
+### 15.1 What changed
+
+**New domain core — `backend/src/auth/` (Express-free, env-free, PG-free):**
+
+| File | Content |
+|---|---|
+| `auth-errors.js` | `AuthError(status, message, reason)` + `WorkspaceExpiredError` (410 `workspace_expired`) — the frozen error contract, previously duplicated in auth-service/auth-context |
+| `auth-config.js` | `DEFAULT_AUTH_CONFIG` (frozen historical values) + pure `normalizeAuthConfig` / `normalizeCookieDomain` (the strict charset validation moved verbatim-semantics here). No `process.env`. |
+| `cookies.js` | String-level cookie grammar: the 4 Set-Cookie builders (config-parameterized: name/TTL/Domain) + `parseCookieHeader(header, name)` + the frozen constants (`animastor_sid`, `animastor_gid`, TTLs). No `req`. |
+| `book-access.js` | **The canonical decision layer** (blocker §13.1 resolved): `decideBookAccess(identity, bookId, ports)` — user path carries the real checkBookAccess semantics (resolver self-heal + cross-workspace membership fallback + legacy chain fallback, fail-closed 403), guest path unchanged (expired → 410 before any port call, foreign → 403, port error → 410 fail-closed), pre-auth → anonymous sentinel. Plus `authorizedWorkspace` (workspace|null + `WorkspaceExpiredError` on 410, throws BEFORE port calls — the historical ordering). |
+| `ports.js` | `assertAuthPorts` runtime validators for the six ports (assistant `assertSessionRepo` pattern) — fail-fast at composition, exact historical method lists (§6). |
+| `core.js` | `createAuthService({ ports, config, logger })` — the whole lifecycle (register/login/logout/resolveSession/resolveDefaultWorkspace/createGuest/resolveGuest/touchGuestWorkspace + guestWorkspaceStatus + decision + config-bound cookie wrappers). No Express/env/PG. Registration race → 409 email/username discrimination preserved via a marked `registerRace` error from the port. |
+
+**New host adapters:**
+
+| File | Content |
+|---|---|
+| `storage/postgres/repositories/registration-tx.js` | **The registration unit-of-work** (blocker §13.2 resolved): `registerUserWithWorkspace({username, passwordHash, email, displayName, guestConversion})` — ONE PG transaction (user INSERT ON CONFLICT lower(username) DO NOTHING → workspace INSERT or in-place guest conversion via `guestRepo.convertTemporaryWorkspace` → owner membership). Rollback/error behaviour identical to the former inline transaction; race surfaces as a marked error the core maps to the exact historical 409s. |
+| `auth/index.cjs` | The single wiring point: `authConfigFromEnv()` (the ONLY `process.env` reads left in auth/**) + `buildAuthPorts()` binding user/session/guest/workspace repos, `registrationTx`, and `bookOwnership` (`workspace-ownership.resolveWorkspaceForBook` for the access leg + `book-repo.getWorkspaceId` for the guest leg) → `createAuthService`. Exposes the wired singleton in the historical `authService` shape + a per-call `COOKIE_DOMAIN` re-resolution bridge (the historical call-time env semantics that the auth-mvp cookie suite pins). |
+
+**Rewritten (same require paths, same exports — zero consumer churn):**
+
+- `auth/auth-service.js` — now the compatibility shim re-exporting the wired singleton (`buildAuthService` test seam exported). The former raw SQL (register transaction, canonical username SELECT, self-heal UPDATE) moved to `registration-tx.js` / `user-repo.findByUsernameCanonical` / `workspace-repo.renameWorkspace`. **`auth-service.js` exited `DIRECT_SQL_WHITELIST`** (stale-entry removal, sql-boundary guard enforces). Also re-exports `WorkspaceExpiredError` (new: previously only on auth-context).
+- `middleware/auth-context.js` — now a pure HTTP adapter: `identityOf(req)` projection + delegation to `accessibleBookWorkspace` / `getWorkspaceIdForBook`; `requireAuth/requireAdmin/requireWorkspaceMembership` (admin/workspace-surface policy, host-owned per §4.2) and the guest auto-provision block (path-shape doctrine incl. worker/LAC exemptions) unchanged; `authContext` now uses `parseCookieHeader` with a `readCookie` fallback. No authorization logic remains here.
+- `user-repo.js` +`findByUsernameCanonical` (raw SELECT moved in, semantics identical); `workspace-repo.js` +`renameWorkspace` (self-heal UPDATE moved in).
+
+### 15.2 Boundaries created
+
+- **Decision boundary:** exactly one canonical authorization layer (`auth/book-access.js`); the dead `bookAccessDecision` twin is gone (its result shape absorbed); `requireBookAccess`/`checkBookAccess`/`getAccessibleBookWorkspace`/`dedupOwnedByCaller`/`importBookAllowed` and the player `assertBookAccess` port all flow through it.
+- **Transaction boundary:** registration atomicity lives behind the `registrationTx` port; the domain core has zero SQL.
+- **Config boundary:** auth/** reads `process.env` in exactly one file (`auth/index.cjs` wiring); the domain consumes `normalizeAuthConfig`-normalized config. `ADMIN_USERNAMES`/`NODE_ENV`/rate-limits stay host (§7 disposition).
+- **HTTP boundary:** no domain file imports Express; middleware files import only the domain (no repos, no raw PG).
+
+### 15.3 Blockers resolved / remaining
+
+| Blocker | Status |
+|---|---|
+| §13.1 divergent decision paths | **RESOLVED** — consolidated in `book-access.js`, guards are adapters |
+| §13.2 raw-SQL registration transaction | **RESOLVED** — `registration-tx.js` unit-of-work port; `DIRECT_SQL_WHITELIST` entry removed |
+| §13.3 hidden writes / lazy requires in auth paths | **RESOLVED** — all behind named ports (`bookOwnership.resolveAccessWorkspace` documents the self-heal attach; `resolveDefaultWorkspace` self-heal routed through `workspace-repo.renameWorkspace`) |
+| §13.4 timing-equalization invariant | **PRESERVED** — `password.js` untouched, pinned by contract tests |
+| §13.5 pre-auth legacy surface | **PRESERVED** — pinned by auth-mvp/guest-workspace suites (65 tests green) + 12 new decision-matrix tests |
+| §13.6 config duplication (runtime-config) | **PARTIALLY RESOLVED** — auth-side env reads collapsed into one wiring file; `config/runtime-config.js` L274–276 still duplicates the GUEST_* reads for its own consumers (host-internal cleanup, pre-extraction hygiene, not a blocker) |
+| §13.7 duplicated HTTPS detection | **UNCHANGED (accepted)** — both helpers remain host-side transport concerns |
+
+### 15.4 Extraction sanity check (post-implementation)
+
+- **Imports left in the domain core:** `node:crypto` only (password.js); intra-auth requires. Zero npm deps, zero Express, zero storage requires, zero `backend.cjs` back-references (verified by scan: no violations).
+- **Repositories remaining (host adapters):** user/session/guest/workspace repos + `registration-tx.js` + `book-repo.getWorkspaceId` + `workspace-ownership.resolveWorkspaceForBook` — all bound in `buildAuthPorts()`.
+- **Env dependencies remaining:** `auth/index.cjs` only (COOKIE_DOMAIN live re-resolution + GUEST_* TTLs).
+- **Express remaining:** `middleware/auth-context.js` (adapter) + `routes/auth-routes.cjs` (contour) — exactly the §4.2 host-side disposition.
+- **Circular dependencies:** none (fresh-require smoke over all 9 auth files passes; dependency direction is strictly host → domain).
+- **Consumers migrating at physical extraction:** domain files (`auth/{core,book-access,cookies,auth-errors,auth-config,password,ports}.js`) move to the package; `auth/index.cjs` becomes the host shim; `auth-context.js`/`auth-routes.cjs` require-path unchanged; test suites `auth-contract.test.js` + the unit halves move per §11.
+
+### 15.5 Tests
+
+- **New:** `backend/tests/auth-contract.test.js` — 37 tests over in-memory ports: config normalization, cookie grammar matrix, the full decision matrix (pre-auth/user/guest/expired/foreign/membership-fallback/DB-failure fail-closed × user and guest), registration (race 409s, unique 409, atomic rollback = no session after tx failure, in-place conversion + token revocation, stale token 410, validation 400s), login/logout/session, guest lifecycle, port-validator fail-fast.
+- **Regression (unchanged, all green):** `auth-mvp` + `guest-workspace` + `admin-security` + `txt-import-ownership` (65), `account-workspace` + `workspace-ai-security` + `private-worker-auth` + `fail-closed-worker-auth` (108), `generation-routes` (6), full architecture suite (965 passing; the only 2 failures — installer IB-G15 `private` pin and phase5 `runtime/index.js` read — pre-exist on the base commit `9cea2a0e`, unrelated to auth), `sql-boundary` (whitelist now excludes auth-service; stale-entry rule green), syntax smoke (all production files).
+- **Pre-extraction requirement (unchanged from §12):** move `auth-contract.test.js` + the unit halves into the package; keep PG/HTTP suites host-side.
+
+**Updated verdict: B → B+ (preparation complete; the domain is extraction-ready).** Phase 1–2 of §12 are landed; what remains is the mechanical phase 3 (physical move + shim flip + package manifest + boundary guard test) and the optional phase 4.
+
+---
+
 ## Appendix A — verdict legend
 
 **A** READY · **B** READY AFTER SMALL PREPARATION (bounded seam work first) · **C** HOST-BOUND (domain exists, coupling too strong today) · **D** NOT A PACKAGE

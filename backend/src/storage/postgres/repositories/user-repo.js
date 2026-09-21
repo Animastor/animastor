@@ -141,9 +141,27 @@ async function updateUser(userId, updates) {
     return result.rows[0] || null;
 }
 
+/**
+ * Case-insensitive canonical username lookup (lower(username) unique index).
+ * Historical site: auth-service.findByUsernameCanonical (raw SQL) — moved
+ * behind the repository with the Auth Extraction Phase 1 (audit §6 users
+ * port). The auth domain consumes this via its injected `users` port.
+ * @param {string} username
+ * @returns {Promise<object|null>}
+ */
+async function findByUsernameCanonical(username) {
+    if (!username) return null;
+    const result = await query(
+        `SELECT * FROM users WHERE lower(username) = lower($1) LIMIT 1`,
+        [username]
+    );
+    return result.rows[0] || null;
+}
+
 module.exports = {
     createUser,
     findByUsername,
+    findByUsernameCanonical,
     findByUsernames,
     findById,
     findByEmail,

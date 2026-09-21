@@ -1,5 +1,5 @@
 // ======================================================
-// Auth Context Middleware
+// Auth Context Middleware — HTTP adapter (Extraction Phase 1)
 // ======================================================
 // Identity resolution for every request (Auth MVP + Guest Workspace MVP):
 //
@@ -16,20 +16,36 @@
 //           workspaces. Everything outside /api/v1 stays unauthenticated.
 //
 // The guest is NEVER a fake user: req.user stays null, the identity lives on
-// req.guest, and ownership resolution (`checkBookAccess`/guards) treats the
-// guest's temporary workspace exactly like a personal one — same ownership
-// chain `identity → workspace → book`, no second ownership system.
+// req.guest, and ownership resolution (guards) treats the guest's temporary
+// workspace exactly like a personal one — same ownership chain
+// `identity → workspace → book`, no second ownership system.
 //
-// Expired guest workspaces keep resolving (identity valid, data past TTL) and
-// the guards answer 410 `workspace_expired` — the client then shows a real
-// "expired" state instead of silently starting over.
+// EXTRACTION PHASE 1 (audit §8): this module is now a thin HTTP ADAPTER —
+// it holds NO authorization logic of its own. Every decision delegates to
+// the canonical layer (auth/book-access.js via the wired authService);
+// this file only:
+//   - reads identity from req (cookies), calls the domain, maps results to
+//     HTTP statuses/bodies (401/403/410 semantics FROZEN);
+//   - keeps the host-side policies that are path/transport-shaped: guest
+//     auto-provision with its route exemptions (/auth, /worker,
+//     /ai-connector, /admin) and the Secure-flag detection;
+//   - requireAdmin / requireWorkspaceMembership are admin/workspace-surface
+//     policies (host-owned per audit §4.2), kept here unchanged.
+// ======================================================
 
-const workspaceRepo = require('../storage/postgres/repositories/workspace-repo');
 const authService = require('../auth/auth-service');
 
 /** True when the request carries ANY recognized identity (user or guest). */
 function hasIdentity(req) {
     return !!(req && (req.user || req.guest));
+}
+
+/** Identity projection the domain layer consumes (plain objects, no req). */
+function identityOf(req) {
+    if (!req) return null;
+    if (req.user) return { user: req.user, workspace: req.workspace };
+    if (req.guest) return { guest: req.guest, workspace: req.workspace };
+    return null;
 }
 
 /**
@@ -44,7 +60,9 @@ async function authContext(req, res, next) {
     req.workspace = null;
     req.auth = { kind: 'none' };
     try {
-        const sessionToken = authService.readCookie(req, authService.SESSION_COOKIE_NAME);
+        const sessionToken = authService.parseCookieHeader
+            ? authService.parseCookieHeader(req.headers && req.headers.cookie, authService.SESSION_COOKIE_NAME)
+            : authService.readCookie(req, authService.SESSION_COOKIE_NAME);
         if (sessionToken) {
             const resolved = await authService.resolveSession(sessionToken);
             if (resolved) {
@@ -55,7 +73,9 @@ async function authContext(req, res, next) {
             }
         }
 
-        const guestToken = authService.readCookie(req, authService.GUEST_COOKIE_NAME);
+        const guestToken = authService.parseCookieHeader
+            ? authService.parseCookieHeader(req.headers && req.headers.cookie, authService.GUEST_COOKIE_NAME)
+            : authService.readCookie(req, authService.GUEST_COOKIE_NAME);
         if (guestToken) {
             const resolved = await authService.resolveGuest(guestToken);
             if (resolved) {
@@ -104,7 +124,7 @@ async function authContext(req, res, next) {
     next();
 }
 
-/** Production/HTTPS detection (mirrors auth-routes.cjs). */
+/** Production/HTTPS detection (transport concern — stays host-side). */
 function isHttpsRequest(req) {
     if (process.env.NODE_ENV === 'production') return true;
     const proto = (req.headers && req.headers['x-forwarded-proto']) || '';
@@ -166,75 +186,16 @@ function requireWorkspaceMembership(req, res, next) {
     next();
 }
 
-/** Sentinel thrown by guest access checks on an expired workspace. */
-class WorkspaceExpiredError extends Error {
-    constructor() {
-        super('workspace_expired');
-        this.status = 410;
-        this.code = 'workspace_expired';
-    }
-}
-
 /**
- * Book access authorization helper.
- * - no identity (legacy pre-auth): access allowed everywhere;
- * - authenticated user: workspace membership (books.workspace_id →
- *   workspace_members), with self-heal for rows created pre-ownership;
- * - guest: book must live in the guest's temporary workspace; an EXPIRED
- *   workspace throws WorkspaceExpiredError (guards answer 410).
+ * Book access authorization helper — adapter over the canonical decision
+ * layer. Same contract as the historical implementation: workspace|null,
+ * throws WorkspaceExpiredError (410) for an expired guest workspace.
+ * Reads identity from req and delegates; NO decision logic here.
  *
  * @returns {Promise<object|null>} Workspace if authorized, null otherwise
  */
 async function checkBookAccess(req, bookId) {
-    if (!hasIdentity(req)) {
-        // Pre-auth mode: allow access to all books.
-        // The book LIST (recent-books-routes.cjs) filters out workspace-owned
-        // books for anonymous visitors; individual book access is allowed for
-        // dedup, session restore, and deep-link compatibility.
-        return { id: 'anonymous', name: 'Anonymous', type: 'temporary' };
-    }
-
-    if (req.guest) {
-        const gw = req.workspace;
-        if (!gw) return null;
-        if (gw.status === 'expired') throw new WorkspaceExpiredError();
-        const wsId = await resolveGuestBookWorkspace(bookId, gw.id);
-        if (wsId === gw.id) return gw;
-        return null;
-    }
-
-    // ── authenticated user ──
-    if (req.workspace && req.workspace.id) {
-        const ownership = require('./workspace-ownership');
-        const wsId = await ownership.resolveWorkspaceForBook(bookId, {
-            preferredWorkspaceId: req.workspace.id,
-            // Authorization paths must not seed registry rows for unknown ids.
-            allowCreate: false,
-        });
-        if (wsId) {
-            if (wsId === req.workspace.id) {
-                return req.workspace;
-            }
-            // Book belongs elsewhere — membership in that workspace could
-            // still allow access (collaboration-ready).
-            const membership = await workspaceRepo.getMembership(wsId, req.user.userId);
-            if (membership) return await workspaceRepo.findById(wsId);
-            return null;
-        }
-        return null;
-    }
-
-    const workspaceId = await workspaceRepo.checkBookAccess(bookId, req.user.userId);
-    if (!workspaceId) return null;
-    return await workspaceRepo.findById(workspaceId);
-}
-
-/** Resolve the workspace owning `bookId` as seen by a guest. Never creates
- *  rows (access path): the book must already be attached to the guest
- *  workspace — creation paths attach it server-side using the same context. */
-async function resolveGuestBookWorkspace(bookId, guestWorkspaceId) {
-    const bookRepo = require('../storage/postgres/repositories/book-repo');
-    return await bookRepo.getWorkspaceId(bookId);
+    return authService.accessibleBookWorkspace(identityOf(req), bookId);
 }
 
 /**
@@ -255,7 +216,7 @@ function requireBookAccess(bookIdParam = 'bookId') {
         try {
             workspace = await checkBookAccess(req, bookId);
         } catch (err) {
-            if (err instanceof WorkspaceExpiredError) {
+            if (err instanceof authService.WorkspaceExpiredError) {
                 return res.status(410).json({ error: 'Guest workspace expired', code: 'workspace_expired' });
             }
             console.error(`[AUTH-CONTEXT] checkBookAccess(${bookId}) failed:`, err.message);
@@ -284,7 +245,7 @@ async function getAccessibleBookWorkspace(req, bookId) {
             ? { ok: true, workspace: ws, mode: req.guest ? 'guest' : 'auth' }
             : { ok: false, workspace: null, mode: req.guest ? 'guest' : 'auth' };
     } catch (err) {
-        if (err instanceof WorkspaceExpiredError) {
+        if (err instanceof authService.WorkspaceExpiredError) {
             return { ok: false, status: 410, workspace: null, mode: 'expired' };
         }
         console.error(`[AUTH-CONTEXT] getAccessibleBookWorkspace(${bookId}) failed:`, err.message);
@@ -307,7 +268,7 @@ async function dedupOwnedByCaller(req, candidateBookId) {
         const ws = await checkBookAccess(req, candidateBookId);
         return !!ws;
     } catch (err) {
-        if (err instanceof WorkspaceExpiredError) return false;
+        if (err instanceof authService.WorkspaceExpiredError) return false;
         console.error(`[AUTH-CONTEXT] dedupOwnedByCaller(${candidateBookId}) failed:`, err.message);
         return false; // fail closed
     }
@@ -317,7 +278,8 @@ async function dedupOwnedByCaller(req, candidateBookId) {
  * Book-creation authorization for authenticated imports (vbook bundles).
  * The bundle book_id is client-controlled: an authenticated (user OR guest)
  * re-import must never touch, overwrite or reveal a book owned by a foreign
- * workspace.
+ * workspace. Adapter over the canonical decision layer + the foreign-book
+ * workspace lookup (workspaces port).
  * @param {object} req
  * @param {string} bookId
  * @param {object} [opts]
@@ -333,7 +295,7 @@ async function importBookAllowed(req, bookId, { diskCopyExists = false } = {}) {
     try {
         const owned = await checkBookAccess(req, bookId);
         if (owned) return { allowed: true };
-        const foreignWs = await workspaceRepo.getWorkspaceIdForBook(bookId);
+        const foreignWs = await authService.getWorkspaceIdForBook(bookId);
         if (foreignWs) {
             return { allowed: false, status: 403, error: 'Book belongs to another workspace' };
         }
@@ -344,7 +306,7 @@ async function importBookAllowed(req, bookId, { diskCopyExists = false } = {}) {
         }
         return { allowed: true };
     } catch (err) {
-        if (err instanceof WorkspaceExpiredError) {
+        if (err instanceof authService.WorkspaceExpiredError) {
             return { allowed: false, status: 410, error: 'Guest workspace expired' };
         }
         console.error(`[AUTH-CONTEXT] importBookAllowed(${bookId}) failed:`, err.message);
@@ -381,7 +343,7 @@ module.exports = {
     dedupOwnedByCaller,
     importBookAllowed,
     hasIdentity,
-    WorkspaceExpiredError,
+    WorkspaceExpiredError: authService.WorkspaceExpiredError,
     getCurrentUser,
     getCurrentWorkspace,
 };

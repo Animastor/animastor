@@ -25,8 +25,12 @@ const { listSourceFiles, readSource, rel, BACKEND_SRC } = require('./helpers');
 // restoration.js, runtime/runtime-scheduler.js and runtime/scene-window.js —
 // their version-gate/version-scene SQL moved behind the PersistencePort
 // (runtime/persistence-port → storage/runtime-persistence-adapter).)
+// (Auth Phase 1 removed auth/auth-service.js — the registration transaction
+// moved behind the registrationTx unit-of-work port
+// (storage/postgres/repositories/registration-tx.js); the canonical-username
+// SELECT and the workspace self-heal UPDATE moved into user-repo/workspace-repo.
+// The auth domain now reaches PG only through repositories/ports.)
 const DIRECT_SQL_WHITELIST = [
-    'backend/src/auth/auth-service.js',
     'backend/src/image/iu-processor.js',
     'backend/src/routes/ai-endpoint-routes.cjs',
     'backend/src/services/agent-session.js',

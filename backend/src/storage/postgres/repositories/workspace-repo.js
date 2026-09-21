@@ -140,6 +140,25 @@ async function getWorkspaceIdForBook(bookId) {
     return result.rows[0]?.workspace_id || null;
 }
 
+/**
+ * Rename a workspace (auth self-heal: legacy guest→user conversion names).
+ * Historical site: auth-service.resolveDefaultWorkspace raw UPDATE — moved
+ * behind the repository with the Auth Extraction Phase 1 (audit §6
+ * workspaces port). Never overwrites a user-chosen name upstream: the auth
+ * core only calls this when the CURRENT name is a legacy sentinel.
+ * @param {string} workspaceId - UUID
+ * @param {string} name - new display name
+ * @returns {Promise<object|null>} updated workspace row or null
+ */
+async function renameWorkspace(workspaceId, name) {
+    if (!workspaceId || !name) return null;
+    const result = await query(
+        `UPDATE workspaces SET name = $2 WHERE id = $1 RETURNING *`,
+        [workspaceId, name]
+    );
+    return result.rows[0] || null;
+}
+
 module.exports = {
     createWorkspace,
     findById,
@@ -148,4 +167,5 @@ module.exports = {
     getMembership,
     checkBookAccess,
     getWorkspaceIdForBook,
+    renameWorkspace,
 };
