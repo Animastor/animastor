@@ -1,6 +1,6 @@
 # Auth Extraction Readiness Audit — `@animastor/auth`
 
-**Status:** AUDIT / RECONNAISSANCE ONLY. No production code changed, no package created, no physical extraction, no API changed.
+**Status:** AUDIT + IMPLEMENTATION RECORD. §1–14 are the audit (no code changed at that point); §15 records Phase 1 (contract preparation, landed); §16 records the physical extraction into `packages/animastor-auth` (landed; package NOT published to npm).
 **Date:** 2026-09-21
 **Branch:** `c21.4-physically-extract-analysis-from-backend`
 **Baseline commit:** `958bfd7c` ("docs(architecture): audit remaining backend host for extraction candidates")
@@ -392,7 +392,7 @@ No circular-dependency, licensing, or publish-blocking risk was found. The packa
 
 ## 14. Final verdict
 
-### **B — READY AFTER SMALL PREPARATION**
+### **B — READY AFTER SMALL PREPARATION** (superseded: Phase 1 §15 and physical extraction §16 have since LANDED)
 
 The domain is cohesive, crypto-only, stateless in-process, owns its contract embryo (`AuthError`, cookie grammar, public projections, decision-result shape), carries 1,257 LOC of dedicated tests, and has a small, fully-mapped consumer list with one-way dependency direction. Nothing measured this pass argues for C: every blocker is a bounded seam, and every seam has an in-repo precedent (assistant sessionRepo contract, registration via explicit port method, player/editor port injection, installer boundary guards).
 
@@ -475,6 +475,64 @@ Recommended execution size: phases 1–2 are ~1–2 focused sessions (all inside
 - **Pre-extraction requirement (unchanged from §12):** move `auth-contract.test.js` + the unit halves into the package; keep PG/HTTP suites host-side.
 
 **Updated verdict: B → B+ (preparation complete; the domain is extraction-ready).** Phase 1–2 of §12 are landed; what remains is the mechanical phase 3 (physical move + shim flip + package manifest + boundary guard test) and the optional phase 4.
+
+---
+
+## 16. Physical Extraction (LANDED)
+
+**Status:** IMPLEMENTED — the auth domain is physically extracted into `packages/animastor-auth` (`@animastor/auth@0.1.0`, private repo package, **NOT published**). Parent commit: Phase 1 `004b7ef0`. No public API change, no DB change, no worker-auth change, no frontend change.
+
+### 16.1 What was moved INTO the package
+
+| Package file | Former location | Content |
+|---|---|---|
+| `src/core.js` | `backend/src/auth/core.js` | `createAuthService` lifecycle (register/login/logout/session/guest) |
+| `src/book-access.js` | `backend/src/auth/book-access.js` | canonical decision layer (`decideBookAccess`/`authorizedWorkspace`) |
+| `src/cookies.js` | `backend/src/auth/cookies.js` | cookie grammar + frozen constants |
+| `src/auth-config.js` | `backend/src/auth/auth-config.js` | config contract (`DEFAULT_AUTH_CONFIG`, `normalizeAuthConfig`, `normalizeCookieDomain`) |
+| `src/auth-errors.js` | `backend/src/auth/auth-errors.js` | `AuthError` + `WorkspaceExpiredError` |
+| `src/password.js` | `backend/src/auth/password.js` | scrypt primitives (domain-side by architecture: pure `node:crypto`, zero deps) |
+| `src/ports.js` | `backend/src/auth/ports.js` | `assertAuthPorts` port validators |
+| `src/index.cjs` | — | package entrypoint: the ONLY export-map root; 13-name frozen public API |
+| `test/auth-contract.test.js` | `backend/tests/auth-contract.test.js` | 37 contract tests over in-memory ports (moved with the domain) |
+| `package.json` / `README.md` / `LICENSE` / `CHANGELOG.md` | — | assistant/installer conventions: zero runtime deps, `node >=20`, MIT, `publishConfig.access: public`, single `.` export root |
+
+`git mv` preserved file history; intra-package requires needed no changes (same directory).
+
+### 16.2 What stayed host-side
+
+- **PostgreSQL adapters:** `storage/postgres/repositories/{user,session,guest,workspace}-repo.js`, `registration-tx.js` (the unit-of-work: SQL + `getPool()` transaction), `book-repo.getWorkspaceId` leg.
+- **Book ownership resolver:** `middleware/workspace-ownership.js` (the `bookOwnership.resolveAccessWorkspace` leg — shared by 8+ non-auth consumers).
+- **Composition root:** `backend/src/auth/index.cjs` — `buildAuthPorts()` (binds all six ports) + `authConfigFromEnv()` (the only `process.env` reads in auth/**) + `buildAuthService()` (per-call `COOKIE_DOMAIN` re-resolution bridge) + the wired singleton in the historical `authService` shape.
+- **Compatibility shim:** `backend/src/auth/auth-service.js` — re-exports the wired singleton (`AuthError`, `WorkspaceExpiredError`, `buildAuthService` test seam). Zero consumer churn.
+- **HTTP adapter layer:** `middleware/auth-context.js` (identity resolution, guards, guest auto-provision policy) and `routes/auth-routes.cjs` (contour).
+- **Host integration tests:** `auth-mvp`, `guest-workspace`, `admin-security`, `txt-import-ownership`, `account-workspace` etc. (real PG + Express). `password` imports in `auth-mvp`/`admin-security` re-pointed to `@animastor/auth` (the only test edits; assertions untouched).
+
+### 16.3 Package boundary (verified by guards)
+
+Dependency direction is strictly one-way (`backend → @animastor/auth`). The package contains **no Express, no PostgreSQL/pg, no `process.env`, no filesystem, no worker-auth, no `backend/src` requires** — its only external require is `node:crypto` (password.js). Verified by the new `backend/tests/architecture/auth-package-boundary.test.js`:
+
+- **APB-G1** extraction landed, no backend copies; **G2** zero runtime deps; **G3** builtins + intra-package requires only; **G4** no reverse requires into `backend/**`; **G5** no `process.env`/`__dirname`/`require.cache` (comments stripped before scan); **G6** zero host imports of package internals; **G7** frozen export surface; **G8** host wiring uses the package specifier only (no deep-imports); **G9** manifest identity pins; **G10** PG adapters stay host-side; **G11** contract tests in-package, HTTP suites host-side.
+
+**Another-host test:** installing `@animastor/auth` in a host without PostgreSQL/Express is architecturally complete — a host supplies `assertAuthPorts(...)`-conforming adapters + a config object; nothing else (README documents the port table).
+
+### 16.4 Ports (final, as wired in `buildAuthPorts()`)
+
+`users` (`findByUsernameCanonical`, `findByEmail`) · `sessions` (`createSession`, `findByToken`, `revokeByToken`) · `guests` (`createGuest`, `findByToken`, `touchWorkspaceActivity`, `revokeByToken`) · `workspaces` (`findById`, `checkBookAccess`, `getMembership`, `getWorkspaceIdForBook`, `findPersonalWorkspace`, `createWorkspace`, `renameWorkspace`) · `bookOwnership` (`resolveAccessWorkspace` → `workspace-ownership.resolveWorkspaceForBook`, `getWorkspaceId` → `book-repo.getWorkspaceId`) · `registrationTx` (`registerUserWithWorkspace` → `registration-tx.js`). Validators: `assertAuthPorts` fail-fast at composition.
+
+### 16.5 Test strategy (final)
+
+- **In the package:** `test/auth-contract.test.js` — 37 tests, in-memory ports, no PG/Express (`npm test` in `packages/animastor-auth`).
+- **Host-side:** HTTP/PG integration suites unchanged (auth-mvp 30, guest-workspace 17, admin-security 8, txt-import-ownership 12, account-workspace 12, worker/security suites) + 11 boundary guards in `tests/architecture/auth-package-boundary.test.js`.
+- **Results at extraction:** package 37 passing; backend auth/integration 92 passing; architecture suite 976 passing (the 2 failures — installer IB-G15, phase5 runtime/index.js — pre-exist on the base commit, unrelated); worker/security suites 83 passing; syntax smoke green.
+
+### 16.6 Remaining limitations / follow-ups
+
+1. **`file:` dependency** — like the other 10 consumed `@animastor/*` packages, `@animastor/auth` rides the `file:../packages/animastor-auth` seam; publishing to npm is a separate release decision (NOT done here, per instructions).
+2. **`auth-routes.cjs` stays host-side** (§4.2 disposition) — an optional phase-4 move as `createAuthRoutes(app, deps)` remains possible but was deliberately not taken (extraction, not refactoring).
+3. **`config/runtime-config.js` GUEST_* duplication** (§15.3 item 6) persists — host-internal hygiene, not a package concern.
+4. **Session/guest token grammars** (`sid.*`/`gst.*` parse/format) still live in the host repositories (they are only used there); if a second host ever needs to mint compatible tokens, lift them into the package as pure helpers (pure move, zero semantic risk).
+5. **`requireAdmin`/`ADMIN_USERNAMES`** stay host middleware (admin-surface policy, §4.2).
 
 ---
 

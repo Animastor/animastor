@@ -1,28 +1,27 @@
 // ======================================================
-// AUTH HOST WIRING (Auth Extraction Phase 1) — composition root + shim
+// AUTH HOST WIRING — composition root shim over @animastor/auth
 // ======================================================
-// The ONE host-side binding point of the auth domain (audit §12 phase 2):
-// resolves env once, binds the concrete PG adapters to the domain ports,
-// and exposes the historical `authService` module.exports shape so every
-// existing consumer keeps working unchanged.
+// The single host-side binding point of the auth domain. The DOMAIN lives
+// in the @animastor/auth package (packages/animastor-auth — no Express, no
+// PostgreSQL, no process.env inside); THIS module is the composition root:
 //
-// AFTER the physical extraction this file remains the host shim: the domain
-// (auth/core.js + book-access.js + cookies.js + auth-errors.js +
-// auth-config.js + password.js) moves to packages/animastor/auth and this
-// module becomes `createAuthService({ ports: boundHostRepos, config:
-// fromEnv() })` — zero consumer churn.
+//     @animastor/auth (domain)
+//        ↓  createAuthService({ ports, config })
+//     backend ports/adapters (PG repos, registrationTx, workspace-ownership)
+//        ↓
+//     compatibility API (the historical authService export shape)
 //
-// Domain-side env policy (audit §7): NO module under auth/** reads
-// process.env except THIS wiring — the domain receives the ready config.
+// Every existing consumer keeps its require path and the exact method
+// surface — auth-context, auth-routes and the test suites are unchanged.
+//
+// Env policy: the ONLY process.env reads in auth/** happen here (the host
+// resolves config; the package never touches the environment).
 // ======================================================
 
 'use strict';
 
-const { createAuthService } = require('./core');
-const { normalizeCookieDomain, DAY_MS } = require('./auth-config');
-const cookies = require('./cookies');
-const { AuthError, WorkspaceExpiredError } = require('./auth-errors');
-const password = require('./password');
+const { createAuthService, normalizeCookieDomain, cookies } = require('@animastor/auth');
+const { AuthError, WorkspaceExpiredError } = require('@animastor/auth');
 
 const userRepo = require('../storage/postgres/repositories/user-repo');
 const workspaceRepo = require('../storage/postgres/repositories/workspace-repo');
@@ -38,14 +37,14 @@ function authConfigFromEnv(env = process.env) {
         sessionCookieName: cookies.SESSION_COOKIE_NAME,
         guestCookieName: cookies.GUEST_COOKIE_NAME,
         sessionTtlMs: cookies.SESSION_TTL_MS, // 30d — hardcoded today (audit §7)
-        guestWorkspaceTtlMs: Math.max(1, Number(env.GUEST_WORKSPACE_TTL_DAYS ?? 7)) * DAY_MS,
-        guestWorkspaceGraceMs: Math.max(0, Number(env.GUEST_WORKSPACE_GRACE_PERIOD_DAYS ?? 23)) * DAY_MS,
-        guestSessionTtlMs: Math.max(1, Number(env.GUEST_SESSION_TTL_DAYS ?? 30)) * DAY_MS,
+        guestWorkspaceTtlMs: Math.max(1, Number(env.GUEST_WORKSPACE_TTL_DAYS ?? 7)) * 24 * 60 * 60 * 1000,
+        guestWorkspaceGraceMs: Math.max(0, Number(env.GUEST_WORKSPACE_GRACE_PERIOD_DAYS ?? 23)) * 24 * 60 * 60 * 1000,
+        guestSessionTtlMs: Math.max(1, Number(env.GUEST_SESSION_TTL_DAYS ?? 30)) * 24 * 60 * 60 * 1000,
         cookieDomain: normalizeCookieDomain(env.COOKIE_DOMAIN),
     };
 }
 
-/** The concrete PG adapters for the domain ports (audit §6). */
+/** The concrete PG adapters for the package ports (audit §6). */
 function buildAuthPorts() {
     return {
         users: {
@@ -93,7 +92,7 @@ function buildAuthService() {
     const svc = createAuthService({ ports: buildAuthPorts(), config: authConfigFromEnv() });
     // Compatibility bridge: the historical auth-service resolved COOKIE_DOMAIN
     // at CALL time (env may change after boot; the auth-mvp cookie contract
-    // suite relies on it). The domain core stays env-free — the host bridge
+    // suite relies on it). The package stays env-free — the host shim
     // re-resolves the cookie domain per call for the four cookie wrappers.
     // All other config (TTLs, names) remains a boot-time snapshot, matching
     // the historical module-level consts.
@@ -108,10 +107,9 @@ function buildAuthService() {
 const authService = buildAuthService();
 
 module.exports = authService;
-// Exposed for tests + the future physical move (host composes, never re-derives).
+// Exposed for tests + future hosts (host composes, never re-derives).
 module.exports.buildAuthService = buildAuthService;
 module.exports.buildAuthPorts = buildAuthPorts;
 module.exports.authConfigFromEnv = authConfigFromEnv;
 module.exports.AuthError = AuthError;
 module.exports.WorkspaceExpiredError = WorkspaceExpiredError;
-module.exports.password = password;

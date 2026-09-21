@@ -17,11 +17,11 @@
 // run unchanged against the real PG adapter).
 
 const { expect } = require('chai');
-const { createAuthService } = require('../src/auth/core');
-const { AuthError, WorkspaceExpiredError } = require('../src/auth/auth-errors');
-const { normalizeAuthConfig, normalizeCookieDomain, DEFAULT_AUTH_CONFIG } = require('../src/auth/auth-config');
-const cookies = require('../src/auth/cookies');
-const { assertAuthPorts } = require('../src/auth/ports');
+const { createAuthService } = require('../src/core');
+const { AuthError, WorkspaceExpiredError } = require('../src/auth-errors');
+const { normalizeAuthConfig, normalizeCookieDomain, DEFAULT_AUTH_CONFIG } = require('../src/auth-config');
+const cookies = require('../src/cookies');
+const { assertAuthPorts } = require('../src/ports');
 
 // ── in-memory port fixtures ─────────────────────────────────────────────
 

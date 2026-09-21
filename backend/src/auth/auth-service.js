@@ -1,20 +1,21 @@
 // ======================================================
-// AUTH SERVICE (Authentication MVP) — Extraction Phase 1 shim
+// AUTH SERVICE (Authentication MVP) — compatibility shim
 // ======================================================
-// This file is now the COMPATIBILITY SHIM over the auth domain core
-// (audit §12 phase 2): the domain lives in auth/core.js (Express-free,
-// ports-injected) and the host binding is auth/index.cjs (env + PG
-// adapters). Every export below is re-exported from the wired singleton so
-// all existing consumers (auth-context, auth-routes, 15+ test suites) keep
-// their require path and behaviour unchanged.
+// The auth DOMAIN now lives in the @animastor/auth npm package
+// (packages/animastor-auth): core lifecycle, the canonical book-access
+// decision layer, the cookie grammar, the config/error contracts and the
+// scrypt password primitives. The host binding is auth/index.cjs (PG
+// repositories + registration unit-of-work + workspace-ownership + env
+// config); this file re-exports the wired singleton so all existing
+// consumers (auth-context, auth-routes, 15+ test suites) keep their require
+// path and behaviour unchanged.
 //
-// The former inline SQL (register transaction, canonical username lookup,
-// workspace self-heal UPDATE) moved to:
-//   storage/postgres/repositories/registration-tx.js  (unit-of-work)
+// PostgreSQL implementations stay host-side:
+//   storage/postgres/repositories/registration-tx.js  (unit-of-work port)
 //   storage/postgres/repositories/user-repo.findByUsernameCanonical
 //   storage/postgres/repositories/workspace-repo.renameWorkspace
-// DIRECT_SQL_WHITELIST: this file no longer holds a raw postgres handle —
-// the whitelist entry is REMOVED (sql-boundary guard's stale-entry rule).
+// DIRECT_SQL_WHITELIST: no file in backend/src/auth holds a raw postgres
+// handle (the guard's stale-entry rule enforces this).
 //
 // Semantics unchanged (audit §9): error/status codes, cookie attributes,
 // guest lifecycle, conversion atomicity, fail-closed authorization.
@@ -23,9 +24,7 @@
 'use strict';
 
 const wired = require('./index.cjs');
-const cookies = require('./cookies');
-const { AuthError, WorkspaceExpiredError } = require('./auth-errors');
-const password = require('./password');
+const { AuthError, WorkspaceExpiredError } = require('@animastor/auth');
 
 // Re-export the wired singleton's surface (the historical authService shape).
 const authService = wired;
@@ -35,13 +34,8 @@ module.exports = authService;
 module.exports.AuthError = AuthError;
 module.exports.WorkspaceExpiredError = WorkspaceExpiredError;
 
-// Static cookie grammar surface (constants were also reachable via the
-// singleton; the modules are exported for direct consumers/tests).
-module.exports.cookies = cookies;
-module.exports.password = password;
-
-// Testing seam: rebuild the singleton with custom ports/config (used by the
-// contract suite; production always uses the env-bound singleton).
+// Testing seam: rebuild the singleton with custom ports/config (used by
+// tests; production always uses the env-bound singleton).
 module.exports.buildAuthService = wired.buildAuthService;
 module.exports.buildAuthPorts = wired.buildAuthPorts;
 module.exports.authConfigFromEnv = wired.authConfigFromEnv;

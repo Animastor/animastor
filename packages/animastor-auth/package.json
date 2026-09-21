@@ -1,0 +1,45 @@
+{
+  "name": "@animastor/auth",
+  "version": "0.1.0",
+  "description": "Animastor Auth — the identity/session/authorization domain of the Animastor backend, physically extracted from the host: registration (with guest→account in-place conversion), login/logout, server-side session and guest-identity semantics, the canonical book-access decision layer, the cookie grammar (animastor_sid/animastor_gid) and the scrypt password primitives. The package reaches persistence, the registration unit-of-work, the book-ownership resolver and configuration ONLY through injected ports and a normalized config object — no Express, no PostgreSQL, no process.env, no filesystem inside.",
+  "keywords": [
+    "animastor",
+    "auth",
+    "authentication",
+    "session",
+    "authorization"
+  ],
+  "main": "src/index.cjs",
+  "exports": {
+    ".": "./src/index.cjs"
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "mocha --exit test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Animastor/animastor.git",
+    "directory": "packages/animastor-auth"
+  },
+  "homepage": "https://github.com/Animastor/animastor/tree/main/packages/animastor-auth#readme",
+  "bugs": {
+    "url": "https://github.com/Animastor/animastor/issues"
+  },
+  "devDependencies": {
+    "chai": "^6.2.2",
+    "mocha": "^11.7.5"
+  }
+}
