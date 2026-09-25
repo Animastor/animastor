@@ -39,7 +39,7 @@ describe('@animastor/generation package', () => {
         const entry = path.join(__dirname, '..', 'src', 'index.js');
         const gen = require(entry);
         expect(Object.keys(gen).sort()).to.deep.equal([
-            'artifactNaming', 'bootstrap', 'comfyuiProvider', 'generationProgress',
+            'artifactNaming', 'bootstrap', 'comfyuiProvider', 'dirtyGrammar', 'generationProgress',
             'mediaRegistry', 'ports', 'promptProfiles', 'sceneState',
         ]);
         delete require.cache[require.resolve(entry)];
@@ -62,11 +62,34 @@ describe('@animastor/generation package', () => {
         expect(offenders).to.deep.equal([]);
     });
 
-    it('exports map exposes the root only (no accidental deep imports)', () => {
+    it('exports map exposes the root + the dirty-grammar subpath (no accidental deep imports)', () => {
         const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
-        expect(pkg.exports).to.deep.equal({ '.': './src/index.js' });
+        expect(pkg.exports).to.deep.equal({ '.': './src/index.js', './dirty-grammar': './src/dirty-grammar/index.js' });
         expect(() => require('../src/core/artifact-naming.js')).to.not.throw(); // direct file load still works for tooling
         expect(() => require('@animastor/generation/core/artifact-naming')).to.throw(); // but not as a package subpath
+    });
+
+    // ── dirty-grammar tier (post-reconnaissance adoption) ────────────
+    it('dirtyGrammar exposes the adopted dirty-layer grammar surface', () => {
+        const dg = generation.dirtyGrammar;
+        for (const fn of ['computeSceneDirtyLayers', 'getFieldsForLayer', 'getCrossFields',
+            'getLayerDependencies', 'sceneReferencesCharacter', 'resolveDirtyLayers',
+            'computeSceneHash', 'computeBookHash', 'shortHash', 'generateBuildId',
+            'estimateSpeechDurationSec', 'cyrToLatin']) {
+            expect(dg[fn], `dirtyGrammar.${fn}`).to.be.a('function');
+        }
+        for (const k of ['SCENE_FIELDS', 'CROSS_FIELDS', 'DEPENDENCY_GRAPH', 'isEqual',
+            'extractPassport', 'SPEECH_SEC_PER_WORD', 'SPEECH_MIN_SEC', 'CYR_LATIN_MAP']) {
+            expect(k in dg, `dirtyGrammar.${k}`).to.equal(true);
+        }
+        // frozen grammar semantics: voice-only change does not cascade
+        expect(dg.computeSceneDirtyLayers(
+            { audio: { voice: 'narrator' } },
+            { audio: { voice: 'character' } },
+        ).dirtyLayers).to.deep.equal(['audio']);
+        // frozen speech heuristic contract (agent-prompts scene splitting)
+        expect(dg.estimateSpeechDurationSec('')).to.equal(2);
+        expect(dg.estimateSpeechDurationSec('one two three four five six seven')).to.equal(2.1);
     });
 
     // ── ports: fail-fast + wiring through the public API ────────────

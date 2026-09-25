@@ -67,7 +67,7 @@ function makeMocks(overrides = {}) {
     };
 
     const mod = proxyquire('../src/services/agent/pipeline-runner', {
-        '../source-coverage': sourceCoverage,
+        '@animastor/parser/source-coverage': sourceCoverage,
         '../../book/lazy-book': {
             injectChapterMarkers: (t) => t,
             splitIntoChapters: () => [],

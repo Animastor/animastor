@@ -15,6 +15,10 @@ const parser = require('./lazy-book/parser');
 const contracts = require('./contracts/parser-contract');
 const legacyProjection = require('./contracts/legacy-projection');
 const languageDetector = require('./language-detector');
+// Text-ingest analysis tier (adopted from the host, 2026-09-25):
+// verbatim source-coverage mapping + encoding detection.
+const sourceCoverage = require('./source-coverage');
+const encodingDetect = require('./encoding-detect');
 
 module.exports = {
     // ── Parser facade (deterministic, sync, no IO) ────────────────
@@ -48,4 +52,25 @@ module.exports = {
 
     // ── Language detection (pure utility, tinyld-based) ───────────
     detectLanguageWithConfidence: languageDetector.detectLanguageWithConfidence,
+
+    // ── Source coverage (verbatim text-coverage analysis, adopted) ──
+    normalizeTextForCoverage: sourceCoverage.normalizeTextForCoverage,
+    buildCoverageIndex: sourceCoverage.buildCoverageIndex,
+    skipWhitespaceForward: sourceCoverage.skipWhitespaceForward,
+    rawOffsetToNormalizedIndex: sourceCoverage.rawOffsetToNormalizedIndex,
+    looksLikeChapterTitle: sourceCoverage.looksLikeChapterTitle,
+    isAllCapsHeading: sourceCoverage.isAllCapsHeading,
+    findNarrativeStartOffset: sourceCoverage.findNarrativeStartOffset,
+    getLastSentenceFragment: sourceCoverage.getLastSentenceFragment,
+    buildSceneEndNeedles: sourceCoverage.buildSceneEndNeedles,
+    findLastSceneEndOffset: sourceCoverage.findLastSceneEndOffset,
+    splitTextIntoNormalizedSentences: sourceCoverage.splitTextIntoNormalizedSentences,
+    trySentenceLevelMatch: sourceCoverage.trySentenceLevelMatch,
+    computeSceneCoverage: sourceCoverage.computeSceneCoverage,
+
+    // ── Encoding detection (ingest decode, adopted) ───────────────
+    decodeBuffer: encodingDetect.decodeBuffer,
+    detectBom: encodingDetect.detectBom,
+    scoreText: encodingDetect.scoreText,
+    ENCODING_LABELS: encodingDetect.ENCODING_LABELS,
 };

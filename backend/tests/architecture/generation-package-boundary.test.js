@@ -14,14 +14,15 @@
 //   G7-E  no duplicate Generation Core implementation remains in backend
 //   G7-F  compatibility shims are re-export/delegation only (S-7 target
 //         state: the deep-path shims were DELETED — absence is pinned)
-//   G7-G  the package public API surface is frozen
-//   G7-H  no accidental deep imports (exports map exposes '.' only)
+//   G7-G  the package public API surface is frozen (incl. dirtyGrammar)
+//   G7-H  no accidental deep imports (exports map exposes '.' + './dirty-grammar')
 //   G7-I  the S-6 port guards remain green (port contour + wiring pins)
 //   G7-J  the S-5 runtime/orchestration boundary remains green
 //   G7-K  no dependency cycle package ↔ backend
 //   G7-L  the package loads independently from the backend source tree
-//   G7-M  package-internal pure util copies stay byte/behavior-parity with
-//         the host legs (cyr-latin-map, escapeRegExp)
+//   G7-M  package-internal pure util copies stay behavior-parity with
+//         their canonical package legs (cyr-latin-map, escapeRegExp);
+//         C21.4: the canonical cyr-latin-map lives in dirty-grammar/
 //
 // Docs: docs/architecture/generation-module-extraction-reconnaissance.md §29
 
@@ -68,7 +69,7 @@ describe('G7: @animastor/generation package boundary', () => {
         const pkg = JSON.parse(fs.readFileSync(path.join(PKG_DIR, 'package.json'), 'utf8'));
         expect(pkg.name).to.equal('@animastor/generation');
         expect(pkg.main).to.equal('src/index.js');
-        expect(pkg.exports).to.deep.equal({ '.': './src/index.js' });
+        expect(pkg.exports).to.deep.equal({ '.': './src/index.js', './dirty-grammar': './src/dirty-grammar/index.js' });
         expect(fs.existsSync(path.join(PKG_DIR, 'README.md'))).to.equal(true);
         // the intermediate backend/src/generation area is GONE
         expect(fs.existsSync(path.join(BACKEND_SRC, 'generation')), 'backend must not keep a generation/ directory').to.equal(false);
@@ -170,6 +171,8 @@ describe('G7: @animastor/generation package boundary', () => {
             { re: /function validateAssetTransition/, pkg: 'core/scene-state.js' },
             { re: /function taskId/, pkg: 'core/generation-progress.js' },
             { re: /function assembleMergedDialogueWorkflow/, pkg: 'providers/comfyui-provider.js' },
+            { re: /function computeSceneDirtyLayers/, pkg: 'dirty-grammar/prompt-dependency-registry.js' },
+            { re: /function estimateSpeechDurationSec/, pkg: 'dirty-grammar/speech-estimation.js' },
         ];
         const hostFiles = listSourceFiles(BACKEND_SRC);
         const hostSources = hostFiles.map(f => [rel(f), readSource(f)]);
@@ -199,6 +202,7 @@ describe('G7: @animastor/generation package boundary', () => {
             'artifactNaming',
             'bootstrap',
             'comfyuiProvider',
+            'dirtyGrammar',
             'generationProgress',
             'mediaRegistry',
             'ports',
@@ -231,6 +235,17 @@ describe('G7: @animastor/generation package boundary', () => {
             expect(generation.comfyuiProvider[fn], `comfyuiProvider.${fn}`).to.exist;
         }
         expect(generation.bootstrap).to.be.a('function');
+        // C21.4: the dirty-grammar namespace surface (adopted from the host)
+        for (const fn of ['computeSceneDirtyLayers', 'getFieldsForLayer', 'getCrossFields',
+            'getLayerDependencies', 'sceneReferencesCharacter', 'resolveDirtyLayers',
+            'computeSceneHash', 'computeBookHash', 'shortHash', 'generateBuildId',
+            'estimateSpeechDurationSec', 'cyrToLatin']) {
+            expect(generation.dirtyGrammar[fn], `dirtyGrammar.${fn}`).to.be.a('function');
+        }
+        for (const k of ['SCENE_FIELDS', 'CROSS_FIELDS', 'DEPENDENCY_GRAPH', 'isEqual',
+            'extractPassport', 'SPEECH_SEC_PER_WORD', 'SPEECH_MIN_SEC', 'CYR_LATIN_MAP']) {
+            expect(k in generation.dirtyGrammar, `dirtyGrammar.${k}`).to.equal(true);
+        }
     });
 
     // ── G7-H — no accidental deep imports ───────────────────────────
@@ -296,8 +311,7 @@ describe('G7: @animastor/generation package boundary', () => {
         }
         // 2. backend → package: the ONLY edge shape is the root specifier;
         //    nothing in the package re-exports a backend module that would
-        //    re-enter package internals (root surface is frozen by G7-G).
-        expect(Object.keys(require('@animastor/generation')).length, 'root surface size').to.equal(8);
+        //    re-enter package internals (root surface is frozen by G7-G).            expect(Object.keys(require('@animastor/generation')).length, 'root surface size').to.equal(9);
     });
 
     // ── G7-L — package loads independently from the backend tree ────
@@ -308,7 +322,7 @@ describe('G7: @animastor/generation package boundary', () => {
         const gen = require(entry);
         // zero side effects: no throw, full surface present
         expect(Object.keys(gen).sort().join(',')).to.equal(
-            'artifactNaming,bootstrap,comfyuiProvider,generationProgress,mediaRegistry,ports,promptProfiles,sceneState');
+            'artifactNaming,bootstrap,comfyuiProvider,dirtyGrammar,generationProgress,mediaRegistry,ports,promptProfiles,sceneState');
         // unwired ports fail only on USE (fail-fast, never at require time).
         // The mocha fixture (generation-test-bindings) wires the ports at
         // startup — reset, assert the fail-fast, and restore the wiring.
@@ -336,11 +350,13 @@ describe('G7: @animastor/generation package boundary', () => {
     });
 
     // ── G7-M — package-internal util copies stay parity-pinned ──────
-    it('G7-M: package utils are behavior-identical to the host legs (cyr-latin-map, escapeRegExp)', () => {
-        const pkgCyr = require(path.join(PKG_SRC, 'utils', 'cyr-latin-map.js'));
-        const hostCyr = require(path.join(BACKEND_SRC, 'utils', 'cyr-latin-map.js'));
-        expect(pkgCyr.CYR_LATIN_MAP).to.deep.equal(hostCyr.CYR_LATIN_MAP);
-        expect(pkgCyr.cyrToLatin('Лёд Мама ёлка ЪЬ')).to.equal(hostCyr.cyrToLatin('Лёд Мама ёлка ЪЬ'));
+    it('G7-M: package utils are behavior-identical to their canonical legs (cyr-latin-map, escapeRegExp)', () => {
+        // C21.4: the canonical cyr-latin-map lives in the dirty-grammar tier;
+        // the editor package keeps its own parity twin (PB5 pins that twin).
+        const pkgCyr = require(path.join(PKG_SRC, 'dirty-grammar', 'cyr-latin-map.js'));
+        const editorCyr = require(path.join(REPO_ROOT, 'packages', 'animastor-editor', 'src', 'cyr-latin-map.js'));
+        expect(pkgCyr.CYR_LATIN_MAP).to.deep.equal(editorCyr.CYR_LATIN_MAP);
+        expect(pkgCyr.cyrToLatin('Лёд Мама ёлка ЪЬ')).to.equal(editorCyr.cyrToLatin('Лёд Мама ёлка ЪЬ'));
         const pkgEsc = require(path.join(PKG_SRC, 'utils', 'escape-regexp.js'));
         const hostEsc = require(path.join(BACKEND_SRC, 'utils', 'string-utils.js'));
         for (const s of ['a.b*c', '[x](y){z}|\\^$+?!', '([^)]*)']) {

@@ -13,7 +13,8 @@
     ],
     "main": "src/index.js",
     "exports": {
-        ".": "./src/index.js"
+        ".": "./src/index.js",
+        "./dirty-grammar": "./src/dirty-grammar/index.js"
     },
     "files": [
         "src/",

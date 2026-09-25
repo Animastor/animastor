@@ -336,7 +336,6 @@ describe('architecture: Generation media registry (S-2)', () => {
             'orchestration/orchestrator.js',     // FAIL_EVENT_TYPES fallback keys per media type in comment + Stage literal handlers
             'services/generation-progress.js',    // (docs only after completion pass)
             'services/scene-asset-registry.js',   // ['audio','image','video','storyboard'] — PG asset registry incl. non-media 'storyboard'
-            'services/prompt-dependency-registry.js', // JSON unit keys ('audio'/'image'/'video' are unit field names, not media types)
             'services/cleanup-service.cjs',       // legacy counters mirror (dead display stats, see §22)
             'routes/connector-routes.cjs',        // connector profiles (outside generation contour — S2-E)
             'routes/worker-setup-routes.cjs',     // worker setup profiles (outside contour)
@@ -366,6 +365,15 @@ describe('architecture: Generation media registry (S-2)', () => {
                 path.join(PKG_SRC, 'core', 'default-registrations.js'),
                 path.join(PKG_SRC, 'core', 'media-registry.js'),   // doc comments only
                 path.join(PKG_SRC, 'core', 'scene-state.js'),      // per-asset default shape (audio/image/video hash fields — FSM data contract, mirrors host state/scene-state.js)
+                // C21.4: the dirty-grammar tier — the PDR's dirty-layer grammar
+                // uses 'audio'/'image'/'video' as scene-field LAYER names (unit
+                // comparison keys + layers arrays), not media capability maps.
+                path.join(PKG_SRC, 'dirty-grammar', 'index.js'),
+                path.join(PKG_SRC, 'dirty-grammar', 'prompt-dependency-registry.js'),
+                path.join(PKG_SRC, 'dirty-grammar', 'dependency-graph.js'),
+                path.join(PKG_SRC, 'dirty-grammar', 'scene-hash.js'),
+                path.join(PKG_SRC, 'dirty-grammar', 'speech-estimation.js'),
+                path.join(PKG_SRC, 'dirty-grammar', 'cyr-latin-map.js'),
             ]);
             for (const pkgFile of listSourceFiles(PKG_SRC)) {
                 if (pkgAllowed.has(pkgFile)) continue;

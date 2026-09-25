@@ -1,5 +1,5 @@
 const { expect } = require('chai');
-const sceneHash = require('../src/utils/scene-hash');
+const sceneHash = require('../src/dirty-grammar/scene-hash');
 
 describe('Scene Hash (Phase A.3)', () => {
     describe('computeSceneHash', () => {

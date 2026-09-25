@@ -10,6 +10,10 @@
 //   - build_id
 //   - created_at / updated_at
 //   - status, scene_hash itself
+//
+// Physical home (post-reconnaissance adoption, 2026-09-25): moved verbatim
+// from backend/src/utils/scene-hash.js into the Generation package — the
+// dirty-grammar tier next to the sceneState FSM it invalidates for.
 
 const crypto = require('crypto');
 

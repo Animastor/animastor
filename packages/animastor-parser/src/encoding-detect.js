@@ -1,8 +1,15 @@
 // ======================================================
-// Encoding Detection and Decoding
+// Encoding Detection and Decoding — @animastor/parser/encoding-detect
 // ======================================================
 // Tries multiple encodings to decode a buffer into text.
 // Uses iconv-lite for conversion and heuristic scoring.
+//
+// Physical home (post-reconnaissance adoption, 2026-09-25): moved verbatim
+// from backend/src/services/encoding-detect.js into the Parser package —
+// the text-ingest analysis orbit. iconv-lite became a declared parser
+// dependency (the package's second external, next to tinyld). Reachable
+// through the package root (parser.decodeBuffer et al.) or the
+// ./encoding-detect subpath export.
 // ======================================================
 
 const iconv = require('iconv-lite');

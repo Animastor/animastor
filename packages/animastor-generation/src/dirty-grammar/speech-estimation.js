@@ -7,17 +7,20 @@
 // services/placeholder-audio.js and imported from there by modules that have
 // nothing to do with placeholder audio.
 //
-// S-4: canonical home is utils/ (shared pure host utils); placeholder-audio
-// re-exports it for compatibility.
-//
 // IMPORTANT: the constants are part of a documented contract with
 // agent-prompts.js scene splitting ("~N words" guideline) — the tokenizer
 // and rates must stay identical wherever a word-count estimate is compared
-// against it. Do not tune one copy without the other (single canonical copy
-// now; guarded by tests/architecture/s4-shared-infra-moves.test.js S4-F).
+// against it. Do not tune one copy without the other (single canonical
+// copy; guarded by tests/architecture/s4-shared-infra-moves.test.js S4-F
+// and the post-adoption guards).
 //
 // Pure function — no disk/DB access — so it can be called on raw scene
 // text during book splitting, not only on persisted scenes.
+//
+// Physical home (post-reconnaissance adoption, 2026-09-25): moved verbatim
+// from backend/src/utils/speech-estimation.js into the Generation package
+// (the host no longer keeps its own copy; the placeholder-audio host adapter
+// re-exports this module for its legacy surface).
 
 const SPEECH_SEC_PER_WORD = 0.3;
 const SPEECH_MIN_SEC = 2;

@@ -35,11 +35,15 @@ function warn(msg) { console.warn(`${logPrefix} ⚠️  ${msg}`); }
 // ======================================================
 
 // S-4: the narration speech-rate heuristic (single source of truth for
-// text → estimated narration time) moved to utils/speech-estimation.js —
+// text → estimated narration time) canonical home is the Generation package
+// dirty-grammar tier (adopted 2026-09-25); re-exported below.
 // the VBook agent pipeline consumes it directly from there, without
 // importing this placeholder-audio module. The re-export below keeps the
 // public surface byte-compatible.
-const { estimateSpeechDurationSec } = require('../utils/speech-estimation');
+// speech-estimation: adopted into @animastor/generation (dirty-grammar) — the
+// host re-exports the package implementation here for this module's legacy
+// surface (tests/scene-split, visuals-duration, video-action-polish pin it).
+const { estimateSpeechDurationSec } = require('@animastor/generation').dirtyGrammar;
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
 const artifactNaming = require('@animastor/generation').artifactNaming;
 

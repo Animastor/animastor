@@ -8,7 +8,8 @@ const fs = require('fs');
 const path = require('path');
 const lazyBook = require('../../book/lazy-book');
 const config = require('../../config/runtime-config');
-const sourceCoverage = require('../source-coverage');
+// source-coverage: adopted into @animastor/parser — host copy deleted (2026-09-25)
+const sourceCoverage = require('@animastor/parser/source-coverage');
 const { updateSession, createSession, isSessionCancelled } = require('../agent-session');
 const layerConfig = require('../layer-config');
 const { PROGRESS_STAGES, resolveBookLanguage } = require('../agent-prompts');

@@ -13,7 +13,8 @@ const path = require('path');
 const fs = require('fs');
 
 const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
-const { computeSceneHash, generateBuildId } = require('../utils/scene-hash');
+// scene-hash: adopted into @animastor/generation (dirty-grammar) — host copy deleted
+const { computeSceneHash, generateBuildId } = require('@animastor/generation').dirtyGrammar;
 
 const logPrefix = '[SCENE-ASSET-REGISTRY]';
 

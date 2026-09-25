@@ -1,5 +1,5 @@
 const { expect } = require('chai');
-const registry = require('../src/services/prompt-dependency-registry');
+const registry = require('../src/dirty-grammar/prompt-dependency-registry');
 
 describe('Prompt Dependency Registry', () => {
     describe('isEqual', () => {

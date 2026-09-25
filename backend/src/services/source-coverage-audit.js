@@ -1,5 +1,6 @@
 const lazyBook = require('../book/lazy-book');
-const sourceCoverage = require('./source-coverage');
+// source-coverage: adopted into @animastor/parser — host copy deleted (2026-09-25)
+const sourceCoverage = require('@animastor/parser/source-coverage');
 
 function sceneText(scene) {
     return scene?.audio?.full_text || scene?.text || '';

@@ -267,18 +267,18 @@ Considered and rejected: a standalone "naming/utils" package (scene-hash + speec
                          │ ports already bound at composition root
       ┌──────────────────┼──────────────────────────────────────────┐
       ▼                  ▼                                          ▼
- ALREADY EXTRACTED   NEW: ADOPTIONS (no new packages)          READY WITH SEAM WORK
+ ALREADY EXTRACTED   ADOPTIONS ✅ DONE (§8)                     READY WITH SEAM WORK
  (@animastor/*)      → @animastor/generation                   → @animastor/url-safety
   contracts            (dirty-grammar: PDR,                      (dns/fetch ports first;
   vbook-runtime         dependency-graph, scene-hash,             then physical move)
-  parser                speech-estimation, cyr-latin-map,
-  player                prompt-builder, video-workflow
+  parser                speech-estimation, cyr-latin-map —
+  player                DONE; prompt-builder, video-workflow
   editor                builders, audio pure core —
-  generation            phased, LOW→MEDIUM)
+  generation            still pending, MEDIUM)
   orchestration      → @animastor/parser
-  ai-agent             (source-coverage, encoding-detect;
-  ai-analysis          delete stale services/ai-agent
-  assistant            task copies)
+  ai-agent             (source-coverage, encoding-detect DONE;
+  ai-analysis          stale services/ai-agent task copies
+  assistant            deleted)
   auth
   gpu-hub
   installer
@@ -294,3 +294,59 @@ Considered and rejected: a standalone "naming/utils" package (scene-hash + speec
 ```
 
 **Answer to the reconnaissance question:** yes, but little and small. After installer and auth, nothing of *domain* scale remains to extract. What remains extractable is (a) ~1,300 LOC of pure grammar/analysis code whose correct destination is adoption into `generation` and `parser`, (b) one 280-LOC security module (`url-safety`) that deserves its own frozen contract behind DNS/fetch ports, and (c) dead-code deletion of the stale ai-agent task copies. Everything else is either the host's port-adapter layer by design, the HTTP/agent/AI-provider execution plane blocked by the last remaining SCC, or shared-infrastructure doctrine that would gain no boundary by moving.
+
+---
+
+## 8. Extraction performed after reconnaissance (2026-09-25, C21.4)
+
+The three LOW-risk adoptions from §6 were executed on the same branch right after this document was committed. No new npm packages were created; all three took the "adopt into existing package" path. Behavior-neutral: the package files are byte/behavior-identical to the deleted host copies (moves via `git mv`, require-graph re-pointing only).
+
+### 8.1 `@animastor/generation` — new `dirty-grammar/` tier
+
+Moved (host copies DELETED):
+- `backend/src/services/prompt-dependency-registry.js` → `packages/animastor-generation/src/dirty-grammar/prompt-dependency-registry.js`
+- `backend/src/dependency-graph.js` → `…/dirty-grammar/dependency-graph.js`
+- `backend/src/utils/scene-hash.js` → `…/dirty-grammar/scene-hash.js`
+- `backend/src/utils/speech-estimation.js` → `…/dirty-grammar/speech-estimation.js`
+- `backend/src/utils/cyr-latin-map.js` → `…/dirty-grammar/cyr-latin-map.js` (**canonical** single copy; the old package copy `packages/animastor-generation/src/utils/cyr-latin-map.js` was deleted, and `prompt-profiles/prompt-text-utils.js` now requires `../dirty-grammar/cyr-latin-map`)
+
+New public surface: a lazy `dirtyGrammar` namespace on the package ROOT (the 8→9-key root surface, pinned by G7-G/G7-K/G7-L) plus a `./dirty-grammar` subpath export (G7-H updated). Host consumers re-pointed to the package root namespace (`require('@animastor/generation').dirtyGrammar`; media/provider consumers keep `…artifactNaming`/`…comfyuiProvider` as before) per the root doctrine: `services/book-diff.cjs`, `services/scene-asset-registry.js`, `services/book-sync.js`, `services/book-source.js`, `services/placeholder-audio.js`, `agent/pipeline-steps.js`, `agent/text-utils.js`, `agent/unit-splitter.js`, `image/helpers.js` (cyr-latin-map via root namespace — the host twin `backend/src/utils/cyr-latin-map.js` is deleted).
+
+Tests moved into the packages (history preserved via `git mv`): `prompt-dependency-registry.test.js` + `scene-hash.test.js` → `packages/animastor-generation/test/` (72 passing in the package suite), `source-coverage.test.js` → `packages/animastor-parser/test/`.
+
+### 8.2 `@animastor/parser` — source-coverage + encoding-detect
+
+Moved (host copies DELETED):
+- `backend/src/services/source-coverage.js` → `packages/animastor-parser/src/source-coverage.js`
+- `backend/src/services/encoding-detect.js` → `packages/animastor-parser/src/encoding-detect.js`
+
+New root API: 13 source-coverage functions + `decodeBuffer`/`detectBom`/`scoreText`/`ENCODING_LABELS`; subpath exports `./source-coverage` and `./encoding-detect`; `iconv-lite ^0.6.3` added as the package's second external dependency (next to `tinyld`). Host consumers re-pointed: `agent/pipeline-runner.js`, `agent/bootstrap.js`, `services/source-coverage-audit.js`, `services/txt-importer.js` (all via subpath specifiers — subpath exports ARE the parser package doctrine). Parser suite: 58 passing.
+
+### 8.3 Deleted stale ai-agent host copies
+
+`backend/src/services/ai-agent/` now contains ONLY the production barrel `index.js` (the single seam re-exporting `@animastor/ai-analysis`). Deleted as stale duplicates of the ai-analysis package tasks (zero production consumers):
+- `tasks/scenes.js`, `tasks/units.js`, `tasks/locations.js` (+ empty `tasks/` dir)
+- `ports.js` (differed from the package copy by one comment word)
+- `context.js` (identical to the package copy)
+
+Tests re-bound to the package task files: `pipeline-step-types.test.js` now scans `packages/animastor-ai-analysis/src/tasks/{locations,scenes,units}.js`; the C18/C21/ai-analyzer architecture guards dropped the 5 dead host paths from their file lists.
+
+### 8.4 Guard updates + new guards
+
+- **generation-package-boundary.test.js**: G7-E +2 owners, G7-G +`dirtyGrammar` key + frozen dirtyGrammar surface pin, G7-H subpath positive assertion, G7-K root surface 8→9, G7-L keys + new subpath-positive check, G7-M re-pointed to the canonical `dirty-grammar/cyr-latin-map.js` vs the editor package twin.
+- **generation-media-registry.test.js**: `pkgAllowed` + the 6 dirty-grammar files (the PDR's `{ audio: false, image: false, video: false }` unit-comparison literal is layer-grammar data, not a media capability map); stale `services/prompt-dependency-registry.js` entry removed from the host ALLOWED set.
+- **s4-shared-infra-moves.test.js**: `S4_CORE_HOST_FILES` is now EMPTY (speech-estimation moved into the package core tier); S4-E canonical owner re-pointed; S4-H speech surface consumed via the root namespace.
+- **editor-package-boundary.test.js** (PB5) and **editor-extraction-readiness.test.js**: the host cyr-latin-map twin no longer exists — PB5 now pins editor-twin ↔ canonical `dirty-grammar/cyr-latin-map.js` code parity; the image/helpers pin now expects the package root namespace consumption.
+- **S6-A** allow-list extended for the dirty-grammar intra-tier requires.
+- **NEW `backend/tests/dirty-grammar-adoption.test.js`**: regression guard — for 11 representative scene-change fixtures, `bookDiff.diffScene()` output must deep-equal `generation.dirtyGrammar.computeSceneDirtyLayers()` output; also pins the delegation require and the deleted host copy.
+- **NEW `packages/animastor-parser/test/encoding-detect.test.js`**: direct package tests for the adopted encoding detection (BOM, UTF-8 passthrough, Windows-1251, binary/empty rejection, scorer).
+
+### 8.5 Result
+
+| Suite | Result |
+|---|---|
+| `@animastor/generation` (`npm test`) | **72 passing** (was 11) |
+| `@parser` (`npm test`) | **58 passing** (was 36) |
+| backend (`npm test`) | **961 passing / 2 failing** — both failures pre-existing on the base commit (installer `private` pin, phase5 `runtime/index.js` ENOENT; unrelated to this adoption) |
+
+Remaining duplicates after the adoption: none for the moved modules (single canonical owners, pinned by G7-E/S4-E/S6-A + the new regression guard). The next extraction candidate stays `url-safety` (MEDIUM: dns/fetch ports first).

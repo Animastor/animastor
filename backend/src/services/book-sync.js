@@ -23,7 +23,8 @@ const bookSource = require('./book-source');
 const { query } = require('../storage/postgres/database');
 // S-2: default/regenerated layer list resolved from media registry
 const { listMediaTypes: _mediaTypes, isValidWorkerType: _isMediaType } = require('@animastor/generation').mediaRegistry;
-const { computeSceneHash } = require('../utils/scene-hash');
+// scene-hash: adopted into @animastor/generation (dirty-grammar) — host copy deleted
+const { computeSceneHash } = require('@animastor/generation').dirtyGrammar;
 const { getOutdatedByVersions } = require('../storage/postgres/repositories/scene-assets-repo');
 
 const logPrefix = '[BOOK-SYNC]';

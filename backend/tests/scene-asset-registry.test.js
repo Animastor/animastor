@@ -1,5 +1,5 @@
 const { expect } = require('chai');
-const sceneHash = require('../src/utils/scene-hash');
+const sceneHash = require('@animastor/generation').dirtyGrammar;
 
 describe('Scene Asset Registry (Phase A.4)', () => {
     const testBookId = 'test-book-assets';

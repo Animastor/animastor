@@ -17,7 +17,8 @@ const {
 } = require('../agent-session');
 // S-4: the shared heuristic lives in utils/ (host pure utils) — the agent
 // pipeline no longer reaches into the generation placeholder-audio module.
-const { estimateSpeechDurationSec } = require('../../utils/speech-estimation');
+// speech-estimation: adopted into @animastor/generation (dirty-grammar) — host copy deleted
+const { estimateSpeechDurationSec } = require('@animastor/generation').dirtyGrammar;
 const {
     PROGRESS_STAGES, SYSTEM_PROMPTS,
     IMAGE_PROMPT_MAX_CHARS, UNIT_TEXT_MAX_CHARS, SCENE_TEXT_MAX_CHARS,
@@ -233,8 +234,9 @@ async function stepExtractCharacters(sessionId, text, stepIndex, progress, langu
 // ======================================================
 // Agent Pipeline Step — Location Extraction (host adapter, C21)
 // ======================================================
-// Location Analysis (F3) moved from this file into the ai-agent contour
-// (services/ai-agent/tasks/locations.js). Same pattern as C19/C20: the task
+// Location Analysis (F3) moved into the ai-agent contour and now lives in
+// @animastor/ai-analysis (packages/.../tasks/locations.js). Same pattern as
+// C19/C20: the task
 // owns prompt + JSON contract; the LLM seam and persistence are injected
 // ports; degradation (throw → runner keeps the existing set) is unchanged.
 
@@ -256,8 +258,8 @@ async function stepExtractLocations(sessionId, text, characters, stepIndex, prog
 // ======================================================
 // Agent Pipeline Step — Scene Analysis (host adapter, C21)
 // ======================================================
-// Scene Analysis (F4) moved from this file into the ai-agent contour
-// (services/ai-agent/tasks/scenes.js, with the deterministic
+// Scene Analysis (F4) moved into the ai-agent contour and now lives in
+// @animastor/ai-analysis (packages/.../tasks/scenes.js, with the deterministic
 // normalizeSceneEnvironment output guard). Coverage validation, the repair
 // retry and the deterministic fallback remain runner-owned — unchanged.
 
@@ -283,8 +285,8 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
 // ======================================================
 // Agent Pipeline Step — Unit Analysis (host adapter, C21)
 // ======================================================
-// Unit Analysis (F5) moved from this file into the ai-agent contour
-// (services/ai-agent/tasks/units.js). The failure degradation (fallback unit
+// Unit Analysis (F5) moved into the ai-agent contour and now lives in
+// @animastor/ai-analysis (packages/.../tasks/units.js). The failure degradation (fallback unit
 // instead of throw) stays inside the task — unchanged. The long-unit
 // duration splitter (unit-splitter) remains a host-wired post-processor.
 

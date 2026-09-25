@@ -2,7 +2,7 @@ const { expect } = require('chai');
 const {
     findNarrativeStartOffset,
     isAllCapsHeading,
-} = require('../src/services/source-coverage');
+} = require('../src/source-coverage');
 
 describe('source-coverage: findNarrativeStartOffset (chapter-name heading)', () => {
 

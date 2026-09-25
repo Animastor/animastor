@@ -7,7 +7,7 @@
 //   - Coverage with capped scenes (first N processed, rest cached)
 
 const { expect } = require('chai');
-const sourceCoverage = require('../src/services/source-coverage');
+const sourceCoverage = require('@animastor/parser/source-coverage');
 const { resolveSceneProgress } = require('../src/services/agent-service');
 const {
     MAX_SCENES_PER_CHUNK,

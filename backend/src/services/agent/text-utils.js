@@ -5,7 +5,8 @@
 
 // S-4: the shared heuristic lives in utils/ (host pure utils) — the agent
 // pipeline no longer reaches into the generation placeholder-audio module.
-const { estimateSpeechDurationSec } = require('../../utils/speech-estimation');
+// speech-estimation: adopted into @animastor/generation (dirty-grammar) — host copy deleted
+const { estimateSpeechDurationSec } = require('@animastor/generation').dirtyGrammar;
 const { extractSceneTitle, isGenericSceneTitle } = require('../../utils/scene-title-utils');
 const {
     MAX_SCENES_PER_CHUNK, SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC,

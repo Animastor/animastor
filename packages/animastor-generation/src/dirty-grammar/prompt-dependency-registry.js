@@ -1,23 +1,25 @@
 // ======================================================
-// Prompt Dependency Registry
+// Prompt Dependency Registry — @animastor/generation/dirty-grammar
 // ======================================================
-// Central registry of all data sources used by
-// buildImagePrompt() and buildCharacters() in image-service.js.
+// Central registry of all data sources used by image prompt building
+// (buildImagePrompt / buildCharacters on the host) and by the book-diff
+// scene comparison.
 //
-// Every field that contributes to the Final Image Prompt
-// is annotated here with:
+// Every field that contributes to the Final Image Prompt is annotated here
+// with:
 //   scope   — how to find affected scenes (scene|cross)
 //   layers  — which generation layers become dirty
 //   extract — how to get the value for comparison
 //
-// This is the SINGLE SOURCE OF TRUTH for what changes
-// trigger regeneration. If buildImagePrompt() starts
-// reading a new field, add it here — diffScene and
-// computeBookDiff will pick it up automatically.
+// This is the SINGLE SOURCE OF TRUTH for what changes trigger
+// regeneration. If a prompt builder starts reading a new field, add it
+// here — diffScene and computeBookDiff will pick it up automatically.
 //
-// Usage:
-//   const registry = require('./prompt-dependency-registry');
-//   const dirty = registry.computeSceneDirtyLayers(oldScene, newScene);
+// Physical home (post-reconnaissance adoption, 2026-09-25): moved verbatim
+// from backend/src/services/prompt-dependency-registry.js into the
+// Generation package — next to the sceneState FSM and mediaRegistry it
+// drives. Zero requires — pure. Reachable through the package root
+// (generation.dirtyGrammar) or the ./dirty-grammar subpath export.
 //
 // ======================================================
 

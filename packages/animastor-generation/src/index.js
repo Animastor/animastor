@@ -15,6 +15,11 @@
 //                      dispatch through the DispatchTransport port
 //   prompt-profiles/ — the shared prompt-assembly profile resolver and
 //                      character-reference/mention normalizers (S-4)
+//   dirty-grammar/   — the scene-change → dirty-layer grammar (adopted from
+//                      the host post-reconnaissance, 2026-09-25): the Prompt
+//                      Dependency Registry, the layer→layer dependency graph,
+//                      scene-hash fingerprinting, speech-estimation and the
+//                      canonical cyr-latin map. Pure.
 //   ports/           — the frozen S-6 host ports: DispatchTransport,
 //                      GenerationConfig, ProfileStore, BookData — the ONLY
 //                      way the package reaches the host
@@ -36,6 +41,10 @@
 //   comfyuiProvider             — the S-3 provider seam
 //   promptProfiles              — { assemblyProfile, characterUtils,
 //                                   promptTextUtils }
+//   dirtyGrammar                — { computeSceneDirtyLayers,
+//                                   getLayerDependencies, resolveDirtyLayers,
+//                                   computeSceneHash, generateBuildId,
+//                                   estimateSpeechDurationSec, cyrToLatin, … }
 //   ports                       — { dispatchTransport, generationConfig,
 //                                   profileStore, bookData }
 //
@@ -67,6 +76,9 @@ const surface = {
         characterUtils: require('./prompt-profiles/character-utils'),
         promptTextUtils: require('./prompt-profiles/prompt-text-utils'),
     }),
+
+    // ── dirty-grammar tier (post-reconnaissance adoption, 2026-09-25) ──
+    dirtyGrammar: () => require('./dirty-grammar'),
 
     // ── frozen host ports (S-6) ─────────────────────────────────────
     ports: () => ({

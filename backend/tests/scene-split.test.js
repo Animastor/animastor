@@ -9,7 +9,7 @@ const {
     SCENE_MAX_SEC,
     SCENE_MIN_SEC,
 } = require('../src/services/agent-service');
-const sourceCoverage = require('../src/services/source-coverage');
+const sourceCoverage = require('@animastor/parser/source-coverage');
 
 describe('Scene Splitting (Phase A.3 revamp)', () => {
 

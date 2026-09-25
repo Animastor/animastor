@@ -13,7 +13,7 @@ const fs = require('fs');
 const config = require('../config/runtime-config');
 const lazyBook = require('../book/lazy-book');
 const aiService = require('./ai-service');
-const encodingDetect = require('./encoding-detect');
+const encodingDetect = require('@animastor/parser/encoding-detect');
 
 // ======================================================
 // PROGRESS STAGES

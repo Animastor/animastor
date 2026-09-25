@@ -59,7 +59,9 @@ const FORBIDDEN_PATTERNS = [
     { pattern: /require\(\s*['"][^'"]*vbook-runtime[^'"]*['"]\)/, label: '@animastor/vbook-runtime' },
 ];
 
-const ALLOWED_EXTERNALS = new Set(['tinyld']);
+// iconv-lite: declared dependency since the encoding-detect adoption
+// (post-reconnaissance, 2026-09-25) — buffer decode for text ingest.
+const ALLOWED_EXTERNALS = new Set(['tinyld', 'iconv-lite']);
 
 // ── Guard 1: no forbidden imports in any source file ─────────────────────────
 describe('@animastor/parser boundary: no forbidden imports', () => {
@@ -128,9 +130,9 @@ describe('@animastor/parser boundary: no reverse dependency on vbook-runtime', (
 
 // ── Guard 4: only tinyld as external dependency ──────────────────────────────
 describe('@animastor/parser boundary: dependency surface', () => {
-    it('package.json declares exactly tinyld', () => {
+    it('package.json declares exactly tinyld + iconv-lite (the encoding-detect adoption)', () => {
         const pkg = JSON.parse(fs.readFileSync(path.join(PKG_DIR, 'package.json'), 'utf8'));
-        expect(Object.keys(pkg.dependencies || {}).sort()).to.deep.equal(['tinyld']);
+        expect(Object.keys(pkg.dependencies || {}).sort()).to.deep.equal(['iconv-lite', 'tinyld']);
     });
 });
 

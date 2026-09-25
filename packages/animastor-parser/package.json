@@ -1,13 +1,15 @@
 {
     "name": "@animastor/parser",
     "version": "0.1.0",
-    "description": "Deterministic text parser — chapter/segment detection, offsets, language detection, canonical ParserResult/ChapterMap DTO, legacy chapter projection. Pure sync, no IO, no AI, no DB.",
+    "description": "Deterministic text parser — chapter/segment detection, offsets, language detection, canonical ParserResult/ChapterMap DTO, legacy chapter projection, verbatim source-coverage analysis, encoding detection. Pure sync (except buffer decode), no AI, no DB.",
     "main": "src/index.js",
     "exports": {
         ".": "./src/index.js",
         "./contracts/parser-contract": "./src/contracts/parser-contract.js",
         "./contracts/legacy-projection": "./src/contracts/legacy-projection.js",
-        "./language-detector": "./src/language-detector.js"
+        "./language-detector": "./src/language-detector.js",
+        "./source-coverage": "./src/source-coverage.js",
+        "./encoding-detect": "./src/encoding-detect.js"
     },
     "files": [
         "src/",
@@ -34,6 +36,7 @@
         "url": "https://github.com/Animastor/animastor/issues"
     },
     "dependencies": {
+        "iconv-lite": "^0.6.3",
         "tinyld": "^1.3.4"
     },
     "devDependencies": {

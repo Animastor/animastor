@@ -139,7 +139,10 @@ describe('S6: Generation host boundary (ports)', () => {
         const allowed = [
             /^\.\/(media-registry|default-registrations)$/,          // core-internal (registry bootstrap pair)
             /^\.\/prompt-text-utils$/, /^\.\/prompt-profiles\//,     // core-internal
-            /^\.\/(core|providers|ports)\//,                         // package entrypoint namespace requires (S-7 index.js)
+            /^\.\/(core|providers|ports|dirty-grammar)\//,           // package entrypoint namespace requires (S-7 index.js) + C21.4 tier
+            /^\.\/dirty-grammar$/,                                    // C21.4: root entrypoint loads the dirty-grammar tier aggregator
+            /^\.\/(prompt-dependency-registry|dependency-graph|scene-hash|speech-estimation|cyr-latin-map)$/, // dirty-grammar intra-tier (C21.4)
+            /^\.\.\/dirty-grammar\//,                               // prompt-profiles → dirty-grammar canonical cyr-latin-map (C21.4)
             /^\.\.\/ports\//, /^\.\/ports\//,                        // Generation-owned ports
             /^\.\.\/utils\//, /^\.\/utils\//,                        // package-internal pure utils (S-7)
             /^crypto$/,                                              // node builtin

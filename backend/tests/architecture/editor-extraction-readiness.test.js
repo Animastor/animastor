@@ -267,11 +267,12 @@ describe('E6: package require closure reaches only intra-package files + builtin
             expect(code, `${rel(file)} must not require utils/string-utils`).to.not.match(/require\(['"][^'"]*utils\/string-utils['"]\)/);
             expect(code, `${rel(file)} must not require config/runtime-config`).to.not.match(/require\(['"][^'"]*runtime-config['"]\)/);
         }
-        // The host image/helpers.js consumes a HOST-LOCAL byte-parity twin of
-        // the cyr-latin map (Phase 4.1: the package exposes its root only, so
-        // the host must not deep-import the package-internal module).
+        // The host image/helpers.js consumes the canonical cyr-latin map
+        // through the generation package ROOT namespace (C21.4: the host
+        // byte-parity twin backend/src/utils/cyr-latin-map.js was deleted;
+        // deep package imports stay forbidden — dirtyGrammar is root surface).
         const imageHelpers = readSource(path.join(BACKEND_SRC, 'image', 'helpers.js'));
-        expect(imageHelpers).to.match(/require\(['"]\.\.\/utils\/cyr-latin-map['"]\)/);
+        expect(imageHelpers).to.match(/require\(['"]@animastor\/generation['"]\)\.dirtyGrammar/);
     });
 
     it('cyr-latin-map is a pure zero-dependency module inside the package (the canonical transliteration source)', () => {

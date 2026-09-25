@@ -30,12 +30,12 @@
 //         the package (registrars + helpers + facade + ports + entrypoint)
 //         reaches only intra-package files, node builtins and
 //         @animastor/vbook-runtime (the declared dependency).
-//   PB5 — cyr-latin-map twin parity: the host image domain consumes a
-//         HOST-LOCAL byte-parity twin (backend/src/utils/cyr-latin-map.js)
-//         of the package's canonical pure module — the body below the
-//         canonical-source marker is byte-identical to the package file.
-//         Not a second implementation: a generated leg, guarded like the
-//         worker's job-protocol-v2.cjs copy (Phase 9D playbook).
+//   PB5 — cyr-latin-map twin parity: the canonical transliteration map
+//         lives in @animastor/generation's dirty-grammar tier (C21.4 — the
+//         host mirror backend/src/utils/cyr-latin-map.js was deleted); the
+//         editor package keeps an internal copy by ITS boundary doctrine
+//         (root-only package, no generation dependency) — that copy must
+//         stay code-parity with the canonical source.
 //
 // Static checks follow the Phase 1 helpers (pure source scan, CI-safe).
 
@@ -240,44 +240,33 @@ describe('PB4: the package require closure stays self-contained', () => {
     });
 });
 
-// ── PB5 — cyr-latin-map host twin parity ─────────────────────────────────
-describe('PB5: the host cyr-latin-map is a byte-parity twin of the package source', () => {
-    const HOST_TWIN = path.join(BACKEND_SRC, 'utils', 'cyr-latin-map.js');
-    const PACKAGE_SOURCE = path.join(PACKAGE_SRC, 'cyr-latin-map.js');
-    const MARKER = '// ===8<=== canonical source (verbatim, do not edit) ====================';
+// ── PB5 — cyr-latin-map twin parity (canonical = generation dirty-grammar) ──
+describe('PB5: the editor cyr-latin-map stays code-parity with the canonical generation source', () => {
+    // C21.4: canonical home is the generation package dirty-grammar tier;
+    // the host mirror was deleted. The editor package keeps its own copy
+    // (its boundary doctrine forbids a generation dependency) — parity is
+    // guarded here, mirroring generation-package-boundary.test.js G7-M.
+    const CANONICAL_SOURCE = path.join(REPO_ROOT, 'packages', 'animastor-generation', 'src', 'dirty-grammar', 'cyr-latin-map.js');
+    const EDITOR_TWIN = path.join(PACKAGE_SRC, 'cyr-latin-map.js');
 
-    function canonicalBody(file) {
-        const src = readSource(file);
-        const idx = src.indexOf(MARKER);
-        if (idx === -1) return null;
-        let body = src.slice(idx + MARKER.length);
-        if (body.startsWith('\n')) body = body.slice(1);
-        const endIdx = body.indexOf('// ===8<=== end canonical source');
-        if (endIdx !== -1) body = body.slice(0, endIdx);
-        return body;
-    }
-
-    it('the host twin exists and carries the generated-file marker', () => {
-        expect(fs.existsSync(HOST_TWIN)).to.equal(true);
-        expect(readSource(HOST_TWIN)).to.include(MARKER);
+    it('both the canonical source and the editor twin exist', () => {
+        expect(fs.existsSync(CANONICAL_SOURCE)).to.equal(true);
+        expect(fs.existsSync(EDITOR_TWIN)).to.equal(true);
     });
 
-    it('the twin body is byte-identical to the package canonical source', () => {
-        const twinBody = canonicalBody(HOST_TWIN);
-        const packageBody = readSource(PACKAGE_SOURCE);
-        expect(twinBody, 'twin marker missing').to.not.equal(null);
-        expect(twinBody).to.equal(packageBody);
+    it('the twin code (comments stripped) is identical to the canonical source code', () => {
+        expect(codeOf(readSource(EDITOR_TWIN))).to.equal(codeOf(readSource(CANONICAL_SOURCE)));
     });
 
     it('both modules export the same surface (CYR_LATIN_MAP + cyrToLatin) with equal output', () => {
-        const host = require(HOST_TWIN);
-        const pkgSrc = require(PACKAGE_SOURCE);
-        expect(Object.keys(host).sort()).to.deep.equal(Object.keys(pkgSrc).sort());
-        expect(host.cyrToLatin('Привет, Михаил!')).to.equal(pkgSrc.cyrToLatin('Привет, Михаил!'));
-        expect(host.CYR_LATIN_MAP['Ж']).to.equal(pkgSrc.CYR_LATIN_MAP['Ж']);
+        const canonical = require(CANONICAL_SOURCE);
+        const twin = require(EDITOR_TWIN);
+        expect(Object.keys(twin).sort()).to.deep.equal(Object.keys(canonical).sort());
+        expect(twin.cyrToLatin('Привет, Михаил!')).to.equal(canonical.cyrToLatin('Привет, Михаил!'));
+        expect(twin.CYR_LATIN_MAP['Ж']).to.equal(canonical.CYR_LATIN_MAP['Ж']);
     });
 
     it('the twin has zero requires (pure data + pure function)', () => {
-        expect(requireSpecifiers(codeOf(readSource(HOST_TWIN)))).to.deep.equal([]);
+        expect(requireSpecifiers(codeOf(readSource(EDITOR_TWIN)))).to.deep.equal([]);
     });
 });

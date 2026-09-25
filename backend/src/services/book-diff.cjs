@@ -8,7 +8,10 @@ const fs = require('fs');
 const path = require('path');
 // S-4: filename grammar composed from the canonical owner (bytes unchanged)
 const artifactNaming = require('@animastor/generation').artifactNaming;
-const registry = require('./prompt-dependency-registry');
+// Dirty-layer grammar: adopted into @animastor/generation (post-reconnaissance
+// adoption, 2026-09-25) — the host consumed it via the package namespace from
+// here on (backend/src/services/prompt-dependency-registry.js is DELETED).
+const registry = require('@animastor/generation').dirtyGrammar;
 // S-2: default dirty layers resolved from media registry
 const { listMediaTypes: _mediaTypes } = require('@animastor/generation').mediaRegistry;
 

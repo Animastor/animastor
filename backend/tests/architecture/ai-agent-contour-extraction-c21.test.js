@@ -32,15 +32,10 @@ const fs = require('fs');
 const { REPO_ROOT, readSource, rel, requireSpecifiers, resolveSpecifier, listSourceFiles } = require('./helpers');
 
 // ── C21 AI Agent contour file set ────────────────────────────────────────────
-// The backend barrel + the C19/C20 analyzer modules it re-exports
-// through the single seam.
+// The backend barrel is the single seam; the task implementations it
+// re-exports live in @animastor/ai-analysis (stale host copies deleted).
 const CONTOUR_FILES = [
     'backend/src/services/ai-agent/index.js',
-    'backend/src/services/ai-agent/ports.js',
-    'backend/src/services/ai-agent/context.js',
-    'backend/src/services/ai-agent/tasks/locations.js',
-    'backend/src/services/ai-agent/tasks/scenes.js',
-    'backend/src/services/ai-agent/tasks/units.js',
 ].map(f => path.join(REPO_ROOT, f));
 
 const ANALYZER_MODULE_FILES = [

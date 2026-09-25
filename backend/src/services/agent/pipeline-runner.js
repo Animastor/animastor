@@ -4,7 +4,8 @@
 // Orchestrates the full AI pipeline: window text extraction, scene splitting,
 // character/location extraction, unit creation, and visual prompt generation.
 
-const sourceCoverage = require('../source-coverage');
+// source-coverage: adopted into @animastor/parser — host copy deleted (2026-09-25)
+const sourceCoverage = require('@animastor/parser/source-coverage');
 const lazyBook = require('../../book/lazy-book');
 const config = require('../../config/runtime-config');
 const { updateSession, createSession, isSessionCancelled, isBookCancelled } = require('../agent-session');

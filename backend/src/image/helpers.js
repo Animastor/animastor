@@ -19,7 +19,9 @@ const { getOutputPath, escapeRegExp } = require('../utils/string-utils');
 // The Editor keeps its own canonical copy; this host leg is a byte-parity
 // twin (guarded by editor-package-boundary.test.js PB5), restored at the
 // pre-move host location.
-const { CYR_LATIN_MAP, cyrToLatin } = require('../utils/cyr-latin-map');
+// cyr-latin-map: canonical copy adopted into @animastor/generation
+// (dirty-grammar) — the host mirror was deleted by the adoption
+const { CYR_LATIN_MAP, cyrToLatin } = require('@animastor/generation').dirtyGrammar;
 // S-4: canonical implementations live in the generation prompt-profiles layer.
 const textUtils = require('@animastor/generation').promptProfiles.promptTextUtils;
 const characterUtils = require('@animastor/generation').promptProfiles.characterUtils;

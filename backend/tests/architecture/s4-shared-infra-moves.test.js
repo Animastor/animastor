@@ -53,8 +53,9 @@ function requiresOf(source) {
 }
 
 // The Generation Core tier after S-4 (pure shared components; registry is the
-// media-capability seam). S-7: package-owned files are read from PKG_SRC;
-// the one shared host util (speech-estimation, §26.2 verdict) stays host-side.
+// media-capability seam). S-7: package-owned files are read from PKG_SRC.
+// C21.4: the last shared host util (speech-estimation) moved into the
+// package dirty-grammar tier — the core tier is now fully package-owned.
 const S4_CORE_PKG_FILES = [
     'core/artifact-naming.js',
     'core/generation-progress.js',
@@ -63,10 +64,9 @@ const S4_CORE_PKG_FILES = [
     'prompt-profiles/assembly-profile.js',
     'prompt-profiles/character-utils.js',
     'prompt-profiles/prompt-text-utils.js',
+    'dirty-grammar/speech-estimation.js',
 ];
-const S4_CORE_HOST_FILES = [
-    'utils/speech-estimation.js',
-];
+const S4_CORE_HOST_FILES = [];
 const S4_CORE_ALL = [
     ...S4_CORE_PKG_FILES.map(f => ({ file: f, src: readPkg(f) })),
     ...S4_CORE_HOST_FILES.map(f => ({ file: f, src: read(f) })),
@@ -260,7 +260,7 @@ describe('S-4: shared infrastructure moves', () => {
             expect(owners, `${canonical} must be the only implementation`).to.include(canonicalKey);
             expect(owners.filter(f => f !== canonicalKey), `duplicate implementations of ${canonical}: ${owners.filter(f => f !== canonicalKey).join(', ')}`).to.deep.equal([]);
         };
-        singleDef(/function estimateSpeechDurationSec/, 'utils/speech-estimation.js');
+        singleDef(/function estimateSpeechDurationSec/, '@pkg/dirty-grammar/speech-estimation.js');
         singleDef(/function normalizeCharacterRefs/, '@pkg/prompt-profiles/character-utils.js');
         singleDef(/function resolveAssembly/, '@pkg/prompt-profiles/assembly-profile.js');
         singleDef(/function sceneChunkAudioName/, '@pkg/core/artifact-naming.js');
@@ -409,7 +409,8 @@ describe('S-4: shared infrastructure moves', () => {
         const assembly = require('@animastor/generation').promptProfiles.assemblyProfile;
         expect(assembly.resolveAssembly('audio').defaults).to.have.property('defaultInstruct');
         // the shared speech heuristic surface (visuals-duration.test.js, scene-split.test.js)
-        const speech = require(path.join(SRC, 'utils', 'speech-estimation.js'));
+        // C21.4: owned by the package dirty-grammar tier, consumed via the root namespace
+        const speech = require('@animastor/generation').dirtyGrammar;
         expect(speech.estimateSpeechDurationSec('')).to.equal(2);
         expect(speech.estimateSpeechDurationSec('one two three four five six seven')).to.equal(2.1);
     });

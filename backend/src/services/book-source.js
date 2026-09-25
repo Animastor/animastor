@@ -12,7 +12,8 @@
 // Book JSON before persisting.
 
 const bookLoader = require('../book');
-const { computeSceneHash } = require('../utils/scene-hash');
+// scene-hash: adopted into @animastor/generation (dirty-grammar) — host copy deleted
+const { computeSceneHash } = require('@animastor/generation').dirtyGrammar;
 
 const logPrefix = '[BOOK-SOURCE]';
 function log(msg) { console.log(`${logPrefix} ${msg}`); }

@@ -13,8 +13,12 @@
 //
 // When a layer changes, all layers in its "regenerate" array
 // must also be regenerated due to data dependencies.
+//
+// Physical home (post-reconnaissance adoption, 2026-09-25): moved verbatim
+// from backend/src/dependency-graph.js into the Generation package. The
+// registry require now resolves the sibling module.
 
-const registry = require('./services/prompt-dependency-registry');
+const registry = require('./prompt-dependency-registry');
 const layerDeps = registry.getLayerDependencies();
 
 const DEPENDENCY_GRAPH = {

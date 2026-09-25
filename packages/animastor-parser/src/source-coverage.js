@@ -1,3 +1,19 @@
+// ======================================================
+// Source Coverage — @animastor/parser/source-coverage
+// ======================================================
+// Verbatim text-coverage analysis for AI scene-splitting windows: maps
+// produced scenes back onto the source text offsets, finds narrative start
+// (chapter headings), builds repair hints for coverage failures.
+//
+// Physical home (post-reconnaissance adoption, 2026-09-25): moved verbatim
+// from backend/src/services/source-coverage.js into the Parser package —
+// the text-analysis orbit (parser already owns chapter/segment detection
+// and language detection). Zero requires — pure. Reachable through the
+// package root (parser.computeSceneCoverage et al.) or the
+// ./source-coverage subpath export.
+//
+// ======================================================
+
 const CHAPTER_HEADER_RE = /^(?:глава|chapter|часть|part|пролог|prologue|эпилог|epilogue|введение|introduction|предисловие|preface|послесловие|afterword|приложение|appendix)/i;
 
 function looksLikeChapterTitle(line) {

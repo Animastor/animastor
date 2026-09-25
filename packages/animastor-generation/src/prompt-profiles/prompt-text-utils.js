@@ -12,12 +12,13 @@
 
 // Package-internal pure text primitives (S-7): cyr-latin-map and escapeRegExp
 // are pure data/functions with zero host dependencies. They live inside the
-// package (src/utils/) so the package has no backend require; byte parity
-// with the host legs (backend/src/utils/cyr-latin-map.js, escapeRegExp in
-// backend/src/utils/string-utils.js) is guarded by the G7 suite
-// (tests/architecture/generation-package-boundary.test.js).
+// package so it has no backend require. cyr-latin-map moved to the
+// dirty-grammar tier (post-reconnaissance adoption — the dirty-grammar copy
+// is the canonical one); escape-regexp stays in src/utils/. Host copies were
+// deleted by the adoption; parity with the Editor package copy is guarded by
+// the G7 suite (tests/architecture/generation-package-boundary.test.js).
 
-const { CYR_LATIN_MAP, cyrToLatin } = require('../utils/cyr-latin-map');
+const { CYR_LATIN_MAP, cyrToLatin } = require('../dirty-grammar/cyr-latin-map');
 const { escapeRegExp } = require('../utils/escape-regexp');
 
 const UNSAFE_CHARACTER_ALIAS_WORDS = new Set([
