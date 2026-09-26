@@ -87,5 +87,6 @@ function resolveDirtyLayers(dirtyLayers) {
 }
 
 module.exports = {
+    DEPENDENCY_GRAPH,
     resolveDirtyLayers
 };

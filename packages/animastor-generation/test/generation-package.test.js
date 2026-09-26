@@ -78,10 +78,23 @@ describe('@animastor/generation package', () => {
             'estimateSpeechDurationSec', 'cyrToLatin']) {
             expect(dg[fn], `dirtyGrammar.${fn}`).to.be.a('function');
         }
-        for (const k of ['SCENE_FIELDS', 'CROSS_FIELDS', 'DEPENDENCY_GRAPH', 'isEqual',
+        for (const k of ['SCENE_FIELDS', 'CROSS_FIELDS', 'isEqual',
             'extractPassport', 'SPEECH_SEC_PER_WORD', 'SPEECH_MIN_SEC', 'CYR_LATIN_MAP']) {
             expect(k in dg, `dirtyGrammar.${k}`).to.equal(true);
         }
+        // frozen layer→layer dependency graph: the real object, not undefined
+        // (regression: DEPENDENCY_GRAPH was declared in the public surface but
+        // dependency-graph.js did not export it)
+        expect(dg.DEPENDENCY_GRAPH, 'dirtyGrammar.DEPENDENCY_GRAPH').to.be.an('object');
+        for (const layer of ['image', 'audio', 'video', 'filesystem']) {
+            expect(dg.DEPENDENCY_GRAPH[layer], `DEPENDENCY_GRAPH.${layer}`).to.be.an('object');
+        }
+        expect(dg.DEPENDENCY_GRAPH.image.regenerate).to.deep.equal(['image', 'video']);
+        expect(dg.DEPENDENCY_GRAPH.audio.regenerate).to.deep.equal(['audio']);
+        expect(dg.DEPENDENCY_GRAPH.video.regenerate).to.deep.equal(['video']);
+        // frozen transitive resolution
+        expect(dg.resolveDirtyLayers(['image'])).to.deep.equal(['image', 'video']);
+        expect(dg.resolveDirtyLayers(['audio'])).to.deep.equal(['audio']);
         // frozen grammar semantics: voice-only change does not cascade
         expect(dg.computeSceneDirtyLayers(
             { audio: { voice: 'narrator' } },

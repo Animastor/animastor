@@ -242,10 +242,16 @@ describe('G7: @animastor/generation package boundary', () => {
             'estimateSpeechDurationSec', 'cyrToLatin']) {
             expect(generation.dirtyGrammar[fn], `dirtyGrammar.${fn}`).to.be.a('function');
         }
-        for (const k of ['SCENE_FIELDS', 'CROSS_FIELDS', 'DEPENDENCY_GRAPH', 'isEqual',
+        for (const k of ['SCENE_FIELDS', 'CROSS_FIELDS', 'isEqual',
             'extractPassport', 'SPEECH_SEC_PER_WORD', 'SPEECH_MIN_SEC', 'CYR_LATIN_MAP']) {
             expect(k in generation.dirtyGrammar, `dirtyGrammar.${k}`).to.equal(true);
         }
+        // DEPENDENCY_GRAPH must be the real object (not undefined) with the
+        // frozen layer→layer regenerate arrays
+        expect(generation.dirtyGrammar.DEPENDENCY_GRAPH, 'dirtyGrammar.DEPENDENCY_GRAPH').to.be.an('object');
+        expect(generation.dirtyGrammar.DEPENDENCY_GRAPH.image.regenerate).to.deep.equal(['image', 'video']);
+        expect(generation.dirtyGrammar.DEPENDENCY_GRAPH.audio.regenerate).to.deep.equal(['audio']);
+        expect(generation.dirtyGrammar.DEPENDENCY_GRAPH.video.regenerate).to.deep.equal(['video']);
     });
 
     // ── G7-H — no accidental deep imports ───────────────────────────
