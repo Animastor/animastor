@@ -478,7 +478,7 @@ const routeDeps = {
     //   sessionRepo    — chat-session repository port (list/get/create/
     //                    append/rename/delete/purge) — PG impl host-side
     //   purgeForBook   — Assistant-data purge for book deletion/cache teardown
-    //   chatTransport  — safeFetch (url-safety) + shared-pool inference +
+    //   chatTransport  — safeFetch (@animastor/url-safety) + shared-pool inference +
     //                    describeSharedError + chat source token (gateway)
     //   log            — host logger
     // Guarded by tests/architecture/assistant-contour.test.js (A1–A7) and
@@ -489,7 +489,7 @@ const routeDeps = {
         providerGateway: require('./services/provider-gateway'),
         chatEngine,
         sessionRepo: chatSessionRepo,
-        urlSafety: require('./services/url-safety'),
+        urlSafety: require('@animastor/url-safety'),
         sharedPool: require('./services/ai-connector/shared-pool'),
         log: utils.log,
     }),

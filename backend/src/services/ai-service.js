@@ -6,7 +6,7 @@
 // ======================================================
 
 const config = require('../config/runtime-config');
-const { safeFetch } = require('./url-safety');
+const { safeFetch } = require('@animastor/url-safety');
 
 const AI_API_BASE_URL = process.env.AI_API_BASE_URL || 'https://api.aicredits.in/v1';
 

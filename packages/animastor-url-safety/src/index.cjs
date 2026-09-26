@@ -1,9 +1,11 @@
 // ======================================================
 // URL Safety — SSRF guard for user-controlled endpoints
+// (extracted from backend/src/services/url-safety.js — behavior parity)
 // ======================================================
-// Users may point a workspace AI provider at their own OpenAI-compatible
-// endpoint, but the backend must never become an SSRF proxy. This module
-// rejects non-public endpoints:
+//
+// Hosts may let users point an AI client at their own OpenAI-compatible
+// endpoint, but the host process must never become an SSRF proxy. This
+// module rejects non-public endpoints:
 //
 //   - non-http(s) schemes;
 //   - literal loopback/private/link-local/metadata IPv4 and IPv6
@@ -17,15 +19,71 @@
 //
 // `safeFetch` re-validates EVERY hop: the initial request AND each redirect
 // (redirects are not followed blindly — a public endpoint redirecting to a
-// private address is refused). Only http/https is accepted. Operator-controlled
-// env endpoints (global AI_API_BASE_URL fallback) are deliberately exempt
-// (validatePublic=false) — SSRF is about USER-controlled endpoints; a
-// self-hosted operator may still target an internal LLM via env config.
+// private address is refused). Only http/https is accepted. Operator-
+// controlled endpoints (e.g. a global env-configured AI fallback) are
+// deliberately exempt (validatePublic=false) — SSRF is about USER-controlled
+// endpoints; a self-hosted operator may still target an internal service via
+// trusted configuration. The exemption is an EXPLICIT call parameter — this
+// package never reads process.env itself.
+//
+// HOST INJECTION (package boundary): this package has no hidden host access.
+// DNS resolution and HTTP fetch arrive through the injected `dnsResolver` /
+// `fetchImpl` ports; when not configured, the runtime defaults (node:dns
+// promises lookup and global fetch) are resolved LAZILY AT CALL TIME so
+// hosts and test harnesses may stub `dns.promises.lookup` / `global.fetch`
+// exactly as they did before the extraction.
 
-const dns = require('dns');
+'use strict';
+
 const net = require('net');
 
 const MAX_REDIRECTS = 3;
+
+// ── ports (injected; call-time defaults — see package README) ────────────
+
+let _ports = null;
+
+/**
+ * Set the dnsResolver / fetchImpl ports. Every argument is optional;
+ * `null`/`undefined` keeps the current binding. Call with no arguments to
+ * reset to the runtime defaults (node:dns + global.fetch, resolved lazily
+ * at call time). Hosts wire this once at composition-root time.
+ * @param {{dnsResolver?: Function, fetchImpl?: Function}} [ports]
+ */
+function setUrlSafetyPorts(ports) {
+    if (ports === undefined || ports === null) {
+        _ports = null;
+        return;
+    }
+    if (typeof ports !== 'object') {
+        throw new TypeError('setUrlSafetyPorts: ports must be an object');
+    }
+    if (ports.dnsResolver !== undefined && ports.dnsResolver !== null && typeof ports.dnsResolver !== 'function') {
+        throw new TypeError('setUrlSafetyPorts: ports.dnsResolver must be a function');
+    }
+    if (ports.fetchImpl !== undefined && ports.fetchImpl !== null && typeof ports.fetchImpl !== 'function') {
+        throw new TypeError('setUrlSafetyPorts: ports.fetchImpl must be a function');
+    }
+    _ports = {
+        dnsResolver: ports.dnsResolver || null,
+        fetchImpl: ports.fetchImpl || null,
+    };
+}
+
+/** The wired dnsResolver, or the node:dns all-records lookup (call-time). */
+async function resolveDns(host, options) {
+    if (_ports && _ports.dnsResolver) return _ports.dnsResolver(host, options);
+    // Call-time require+resolution: a host stubbing dns.promises.lookup
+    // (test harnesses) keeps working after the physical extraction.
+    const dns = require('dns');
+    return dns.promises.lookup(host, options);
+}
+
+/** The wired fetchImpl, or global.fetch (call-time). */
+function doFetch(url, opts) {
+    if (_ports && _ports.fetchImpl) return _ports.fetchImpl(url, opts);
+    return global.fetch(url, opts);
+}
 
 // ── IPv4 classification ──────────────────────────────────────────────────
 
@@ -55,7 +113,6 @@ function isPrivateIPv4(ip) {
 /** 16-byte Buffer for an IPv6 string, or null when unparseable. */
 function ipv6ToBuffer(ip) {
     let s = ip.trim();
-    let v4Suffix = null;
     // Trailing dotted IPv4 (::ffff:1.2.3.4 style)
     if (s.includes('.')) {
         const lastColon = s.lastIndexOf(':');
@@ -64,7 +121,6 @@ function ipv6ToBuffer(ip) {
         if (!m) return null;
         const oct = m.slice(1).map(Number);
         if (oct.some((x) => x > 255)) return null;
-        v4Suffix = oct;
         const hi = (oct[0] << 8) | oct[1];
         const lo = (oct[2] << 8) | oct[3];
         s = s.slice(0, lastColon + 1) + hi.toString(16) + ':' + lo.toString(16);
@@ -218,7 +274,7 @@ async function assertPublicEndpoint(urlString) {
         // Resolve ALL addresses — round-robin / multi-A records must not be
         // able to smuggle a private address past the check. `verbatim` keeps
         // the native A/AAAA order so IPv6-capable clients are not broken.
-        const addrs = await dns.promises.lookup(host, { all: true, verbatim: true });
+        const addrs = await resolveDns(host, { all: true, verbatim: true });
         if (!addrs || addrs.length === 0) {
             return { ok: false, reason: 'endpoint hostname did not resolve' };
         }
@@ -244,7 +300,7 @@ async function assertPublicEndpoint(urlString) {
  * @param {string} urlString
  * @param {object} opts fetch options plus:
  *   validatePublic (default true) — set false for operator-controlled
- *   (env) endpoints which are trusted configuration, not an SSRF surface.
+ *   (trusted-config) endpoints which are not an SSRF surface.
  */
 async function safeFetch(urlString, opts = {}) {
     const { validatePublic = true, ...fetchOpts } = opts;
@@ -258,7 +314,7 @@ async function safeFetch(urlString, opts = {}) {
                 throw err;
             }
         }
-        const response = await global.fetch(currentUrl, { ...fetchOpts, redirect: 'manual' });
+        const response = await doFetch(currentUrl, { ...fetchOpts, redirect: 'manual' });
         if (response.status >= 300 && response.status < 400) {
             const location = response.headers.get('location');
             if (!location) return response;
@@ -271,11 +327,16 @@ async function safeFetch(urlString, opts = {}) {
 }
 
 module.exports = {
+    // public API (frozen)
     assertPublicEndpoint,
     safeFetch,
+    // classification helpers (exported for hosts/tests; behavior-parity with
+    // the pre-extraction module surface)
     isPrivateIPv4,
     isPrivateIPv6,
     isPrivateAddress,
     parseNumericHost,
     MAX_REDIRECTS,
+    // host injection seam
+    setUrlSafetyPorts,
 };

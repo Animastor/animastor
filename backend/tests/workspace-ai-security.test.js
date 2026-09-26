@@ -31,7 +31,7 @@ const dns = require('dns');
 
 const { query } = require('../src/storage/postgres/database');
 const { runMigrations } = require('../src/storage/postgres/schema');
-const urlSafety = require('../src/services/url-safety');
+const urlSafety = require('@animastor/url-safety');
 const workspaceAi = require('../src/services/workspace-ai-provider');
 const config = require('../src/config/runtime-config');
 const { authContext, requireBookAccess } = require('../src/middleware/auth-context');
@@ -125,7 +125,7 @@ function buildApp() {
     const chatSessionRepo = require('../src/storage/postgres/repositories/chat-session-repo');
     const providerGateway = require('../src/services/provider-gateway');
     const sharedPool = require('../src/services/ai-connector/shared-pool');
-    const { safeFetch } = require('../src/services/url-safety');
+    const { safeFetch } = require('@animastor/url-safety');
     registerAiRoutes(app, null, {
         chatEngine,
         assistantPorts: {

@@ -16,7 +16,7 @@
 
 const workspaceAi = require('../services/workspace-ai-provider');
 const aiConnectorRepo = require('../storage/postgres/repositories/ai-connector-repo');
-const { assertPublicEndpoint } = require('../services/url-safety');
+const { assertPublicEndpoint } = require('@animastor/url-safety');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

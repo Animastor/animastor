@@ -109,7 +109,7 @@
 │   │   │   ├── generation-progress.js           # Independent generation task registry
 │   │   │   ├── prompt-profile-loader.js         # Model-specific prompt profiles
 │   │   │   ├── profile-override.js              # User-selected prompt profile (Redis)
-│   │   │   ├── url-safety.js                    # SSRF guard for workspace endpoints
+│   │   │   ├── (url-safety → @animastor/url-safety package)  # SSRF guard for workspace endpoints
 │   │   │   ├── language-detector.js             # Text language detection
 │   │   │   ├── structure-detector.js            # Text structure detection
 │   │   │   ├── agent-session.js                 # Agent session management

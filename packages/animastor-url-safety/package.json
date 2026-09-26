@@ -1,0 +1,45 @@
+{
+  "name": "@animastor/url-safety",
+  "version": "0.1.0",
+  "description": "Animastor URL Safety — the SSRF guard of the Animastor backend, physically extracted from the host: public-endpoint assertion (http/https only, literal loopback/private/link-local/metadata IPv4+IPv6 incl. decimal/octal/hex alternative forms and IPv4-mapped IPv6, ALL-records DNS resolution against private/special ranges, fail-closed on resolution errors) and safeFetch with per-hop re-validation and manual redirect following. The package reaches the host ONLY through the injected dnsResolver/fetchImpl ports (runtime defaults: node:dns + global.fetch, resolved at call time) — no process.env, no backend config, no Express, no filesystem inside; the operator-exemption (validatePublic=false) is an explicit call parameter, never an env read.",
+  "keywords": [
+    "animastor",
+    "ssrf",
+    "url-safety",
+    "security",
+    "fetch"
+  ],
+  "main": "src/index.cjs",
+  "exports": {
+    ".": "./src/index.cjs"
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "mocha --exit test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Animastor/animastor.git",
+    "directory": "packages/animastor-url-safety"
+  },
+  "homepage": "https://github.com/Animastor/animastor/tree/main/packages/animastor-url-safety#readme",
+  "bugs": {
+    "url": "https://github.com/Animastor/animastor/issues"
+  },
+  "devDependencies": {
+    "chai": "^6.2.2",
+    "mocha": "^11.7.5"
+  }
+}

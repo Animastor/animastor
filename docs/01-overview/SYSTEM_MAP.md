@@ -64,7 +64,7 @@ Deployment (`docker-compose.yml`): `postgres` (PG 16), `redis` (7, persisted vol
 - **Profile Override** — `services/profile-override.js` — User-selected prompt profile per type (global, Redis-persisted).
 - **Progress Pub/Sub** — `services/progress-pubsub.cjs` — Redis pub/sub for real-time SSE progress push.
 - **Generation Progress** — `services/generation-progress.js` — Independent generation task registry (per command).
-- **URL Safety** — `services/url-safety.js` — SSRF guard for workspace provider endpoints.
+- **URL Safety** — `@animastor/url-safety` package (`packages/animastor-url-safety`) — SSRF guard for workspace provider endpoints (extracted from the host; `dnsResolver`/`fetchImpl` ports).
 - **Language Detector** — `services/language-detector.js` — Text language detection.
 
 ---

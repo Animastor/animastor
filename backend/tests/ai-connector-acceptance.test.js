@@ -184,7 +184,7 @@ function buildBackend() {
     const chatSessionRepo = require('../src/storage/postgres/repositories/chat-session-repo');
     const providerGateway = require('../src/services/provider-gateway');
     const sharedPool = require('../src/services/ai-connector/shared-pool');
-    const { safeFetch } = require('../src/services/url-safety');
+    const { safeFetch } = require('@animastor/url-safety');
     registerAiRoutes(app, null, {
         chatEngine,
         assistantPorts: {

@@ -230,7 +230,7 @@ describe('PB4: the package require closure stays self-contained', () => {
         const offenders = [];
         for (const file of listSourceFiles(PACKAGE_SRC)) {
             const code = codeOf(readSource(file));
-            for (const forbidden of ['storage/postgres', 'services/provider-gateway', 'ai-connector/shared-pool', 'services/url-safety', 'book/lazy-book', 'bundle-validator']) {
+            for (const forbidden of ['storage/postgres', 'services/provider-gateway', 'ai-connector/shared-pool', 'services/url-safety', '@animastor/url-safety', 'book/lazy-book', 'bundle-validator']) {
                 if (code.includes(forbidden)) offenders.push(`${rel(file)}: ${forbidden}`);
             }
         }

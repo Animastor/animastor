@@ -29,7 +29,7 @@ const workerRepo = require('../storage/postgres/repositories/worker-repo');
 const workerAuth = require('../services/worker-auth');
 const config = require('../config/runtime-config');
 const { requireAdmin } = require('../middleware/auth-context');
-const { assertPublicEndpoint } = require('../services/url-safety');
+const { assertPublicEndpoint } = require('@animastor/url-safety');
 
 const MAX_NAME_LEN = 120;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

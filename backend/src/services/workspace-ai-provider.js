@@ -15,7 +15,7 @@
 // ======================================================
 
 const crypto = require('crypto');
-const { safeFetch } = require('./url-safety');
+const { safeFetch } = require('@animastor/url-safety');
 
 let _logEmitted = false;
 
