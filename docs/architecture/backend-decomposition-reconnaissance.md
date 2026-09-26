@@ -89,7 +89,7 @@ A candidate is good only if extraction yields a real physical boundary: `host �
 | `dependency-graph.js` (root) | 87 | PDR only | **ADOPT INTO `@animastor/generation`** (with PDR) |
 | `services/source-coverage.js` | 445 | **zero requires** — pure | **ADOPT INTO `@animastor/parser`** |
 | `services/encoding-detect.js` | 303 | iconv-lite only | **ADOPT INTO `@animastor/parser`** |
-| `services/url-safety.js` | 280 | dns, net only — pure | **READY WITH SEAM WORK** (micro-package) — see §4.4 |
+| `services/url-safety.js` | 280 | dns, net only — pure | **EXTRACTED / COMPLETE** (§4.4, commit `c3175549`) — was READY WITH SEAM WORK |
 | `utils/scene-hash.js` | 103 | crypto only — pure | **ADOPT INTO `@animastor/generation`** (drives scene-state invalidation) |
 | `utils/speech-estimation.js` | 42 | zero — pure | **ADOPT INTO `@animastor/generation`** (contract-coupled with agent-prompts constants) |
 | `utils/cyr-latin-map.js` | 39 | zero — pure | **ADOPT INTO `@animastor/generation`** (a copy already exists in generation package — dedupe) |
@@ -192,20 +192,22 @@ Considered and rejected: a standalone "naming/utils" package (scene-hash + speec
 10. **Tests:** move `source-coverage.test.js` (82); encoding-detect currently covered indirectly — add a direct suite in the package.
 11. **Complexity: LOW.**
 
-### 4.4 Candidate: `@animastor/url-safety` — READY WITH SEAM WORK (micro-package)
+### 4.4 Candidate: `@animastor/url-safety` — **EXTRACTED / COMPLETE** (micro-package)
 
-1. **Proposed package:** `@animastor/url-safety` (SSRF guard).
-2. **Sources:** `services/url-safety.js` (280).
-3. **Public API:** `assertPublicEndpoint`, `safeFetch`.
-4. **Ports:** DNS resolution + fetch injectable (currently module-level `dns`/`net`/global fetch — resolve functions become ports for deterministic tests).
+**Status (updated after commit `c3175549` — "refactor(security): extract url safety package"): extraction LANDED.** The item below is kept for the historical reconnaissance record; the plan was executed as written, and the package now physically lives in `packages/animastor-url-safety`.
+
+1. **Proposed package:** `@animastor/url-safety` (SSRF guard) — **now real:** `packages/animastor-url-safety` (`@animastor/url-safety` 0.1.0, MIT, node>=18, zero runtime npm deps — `net` + a call-time `dns` require only), single `.` export root.
+2. **Sources:** `services/url-safety.js` (280) — **physically moved into `packages/animastor-url-safety/src/index.cjs` (git rename, behavior parity) and the host copy DELETED — no compatibility copy remains.**
+3. **Public API:** `assertPublicEndpoint`, `safeFetch` — **frozen 8-name surface:** `assertPublicEndpoint`, `safeFetch`, `isPrivateIPv4`, `isPrivateIPv6`, `isPrivateAddress`, `parseNumericHost`, `MAX_REDIRECTS`, `setUrlSafetyPorts`.
+4. **Ports:** DNS resolution + fetch injectable — **DONE: the `dnsResolver` and `fetchImpl` ports are injected via `setUrlSafetyPorts({ dnsResolver, fetchImpl })`; when unwired, the runtime defaults (`dns.promises.lookup` / `global.fetch`) resolve lazily AT CALL TIME, so hosts and test harnesses stubbing `dns.promises.lookup`/`global.fetch` keep working unchanged.**
 5. **Dependencies:** zero (node builtins).
-6. **Consumers:** `workspace-ai-provider.js`, `ai-service.js`, `assistant-ports.cjs`, `routes/settings-ai-routes.cjs`, `routes/admin-routes.cjs`.
+6. **Consumers (post-extraction, verified):** `services/ai-service.js` and `services/workspace-ai-provider.js` (`safeFetch`), `routes/settings-ai-routes.cjs` and `routes/admin-routes.cjs` (`assertPublicEndpoint`), `backend.cjs` (`assistantPorts.urlSafety` → the whole module surface via the assistant package's `chatTransport.safeFetch` seam). All five require the `@animastor/url-safety` specifier; `services/assistant-ports.cjs` itself holds no url-safety require (it consumes only the injected `urlSafety` port object).
 7. **Remains in backend:** all consumers and their wiring.
-8. **Files physically deleted:** `services/url-safety.js`.
-9. **Architecture guards:** package-boundary test (no host requires, no env reads).
-10. **Tests:** security suites (`workspace-ai-security`, `ai-shared-*`) keep running against consumers; add package-local suite for the redirect/rebind matrix (the security-critical part deserves a frozen contract).
-11. **Seam changes required:** (a) inject `dnsResolver` + `fetchImpl` ports instead of module-global dns/fetch; (b) the operator exemption flag (`validatePublic=false`) becomes an explicit parameter, removing the implicit env contract; (c) decide package vs. adoption into `@animastor/ai-connector`-adjacent surface — standalone preferred because assistant package consumes it too.
-12. **Complexity: MEDIUM** (security-critical; seam work is small but the test matrix must move and freeze).
+8. **Files physically deleted:** `services/url-safety.js` — **DONE.**
+9. **Architecture guards:** **`backend/tests/architecture/url-safety-package-boundary.test.js` (USB-G1…G11)** — no host imports/reverse deps, no `process.env`/`__dirname`/`require.cache`/Express/fs inside the package, call-time-only `dns` require pinned, frozen public API, manifest identity pins, host consumers pinned to the package specifier.
+10. **Tests:** security suites (`workspace-ai-security`, `ai-shared-*`) keep running against consumers; **`packages/animastor-url-safety/test/url-safety-security.test.js` (95 cases) moved INTO the package** — the frozen redirect/DNS-rebinding/IPv4/IPv6 matrix, running on injected ports (no real network). The explicit `validatePublic=false` operator exemption is an ordinary opts parameter (default `true`) — the package never reads env itself.
+11. **Seam changes required:** ~~(a) inject `dnsResolver` + `fetchImpl` ports instead of module-global dns/fetch;~~ **DONE** (see 4). ~~(b) the operator exemption flag (`validatePublic=false`) becomes an explicit parameter, removing the implicit env contract~~ — **DONE** (see 10). ~~(c) decide package vs. adoption into `@animastor/ai-connector`-adjacent surface~~ — **decided: standalone package** (assistant package consumes it through the ports seam).
+12. **Complexity: ~~MEDIUM~~ — executed.**
 
 **Why only these:** everything else either *is* a host adapter by design (O-ports, media executors, routes), is blocked by the last SCC (AI-provider plane), or has no consumer outside one host file (LAC transport, parallel orchestrator).
 
@@ -229,7 +231,7 @@ Considered and rejected: a standalone "naming/utils" package (scene-hash + speec
 | source-coverage | ingest text analysis | **ADOPT INTO EXISTING PACKAGE** | none (pure) | `@animastor/parser` (`./source-coverage`) | LOW |
 | encoding-detect | ingest text analysis | **ADOPT INTO EXISTING PACKAGE** | iconv-lite dep policy in parser | `@animastor/parser` (`./encoding-detect`) | LOW |
 | stale ai-agent task copies (scenes/units/locations) | ai-agent contour | **ADOPT (complete) — delete host copies** | 5 architecture tests pin old paths | — (deletion) | LOW |
-| url-safety | SSRF guard | **READY WITH SEAM WORK** | dns/fetch must become injectable ports; security test matrix freeze | `@animastor/url-safety` | MEDIUM |
+| url-safety | SSRF guard | **EXTRACTED / COMPLETE** (commit `c3175549`) | ~~dns/fetch must become injectable ports; security test matrix freeze~~ DONE (`setUrlSafetyPorts` dnsResolver/fetchImpl; 95-case security suite in the package) | `@animastor/url-safety` | ~~MEDIUM~~ done |
 | image/prompt-builder | media | **ADOPT INTO EXISTING PACKAGE** | assembly-profile import direction | `@animastor/generation` (prompt-profiles) | MEDIUM |
 | workflows/video builders | media | **ADOPT INTO EXISTING PACKAGE (WITH SEAM WORK)** | profile-override seam + 1 lazy PG read | `@animastor/generation` | MEDIUM |
 | audio pure core (segments/chunks/silence/ffmpeg grammar) | media | **ADOPT INTO EXISTING PACKAGE (WITH SEAM WORK)** | `getOutputPath` → config reach-in | `@animastor/generation` | MEDIUM |
@@ -267,13 +269,13 @@ Considered and rejected: a standalone "naming/utils" package (scene-hash + speec
                          │ ports already bound at composition root
       ┌──────────────────┼──────────────────────────────────────────┐
       ▼                  ▼                                          ▼
- ALREADY EXTRACTED   ADOPTIONS ✅ DONE (§8)                     READY WITH SEAM WORK
+ ALREADY EXTRACTED   ADOPTIONS ✅ DONE (§8)                     EXTRACTED ✅ (§9)
  (@animastor/*)      → @animastor/generation                   → @animastor/url-safety
-  contracts            (dirty-grammar: PDR,                      (dns/fetch ports first;
-  vbook-runtime         dependency-graph, scene-hash,             then physical move)
-  parser                speech-estimation, cyr-latin-map —
-  player                DONE; prompt-builder, video-workflow
-  editor                builders, audio pure core —
+  contracts            (dirty-grammar: PDR,                      (setUrlSafetyPorts →
+  vbook-runtime         dependency-graph, scene-hash,              dnsResolver/fetchImpl;
+  parser                speech-estimation, cyr-latin-map —         validatePublic explicit;
+  player                DONE; prompt-builder, video-workflow       host module deleted —
+  editor                builders, audio pure core —                c3175549)
   generation            still pending, MEDIUM)
   orchestration      → @animastor/parser
   ai-agent             (source-coverage, encoding-detect DONE;
@@ -282,7 +284,9 @@ Considered and rejected: a standalone "naming/utils" package (scene-hash + speec
   auth
   gpu-hub
   installer
+  url-safety
   worker / connectors / web-*
+
 
  HOST-BOUND FOREVER (by doctrine, not by omission):
    postgres schema + repositories · O-port adapters · runtime loop / gpu-dispatcher /
@@ -293,7 +297,7 @@ Considered and rejected: a standalone "naming/utils" package (scene-hash + speec
    FSM orchestrators, placeholder-audio, waveform) · book-deletion cascade
 ```
 
-**Answer to the reconnaissance question:** yes, but little and small. After installer and auth, nothing of *domain* scale remains to extract. What remains extractable is (a) ~1,300 LOC of pure grammar/analysis code whose correct destination is adoption into `generation` and `parser`, (b) one 280-LOC security module (`url-safety`) that deserves its own frozen contract behind DNS/fetch ports, and (c) dead-code deletion of the stale ai-agent task copies. Everything else is either the host's port-adapter layer by design, the HTTP/agent/AI-provider execution plane blocked by the last remaining SCC, or shared-infrastructure doctrine that would gain no boundary by moving.
+**Answer to the reconnaissance question:** yes, but little and small. After installer and auth, nothing of *domain* scale remains to extract. What remained extractable was (a) ~1,300 LOC of pure grammar/analysis code whose correct destination is adoption into `generation` and `parser` (DONE — §8), (b) one 280-LOC security module (`url-safety`) behind its own frozen contract with DNS/fetch ports (DONE — §9), and (c) dead-code deletion of the stale ai-agent task copies (DONE — §8.3). Everything else is either the host's port-adapter layer by design, the HTTP/agent/AI-provider execution plane blocked by the last remaining SCC, or shared-infrastructure doctrine that would gain no boundary by moving.
 
 ---
 
@@ -349,4 +353,20 @@ Tests re-bound to the package task files: `pipeline-step-types.test.js` now scan
 | `@parser` (`npm test`) | **58 passing** (was 36) |
 | backend (`npm test`) | **961 passing / 2 failing** — both failures pre-existing on the base commit (installer `private` pin, phase5 `runtime/index.js` ENOENT; unrelated to this adoption) |
 
-Remaining duplicates after the adoption: none for the moved modules (single canonical owners, pinned by G7-E/S4-E/S6-A + the new regression guard). The next extraction candidate stays `url-safety` (MEDIUM: dns/fetch ports first).
+Remaining duplicates after the adoption: none for the moved modules (single canonical owners, pinned by G7-E/S4-E/S6-A + the new regression guard). The next extraction candidate was `url-safety` — executed in §9.
+
+---
+
+## 9. Extraction performed after reconnaissance: `@animastor/url-safety` (2026-09-26, commit `c3175549`)
+
+The §4.4 candidate was executed as a NEW npm package (the standalone option of §4.4.11c — the assistant package consumes the guard through its `chatTransport` ports seam, so a shared package was preferred over adoption into a host-adjacent surface). Commit: `refactor(security): extract url safety package`.
+
+- **Package:** `packages/animastor-url-safety` — `@animastor/url-safety` 0.1.0, MIT, node>=18, zero runtime npm dependencies (only `net` + a call-time `dns` require), single `.` export root, npm-ready (package.json/lock, README, CHANGELOG, LICENSE, `files`, `publishConfig`). NOT published.
+- **Sources:** `backend/src/services/url-safety.js` (280 LOC) moved into `packages/animastor-url-safety/src/index.cjs` (git rename, strict behavior parity) and the host copy **deleted** — single canonical owner, no compatibility copy.
+- **Ports (the §4.4 seam work):** `setUrlSafetyPorts({ dnsResolver, fetchImpl })` injects DNS resolution and HTTP fetch; when unwired, the runtime defaults (`dns.promises.lookup` / `global.fetch`) resolve lazily AT CALL TIME, so host code and test harnesses stubbing `dns.promises.lookup`/`global.fetch` behave exactly as before the extraction.
+- **Explicit operator exemption:** `safeFetch(url, { validatePublic: false })` is an ordinary call parameter (default `true`); the package never reads `process.env` — the implicit env contract is gone.
+- **Security contract frozen, nothing weakened:** http/https only; literal loopback/private/link-local/metadata IPv4+IPv6 (incl. decimal/octal/hex alternative forms and IPv4-mapped IPv6); ALL-records DNS resolution vs private/special ranges (DNS-rebinding + round-robin shapes); fail-closed on resolution errors; `safeFetch` per-hop re-validation with manual redirect following (`MAX_REDIRECTS = 3`) and the `ENDPOINT_NOT_PUBLIC` error code.
+- **Public API (frozen 8-name surface):** `assertPublicEndpoint`, `safeFetch`, `isPrivateIPv4`, `isPrivateIPv6`, `isPrivateAddress`, `parseNumericHost`, `MAX_REDIRECTS`, `setUrlSafetyPorts`.
+- **Consumers re-pointed (all five require the package specifier):** `services/ai-service.js` + `services/workspace-ai-provider.js` (`safeFetch`), `routes/settings-ai-routes.cjs` + `routes/admin-routes.cjs` (`assertPublicEndpoint`), `backend.cjs` (`assistantPorts.urlSafety`; the assistant package reaches `safeFetch` only through the injected `chatTransport` port).
+- **Tests:** NEW `packages/animastor-url-safety/test/url-safety-security.test.js` — 95 security-contract cases (IPv4/IPv6 classification matrix, alternative literal forms, DNS rebinding/round-robin/empty/error fail-closed, redirect matrix incl. public→private refusal and budget exhaustion, `validatePublic` semantics, port contract) running entirely on injected ports (no real network). NEW `backend/tests/architecture/url-safety-package-boundary.test.js` — USB-G1…G11 guards (package exists / host module gone; zero runtime deps; node-builtins-only requires; no reverse dependency into backend; no `process.env`/`__dirname`/`require.cache`/Express/fs, call-time-only `dns`; frozen API surface; manifest identity pins; consumers pinned to the specifier; explicit-exemption pin). Existing backend suites re-pointed off the deleted host path.
+- **Backend `package.json`:** `"@animastor/url-safety": "file:../packages/animastor-url-safety"` added (same wiring pattern as the other `file:` package deps).
