@@ -112,7 +112,7 @@ describe('PB2: the package manifest is publish-ready and boundary-closed', () =>
         expect(pkg.bugs && pkg.bugs.url).to.be.a('string');
         expect(pkg.engines && pkg.engines.node).to.be.a('string');
         expect(pkg.main).to.equal('src/index.cjs');
-        expect(pkg.files).to.deep.equal(['src/', 'README.md', 'LICENSE']);
+        expect(pkg.files).to.deep.equal(['src/', 'README.md', 'LICENSE', 'CHANGELOG.md']);
         expect(pkg.scripts && pkg.scripts.test).to.match(/mocha/);
     });
 

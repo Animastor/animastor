@@ -1,26 +1,39 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-09-26)
 
-### C13 Parser contract (typed, additive — no behavior change)
+Parser Core physically moved out of this package into the standalone
+[`@animastor/parser`](https://www.npmjs.com/package/@animastor/parser)
+package (C13–C15 extraction). This is a breaking release for consumers of the
+removed subpath exports; the book-model surface is unchanged.
 
-- `src/contracts/parser-contract.js` — canonical `ParserResult`/`ChapterMap`
-  DTO + `ParserSegment` JSDoc types, `PARSER_CONTRACT_VERSION = 1`,
-  `validateParserResult`/`validateParserSegment`/`validateLanguageResult`,
-  `assertValidParserResult`, and the `StructureDetectorPort` shape check
-  (`isValidStructureDetectorPort`/`assertStructureDetectorPort`).
-- `src/contracts/legacy-projection.js` — the legacy chapter DTO defined as a
-  projection of the canonical map (`segmentToLegacyChapter`,
-  `mapToLegacyChapters`); `splitIntoChapters()` now delegates to it
-  (behavior byte-identical, pinned by contract tests).
-- `setStructureDetector()` additionally accepts the documented port alias
-  `buildChapterMap`; the required method stays `buildDeterministicMap`
-  (fail-closed semantics and error message unchanged).
-- `lazy-book/parser` additive exports: contract validators + projection
-  helpers + `PARSER_CONTRACT_VERSION`.
-- New export paths: `./contracts/parser-contract`, `./contracts/legacy-projection`.
-- Docs: `docs/parser-contract-c13.md`. No parser algorithm, data format,
-  or AI/Importer behavior changed.
+### Breaking
+
+- Removed `src/parser-core.js`, `src/language-detector.js`,
+  `src/contracts/parser-contract.js`, `src/contracts/legacy-projection.js`
+  and `src/lazy-book/parser.js` — the parser implementation now lives in
+  `@animastor/parser`.
+- Removed subpath exports `./language-detector` and `./lazy-book/parser`.
+  Migrate to `@animastor/parser` (root) or
+  `@animastor/parser/language-detector` — the re-exported API is identical.
+- Dependency change: `tinyld` removed (moved with the language detector);
+  `@animastor/parser ^0.1.0` added (registry dependency, replaces the
+  monorepo `file:` link).
+
+### Unchanged
+
+- The canonical Book Model facade (`./book-model.cjs`), bundle CRUD,
+  lazy-book lifecycle, bundle validation, snake-guard / character-identity /
+  scene-title-utils and the JSON schemas are untouched; the parser contract
+  DTOs keep flowing through the same call signatures (now re-exported from
+  `@animastor/parser`).
+
+### C13 Parser contract (pre-release state, superseded by the move above)
+
+- The contract work that first landed here (canonical `ParserResult`/
+  `ChapterMap` DTO + validators, legacy chapter projection,
+  `buildChapterMap` port alias) moved with the parser into
+  `@animastor/parser` 0.1.0.
 
 ## 0.1.0 — 2026-09-07
 

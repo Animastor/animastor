@@ -75,10 +75,10 @@ function readSource(p) {
 
 console.log('\n[1/7] package smoke');
 
-check('package identity is @animastor/gpu-hub@0.1.0', () => {
+check('package identity is @animastor/gpu-hub@0.1.1', () => {
   const pkg = readPkg();
   assert(pkg.name === '@animastor/gpu-hub', `name=${pkg.name}`);
-  assert(pkg.version === '0.1.0', `version=${pkg.version}`);
+  assert(pkg.version === '0.1.1', `version=${pkg.version}`);
 });
 
 check('package declares MIT license + node >= 18 engines', () => {

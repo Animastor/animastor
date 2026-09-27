@@ -53,7 +53,7 @@
 | @animastor/auth | 0.1.0 | 0.1.0 | да | нет | R/L/C ✓ | ✓ | UP_TO_DATE | no action required |
 | animastor-comfyui-workflow-connector | 0.1.0 | 0.1.0 | да | нет (`tests/` не закоммичены, в tarball не попадают) | R/L ✓, CHANGELOG ✗ | нет `exports`-карты (standalone-стандарт) | UP_TO_DATE | no action required (опционально: CHANGELOG, закоммитить tests/) |
 | @animastor/contracts | 0.1.1 | 0.1.1 | да | нет | R/L ✓, CHANGELOG ✗ | ✓ | UP_TO_DATE | no action required (опционально: CHANGELOG) |
-| @animastor/editor | 0.1.0 | 0.1.0 | да | нет (код идентичен tarball) | R/L ✓, **CHANGELOG — точная копия CHANGELOG `@animastor/player`** | ✓ (но неверный CHANGELOG попал и в опубликованный tarball — npm авто-включает CHANGELOG.md) | METADATA_PROBLEM | fix CHANGELOG → bump patch 0.1.1 → update CHANGELOG → npm publish |
+| @animastor/editor | 0.1.0 | 0.1.0 | да | нет (код идентичен tarball) | R/L ✓, **CHANGELOG в репозитории — точная копия CHANGELOG `@animastor/player`** (в опубликованный tarball CHANGELOG не попадал — его нет в `files`) | `files` без `CHANGELOG.md` | METADATA_PROBLEM | fix CHANGELOG → bump patch 0.1.1 → npm publish (см. §G — подготовлено) |
 | @animastor/generation | 0.1.0 | 0.1.0 | да | **да: runtime + API** (`src/dirty-grammar/` — 6 новых модулей; `exports["./dirty-grammar"]`; `dirtyGrammar` в index; фикс `media-registry.js`; deps не менялись) | R/L ✓, CHANGELOG ✗ | ✓ | CHANGES_NOT_PUBLISHED + VERSION_NOT_BUMPED | bump (additive API → patch 0.1.1 допустим; консервативно minor 0.2.0) → create CHANGELOG → npm publish |
 | @animastor/gpu-hub | 0.1.0 | 0.1.0 | да | **да: runtime** (`gpu-hub.js` — канонический путь installer package.json; `Dockerfile`; `tests/` не закоммичены) | R/L ✓, CHANGELOG ✗ | ✓ | CHANGES_NOT_PUBLISHED + VERSION_NOT_BUMPED | bump patch 0.1.1 → create CHANGELOG → npm publish |
 | @animastor/installer | 0.1.0 | 0.1.0 | да | нет (после публикации только docs/metadata-фикс 39d5caed, уже совпадает с tarball; `tests/` не закоммичены) | R/L ✓, CHANGELOG ✗ | ✓ | UP_TO_DATE | no action required |
@@ -110,7 +110,7 @@
 ## 3. Проверка npm tarball (все 28 опубликованных пакетов)
 
 - Скачан и продиффован каждый опубликованный tarball против локального каталога: **лишних файлов в tarball'ах не обнаружено**; состав соответствует `files` (gpu-hub намеренно публикует `Dockerfile`/`.dockerignore`, ai-connector — `SPEC.md`).
-- Диверженции только там, где есть изменения после публикации (§2), плюс: `test/` есть в tarball только у `@animastor/orchestration` (заявлен в `files`); `CHANGELOG.md` авто-включён npm в tarball `@animastor/editor` (с неверным содержимым — см. §D).
+- Диверженции только там, где есть изменения после публикации (§2), плюс: `test/` есть в tarball только у `@animastor/orchestration` (заявлен в `files`). Примечание (исправлено в §G): npm **не** авто-включает CHANGELOG.md в tarball — в tarball `@animastor/editor` CHANGELOG отсутствовал (не заявлен в `files`); ошибочное содержимое жило только в репозитории.
 - Smoke-тесты установки и `require()`: `@animastor/contracts@0.1.1` (21 export), `@animastor/parser@0.1.0` (22), `@animastor/vbook-runtime@0.1.0` (10) — успешно; локальный `@animastor/url-safety` — успешно (8 exports).
 - Stale-артефакты `.tgz` лежат в `packages/animastor-editor/` и `packages/animastor-web-navigator/`, но игнорируются git (`*.tgz`) и в tarball не попадают. В git не tracked ни один `.tgz`.
 - `animastor-worker/` — не npm-пакет (нет `package.json`), ops-скрипты; в аудит публикации не входит.
@@ -140,8 +140,8 @@
 
 ## D. PACKAGING / METADATA ISSUES
 
-1. **@animastor/editor — METADATA_PROBLEM (единственная существенная):** `packages/animastor-editor/CHANGELOG.md` — **байт-в-байт копия CHANGELOG `@animastor/player`** (попала при extraction-коммите `f41f0aad` и с тех пор не менялась). Неверный CHANGELOG уже опубликован в npm tarball (npm авто-включает CHANGELOG.md, хотя его нет в `files`).
-   **Действие:** написать настоящий CHANGELOG → bump patch 0.1.1 → npm publish (перепубликация исправит и tarball).
+1. **@animastor/editor — METADATA_PROBLEM (единственная существенная):** `packages/animastor-editor/CHANGELOG.md` — **байт-в-байт копия CHANGELOG `@animastor/player`** (попала при extraction-коммите `f41f0aad` и с тех пор не менялась). Уточнение (проверка при подготовке §G): опубликованный npm tarball 0.1.0 **не** содержал CHANGELOG — файл не заявлен в `files` редактора и npm его не авто-включает; ошибка была только в репозитории.
+   **Действие:** написать настоящий CHANGELOG → bump patch 0.1.1 → добавить `CHANGELOG.md` в `files` → npm publish (см. §G — подготовлено).
 2. **@animastor/vbook-runtime — `file:` dependency:** локально `@animastor/parser: file:../animastor-parser`. Для npm-потребителей такой диапазон неработоспособен; перед публикацией заменить на registry-диапазон.
 3. **@animastor/orchestration — `files` включает `test/`** — единственный пакет, публикующий тесты (отклонение от стандарта «тесты не в tarball»). Опционально: убрать `test/` из `files` при следующем релизе.
 4. **animastor-ai-connector / animastor-comfyui-workflow-connector — нет `exports`-карты, unscoped имена** — legacy standalone-стандарт, опубликованы до введения `@animastor/*`-стандарта. Переименование сейчас = breaking; опционально добавить `exports` в следующем миноре.
@@ -169,6 +169,89 @@
 5. **@animastor/gpu-hub** — bump patch 0.1.1 → create CHANGELOG → `npm publish` (независим; в любой момент).
 6. **@animastor/editor** — fix CHANGELOG → bump patch 0.1.1 → `npm publish` (независим; в любой момент).
 7. Остальные — no action required.
+
+## G. Prepared for manual publication
+
+Подготовка выполнена в рамках коммита `chore: prepare packages for npm publication`.
+Все шесть пакетов приведены в состояние READY_TO_PUBLISH; `npm publish` **не** выполнялся.
+
+| Package | Version | Ready | Required manual action |
+|---|---|---|---|
+| @animastor/url-safety | 0.1.0 | YES | npm publish |
+| @animastor/parser | 0.1.1 | YES | npm publish |
+| @animastor/vbook-runtime | 0.2.0 | YES | npm publish |
+| @animastor/generation | 0.1.1 | YES | npm publish |
+| @animastor/gpu-hub | 0.1.1 | YES | npm publish |
+| @animastor/editor | 0.1.1 | YES | npm publish |
+
+### G.1 Что именно подготовлено
+
+**@animastor/url-safety 0.1.0** — первая публикация; версия 0.1.0 подтверждена аудитом (первичный релиз).
+Изменений кода/метаданных не требуется. Проверено: package.json (стандарт: main `src/index.cjs`, `publishConfig.access: public`, MIT, engines >=18), README/LICENSE/CHANGELOG 0.1.0, `exports "."`, `files` (5 файлов в tarball), `npm pack --dry-run` чистый, тесты 95 passing, smoke-тест установки из tarball: `npm install <tgz>` + `require('@animastor/url-safety')` (8 exports, `assertPublicEndpoint`/`safeFetch` на месте).
+
+**@animastor/parser 0.1.1** — additive-релиз (аудит §2: новый публичный API без изменений существующих сигнатур; major не обоснован).
+- version bump 0.1.0 → **0.1.1**.
+- CHANGELOG: добавлена запись 0.1.1 (source-coverage — 13 exports; encoding-detect — 4 exports; subpath exports `./source-coverage`, `./encoding-detect`; dep `iconv-lite ^0.6.3`; корень теперь 39 exports).
+- `source-coverage` и `encoding-detect` сохранены, `iconv-lite` сохранён.
+- Проверено: exports-карта (6 subpath), package contents (11 файлов, включая оба новых модуля), тесты 58 passing, `npm pack --dry-run` чистый.
+
+**@animastor/vbook-runtime 0.2.0** — breaking-релиз (аудит §2: удаление публичных subpath-exports; в 0.x breaking допустим минором).
+- version bump 0.1.0 → **0.2.0**.
+- CHANGELOG: секция «Unreleased» переоформлена в полноценную запись **0.2.0** (Breaking / Unchanged / C13-история) с инструкцией миграции на `@animastor/parser`.
+- Dependency заменена: `"@animastor/parser": "file:../animastor-parser"` → `"@animastor/parser": "^0.1.0"` — registry-диапазон совместим с уже опубликованным parser 0.1.0 (покрывает и готовящийся 0.1.1: установку можно выполнять уже сегодня, до публикации parser 0.1.1).
+- Exports после удаления parser-модулей проверены: корень (10), `./book-model.cjs`, `./bundle-validator.cjs`, `./books-root`, `./character-identity`, `./snake-guard`, `./scene-title-utils`, `./lazy-book` (+7 subpath), `./schemas/*` — все резолвятся.
+- Чистая среда: `npm install <tgz>` из пакета (вне монорепо) — 4 пакета установлено (parser из registry, adm-zip), **без `file:` ссылок**.
+- Runtime require: `splitIntoChapters` через lazy-book работает с привязанным detector (fail-closed без привязки — документированное поведение); character-identity/snake-guard/scene-title-utils/bundle-validator — на месте.
+- Тесты 24 passing (включая package-suite 19). Потребители удалённых subpath (`./language-detector`, `./lazy-book/parser`) в `packages/*`, `backend/src` — не найдены.
+
+**@animastor/generation 0.1.1** — additive-релиз (аудит §2: dirty-grammar ярус + фикс media-registry).
+- version bump 0.1.0 → **0.1.1**; создан CHANGELOG (0.1.1 dirty-grammar + 0.1.0 история).
+- `CHANGELOG.md` добавлен в `files` (раньше CHANGELOG отсутствовал вовсе).
+- Public export `./dirty-grammar` проверен: subpath резолвится, 19 именованных exports (`computeSceneDirtyLayers`, `getLayerDependencies`, `resolveDirtyLayers`, `computeSceneHash`, `generateBuildId`, `estimateSpeechDurationSec`, `cyrToLatin`, …); все 6 модулей dirty-grammar попадают в tarball (24 файла).
+- Тесты 72 passing. `npm pack --dry-run` чистый.
+
+**@animastor/gpu-hub 0.1.1** — patch-релиз (аудит §2: runtime-фикс резолва installer-версии + Dockerfile).
+- version bump 0.1.0 → **0.1.1**; создан CHANGELOG; `CHANGELOG.md` добавлен в `files`.
+- Изменения `gpu-hub.js` сохранены (97df4b7d), Dockerfile в `files` и в tarball (9 файлов).
+- Smoke-тест пакета обновлён на новую версию (`tests/run-all.cjs`: package identity 0.1.0 → 0.1.1 — version-pin тест по определению следует за bump).
+- Тесты 22 passed, 0 failed. `npm pack --dry-run` чистый.
+
+**@animastor/editor 0.1.1** — documentation-only релиз (аудит §D.1, уточнено: ошибочный CHANGELOG был только в репозитории; опубликованный tarball 0.1.0 его не содержал).
+- version bump 0.1.0 → **0.1.1**.
+- Написан настоящий CHANGELOG редактора (0.1.1 + полная 0.1.0 история: API, surface, boundary — по README и extraction-аудиту); копия CHANGELOG player устранена.
+- `CHANGELOG.md` добавлен в `files` — корректный CHANGELOG теперь попадает в tarball (и неверный туда попасть больше не может).
+- Runtime-код не менялся (идентичен опубликованному 0.1.0). Тесты 75 passing (в документированной конфигурации — из backend-workspace, где `.mocharc.json` подключает vbook/generation test-bindings; отдельно из каталога пакета 1 из 75 падает из-за несмонтированного generation config-binding — pre-existing особенность host-run тестов, не связана с релизом).
+- `backend/tests/architecture/editor-package-boundary.test.js` PB2: ожидание `files` обновлено (`+ CHANGELOG.md`).
+
+### G.2 Порядок публикации и зависимости между пакетами
+
+Порядок обязателен только для пары parser → vbook-runtime; остальные независимы.
+
+1. **@animastor/parser 0.1.1** — первым: vbook-runtime 0.2.0 объявляет `^0.1.0` (уже совместимо с опубликованным 0.1.0, но публиковать parser раньше — правильный порядок, чтобы потребители 0.1.1 получили additive API).
+2. **@animastor/vbook-runtime 0.2.0** — после parser: его registry-dependency `@animastor/parser ^0.1.0` резолвится с уже опубликованной версии.
+3. **@animastor/url-safety 0.1.0** — независимо, в любой момент (нет зависимостей и потребителей).
+4. **@animastor/generation 0.1.1** — независимо (deps: `@animastor/contracts ^0.1.0` — уже в npm; `animastor-comfyui-workflow-connector ^0.1.0` — уже в npm).
+5. **@animastor/gpu-hub 0.1.1** — независимо (deps: `@animastor/contracts ^0.1.0` — уже в npm).
+6. **@animastor/editor 0.1.1** — независимо (dep: `@animastor/vbook-runtime ^0.1.0` — уже в npm; установка продолжит резолвить vbook-runtime 0.1.x, см. G.3).
+
+### G.3 Потребители и диапазоны (зафиксировано для будущих релизов)
+
+- **`@animastor/vbook-runtime ^0.1.0`-потребители** (`@animastor/ai-analysis@0.1.0`, `@animastor/editor@0.1.0`, `@animastor/player@0.1.0`): диапазон `^0.1.0` **не покрывает** 0.2.0. npm при установке этих опубликованных версий продолжит резолвить vbook-runtime **0.1.x** — установки не сломаются. Новые потребители, которым нужны возможности 0.2.0 (registry-dep на parser вместо bundled-модулей), должны объявлять `^0.2.0`. Этим трём пакетам при **следующем собственном релизе** нужно поднять диапазон (или осознанно остаться на 0.1.x — их текущий API-контракт полностью покрывается 0.1.x). Автоматическое изменение не выполнялось — по условию задачи.
+- **`@animastor/orchestration@0.1.1` → `@animastor/generation ^0.1.0`**: патч-публикация generation 0.1.1 покрыта диапазоном — проблем нет.
+- **Хост-разработка** (`backend/package.json`): все внутренние пакеты подключены через `file:` ссылки — на npm-версии не влияют, ничего менять не требовалось.
+
+### G.4 Результаты финальной проверки (все шесть пакетов)
+
+| Проверка | url-safety | parser | vbook-runtime | generation | gpu-hub | editor |
+|---|---|---|---|---|---|---|
+| `npm pack --dry-run` | ✓ 5 файлов | ✓ 11 | ✓ 22 | ✓ 24 | ✓ 9 | ✓ 12 |
+| CHANGELOG в tarball | ✓ | ✓ | ✓ | ✓ (новое) | ✓ (новое) | ✓ (новое) |
+| exports резолвятся | ✓ (8) | ✓ (39) | ✓ (10+subpaths) | ✓ (+dirty-grammar 19) | н/п (HTTP-сервис) | ✓ (root) |
+| `file:` deps | нет | нет | **нет** (был) | нет | нет | нет |
+| Тесты | 95 ✓ | 58 ✓ | 24 ✓ | 72 ✓ | 22 ✓ | 75 ✓ |
+| Версия/lock consistency | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+Прочее: реестр не менялся; CI/GitHub Release не создавались; unrelated-код не тронут (изменён только один version-pin тест gpu-hub и одно ожидание `files` в PB2 — оба напрямую следуют из подготовки релизов).
 
 ## Примечание о push
 

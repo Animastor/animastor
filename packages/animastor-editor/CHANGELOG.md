@@ -1,41 +1,56 @@
 # Changelog
 
-## 0.1.0 — 2026-09-08
+## 0.1.1 (2026-09-26)
 
-### Release preparation (npm publication)
+Documentation-only release: the repository `CHANGELOG.md` mistakenly held a
+copy of the `@animastor/player` changelog (carried over with the Player
+extraction commit and never replaced). The published 0.1.0 npm tarball was
+not affected — it contained no CHANGELOG at all (not in `files`). The
+runtime code in 0.1.1 is identical to the published 0.1.0 tarball.
 
-- `@animastor/vbook-runtime` dependency switched from the monorepo
-  `file:` link to the published registry range `^0.1.0` (0.1.0 is live on
-  npm) — `npm install @animastor/player` now resolves cleanly on a fresh
-  environment. The host backend is unaffected: it injects the bookModel,
-  so the package's default facade instance is inert inside the backend
-  process; the monorepo `file:` links at `backend/package.json` are
-  unchanged.
-- Consumer metadata completed: keywords, homepage, README installation
-  section + Node >= 18 requirement + absolute doc links (relative
-  `../../docs/...` links do not resolve on npmjs.com).
-- `files` narrowed to production content (`src/` + metadata) — tests stay
-  in the repository checkout and run via `npm test`, matching the
-  repo-wide package standard (no tests in published tarballs).
+### Fixed
 
-### Physical extraction (route split 4d1f6f0e → boundary audit → move)
+- `CHANGELOG.md` — replaced the wrong (Player) changelog with the Editor
+  history (see 0.1.0 below).
+- `files` — `CHANGELOG.md` added to the published tarball metadata, so the
+  correct changelog ships with 0.1.1.
 
-- The playback HTTP contour physically moved from the backend host into
-  `src/` of this package: the registrar (`player-routes.cjs`), shared
-  contour helpers (`player-shared.cjs`), scene media (`scene-media.cjs`),
-  scene data (`scene-data.cjs`), IU media (`iu-media.cjs`), playback queue
-  (`playback-queue.cjs`), the artifact-naming grammar
-  (`artifact-naming.cjs`) and the Player Model facade (`player-model.cjs`,
-  from the host `backend/src/player/index.cjs`) — final boundary audit
-  MOVE list.
-- Behavior, URLs, headers (Range / 206 / ETag / If-Range / 304 / 416),
-  status codes and response bodies unchanged (17 frozen endpoints, pinned
-  by `backend/tests/architecture/player-route-split.test.js` P1).
-- Legacy backend copies deleted: `backend/src/routes/player/`,
-  `backend/src/player/`, and the empty `routes/book/chunks-routes.cjs`
-  registrar stub.
-- Every host dependency arrives as an injected port (composition-root
-  contract in the README); the package's only dependency is
-  `@animastor/vbook-runtime` (Player Model facade).
-- Behavior tests moved into the package: `test/scene-timings.test.js`,
-  `test/scene-audio-range.test.js`.
+## 0.1.0 (2026-09-08)
+
+First release — the book-editing HTTP contour physically extracted from the
+Animastor backend host (editor extraction audit, Phase 4 — physical move
+COMPLETE).
+
+### API
+
+- Root entrypoint exports `createEditorModel`, `createEditorRoutes`,
+  `createEntityCrudRoutes`, `createEditorPorts` (root-only export map;
+  deep imports blocked by the package `exports` map and the deep-import
+  guard, PB1–PB4).
+- `createEditorModel` — facade over the Canonical Book Model
+  (`@animastor/vbook-runtime/book-model.cjs`).
+- `createEditorPorts` — frozen host-port seam (Phase 2, guard E5):
+  `sceneAssetsRepo`, `placeholderAudio`, `auditCoverage`, `promptLimit`,
+  `purge`, `resolveOwnership`, `recoveryCtx`; mandatory ports fail-closed.
+
+### Surface
+
+- Core book GET/PUT/PATCH/DELETE with read-time enrichment and the
+  post-commit derived-state fan-out.
+- Targeted PATCH endpoints: scenes / metadata / locations / characters /
+  voices / behaviors.
+- Entity CRUD (characters / locations / voices / behaviors) with the
+  entity-id grammar (transliteration → snake_case over the pure cyr-latin
+  map), duplicate-id 409, missing-name 400, full-passport delete plus the
+  dangling same-id voice cleanup.
+- Structure CRUD (chapters / scenes / units) and blank-book scaffolding
+  (`POST /book/blank`).
+- Scene-patch utils (pure) and read-recovery (chunk repair ctx).
+
+### Boundary
+
+- No backend-host imports: book content is reached only through the
+  injected `editorModel`; every host dependency arrives as an injected
+  port at registration time.
+- Runtime dependency: `@animastor/vbook-runtime ^0.1.0` (Book Model facade
+  + `lazy-book/paths` id grammar).

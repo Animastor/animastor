@@ -1,6 +1,6 @@
 {
     "name": "@animastor/parser",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "Deterministic text parser — chapter/segment detection, offsets, language detection, canonical ParserResult/ChapterMap DTO, legacy chapter projection, verbatim source-coverage analysis, encoding detection. Pure sync (except buffer decode), no AI, no DB.",
     "main": "src/index.js",
     "exports": {

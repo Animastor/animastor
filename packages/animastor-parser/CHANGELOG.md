@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.1.1 (2026-09-26)
+
+Text-ingest analysis tier adopted from the Animastor host
+(`refactor(backend): adopt pure analysis into packages`, 1900d931).
+Additive release — no existing export, signature, or behavior changed.
+
+### Features
+
+- New module `src/source-coverage.js` — verbatim text-coverage analysis
+  (`normalizeTextForCoverage`, `buildCoverageIndex`, `skipWhitespaceForward`,
+  `rawOffsetToNormalizedIndex`, `looksLikeChapterTitle`, `isAllCapsHeading`,
+  `findNarrativeStartOffset`, `getLastSentenceFragment`, `buildSceneEndNeedles`,
+  `findLastSceneEndOffset`, `splitTextIntoNormalizedSentences`,
+  `trySentenceLevelMatch`, `computeSceneCoverage`); 13 new exports on the
+  root entrypoint.
+- New module `src/encoding-detect.js` — ingest decode / encoding detection
+  (`decodeBuffer`, `detectBom`, `scoreText`, `ENCODING_LABELS`); 4 new exports
+  on the root entrypoint (root total now 39).
+- New subpath exports: `@animastor/parser/source-coverage`,
+  `@animastor/parser/encoding-detect`.
+
+### Dependencies
+
+- Added `iconv-lite ^0.6.3` (buffer decode behind `decodeBuffer`).
+
 ## 0.1.0 (2026-09-08)
 
 First release — Parser Core extracted from `@animastor/vbook-runtime`.

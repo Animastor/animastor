@@ -1,6 +1,6 @@
 {
     "name": "@animastor/vbook-runtime",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "VBook Runtime — canonical VBook 3.1 bundle/book model: multi-file bundle CRUD, draft/import lifecycle, lazy parse windows, bundle validation, canonical id grammar and path layout. Owns bundle/book canonical state; the host owns the filesystem root (booksRoot), snapshots, deletion orchestration and Redis/PG/GPU Hub.",
     "main": "src/index.js",
     "exports": {
@@ -49,7 +49,7 @@
         "url": "https://github.com/Animastor/animastor/issues"
     },
     "dependencies": {
-        "@animastor/parser": "file:../animastor-parser",
+        "@animastor/parser": "^0.1.0",
         "adm-zip": "^0.5.10"
     },
     "devDependencies": {

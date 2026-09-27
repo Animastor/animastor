@@ -1,6 +1,6 @@
 {
     "name": "@animastor/editor",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "Animastor Editor — book-editing HTTP contour: core book GET/PUT/PATCH/DELETE, scene/metadata/location/character/voice/behavior patches, entity CRUD (characters/locations/voices/behaviors), structure CRUD (chapters/scenes/units) and blank-book scaffolding. Reads and writes book content only through the injected editorModel (VBook boundary); every host dependency arrives as an injected port (editorPorts) — no config, no generation, no AI, no Redis/PG internals in the package.",
     "keywords": [
         "animastor",
@@ -16,7 +16,8 @@
     "files": [
         "src/",
         "README.md",
-        "LICENSE"
+        "LICENSE",
+        "CHANGELOG.md"
     ],
     "scripts": {
         "test": "mocha --exit test/*.test.js"

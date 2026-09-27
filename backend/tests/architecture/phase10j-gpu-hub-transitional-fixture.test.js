@@ -41,7 +41,7 @@ describe('phase10j: transitional fixture status (gpu-hub/)', () => {
         expect(fs.existsSync(HUB_DIR), 'gpu-hub/ fixture must exist until the cutover phase').to.be.true;
         const pkg = JSON.parse(fs.readFileSync(path.join(HUB_DIR, 'package.json'), 'utf8'));
         expect(pkg.name).to.equal('@animastor/gpu-hub');
-        expect(pkg.version).to.equal('0.1.0');
+        expect(pkg.version).to.equal('0.1.1');
     });
 
     it('gpu-hub/ carries no production npm dependencies of the backend (fixture stays isolated)', () => {

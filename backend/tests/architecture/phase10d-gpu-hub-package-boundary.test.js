@@ -60,6 +60,7 @@ const FROZEN_PACK_FILES = [
     'package.json',
     'server.js',
     'tarball.js',
+    'CHANGELOG.md',
 ].sort();
 
 // Frozen runtime surface (Phase 10D PB5).
@@ -70,9 +71,9 @@ const FROZEN_RUNTIME_FILES = ['gpu-hub.js', 'server.js', 'tarball.js', 'bootstra
 describe('phase10d: GPU Hub package identity', () => {
     const pkg = JSON.parse(fs.readFileSync(PKG_JSON, 'utf8'));
 
-    it('package is @animastor/gpu-hub@0.1.0 with MIT license', () => {
+    it('package is @animastor/gpu-hub@0.1.1 with MIT license', () => {
         expect(pkg.name, 'package name (Phase 10D identity)').to.equal('@animastor/gpu-hub');
-        expect(pkg.version).to.equal('0.1.0');
+        expect(pkg.version).to.equal('0.1.1');
         expect(pkg.license).to.equal('MIT');
         expect(pkg.main).to.equal('server.js');
     });
@@ -160,7 +161,7 @@ describe('phase10d: npm pack surface', function () {
 
     it('tarball identity matches the frozen package identity', () => {
         expect(packed.name).to.equal('@animastor/gpu-hub');
-        expect(packed.version).to.equal('0.1.0');
+        expect(packed.version).to.equal('0.1.1');
     });
 });
 
