@@ -4,7 +4,7 @@
 - **Ветка:** `c21.4-physically-extract-analysis-from-backend`
 - **HEAD на момент проверки:** `cf2d5836fa6a545b10ab60aefebf0edce2c93656` (`docs(architecture): fix npm publication order wording`)
 - **Подготовка публикации:** `6831a126` (`chore: prepare packages for npm publication`), план — `docs/architecture/npm-package-publication-audit.md` §G
-- **Метод:** прямые запросы к npm registry (`curl registry.npmjs.org` + `npm view`); скачивание опубликованных tarball'ов всех шести пакетов; `diff -rq` tarball ↔ `packages/*`; `npm install` в чистых временных директориях (вне монорепо) + `require()` корня и subpath exports; проверка `dist-tags`, дат публикации и shasum-сверка (`npm pack --dry-run --json` ↔ `dist.shasum`); проверкаinstallability предыдущих версий.
+- **Метод:** прямые запросы к npm registry (`curl registry.npmjs.org` + `npm view`); скачивание опубликованных tarball'ов всех шести пакетов; `diff -rq` tarball ↔ `packages/*`; `npm install` в чистых временных директориях (вне монорепо) + `require()` корня и subpath exports; проверка `dist-tags`, дат публикации и shasum-сверка (`npm pack --dry-run --json` ↔ `dist.shasum`); проверка installability предыдущих версий.
 - **Ничего не публиковалось и не менялось** — только чтение registry и локальных файлов.
 
 ## Итоговая таблица
@@ -63,7 +63,7 @@
 
 `diff -rq` (исключая `node_modules`, `package-lock.json`, `test/`, `.git`):
 
-- **parser, vbook-runtime, url-safety, generation, gpu-hub: 0 расхождений** — опубликованный tarball байт-в-байт совпадает с репозиторием.
+- **parser, vbook-runtime, url-safety, generation, gpu-hub: 0 расхождений** — содержимое опубликованного tarball совпадает с соответствующим содержимым package directory после исключения `node_modules`, `package-lock.json`, `test/` и `.git`; расхождений в публикуемых файлах не обнаружено.
 - **editor:** единственное расхождение — в репозитории лежит локальный stale-артефакт `animastor-editor-0.1.0.tgz` (git-ignored `*.tgz`, в публикации не участвует). Содержимое tarball ≡ репозиторий.
 - Шасум-сверка `npm pack --dry-run --json` (локально) ↔ `dist.shasum` (registry): **все 6 совпадают** — `8743ea4b…` (parser), `a40f30f4…` (vbook-runtime), `62614ee7…` (url-safety), `40b8a949…` (generation), `455da631…` (gpu-hub), `fb551048…` (editor).
 - **Ожидаемые различия npm metadata:** отсутствуют как проблемы; npm добавляет в published manifest только стандартные вычисляемые поля (`dist`, `_id`, `_npmVersion` и т.п.).
@@ -98,4 +98,4 @@
 ## Вывод
 
 **Ручная публикация npm-пакетов Animastor успешно подтверждена: 6/6 PASS.**
-Все шесть пакетов существуют на npm в ожидаемых версиях, `latest` указывает на них, tarball'ы байт-в-байт совпадают с репозиторием (shasum-сверка), устанавливаются из registry в чистых средах, их публичные API (корневые exports и subpaths) работают, `file:` dependencies отсутствуют, предыдущие версии не затронуты.
+Все шесть пакетов существуют на npm в ожидаемых версиях, `latest` указывает на них, содержимое tarball'ов совпадает с публикуемым содержимым репозитория (см. §4, shasum-сверка), устанавливаются из registry в чистых средах, их публичные API (корневые exports и subpaths) работают, `file:` dependencies отсутствуют, предыдущие версии не затронуты.
