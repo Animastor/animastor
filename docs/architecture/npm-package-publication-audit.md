@@ -164,7 +164,7 @@
 
 1. **@animastor/url-safety** — first publication → `npm publish` (независим, готов).
 2. **@animastor/parser** — bump → CHANGELOG entry → `npm publish` (до vbook-runtime, который от него зависит).
-3. **@animastor/vbook-runtime** — bump 0.2.0 → CHANGELOG → заменить `file:` dep на `^0.2.0` parser → `npm publish`.
+3. **@animastor/vbook-runtime** — bump 0.2.0 → CHANGELOG → `npm publish`. Registry dependency уже подготовлена (6831a126): `"@animastor/parser": "^0.1.0"` — диапазон совместим и с уже опубликованным parser 0.1.0, и с подготовленным 0.1.1; публикуется после parser (см. §G.2).
 4. **@animastor/generation** — bump → create CHANGELOG → `npm publish`. (После bump до 0.2.0 диапазон `@animastor/orchestration` `^0.1.0` перестанет покрывать новую версию — при следующем релизе orchestration поднять диапазон; при patch-публикации 0.1.1 проблемы нет.)
 5. **@animastor/gpu-hub** — bump patch 0.1.1 → create CHANGELOG → `npm publish` (независим; в любой момент).
 6. **@animastor/editor** — fix CHANGELOG → bump patch 0.1.1 → `npm publish` (независим; в любой момент).
