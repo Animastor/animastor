@@ -10,7 +10,7 @@
     "preview": "vite preview --port 5174",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "build:packages": "for pkg in ../../packages/animastor-web-*; do npm --prefix \"$pkg\" run build || exit 1; done"
+    "build:packages": "node scripts/build-packages.cjs"
   },
   "dependencies": {
     "@animastor/web-ai-chat": "^0.1.0",

@@ -18,6 +18,17 @@ COPY packages/animastor-installer/src/installer/ /staging/artifacts/installer-sr
 COPY packages/animastor-installer/package.json   /staging/artifacts/installer-src/package.json
 COPY packages/animastor-installer/ai/install-manifests/ /staging/artifacts/install-manifests/
 
+# B5 integrity gate (prep plan §2.3): verify the CONTENT DIGEST of every
+# staged group against artifacts.lock.json on the staging tree — BEFORE
+# the runtime stage's `COPY --from=stager`. Mismatch fails the build here,
+# so a silently different artifact can never be baked into the image.
+# The gate is delivery-neutral (§2.0): post-split the same check runs over
+# whatever materializes /staging/artifacts (release zips, build inputs).
+# Digest formula is shared with tools/update-artifacts-lock.cjs.
+COPY packages/animastor-gpu-hub/artifacts.lock.json /staging/artifacts.lock.json
+COPY packages/animastor-gpu-hub/scripts/verify-staged-artifacts.sh /staging/verify-staged-artifacts.sh
+RUN sh /staging/verify-staged-artifacts.sh /staging/artifacts.lock.json /staging/artifacts
+
 # ── Stage 2: GPU Hub runtime ────────────────────────────────────────────────
 FROM node:20-slim
 
