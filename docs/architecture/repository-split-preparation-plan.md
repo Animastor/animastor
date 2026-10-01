@@ -169,7 +169,7 @@ Checksum mismatch = fail build. `check-artifacts.sh` после сборки о�
 2. **Внутренние базлайны (уже существуют)**: манифесты хранят
    `baseline_sha256` каждого workflow и `worker_bundle.min_version` —
    `check-artifacts.sh` проверяет [3/6] version compat и [4/6] SHA256 workflow.
-3. **Бake-in верификация (уже существует)**: Dockerfile RUN-проверка 4 групп +
+3. **Bake-in верификация (уже существует)**: Dockerfile RUN-проверка 4 групп +
    `check-artifacts.sh` [1/6], [2/6], [5/6], [6/6] (структура, версия bundle,
    отсутствие monorepo-путей, entry points installer).
 
