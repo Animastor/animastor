@@ -13,10 +13,20 @@ decoupling), Phase 9C/9D (contracts/worker).
 
 ## Executive result
 
-**READY с 6 условиями (Pre-conditions, P1–P6)** — все они административные/
-инфраструктурные, ни одно не требует изменения кода или архитектуры. Блокеров,
-требующих переделки плана, не обнаружено. Детали — §9 (Blockers & pre-conditions).
-Итоговый вердикт — в конце документа.
+**PHYSICAL SPLIT: BLOCKED** — до выполнения hard prerequisites (§8, §9).
+Блокеров, требующих переделки preparation plan, не обнаружено; план исполним
+как есть. P1–P6 неоднородны (§8):
+
+- **HARD PRECONDITIONS** — обязательны ДО физического filter-repo split:
+  P2 (FF master), P4 (untracked-решения), P5 (CI, G1–G5), P6 (диск), P1
+  (bare/GitHub/hooks — к шагу 5, до первого push), а также этапы B1–B4, B6,
+  B8, B12 → B5 → B7 → B9 (§9, шаги 1–4).
+- **POST-SPLIT REQUIREMENTS** — сам filter-repo не блокируют: P3 (npm-токен,
+  publish-CI).
+
+Единственный статус документа — **BLOCKED**; READY фиксируется только после
+закрытия всех hard prerequisites. Детали: §8 (классификация), §9 (порядок),
+Вердикт (в конце).
 
 ---
 
@@ -34,7 +44,7 @@ decoupling), Phase 9C/9D (contracts/worker).
 | Секреты | `.env`, `proxy/conf/.htpasswd` — untracked/ignored; `LETS_ENCRYPT_DIR` — вне репо | в split-историю не попадут ✓ |
 | npm | registry npmjs; в `~/.npmrc` есть authToken, но **недействителен** (E401) | см. P3 |
 | GitHub org | Animastor существует; репозитории не созданы | P1 |
-| Untracked root | `package.json` (реальный файл), `workflow.json` (пустой каталог!), `local.properties` | см. P4, §3.1 |
+| Untracked root | `package.json` (реальный файл), `workflow.json` (пустой каталог, root-owned), `local.properties` — ни один не имеет истории (`git log --all` пуст) | решения зафиксированы (P4): `workflow.json` — RETIRE, `local.properties` — VPS-local |
 | CI в монорепо | отсутствует (`.github/` нет) | CI создаётся с нуля в split-репо — P5 |
 | Ветка | work идёт в `c21.4-…` (709f112e), `master` отстаёт (8118f766) | см. P2 |
 
@@ -47,7 +57,7 @@ ACTION-словарь: **KEEP** — переносится историей (fil
 **RETIRE** — удаляется в момент split; **GENERATED** — восстанавливается
 инструментом/npm, не переносится историей.
 
-### 2.1 animastor-backend (37 путей, KEEP)
+### 2.1 animastor-backend (KEEP; единственное исключение — `workflow.json`, RETIRE)
 
 | Source path | ACTION | Примечание |
 |---|---|---|
@@ -58,7 +68,7 @@ ACTION-словарь: **KEEP** — переносится историей (fil
 | `proxy/` | KEEP | nginx; `proxy/conf/.htpasswd` не tracked — пересоздать на VPS (P-деплой) |
 | `scripts/` | KEEP | общий; `check-artifacts.sh` дублируется в hub (см. 2.5) |
 | `docs/` | KEEP+ARCHIVE | целиком, 284 файла; parity-копия — заморозка |
-| `workflow.json` | KEEP (путь) | **untracked** — см. P4 |
+| `workflow.json` | RETIRE | untracked (истории нет, `git log --all` пуст); runtime-код backend его не читает (0 ссылок в `backend/`); compose-mount `./workflow.json:/workflow.json:ro` — мёртвый, снимается при cutover (B11); в выполняемый whitelist не входит — см. P4, §2.6 |
 | `MiM.vbook` | KEEP | VBook-фикстура |
 | `backend-rebuild.sh`, `front-backend-rebuild.sh`, `src-backup.sh` | KEEP | деплой backend |
 | root `README.md`, `ARCHITECTURE.md`, `MEMORY.md`, `CONTRIBUTING.md`, `SECURITY.md`, `THIRD_PARTY_NOTICES.md`, `LICENSE`, `.env.example`, `.dockerignore`, `.gitignore` | KEEP | — |
@@ -76,14 +86,20 @@ ACTION-словарь: **KEEP** — переносится историей (fil
 | `docs/architecture/ANDROID_WEB_PARITY.md` (старый снимок) | COPY(ARCHIVE) | исторический снимок, не редактируется |
 | `LICENSE` | KEEP | — |
 
-### 2.3 animastor-android (6 путей, KEEP)
+### 2.3 animastor-android (KEEP; исключение — root `local.properties`, VPS-local, не переносится)
 
 | Source path | ACTION | Примечание |
 |---|---|---|
-| `frontends/android/` | KEEP | 213 файлов; `build/` не tracked; `gradle.properties` tracked; root `local.properties` untracked — см. P4 |
+| `frontends/android/` | KEEP | 213 файлов; `build/` не tracked; `gradle.properties` tracked |
 | `apk-build.sh`, `build-apk.sh` | KEEP | — |
 | root `ANDROID_WEB_PARITY.md` | COPY | snapshot-механизм §5: CI android получает файл из web-репо, проверяет commit+sha256; история parity НЕ переносится |
 | `LICENSE` | KEEP | — |
+
+Override к prep plan §8.3 (prep plan НЕ меняется): строка
+`--path local.properties` **исключается** из выполняемой команды.
+`local.properties` — untracked VPS-local (истории нет): в историю Android не
+переносится, на VPS пересоздаётся локально. Выполняемый whitelist = §8.3
+минус эта строка.
 
 ### 2.4 animastor-worker (19 путей, KEEP)
 
@@ -116,6 +132,8 @@ ACTION-словарь: **KEEP** — переносится историей (fil
 | bundle/hub-asserts в `phase2-job-protocol-v2.test.js` | дублируются в worker/hub-тестах |
 | worker-fallback в `backend/tests/architecture/helpers.js` (WORKER_PKG_DIR) | после split пути не существуют |
 | корневой untracked `package.json` | B12: зависимости покрываются backend; в split-историю не попадает (untracked) |
+| root `workflow.json` | RETIRE: untracked пустой каталог-заглушка (root-owned); runtime-код backend его не читает (0 ссылок в `backend/`); compose-mount — мёртвый, снимается при cutover (B11); строка `--path workflow.json` (§8.1 prep-plan) — no-op, из команды исключается |
+| root `local.properties` | VPS-local/untracked: в историю Android не переносится; строка `--path local.properties` (§8.3 prep-plan) — no-op, из команды исключается (см. §2.3) |
 
 ## 3. Dependency matrix после split
 
@@ -132,7 +150,7 @@ ACTION-словарь: **KEEP** — переносится историей (fil
 | hub | npm `@animastor/contracts` | `PROTOCOL_VERSION` (runtime) |
 | web | `ANDROID_WEB_PARITY.md` (root) | canonical parity |
 | android | `ANDROID_WEB_PARITY.md` (root) | snapshot из web |
-| backend | `workflow.json` (untracked!) | монтируется в backend-контейнер; после split его некому «перенести» — P4 |
+| backend | `workflow.json` (untracked) | RETIRE (§2.6): runtime не читает (0 ссылок в `backend/`), compose-mount мёртв; mount снимается при cutover (B11), каталог-заглушка удаляется на VPS до split; в историю не попадает |
 
 ### 3.2 Исчезающие `file:`-зависимости и замены
 
@@ -165,7 +183,7 @@ Generated-артефакты, получаемые НЕ из Git-истории:
 | `worker-bundle` zip | GitHub Release animastor-worker (`animastor-worker-bundle-<ver>.zip` + sha256) |
 | `hub-workflows`/`installer-src`/`install-manifests` zips | GitHub Release animastor-backend (`hub-artifacts-v1`: 3 asset по точным именам + sha256) |
 | gpu-hub образ | GHCR digest-pin |
-| `workflow.json`, `local.properties`, `.htpasswd`, `.env` | VPS-локальные файлы/секреты, не из истории |
+| `local.properties`, `.htpasswd`, `.env` | VPS-локальные файлы/секреты, не из истории (`workflow.json` — RETIRE, §2.6) |
 
 ## 4. Cross-repo зависимости после split (полный список)
 
@@ -186,7 +204,7 @@ Generated-артефакты, получаемые НЕ из Git-истории:
 
 | Repo | Remotes | post-receive | Secrets (GitHub Actions) | G-гварды |
 |---|---|---|---|---|
-| animastor-backend | origin=VPS bare | `--mirror` → `Animastor/animastor-backend` | NPM_TOKEN (publish, **сначала возобновить — P3**), SSH/HTTPS-RO для hub-артефактного релиза | G1, G2 (15 pkgs), G6, G7-канон (JOB_PROTOCOL_V2, parity) |
+| animastor-backend | origin=VPS bare | `--mirror` → `Animastor/animastor-backend` | NPM_TOKEN (publish; P3 — POST-SPLIT REQUIREMENT), SSH/HTTPS-RO для hub-артефактного релиза | G1, G2 (15 pkgs), G6, G7-канон (JOB_PROTOCOL_V2, parity) |
 | animastor-web | origin=VPS bare | `--mirror` → `Animastor/animastor-web` | NPM_TOKEN | G1, G2 (13 pkgs), G6, G7-канон (parity) |
 | animastor-android | origin=VPS bare | `--mirror` → `Animastor/animastor-android` | (опц.) signing keystore | G6, G7-snapshot |
 | animastor-worker | origin=VPS bare | `--mirror` → `Animastor/animastor-worker` | GITHUB_TOKEN (Release zip + sha256) | G3 (protocol drift), G6, G7-snapshot |
@@ -215,37 +233,62 @@ guard по basename; hooks создаются **до** первого push; мо
 5. README/org-настройки: topics, права (mirrors — read-only для людей).
 6. Release-механика: после первого release worker — asset скачивается, sha256 совпадает; hub-образ собирается по pin-файлу.
 
-## 8. Blockers (текущее состояние)
+## 8. Blockers P1–P6 — HARD PRECONDITIONS vs POST-SPLIT REQUIREMENTS
 
-| ID | Что | Тип | Снятие |
-|---|---|---|---|
-| P1 | 5 GitHub-репозиториев не созданы | организационное | создать пустые (без README), default `master` |
-| P2 | работа в `c21.4-…`, `master` отстаёт на 136 коммитов | git-гигиена | FF `master` до c21.4 (§7.1 prep-plan уже спроектирован как fast-forward); перед split |
-| P3 | npm-токен недействителен (E401) — publish недоступен, npm install публичных пакетов работает | секреты | выпустить/обновить NPM_TOKEN; до этого миграция B2/B3 может ссылаться на версии, но publish-ветка CI не пройдёт |
-| P4 | untracked-файлы, на которые ссылается план: root `package.json` (RETIRE — ok), `workflow.json` (пустой каталог-заглушка вместо файла!), root `local.properties` | данные | решить до split: `workflow.json` восстановить/удалить из compose-mount и §8.1 whitelist; `local.properties` — оставить VPS-локальным (убрать из whitelist §8.3) |
-| P5 | CI отсутствует во всех будущих репо (`.github/` нет) | процесс | создать workflows до split (§11 prep-plan шаг 4), иначе G-гварды негде гонять |
-| P6 | диск 3.5 GB свободно (97% занято) | ресурсы | освободить ≥3 GB (5 клонов×~60 MB + working trees + docker-контекст) или чистить параллельно |
+| ID | Что | Тип | Снятие | Класс |
+|---|---|---|---|---|
+| P1 | 5 GitHub-репозиториев не созданы | организационное | создать пустые (без README), default `master`; bare + hooks — §7.2 prep-plan | **HARD** — bare/GitHub/hooks должны существовать до первого push (§9, шаг 5) |
+| P2 | работа в `c21.4-…`, `master` отстаёт на 136 коммитов | git-гигиена | FF `master` до c21.4 (§7.1 prep-plan — fast-forward по построению) | **HARD** — filter-repo запускается только на финальной линейной истории |
+| P3 | npm-токен недействителен (E401) — publish недоступен, npm install публичных пакетов работает | секреты | выпустить/обновить NPM_TOKEN; до этого publish-ветка CI не пройдёт | **POST-SPLIT** — сам filter-repo не блокирует; обязателен для publish-CI после split |
+| P4 | untracked root `package.json` / `workflow.json` / `local.properties` | данные | решение зафиксировано (этот документ): `workflow.json` — **RETIRE** (§2.1, §2.6: runtime не читает, mount мёртв, из whitelist исключён); `local.properties` — **VPS-local**, из whitelist §8.3 исключён (§2.3); root `package.json` — RETIRE (B12). До split: физически удалить каталог-заглушку `workflow.json` | **HARD** — определяет выполняемые whitelist'ы |
+| P5 | CI отсутствует во всех будущих репо (`.github/` нет) | процесс | создать workflows до split (§11 prep-plan шаг 4); минимум G1–G5 (§10 prep-plan) | **HARD** — §10 prep-plan: G1–G5 до физического split |
+| P6 | диск 3.5 GB свободно (97% занято) | ресурсы | освободить ≥3 GB (5 клонов×~60 MB + working trees + docker-контекст) | **HARD** — клон/filter-repo могут упасть посреди операции |
 
-Блокеров, требующих изменения архитектуры/кода/плана: **нет**. B1–B12 из
-prep-plan остаются в силе как этапы исполнения (не как препятствия для старта
-split-механики): P-список выше — минимальный вход в исполнение §7–§11.
+Блокеров, требующих изменения архитектуры/кода/плана: **нет**. B1–B12 —
+обязательные этапы исполнения ДО filter-repo (§9, шаги 1–4), а не опция:
+запуск filter-repo при невыполненных B-этапах или открытых HARD-пунктах
+P1/P2/P4/P5/P6 запрещён. Единственный POST-SPLIT пункт — P3.
 
-## 9. Exact recommended execution order
+## 9. Exact recommended execution order (согласован с prep plan §11)
 
-0. Pre: P1–P6 (репо GitHub, FF master, npm-токен, untracked-решения, CI-workflows, диск).
-1. Создать 5 bare на VPS + hooks (до пушей); guard по basename.
-2. Для каждого репо (очередь: backend → web → android → worker → gpu-hub):
+Единственный допустимый порядок. `filter-repo` — только шаг 6; запуск при
+невыполненных шагах 0–5 или открытых HARD-пунктах P1/P2/P4/P5/P6 запрещён.
+
+0. **FF master** (P2): `master` fast-forward до `c21.4-…` (§7.1 prep-plan);
+   удалить `tmp/parser-audit-backup` (по подтверждению); физически удалить
+   каталог-заглушку `workflow.json` (решение RETIRE, P4).
+1. **Размонорепизация** (B1–B4, B6, B8, B12): contracts в `dependencies`,
+   11 backend + 13 web `file:` → npm, удаление 5 mounts, sync-protocol на
+   npm-резолв, web dist build pipeline, удаление root `package.json`;
+   гварды G1/G2/G3. Каждый шаг — отдельный коммит с тестами.
+2. **Артефактная схема hub** (B5): Release-артефакты (`worker-bundle-v2.1.1`;
+   `hub-artifacts-v1` — 3 asset), pin-файл `artifacts.lock.json`, stager на
+   release-артефактах, G4+G5.
+3. **Перенос тестов** (B7) по §9 prep-plan (39 KEEP + 4 SPLIT + 2 MOVE +
+   1 RETIRE, +7 интеграционных); G6.
+4. **CI** (B9, P5): workflows в монорепо-путях так, чтобы переехали без
+   переписывания; минимум G1–G5 зелёные (§10 prep-plan). Также P6:
+   освободить ≥3 GB диска.
+5. **Инфраструктура публикации** (P1): 5 bare на VPS + 5 пустых GitHub-репо;
+   post-receive hooks (§7.2 prep-plan) — до первого push; guard по basename;
+   G7.
+6. **Физический filter-repo split** — только здесь. Очередь: backend → web →
+   android → worker → gpu-hub; для каждого:
    a. полный клон монорепо во временный каталог;
-   b. `git filter-repo --path <white-list §8.n>` (+ `--tag-rename` при коллизиях тегов);
-   c. проверки §6 этого документа;
+   b. `git filter-repo --path <§8.n prep-plan>` с override'ами этого
+      документа: §8.1 без `--path workflow.json` (untracked, RETIRE),
+      §8.3 без `--path local.properties` (VPS-local);
+      (+ `--tag-rename` при коллизиях тегов);
+   c. post-split verification (§6);
    d. push в VPS bare; hook зеркалирует в GitHub;
-   e. проверки §7 этого документа.
-3. Миграция зависимостей в новом backend/web (B1–B3): npm-версии вместо `file:`, удаление mounts, регенерация lock; G1/G2.
-4. Worker: contracts devDep + npm-резолв sync-protocol (B6); G3.
-5. Hub: pin-файл `artifacts.lock.json`, stager на release-артефактах, G4/G5 (B5).
-6. Перенос тестов по §9 prep-plan (B7); G6 во всех репо.
-7. Деплой-декомпозиция (B11): compose-пути на выкачки новых bare.
-8. Freeze монорепо (архив); финальная сверка tips bare↔GitHub.
+   e. GitHub mirror verification (§7).
+7. **Freeze монорепо** (архив); финальная сверка tips bare ↔ GitHub.
+8. **Deployment cutover** (B11): compose-пути на выкачки новых bare;
+   снятие мёртвого `workflow.json`-mount (contracts-mount снят в B1);
+   nginx-портал на выкачки.
+
+P3 (npm-токен) — POST-SPLIT REQUIREMENT: закрыть до первого publish из
+отфильтрованных репозиториев; сам filter-repo не блокирует.
 
 ## 10. Особые случаи — сверка с планом
 
@@ -256,6 +299,26 @@ split-механики): P-список выше — минимальный вх
 - **docs/ archive/portal**: backend KEEP целиком (архив+портал), подмножества COPY у web/worker/hub — двойное владение объявлено (§8 prep-plan), редактирование — только у владельца.
 - **Git history preservation**: filter-repo по white-list в клоне; `--follow`-проверки §6; теги — фильтруются вместе; коллизии тегов между репо устраняются `--tag-rename`.
 - **Отсутствие случайного переноса**: все 5 white-list'ов — префиксные white-list; проверка №4 §6 детектирует чужие домены.
+- **Untracked-пути в whitelist (override; prep plan НЕ меняется)**: `workflow.json` (§8.1) и `local.properties` (§8.3) никогда не были tracked — строки `--path` для них no-op; из выполняемых команд исключаются: `workflow.json` — RETIRE (runtime не читает), `local.properties` — VPS-local. Выполняемые whitelist'ы = §8.n prep-plan минус эти две строки.
+
+---
+
+## 11. Самопроверка (сверка с preparation plan rev 3.2)
+
+- Статус един во всех разделах (Executive result, §8, §9, Вердикт):
+  **PHYSICAL SPLIT: BLOCKED**; READY — только после hard prerequisites.
+- Порядок исполнения §9 = prep plan §11: 0. FF → 1. B1–B4/B6/B8/B12 →
+  2. B5 → 3. B7 → 4. B9 (G1–G5) → 5. bare/GitHub/hooks → 6. filter-repo →
+  7. freeze → 8. cutover; filter-repo раньше шагов 0–5 невозможен.
+- Path matrix §2 ↔ §8.1–8.5 prep-plan: расхождение только в двух объявленных
+  override'ах — `workflow.json` (RETIRE) и `local.properties` (VPS-local);
+  оба untracked, истории не имеют; prep plan не меняется.
+- RETIRE §2.6 ↔ §3.1/§3.3: `workflow.json`, root `package.json`,
+  `local.properties` — в split-историю не попадают.
+- Классификация §8: HARD = P1, P2, P4, P5, P6; POST-SPLIT = P3 (единственный).
+- CI-матрица §5 ↔ G1–G7 (§10 prep-plan): G1/G2 — backend+web, G3 — worker,
+  G4/G5 — hub, G6 — все, G7 — snapshot-репо.
+- Верификации §6/§7 ссылаются только на пути из выполняемых whitelist'ов.
 
 ---
 
@@ -263,11 +326,20 @@ split-механики): P-список выше — минимальный вх
 
 Исполнимость §7–§11 preparation plan подтверждена разведкой окружения
 (git-filter-repo 2.47.0, hook-механика, размеры, отсутствие tracked-секретов
-и node_modules, отсутствие cross-domain симлинков в истории).
+и node_modules, отсутствие cross-domain симлинков в истории). План не требует
+изменений.
 
-Обнаружены 6 административных pre-conditions (P1–P6, §8), не требующих
-изменения кода или плана: 2 из них (P4 — `workflow.json`/`local.properties`,
-P2 — FF master) желательно закрыть до первого filter-repo, остальные — в
-процессе исполнения.
+**PHYSICAL SPLIT: BLOCKED** до выполнения HARD prerequisites:
 
-**PHYSICAL SPLIT: BLOCKED — P1 (GitHub-репозитории не созданы), P2 (master не fast-forward'нут до c21.4), P3 (npm-токен недействителен), P4 (untracked workflow.json/local.properties не решены), P5 (CI-workflows не созданы), P6 (диск 3.5 GB — впритык для 5 клонов). После закрытия P1–P6 — READY.**
+- этапы §9 (шаги 1–4): размонорепизация B1–B4, B6, B8, B12 → артефактная
+  схема B5 → перенос тестов B7 → CI B9 с G1–G5;
+- P2 (FF `master` до c21.4), P4 (untracked-решения: `workflow.json` — RETIRE,
+  `local.properties` — VPS-local; зафиксировано этим документом), P5
+  (CI-workflows, G1–G5), P6 (диск ≥3 GB);
+- P1 (bare + GitHub-репозитории + hooks) — к шагу 5, до первого push.
+
+**POST-SPLIT REQUIREMENT** (сам filter-repo не блокирует): P3 — возобновить
+NPM_TOKEN для publish-CI отфильтрованных репозиториев.
+
+После закрытия всех HARD пунктов статус становится READY и выполняется шаг 6
+(filter-repo) в порядке §9.
