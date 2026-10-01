@@ -106,7 +106,15 @@ require('@animastor/orchestration').ports.layerConfig.setLayerConfigPort(
 // §32.30: HOST BINDINGS for the extracted orchestration package — mirrors the
 // composition-root wiring in backend.cjs. Resolver semantics (zero-arg fns)
 // keep require.cache stubbing working exactly as before the move.
-require('@animastor/orchestration').bindHostModules({
+//
+// PRE-SPLIT DUAL-WIRING: the hoisted binding maps below are applied to BOTH
+// the npm registry copy (requires above) and the monorepo copy under
+// packages/** (try-blocks at the bottom). Before the lock-file decoupling
+// they were ONE module instance through the workspaces symlink; architecture
+// tests still read the monorepo sources, so the monorepo copies must be
+// wired too. The try-blocks become no-ops after the physical split, when
+// packages/** lives in its own repository checkout.
+const HOST_MODULE_BINDINGS = {
     config: () => require('../src/config/runtime-config'),
     state: () => require('../src/state'),
     stateOps: () => require('../src/state/scene-state-ops'),
@@ -124,4 +132,20 @@ require('@animastor/orchestration').bindHostModules({
             return await require('../src/runtime/gpu-dispatcher').resolveWorkspaceForBook(bookId);
         } catch (_) { return null; } /* system pool availability only */
     },
-});
+};
+require('@animastor/orchestration').bindHostModules(HOST_MODULE_BINDINGS);
+
+// Same dual-wiring for the GenerationConfig port: the adapter above wired the
+// npm copy; wire the monorepo copy so registry self-bootstrap inside the
+// monorepo sources (read directly by the S2 suite) finds a wired port.
+try {
+    const runtimeConfig = require('../src/config/runtime-config');
+    require('../../packages/animastor-generation/src/ports/generation-config').setGenerationConfig({
+        leaseTtlS: runtimeConfig.LEASE_TTL_S,
+        quotas: runtimeConfig.QUOTAS,
+        stuckThresholds: runtimeConfig.STUCK_THRESHOLDS,
+    });
+} catch (_) { /* post-split: monorepo checkout not present */ }
+try {
+    require('../../packages/animastor-orchestration/src/index.js').bindHostModules(HOST_MODULE_BINDINGS);
+} catch (_) { /* post-split: monorepo checkout not present */ }

@@ -35,3 +35,18 @@ const { setStructureDetector } = require('@animastor/parser');
 
 configureBooksRoot(() => config.BOOKS_DIR);
 setStructureDetector(require('../src/services/structure-detector'));
+
+// PRE-SPLIT DUAL-WIRING: pre-decoupling the npm specifiers above resolved to
+// ONE module instance with packages/** through the workspaces symlink, so the
+// binding below served both worlds. With registry copies in node_modules the
+// architecture suites that require packages/** sources directly read a
+// SEPARATE module instance — wire that instance too. The try-blocks become
+// no-ops after the physical split (packages/** in their own repo checkout).
+try {
+    require('../../packages/animastor-vbook-runtime/src/books-root.js')
+        .configureBooksRoot(() => config.BOOKS_DIR);
+} catch (_) { /* post-split: monorepo checkout not present */ }
+try {
+    require('../../packages/animastor-parser/src/index.js')
+        .setStructureDetector(require('../src/services/structure-detector'));
+} catch (_) { /* post-split: monorepo checkout both fixtures — idempotent rebind */ }

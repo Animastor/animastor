@@ -57,13 +57,50 @@ B1/B2/B3/B6/B8/B12 + подготовка B7. Физический split НЕ в
 | `diff` npm-копий (contracts, gpu-hub) vs monorepo | byte-identical по всем сверенным файлам |
 | Байт-идентичность `job-protocol-v2.cjs` | sha256 копии и канона без изменений после правок |
 
+## 2.1 Верификация лок-файлов — вторая итерация (текущая)
+
+Первая итерация (§2) выполнялась на унаследованных `node_modules` (частично — ещё workspace-симлинки). Эта итерация: полная регенерация обоих локов и чистый `npm ci`-сценарий с нуля.
+
+### Backend
+
+| Шаг | Результат |
+|---|---|
+| `rm -rf node_modules package-lock.json && npm install` | лок регенерирован; guard-greps: **0** `"link": true`, **0** `"resolved": "../packages…"`, **0** `"file:`; все 13 `@animastor/*` + comfyui-connector из registry (включая вложенные `vbook-runtime@0.1.0` у ai-analysis/editor/player; верхнеуровневый `vbook-runtime@0.2.0`) |
+| `rm -rf node_modules && npm ci` | ✓ чистая установка; `require.resolve` всех 8 runtime-dep ✓; `node_modules/@animastor/contracts` — реальный каталог registry-версии 0.1.1 |
+| `npm run test:arch` после регена | было **965/9** → после фикса фикстур **972/2** (обе — pre-existing: IB-G15, T9) |
+| `npm test` (полный suite) | 972 passing / 2 failing |
+
+### Регрессия dual-instance в тестах (найдена и закрыта)
+
+После подмены симлинков registry-копиями архитектурные тесты, требующие монорепо-исходники напрямую (`packages/animastor-generation/src`, `packages/animastor-orchestration/src`, `packages/animastor-vbook-runtime/src`), стали читать **второй экземпляр** портов: mocharc-фикстуры wire'или npm-копию, тесты — монорепо-копию → registry монорепо-копии оставался пуст (self-bootstrap молча падал в try/catch), `bindHostModules`/`configureBooksRoot` не применялись. Раньше это была одна физика через workspaces-симлинк (realpath-схлопывание).
+
+Фикс — фикстуры дополнительно wire'ят монорепо-копии (hoisting `HOST_MODULE_BINDINGS`, try-блоки становятся no-op после физического split):
+
+- `backend/tests/generation-test-bindings.cjs` — `setGenerationConfig` + `bindHostModules` для `packages/animastor-generation|orchestration`;
+- `backend/tests/vbook-test-bindings.cjs` — `configureBooksRoot` + `setStructureDetector` для `packages/animastor-vbook-runtime|parser`.
+
+Продакшн (`backend.cjs`) не менялся: runtime живёт на npm-копиях. Все fail-fast тесты портов делают явный `_reset*` перед проверкой — pre-wiring безопасен (проверено прогоном).
+
+### Web
+
+| Шаг | Результат |
+|---|---|
+| Root cause рассинхрона `npm ci` | npm 10.9.8 arborist падает с `TypeError: … 'edgesOut'` на plain `npm install` (peer-резолюция vitest@4 ↔ vite@5), а `npm ci` без флага требует peer-поддерево (`esbuild@0.28.2` nested vite@8), которого в legacy-локе нет |
+| Фикс | `frontends/app/.npmrc` (repo-local) с `legacy-peer-deps=true` — install и ci на одном пути резолюции |
+| Регенерация | `rm -rf node_modules package-lock.json && npm install`; guard-greps: **0** link/local-resolved/`file:`; 13 web-* из registry |
+| Чистая цепочка | `rm -rf node_modules && npm ci` ✓ → `build:packages` (13 пакетов) ✓ → `typecheck` ✓ → vitest **201/201** ✓ → `vite build` ✓ |
+
+### Worker
+
+`node tools/sync-protocol.cjs --check` после чистого `npm ci` backend — ✓ exit 0 (npm-resolve канона работает с registry-деревом).
+
 ## 3. Таблица B1–B12 после изменений
 
 | ID | Статус | Комментарий |
 |---|---|---|
 | B1 | **DONE** | оба скрытых dep объявлены; mount'ы сняты; container-резолв — из npm внутри образа |
 | B2 | **DONE** | 11 `file:` → npm; 5 mounts удалены; 3 lock-файла созданы; `test:connector-core` post-split-совместим; backend собирается/тестируется без monorepo |
-| B3 | **DONE** | 13 `file:` → npm; app install/typecheck/test/build зелёные |
+| B3 | **DONE** | 13 `file:` → npm; лок регенерирован (0 link/local/file), `npm ci` ✓; `.npmrc` `legacy-peer-deps=true` (баг arborist npm 10.9.8 + peer vitest@4↔vite@5); цепочка ci → build:packages → typecheck → test (201/201) → build зелёная |
 | B4 | **DONE (инвариант подтверждён)** | изменений пакетов не требовалось: реальные deep-import'ы покрыты `exports`; negative-control require'ы по-прежнему бросают (проверено test:arch) |
 | B5 | **OPEN (код не менялся — по ТЗ)** | Dockerfile/stager/check-artifacts не тронуты; реализация — следующий этап |
 | B6 | **DONE** | npm-resolve канона; `--check` зелёный; копия байт-неизменна; dev-harness манифест с contracts devDep |
