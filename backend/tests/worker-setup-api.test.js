@@ -27,7 +27,8 @@ const { runMigrations } = require('../src/storage/postgres/schema');
 const { authContext } = require('../src/middleware/auth-context');
 const config = require('../src/config/runtime-config');
 const { createMockRedis } = require('./mocks/redis-mock');
-const { buildHubApp } = require('../../packages/animastor-gpu-hub/gpu-hub');
+// B7/R-2 (pre-split decoupling, 2026-10): hub via npm devDependency.
+const { buildHubApp } = require('@animastor/gpu-hub/gpu-hub.js');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
 

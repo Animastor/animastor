@@ -20,8 +20,14 @@ const os = require('os');
 const path = require('path');
 
 const { createMockRedis } = require('./mocks/redis-mock');
-const { buildHubApp } = require('../../packages/animastor-gpu-hub/gpu-hub');
-const { buildBootstrapScript } = require('../../packages/animastor-gpu-hub/bootstrap');
+// B7/R-2 (pre-split decoupling, 2026-10): the hub is consumed as the
+// published npm package (@animastor/gpu-hub devDependency) instead of the
+// monorepo source path — the source path disappears from the backend repo
+// after filter-repo. npm copy is verified byte-identical at decoupling time.
+// NOTE: the package `main` is server.js (a live server entry) — import the
+// individual modules, never the package root.
+const { buildHubApp } = require('@animastor/gpu-hub/gpu-hub.js');
+const { buildBootstrapScript } = require('@animastor/gpu-hub/bootstrap.js');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
 const REAL_MANIFESTS = path.join(REPO_ROOT, 'packages', 'animastor-installer', 'ai', 'install-manifests');

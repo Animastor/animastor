@@ -29,7 +29,11 @@ const { expect } = require('chai');
 const path = require('path');
 const { listSourceFiles, readSource, rel, REPO_ROOT, WORKER_BUNDLE_DIR } = require('./helpers');
 
-const HUB_DIR = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub');
+// B7/R-4 (pre-split decoupling, 2026-10): hub source read via the npm
+// devDependency — the monorepo path packages/animastor-gpu-hub disappears
+// from the backend repo after filter-repo. The npm copy ships the same
+// 9-file package (gpu-hub.js, server.js, tarball.js, bootstrap.js, ...).
+const HUB_DIR = path.dirname(require.resolve('@animastor/gpu-hub/gpu-hub.js', { paths: [path.join(REPO_ROOT, 'backend')] }));
 const CONTRACTS_IMPL = path.join(REPO_ROOT, 'packages', 'animastor-contracts', 'src', 'job-protocol-v2.js');
 const WORKER_REPO = path.join(REPO_ROOT, 'backend', 'src', 'storage', 'postgres', 'repositories', 'worker-repo.js');
 

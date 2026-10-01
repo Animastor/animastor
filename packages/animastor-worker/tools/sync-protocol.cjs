@@ -48,24 +48,33 @@ const path = require("path");
 // identical before and after the physical relocation of the package.
 const BUNDLE_TARGET = path.resolve(__dirname, "..", "worker", "job-protocol-v2.cjs");
 
-// Canonical source: try the repo-root depths that exist before (worker/tools
-// → 2 levels up) and after (packages/animastor-worker/tools → 3 levels up)
-// the relocation; first hit wins. Standalone checkouts keep the current
-// 2-level fallback (canonical simply stays missing there).
-const CANONICAL_CANDIDATES = [
-    path.resolve(__dirname, "..", "..", "..", "packages", "animastor-contracts", "src", "job-protocol-v2.js"),
-    path.resolve(__dirname, "..", "..", "packages", "animastor-contracts", "src", "job-protocol-v2.js"),
-];
-const CANONICAL_DEPTH = CANONICAL_CANDIDATES.findIndex((p) => fs.existsSync(p));
-const CANONICAL_PATH = CANONICAL_DEPTH >= 0
-    ? CANONICAL_CANDIDATES[CANONICAL_DEPTH]
-    : CANONICAL_CANDIDATES[CANONICAL_CANDIDATES.length - 1];
+// Canonical source: B6 (pre-split decoupling, 2026-10) — resolved through
+// npm. @animastor/contracts is a devDependency of the worker; the canonical
+// job-protocol-v2.js lives next to the package's exported entry point (deep
+// subpath resolve is blocked by the package `exports` map by design, so we
+// walk up to the package root owning package.json). Monorepo-relative
+// candidate paths (pre-split) were removed — after the physical split they
+// cannot exist; in the monorepo the npm install provides the same bytes.
+function resolveCanonicalPath() {
+    let entry;
+    try {
+        entry = require.resolve("@animastor/contracts", { paths: [__dirname] });
+    } catch (err) {
+        return null; // devDependency not installed — caller decides
+    }
+    let dir = path.dirname(entry);
+    for (;;) {
+        dir = path.dirname(dir);
+        const pkg = path.join(dir, "package.json");
+        if (fs.existsSync(pkg) && JSON.parse(fs.readFileSync(pkg, "utf8")).name === "@animastor/contracts") {
+            return path.join(dir, "src", "job-protocol-v2.js");
+        }
+    }
+}
+const CANONICAL_PATH = resolveCanonicalPath() || "@animastor/contracts/src/job-protocol-v2.js (not installed)";
 const CANONICAL_PKG_PATH = path.join(path.dirname(path.dirname(CANONICAL_PATH)), "package.json");
 
-const REPO_ROOT = path.resolve(
-    __dirname,
-    ...(CANONICAL_DEPTH === 0 ? ["..", "..", ".."] : ["..", ".."])
-);
+const REPO_ROOT = path.resolve(__dirname, "..", "..");
 
 // The generated file is exactly: HEADER + canonical bytes. Everything after
 // the marker line is canonical, byte for byte — the parity contract.

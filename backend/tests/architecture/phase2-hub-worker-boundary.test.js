@@ -23,7 +23,11 @@ const path = require('path');
 const fs = require('fs');
 const { readSource, rel, REPO_ROOT, WORKER_BUNDLE_DIR } = require('./helpers');
 
-const gpuHubPath = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub', 'gpu-hub.js');
+// B7/R-4 (pre-split decoupling, 2026-10): hub source read via the npm
+// devDependency — the monorepo path packages/animastor-gpu-hub disappears
+// from the backend repo after filter-repo.
+const HUB_NPM_DIR = path.dirname(require.resolve('@animastor/gpu-hub/gpu-hub.js', { paths: [path.join(REPO_ROOT, 'backend')] }));
+const gpuHubPath = path.join(HUB_NPM_DIR, 'gpu-hub.js');
 const workerPath = path.join(WORKER_BUNDLE_DIR, 'worker.cjs');
 const dispatcherPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'gpu-dispatcher.js');
 const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-schema.js');
@@ -93,9 +97,9 @@ describe('architecture: GPU Hub / Worker boundary — role separation', () => {
 
     it('hub has no code-level backend/worker source dependencies (HTTP + shared Redis only)', () => {
         const banned = /require\(['\"][^'\"]*(backend\/src|backend\/ai|worker\/worker|frontends)/;
-        for (const file of fs.readdirSync(path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub'))) {
+        for (const file of fs.readdirSync(HUB_NPM_DIR)) {
             if (!/\.js$/.test(file) && !/\.cjs$/.test(file)) continue;
-            const src = readSource(path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub', file));
+            const src = readSource(path.join(HUB_NPM_DIR, file));
             expect(src, file).to.not.match(banned);
         }
     });

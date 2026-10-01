@@ -57,7 +57,8 @@ const workerRepo = require('../src/storage/postgres/repositories/worker-repo');
 const taskRepo = require('../src/storage/postgres/repositories/task-repo');
 const { createMockRedis } = require('./mocks/redis-mock');
 
-const hub = require('../../packages/animastor-gpu-hub/gpu-hub');
+// B7/R-2 (pre-split decoupling, 2026-10): hub via npm devDependency.
+const hub = require('@animastor/gpu-hub/gpu-hub.js');
 const { buildHubApp, WORKER_AUTH_MIRROR_KEY, ORPHAN_GRACE_MS } = hub;
 
 const stamp = `pwphase2${Date.now()}`;

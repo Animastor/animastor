@@ -22,14 +22,28 @@ const fs = require('fs');
 const path = require('path');
 const { readSource, rel, REPO_ROOT, WORKER_BUNDLE_DIR } = require('./helpers');
 
-const gpuHubPath = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub', 'gpu-hub.js');
+const gpuHubPath = require.resolve('@animastor/gpu-hub/gpu-hub.js', { paths: [path.join(REPO_ROOT, 'backend')] }); // B7/R-4: hub source via npm devDependency (monorepo path disappears after filter-repo)
 const workerPath = path.join(WORKER_BUNDLE_DIR, 'worker.cjs');
 const dispatcherPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'gpu-dispatcher.js');
 const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-schema.js');
 // Phase 9C: the canonical Job Protocol v2 implementation moved to the
 // @animastor/contracts package; backend/src/runtime/job-schema.js is a
 // compatibility facade re-exporting it.
-const contractsImplPath = path.join(REPO_ROOT, 'packages', 'animastor-contracts', 'src', 'job-protocol-v2.js');
+// B1 (pre-split decoupling, 2026-10): resolve the canonical protocol
+// implementation from the backend's npm dependency so the facade and the
+// canonical impl are the SAME module instance. Package root is derived from
+// the EXPORTED entry point (deep subpath resolve is blocked by the package
+// `exports` map by design); source-level reads of the same file keep using
+// this path — the npm copy is byte-identical to the package checkout.
+const contractsPkgDir = (() => {
+    let dir = path.dirname(require.resolve('@animastor/contracts', { paths: [path.join(REPO_ROOT, 'backend')] }));
+    for (;;) {
+        dir = path.dirname(dir);
+        const pkg = path.join(dir, 'package.json');
+        if (fs.existsSync(pkg) && JSON.parse(fs.readFileSync(pkg, 'utf8')).name === '@animastor/contracts') return dir;
+    }
+})();
+const contractsImplPath = path.join(contractsPkgDir, 'src', 'job-protocol-v2.js');
 
 function read(file) {
     return readSource(file);

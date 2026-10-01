@@ -1,0 +1,18 @@
+{
+  "name": "@animastor/worker-dev",
+  "version": "2.1.1",
+  "private": true,
+  "description": "Dev harness for the animastor-worker bundle (packages/animastor-worker). NOT published: the distributable artifact is the zero-dependency bundle in worker/ (animastor-worker@2.1.1, GitHub Release zip + sha256). This manifest exists so the worker repo can install @animastor/contracts as a devDependency for tools/sync-protocol.cjs (B6, npm-resolve of the canonical Job Protocol v2 source).",
+  "scripts": {
+    "test": "node tests/run-all.cjs",
+    "sync:protocol": "node tools/sync-protocol.cjs",
+    "check:protocol": "node tools/sync-protocol.cjs --check"
+  },
+  "devDependencies": {
+    "@animastor/contracts": "^0.1.1"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

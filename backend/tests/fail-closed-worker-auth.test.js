@@ -46,7 +46,8 @@ const config = require('../src/config/runtime-config');
 const workerRepo = require('../src/storage/postgres/repositories/worker-repo');
 const { createMockRedis } = require('./mocks/redis-mock');
 
-const hub = require('../../packages/animastor-gpu-hub/gpu-hub');
+// B7/R-2 (pre-split decoupling, 2026-10): hub via npm devDependency.
+const hub = require('@animastor/gpu-hub/gpu-hub.js');
 const { buildHubApp, WORKER_AUTH_MIRROR_KEY, PROTOCOL_VERSION } = hub;
 
 const stamp = `fcwa${Date.now()}`;

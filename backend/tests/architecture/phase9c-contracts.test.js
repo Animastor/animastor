@@ -35,9 +35,27 @@ const {
     WORKER_BUNDLE_DIR,
 } = require('./helpers');
 
+// B1 (pre-split decoupling, 2026-10): the backend declares
+// @animastor/contracts as a regular npm dependency — the monorepo source
+// checkout is no longer the required resolution path (npm `node_modules`
+// copy inside backend/, compose mount removed). Runtime-identity checks
+// resolve the npm copy (single module instance); source-level checks keep
+// scanning the package checkout (the npm tarball is built from it).
 const CONTRACTS_DIR = path.join(REPO_ROOT, 'packages', 'animastor-contracts');
-const CONTRACTS_IMPL_PATH = path.join(CONTRACTS_DIR, 'src', 'job-protocol-v2.js');
-const CONTRACTS_INDEX_PATH = path.join(CONTRACTS_DIR, 'src', 'index.js');
+// npm-copy package root, derived from the EXPORTED entry point (deep
+// subpath resolve is blocked by the package `exports` map by design):
+// walk up from the resolved entry file until the package's own package.json.
+function npmContractsPkgDir() {
+    let dir = path.dirname(require.resolve('@animastor/contracts', { paths: [path.join(REPO_ROOT, 'backend')] }));
+    for (;;) {
+        dir = path.dirname(dir);
+        const pkg = path.join(dir, 'package.json');
+        if (fs.existsSync(pkg) && JSON.parse(fs.readFileSync(pkg, 'utf8')).name === '@animastor/contracts') return dir;
+    }
+}
+const CONTRACTS_PKG_DIR = npmContractsPkgDir();
+const CONTRACTS_IMPL_PATH = path.join(CONTRACTS_PKG_DIR, 'src', 'job-protocol-v2.js');
+const CONTRACTS_INDEX_PATH = path.join(CONTRACTS_PKG_DIR, 'src', 'index.js');
 const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-schema.js');
 const gpuHubPath = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub', 'gpu-hub.js');
 const WORKER_DIR = WORKER_BUNDLE_DIR;
@@ -315,10 +333,20 @@ describe('Phase 9C: cross-side Job Protocol v2 parity', () => {
 });
 
 // ── C7 — deployment wiring ───────────────────────────────────────────────
+// ── C7 — deployment wiring ───────────────────────────────────────────────
 describe('Phase 9C: contracts deployment wiring', () => {
-    it('backend compose service mounts the contracts package read-only', () => {
+    it('backend compose service carries NO package mounts (B1/B2: deps resolve from npm inside the image)', () => {
         const compose = fs.readFileSync(path.join(REPO_ROOT, 'docker-compose.yml'), 'utf8');
-        expect(compose).to.include('./packages/animastor-contracts:/app/node_modules/@animastor/contracts:ro');
+        const backendSection = compose.slice(compose.indexOf('  backend:'), compose.indexOf('  gpu-hub:'));
+        for (const pkg of [
+            '@animastor/contracts',
+            'animastor-comfyui-workflow-connector',
+            '@animastor/vbook-runtime',
+            '@animastor/player',
+            '@animastor/installer',
+        ]) {
+            expect(backendSection, `monorepo package mount for ${pkg} must NOT return`).to.not.include(`packages/${pkg.replace('@animastor/', 'animastor-')}:/app/node_modules`);
+        }
     });
 
     it('gpu-hub compose service carries NO contracts mount (Phase 10G: hub resolves the published registry package)', () => {

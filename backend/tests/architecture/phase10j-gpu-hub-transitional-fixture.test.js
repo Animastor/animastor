@@ -47,8 +47,16 @@ describe('phase10j: transitional fixture status (gpu-hub/)', () => {
     it('gpu-hub/ carries no production npm dependencies of the backend (fixture stays isolated)', () => {
         const backendPkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'backend', 'package.json'), 'utf8'));
         const deps = { ...(backendPkg.dependencies || {}), ...(backendPkg.devDependencies || {}) };
+        // B7/R-2 (2026-10): @animastor/gpu-hub is now an EXPLICIT backend
+        // devDependency (test-only consumer of the hub's exported app
+        // factory — the wire contract remains HUB_URL + Redis + API key;
+        // backend/src still requires nothing from the hub, TF2 below).
         expect(Object.keys(deps).filter((k) => k.includes('gpu-hub')),
-            'backend must not declare @animastor/gpu-hub as a dependency while the fixture exists').to.deep.equal([]);
+            'backend declares @animastor/gpu-hub as devDependency (B7/R-2)')
+            .to.deep.equal(['@animastor/gpu-hub']);
+        expect(deps['@animastor/gpu-hub']).to.be.a('string');
+        expect(backendPkg.dependencies, 'the hub must stay OUT of production dependencies (wire-contract boundary)')
+            .to.not.have.property('@animastor/gpu-hub');
     });
 });
 

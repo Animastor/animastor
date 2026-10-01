@@ -21,7 +21,9 @@ const path = require('path');
 const zlib = require('zlib');
 
 const { createMockRedis } = require('./mocks/redis-mock');
-const { buildHubApp } = require('../../packages/animastor-gpu-hub/gpu-hub');
+// B7/R-2 (pre-split decoupling, 2026-10): hub via npm devDependency
+// (@animastor/gpu-hub) — monorepo source path disappears after filter-repo.
+const { buildHubApp } = require('@animastor/gpu-hub/gpu-hub.js');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
 const REAL_WORKER_DIR = require('./architecture/helpers').WORKER_BUNDLE_DIR;

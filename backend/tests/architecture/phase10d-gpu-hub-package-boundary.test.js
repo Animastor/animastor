@@ -45,7 +45,12 @@ const fs = require('fs');
 const { spawnSync } = require('child_process');
 const { REPO_ROOT } = require('./helpers');
 
-const HUB_DIR = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub');
+// B7/R-4 (pre-split decoupling, 2026-10): the hub is consumed via the npm
+// devDependency. Boundary tests that inspect the PACKAGE SOURCE (pack
+// surface, Dockerfile, package.json) run against the npm package dir;
+// the monorepo path packages/animastor-gpu-hub disappears from the backend
+// repo after filter-repo.
+const HUB_DIR = path.dirname(require.resolve('@animastor/gpu-hub/gpu-hub.js', { paths: [path.join(REPO_ROOT, 'backend')] }));
 const PKG_JSON = path.join(HUB_DIR, 'package.json');
 const PKG_LOCK = path.join(HUB_DIR, 'package-lock.json');
 
@@ -98,10 +103,16 @@ describe('phase10d: GPU Hub package identity', () => {
 });
 
 // ── PB3 — lockfile sync + contracts link ────────────────────────────────
+// B7/R-4 (2026-10): the npm tarball does NOT ship package-lock.json (lock
+// files are never packed) and the hub-local node_modules tree lives in the
+// monorepo checkout, not in the npm install. Lockfile/link assertions are
+// therefore retargeted at the monorepo source checkout (owner repo until
+// filter-repo; the same assertions live in the hub repo post-split).
 
 describe('phase10d: GPU Hub lockfile + contracts dependency', () => {
     const pkg = JSON.parse(fs.readFileSync(PKG_JSON, 'utf8'));
-    const lock = JSON.parse(fs.readFileSync(PKG_LOCK, 'utf8'));
+    const HUB_SRC_DIR = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub');
+    const lock = JSON.parse(fs.readFileSync(path.join(HUB_SRC_DIR, 'package-lock.json'), 'utf8'));
 
     it('package-lock.json is in sync with the manifest identity', () => {
         expect(lock.name).to.equal(pkg.name);
@@ -119,10 +130,10 @@ describe('phase10d: GPU Hub lockfile + contracts dependency', () => {
     });
 
     it('hub-local node_modules link to contracts exists (installed tree resolves without monorepo root)', () => {
-        const link = path.join(HUB_DIR, 'node_modules', '@animastor', 'contracts');
+        const link = path.join(HUB_SRC_DIR, 'node_modules', '@animastor', 'contracts');
         // Only enforced when the tree is installed (npm ci); guards run in
         // repos where the hub install has been performed.
-        if (fs.existsSync(path.join(HUB_DIR, 'node_modules'))) {
+        if (fs.existsSync(path.join(HUB_SRC_DIR, 'node_modules'))) {
             expect(fs.existsSync(link), 'run `npm ci` in gpu-hub/ — @animastor/contracts link missing').to.be.true;
         }
     });
@@ -237,17 +248,27 @@ describe('phase10d: canonical contracts resolution', () => {
     // here), plus the route/ownership freeze in the standalone suite.
     const contractsCanonical = path.join(REPO_ROOT, 'packages', 'animastor-contracts', 'src', 'index.js');
 
-    it('require.resolve(@animastor/contracts) from the hub tree lands inside the hub tree (registry install, not root fallback)', () => {
+    it('require.resolve(@animastor/contracts) from the hub package lands in an npm node_modules tree (registry install, not monorepo source)', () => {
+        // B7/R-4 (2026-10): HUB_DIR is now the npm install of the hub package
+        // (backend/node_modules/@animastor/gpu-hub) — hoisted resolution puts
+        // contracts in the backend node_modules root, which is exactly the
+        // registry-install (no root fallback) property this guard freezes.
         const resolved = fs.realpathSync(require.resolve('@animastor/contracts', { paths: [HUB_DIR] }));
-        expect(resolved.startsWith(fs.realpathSync(HUB_DIR) + path.sep),
-            `contracts must resolve inside ${HUB_DIR}, got ${resolved}`).to.be.true;
+        expect(resolved, 'contracts must resolve from an npm install, not the monorepo checkout')
+            .to.include(`${path.sep}node_modules${path.sep}@animastor${path.sep}contracts${path.sep}`);
+        expect(resolved.startsWith(fs.realpathSync(path.join(REPO_ROOT, 'packages', 'animastor-contracts'))),
+            'monorepo contracts source must NOT be the resolution target').to.be.false;
     });
 
-    it('resolved package identity is @animastor/contracts@0.1.0 (no copy, no fork)', () => {
+    it('resolved package identity is @animastor/contracts (no copy, no fork)', () => {
         const resolved = require.resolve('@animastor/contracts', { paths: [HUB_DIR] });
         const pkg = JSON.parse(fs.readFileSync(path.join(path.dirname(resolved), '..', 'package.json'), 'utf8'));
         expect(pkg.name).to.equal('@animastor/contracts');
-        expect(pkg.version).to.equal('0.1.0');
+        // B1 (2026-10): the backend tree pins ^0.1.1 — the resolved version
+        // must equal the canonical monorepo contracts version (no fork),
+        // instead of a hardcoded 0.1.0.
+        const canonicalPkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'packages', 'animastor-contracts', 'package.json'), 'utf8'));
+        expect(pkg.version).to.equal(canonicalPkg.version);
     });
 
     it('protocol parity: hub copy PROTOCOL_VERSION === monorepo canonical contracts value', () => {
