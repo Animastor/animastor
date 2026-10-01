@@ -1,6 +1,6 @@
 # Repository Split Preparation Plan
 
-Дата: 2026-10-01 (ревизия 2 — финальная техническая ревизия)
+Дата: 2026-10-01 (ревизия 3 — точечная коррекция ревизии 2)
 Ветка: `c21.4-physically-extract-analysis-from-backend`
 Статус: проектирование; физического разделения нет (read-only аудит; проверочные
 команды — `npm install` в `/tmp`, чтение файлов). Опирается на
@@ -122,29 +122,45 @@ contexts, `RUN curl` pinned release URL, CI-side staging. Меняется то�
 ### 2.1 Формула контракта
 
 ```
-artifact = name + version + source release + sha256 + consumer
+artifact = name + version + source repository + source release/tag
+         + release asset filename + sha256(asset) + consumer
 ```
 
-Каждый артефакт идентифицируется: именем, версией источника, релизом-источником
-(тег в репозитории-владельце), sha256 содержимого и потребителем.
+Каждый артефакт идентифицируется: именем, версией, репозиторием-источником,
+неизменяемым релизом/тегом, **конкретным именем asset внутри релиза**, sha256
+именно этого asset и потребителем. Pin не допускает неявного выбора: один
+Release может содержать несколько asset — ссылка всегда по точному имени
+файла asset.
 
 ### 2.2 Матрица артефактов
 
-| name | Публикует | Содержимое | Версия | source release | sha256 хранится в | consumer |
-|---|---|---|---|---|---|---|
-| `worker-bundle` | **animastor-worker** | 6 файлов из `worker/` (по `files` из `worker/worker/package.json`): `worker.cjs`, `worker-env.cjs`, `worker-cleanup.cjs`, `worker-cleanup-journal.cjs`, `job-protocol-v2.cjs`, `.env.example` | semver из `worker/worker/package.json` — сейчас **2.1.1** | GitHub Release тега `worker-bundle-v2.1.1` в animastor-worker | (1) body Release, (2) pin-файл hub (§2.5) | gpu-hub: bake → `/app/artifacts/worker-bundle/`; раздача воркерам; fingerprint-cache |
-| `hub-workflows` | **animastor-backend** | `backend/ai/workflows/*.json` (8 файлов) | версия = backend release-тег (напр. `artifacts-v1`) | GitHub Release в animastor-backend | (1) body Release, (2) pin-файл hub | gpu-hub: bake → `/app/artifacts/workflows/` |
-| `installer-src` | **animastor-backend** (пакет `@animastor/installer` живёт в backend-репо) | `packages/animastor-installer/src/installer/` + `package.json` (npm 0.1.0) | npm-версия `@animastor/installer` + backend release-тег | тот же GitHub Release animastor-backend | те же | gpu-hub: bake → `/app/artifacts/installer-src/`; воркер скачивает через hub |
-| `install-manifests` | **animastor-backend** | `packages/animastor-installer/ai/install-manifests/{audio,image,video}/*.json` | вместе с `installer-src` (единый backend release) | тот же GitHub Release animastor-backend | те же | gpu-hub: bake → `/app/artifacts/install-manifests/` |
+| name | Публикует (source repository) | Содержимое | Версия | Release tag | Release asset (точное имя файла) | sha256 хранится в | consumer |
+|---|---|---|---|---|---|---|---|
+| `worker-bundle` | **animastor-worker** | 6 файлов из `worker/` (по `files` из `worker/worker/package.json`): `worker.cjs`, `worker-env.cjs`, `worker-cleanup.cjs`, `worker-cleanup-journal.cjs`, `job-protocol-v2.cjs`, `.env.example` | semver из `worker/worker/package.json` — сейчас **2.1.1** | `worker-bundle-v2.1.1` | `animastor-worker-bundle-2.1.1.zip` | (1) body Release, (2) pin-файл hub (§2.5) | gpu-hub: bake → `/app/artifacts/worker-bundle/`; раздача воркерам; fingerprint-cache |
+| `hub-workflows` | **animastor-backend** | `backend/ai/workflows/*.json` (8 файлов) | release-версия — сейчас **v1** | `hub-artifacts-v1` | `hub-workflows-v1.zip` | (1) body Release, (2) pin-файл hub | gpu-hub: bake → `/app/artifacts/workflows/` |
+| `installer-src` | **animastor-backend** (пакет `@animastor/installer` живёт в backend-репо) | `packages/animastor-installer/src/installer/` + `package.json` (npm 0.1.0) | npm-версия `@animastor/installer` (**0.1.0**) + release **v1** | `hub-artifacts-v1` | `installer-src-v1.zip` | те же | gpu-hub: bake → `/app/artifacts/installer-src/`; воркер скачивает через hub |
+| `install-manifests` | **animastor-backend** | `packages/animastor-installer/ai/install-manifests/{audio,image,video}/*.json` | release **v1** | `hub-artifacts-v1` | `install-manifests-v1.zip` | те же | gpu-hub: bake → `/app/artifacts/install-manifests/` |
 
 Итого: **worker публикует 1 артефакт, backend — 3** (одним release-набором).
+Правило имён: asset filename = `<artifact>-<release-version>.zip`; backend-тег
+`hub-artifacts-v1` содержит три asset с суффиксом `v1`; npm-версия installer
+(0.1.0) фиксируется в pin-файле и внутри архива (`package.json`). Pin всегда
+ссылается на конкретный asset по точному имени — неявного выбора файла из
+Release не существует.
 Installer артефакты никуда не переезжают: пакет принадлежит backend-репо,
 hub лишь потребляет его содержимое как данные.
 
-### 2.3 Checksum / integrity — три уровня
+### 2.3 Checksum / integrity — инвариант и три уровня
 
-1. **Артефакт-архив**: sha256 zip/tar фиксирован в body GitHub Release и в
-   pin-файле hub; при загрузке в сборку — сверка (checksum mismatch = fail build).
+**Архитектурное правило (checksum invariant):** независимо от механизма
+доставки (BuildKit additional build contexts, CI-side staging, `RUN fetch`
+и т.п.) sha256 артефакта сверяется с pin-файлом/Release **на этапе staging,
+до попадания артефакта в финальный образ** (до `COPY --from=stager`).
+Checksum mismatch = fail build. `check-artifacts.sh` после сборки остаётся
+дополнительной проверкой, но **не заменяет** staging-проверку целостности.
+
+1. **Артефакт-архив**: sha256 конкретного asset (§2.2) фиксирован в body
+   GitHub Release и в pin-файле hub; сверка обязательна на staging (см. выше).
 2. **Внутренние базлайны (уже существуют)**: манифесты хранят
    `baseline_sha256` каждого workflow и `worker_bundle.min_version` —
    `check-artifacts.sh` проверяет [3/6] version compat и [4/6] SHA256 workflow.
@@ -156,16 +172,18 @@ hub лишь потребляет его содержимое как данны�
 
 ### 2.4 Как GPU Hub получает артефакт
 
-Stager-стейдж Dockerfile материализует 4 дерева в `/staging/artifacts/`
-(механизм — build inputs/`RUN fetch`, см. выше) → `COPY --from=stager` →
-`/app/artifacts/` → RUN-верификация в той же сборке. Runtime-резолв
-(`/app/artifacts/...`) не меняется; fallback-пути в монорепо отсутствуют.
+Stager-стейдж материализует 4 дерева (механизм — build inputs/`RUN fetch`,
+см. выше), **проверяет sha256 каждого asset против pin-файла на staging-шаге**
+и только затем отдаёт результат: `COPY --from=stager` → `/app/artifacts/` →
+RUN-верификация в той же сборке. Runtime-резолв (`/app/artifacts/...`) не
+меняется; fallback-пути в монорепо отсутствуют.
 
 ### 2.5 Что pin'ится для воспроизводимой сборки
 
 - **pin-файл hub-репо** (новый, напр. `artifacts.lock.json`): name →
-  `{ version, source_release, sha256 }` для всех 4 артефактов. Обновляется
-  осознанным коммитом при апгрейде артефактов.
+  `{ source_repository, release_tag, asset_filename, version, sha256 }` для
+  всех 4 артефактов (поля — по формуле §2.1; sha256 — конкретного asset).
+  Обновляется осознанным коммитом при апгрейде артефактов.
 - Базовые образы — по digest (`alpine:3.19`, `node:20-slim` → `@sha256:…`),
   как уже требует standalone-overlay для `GPU_HUB_IMAGE` (прод-образ
   `ghcr.io/animastor/animastor-gpu-hub@sha256:eb9a98…` — pin by digest).
@@ -245,8 +263,11 @@ mobile-web миграцию web-приложения.
   implementation (это зафиксировано в заголовке документа), parity-изменения
   инициируются изменениями web-функциональности.
 - **animastor-android** получает актуальность через **snapshot, синхронизируемый
-  CI**: job в android-репо сверяет sha256 canonical-файла из web-зеркала;
-  при изменении — открывает автоматический PR, обновляющий
+  CI**: владельцем canonical-файла является **animastor-web**; android-CI
+  забирает его из репозитория `animastor-web` по явному межрепозитному
+  механизму (fetch из VPS bare web или его полного клона; GitHub читается
+  только как mirror того же содержимого, §6 — не «источник») и проверяет
+  **commit + sha256 файла**. При изменении — автоматический PR, обновляющий
   `ANDROID_WEB_PARITY.md` в android-репо (путь сохраняется). До появления CI —
   ручной шаг в android-чеклисте релиза. Android **не редактирует** содержимое
   кроме служебного колонтитула «snapshot of web@<commit>».
@@ -255,8 +276,9 @@ mobile-web миграцию web-приложения.
 - `docs/08-mobile-web-migration/` — **целиком animastor-web** (документирует
   миграцию web-UI; тестовые харнессы `tools/*-web-tester` тоже web-репо).
   Android не получает эту директорию — его вход — только parity-файл.
-- После split: ссылки между репо — по имени репо GitHub (`Animastor/animastor-web`),
-  никаких относительных путей.
+- После split: ссылки между репо — по имени репозитория (`animastor-web`;
+  `Animastor/animastor-web` — лишь адрес его зеркала), никаких относительных
+  путей.
 
 ---
 
@@ -332,11 +354,15 @@ git push --mirror git@github.com:Animastor/animastor-backend.git
 
 ### 7.3 Первичная публикация (каждого репо одинаково)
 
-1. `git clone /home/animastor/repos/animastor.git /tmp/split-<name>` (полный клон).
+1. `git clone /home/animastor/repos/animastor.git /tmp/split-<name>` —
+   полный клон старого монорепо используется **только как исходная история**.
 2. В клоне: `git filter-repo <white-list из §8>` (переписывается клон, не source).
-3. `git remote add origin /home/animastor/repos/animastor-<name>.git`;
-   `git push --all && git push --tags`.
-4. Hook в bare (создан **до** первого push) зеркалирует в GitHub.
+3. Результат пушится **только в новый VPS bare split-репозиторий**:
+   `git remote add origin /home/animastor/repos/animastor-<name>.git`;
+   `git push --all && git push --tags`. Прямой push из временного клона в
+   GitHub **запрещён**.
+4. GitHub получает изменения **исключительно через post-receive mirror-hook**
+   соответствующего bare (§7.2); hook создаётся **до** первого push.
 5. В GitHub Org `Animastor` репо создаются заранее пустыми (без README/auto-commit),
    default branch `master`.
 
@@ -397,9 +423,13 @@ git filter-repo \
   --path .gitignore
 ```
 
-Notes: `docs/` целиком (архив; parity-файлы НЕ входят — см. 8.2). `MiM.vbook`
-— сэмпл VBook-фикстура (упоминается только в docs). `docker/` включает
-`docker/worker/` и `overlay-gpu-hub-standalone.yml` как архив (владельцы — §8.4/8.5).
+Notes: `docs/` входит **целиком как исторический архив** — включая
+`docs/architecture/ANDROID_WEB_PARITY.md`, который физически попадает в
+backend из-за `--path docs`. Это историческая копия: она **не редактируется**
+после split (canonical — web, snapshot — android, §5). White-list по этой
+причине не меняется. `MiM.vbook` — сэмпл VBook-фикстура (упоминается только
+в docs). `docker/` включает `docker/worker/` и `overlay-gpu-hub-standalone.yml`
+как архив (владельцы — §8.4/8.5).
 
 ### 8.2 animastor-web
 
@@ -477,7 +507,8 @@ git filter-repo \
   --path LICENSE
 ```
 
-`JOB_PROTOCOL_V2.md` — синхронизируемый снимок (канон — backend, §3/§5-механизм).
+`JOB_PROTOCOL_V2.md` — синхронизируемый снимок: канон принадлежит **backend**,
+worker получает его snapshot по §5-механизму (владелец, CI, commit+sha256).
 
 ### 8.5 animastor-gpu-hub
 
@@ -609,7 +640,7 @@ backend** — переводятся с source-level на контрактный
 | **G4** hub standalone build | `docker build` hub-репо без монорепо-контекста; 4 группы артефактов из artifact contract | Шаг 2 (B5) | gpu-hub |
 | **G5** artifact integrity | `check-artifacts.sh` в CI после сборки образа; сверка sha256 из Release/pin-файла | Шаг 2 (B5) | gpu-hub |
 | **G6** boundary tests | прогон перенесённого набора (§9) в каждом репо | Шаг 3 (B7) | все 5 |
-| **G7** parity-doc sync | sha256 snapshot-файлов (`ANDROID_WEB_PARITY.md`, `JOB_PROTOCOL_V2.md`) против канона | Шаг 5 (вместе с hook'ами) | android, worker, gpu-hub |
+| **G7** parity-doc sync | сверка snapshot-файлов (`ANDROID_WEB_PARITY.md` — канон в **web**; `JOB_PROTOCOL_V2.md` — канон в **backend**) с репозиторием-владельцем по commit + sha256; GitHub — зеркало (§6), не источник | Шаг 5 (вместе с hook'ами) | android, worker, gpu-hub |
 
 Минимум до физического split: G1–G5 (G6 — сразу после переноса тестов,
 до пушей в новые bare).
@@ -664,7 +695,7 @@ backend** — переводятся с source-level на контрактный
 
 ---
 
-## 12. Self-check (непротиворечивость ревизии 2)
+## 12. Self-check (непротиворечивость ревизии 3)
 
 - Пакетов в `packages/`: **30** = 15 backend + 13 web + worker + gpu-hub ✓
 - Опубликованных на npm: **29** (worker bundle — не npm-пакет) ✓
@@ -679,7 +710,13 @@ backend** — переводятся с source-level на контрактный
 - §9: 46 = 39 KEEP + 4 SPLIT + 2 MOVE + 1 RETIRE; интеграционных 7 ✓
 - §10: G1–G7 ↔ шаги 1/2/3/5 плана ✓
 - filter-repo: все пути проверены `git ls-files`; parity-файлы: canonical web,
-  snapshot android, архив backend (§5) ✓
+  snapshot android, исторический архив backend (backend-копия не редактируется,
+  white-list не менялся) (§5, §8.1) ✓
+- §2: pin однозначен (source repository + release tag + asset filename +
+  version + sha256 asset); checksum invariant — staging-проверка до
+  `COPY --from=stager`, `check-artifacts.sh` — дополнительная проверка (§2.3/§2.4) ✓
+- §7.3: клон монорепо = исходная история; результат filter-repo — только в
+  VPS bare; GitHub — только через post-receive hook (§7.2) ✓
 
 ## Методика проверки
 
