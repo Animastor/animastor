@@ -28,7 +28,7 @@ const { readSource, rel, REPO_ROOT, WORKER_BUNDLE_DIR } = require('./helpers');
 // from the backend repo after filter-repo.
 const HUB_NPM_DIR = path.dirname(require.resolve('@animastor/gpu-hub/gpu-hub.js', { paths: [path.join(REPO_ROOT, 'backend')] }));
 const gpuHubPath = path.join(HUB_NPM_DIR, 'gpu-hub.js');
-const workerPath = path.join(WORKER_BUNDLE_DIR, 'worker.cjs');
+const workerPath = WORKER_BUNDLE_DIR ? path.join(WORKER_BUNDLE_DIR, 'worker.cjs') : null;
 const dispatcherPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'gpu-dispatcher.js');
 const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-schema.js');
 
@@ -55,7 +55,8 @@ describe('architecture: GPU Hub / Worker boundary — role separation', () => {
         }
     });
 
-    it('worker still consumes the same hub surface (no protocol drift)', () => {
+    it('worker still consumes the same hub surface (no protocol drift)', function () {
+        if (!WORKER_BUNDLE_DIR) this.skip(); // worker-repo owned post-split (§8.4)
         const worker = read(workerPath);
         expect(worker).to.include('`${HUB_URL}/beacon`');
         expect(worker).to.include('`${HUB_URL}/task/next?worker=${WORKER_ID}&type=${WORKER_TYPE}`');
@@ -78,7 +79,8 @@ describe('architecture: GPU Hub / Worker boundary — role separation', () => {
         expect(hub).to.include("'animastor:worker-auth'");
     });
 
-    it('worker is a self-contained execution bundle (no backend/hub/book/generation/PG deps)', () => {
+    it('worker is a self-contained execution bundle (no backend/hub/book/generation/PG deps)', function () {
+        if (!WORKER_BUNDLE_DIR) this.skip(); // worker-repo owned post-split (§8.4)
         const banned = /postgres|storage\/postgres|book-repo|generation-routes|orchestrat|reconciliation|book\/index|ai-service/i;
         for (const file of fs.readdirSync(WORKER_BUNDLE_DIR)) {
             if (!/\.cjs$/.test(file) && !/\.js$/.test(file)) continue;
@@ -87,7 +89,8 @@ describe('architecture: GPU Hub / Worker boundary — role separation', () => {
         }
     });
 
-    it('worker talks to the hub via HTTP only (no Redis, no direct backend calls)', () => {
+    it('worker talks to the hub via HTTP only (no Redis, no direct backend calls)', function () {
+        if (!WORKER_BUNDLE_DIR) this.skip(); // worker-repo owned post-split (§8.4)
         for (const file of fs.readdirSync(WORKER_BUNDLE_DIR)) {
             if (!/\.cjs$/.test(file) && !/\.js$/.test(file)) continue;
             const src = readSource(path.join(WORKER_BUNDLE_DIR, file));

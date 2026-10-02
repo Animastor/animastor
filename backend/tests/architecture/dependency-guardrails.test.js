@@ -24,8 +24,12 @@ const fs = require('fs');
 const path = require('path');
 const { listSourceFiles, readSource, rel, REPO_ROOT, requireSpecifiers, WORKER_BUNDLE_DIR } = require('./helpers');
 
+// B7 (2026-10): the hub dir resolves through the npm devDependency — the
+// monorepo checkout (packages/animastor-gpu-hub) disappears with filter-repo
+// §8.5 (hub-side assertions MOVE to the hub repo's own suite).
+
 const WORKER_DIR = WORKER_BUNDLE_DIR;
-const HUB_DIR = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub');
+const HUB_DIR = path.dirname(require.resolve('@animastor/gpu-hub/gpu-hub.js', { paths: [path.join(REPO_ROOT, 'backend')] }));
 const LAC_DIR = path.join(REPO_ROOT, 'packages', 'animastor-ai-connector');
 const FRONTEND_APP_DIR = path.join(REPO_ROOT, 'frontends', 'app', 'src');
 const BACKEND_SRC = path.join(REPO_ROOT, 'backend', 'src');
@@ -43,7 +47,11 @@ function externalSpecs(dir) {
     return out;
 }
 
-describe('architecture: worker isolation', () => {
+describe('architecture: worker isolation', function () {
+    // B7: the worker bundle (packages/animastor-worker) leaves the backend
+    // repo at the split (§8.4) — these guards MOVE to the worker repo suite.
+    // With the checkout absent, skip instead of failing on a stale path.
+    if (!WORKER_BUNDLE_DIR) return;
     it('worker bundle requires ONLY node builtins + its own files', () => {
         const allowed = new Set(['child_process', 'os', 'fs', 'path', 'crypto', 'http', 'https', 'url', 'util', 'stream', 'events', 'zlib']);
         const offenders = [];

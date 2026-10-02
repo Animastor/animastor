@@ -724,7 +724,12 @@ describe('Private worker Phase 2 — backend dispatch & callback hardening', () 
         });
     });
 
-    describe('worker.cjs Bearer support (source contract)', () => {
+    describe('worker.cjs Bearer support (source contract)', function () {
+        // B7: conditional — the worker bundle moves to its own repo at the
+        // split (§8.4); this source-contract check travels with it.
+        before(function () {
+            if (!require('./architecture/helpers').WORKER_BUNDLE_DIR) this.skip();
+        });
         it('sends the credential on every hub call when ANIMASTOR_WORKER_TOKEN is set', () => {
             const workerSource = fs.readFileSync(
                 path.join(require('./architecture/helpers').WORKER_BUNDLE_DIR, 'worker.cjs'), 'utf8'

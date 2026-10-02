@@ -180,8 +180,9 @@ describe('architecture: Redis ownership', () => {
         expect(offenders, 'animastor:worker-auth may only be written by services/worker-auth.js (the auth boundary).').to.deep.equal([]);
     });
 
-    it('worker bundle never touches Redis directly', () => {
+    it('worker bundle never touches Redis directly', function () {
         const workerDir = require('./helpers').WORKER_BUNDLE_DIR;
+        if (!workerDir) this.skip(); // worker-repo owned post-split (§8.4)
         for (const file of listSourceFiles(workerDir)) {
             expect(readSource(file), `${rel(file)} must not talk to Redis — the worker talks HTTP to the hub only`).to.not.match(/ioredis|redis/i.test('') ? /$^/ : /ioredis|createClient|new\s+Redis/);
         }

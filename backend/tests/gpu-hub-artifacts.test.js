@@ -26,8 +26,8 @@ const { createMockRedis } = require('./mocks/redis-mock');
 const { buildHubApp } = require('@animastor/gpu-hub/gpu-hub.js');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
-const REAL_WORKER_DIR = require('./architecture/helpers').WORKER_BUNDLE_DIR;
-const REAL_WORKER_SOURCE = path.join(REAL_WORKER_DIR, 'worker.cjs');
+const REAL_WORKER_DIR = require('./architecture/helpers').WORKER_BUNDLE_DIR; // null post-split (worker repo owns this surface)
+const REAL_WORKER_SOURCE = REAL_WORKER_DIR ? path.join(REAL_WORKER_DIR, 'worker.cjs') : null;
 const REAL_WORKFLOW_DIR = path.join(REPO_ROOT, 'backend', 'ai', 'workflows');
 const REAL_INSTALLER_SRC = path.join(REPO_ROOT, 'packages', 'animastor-installer', 'src', 'installer');
 const REAL_MANIFESTS = path.join(REPO_ROOT, 'packages', 'animastor-installer', 'ai', 'install-manifests');
@@ -44,6 +44,15 @@ const ARTIFACT_CONFIG = {
     INSTALLER_SRC_DIR: REAL_INSTALLER_SRC,
     INSTALLER_MANIFESTS_DIR: REAL_MANIFESTS,
 };
+
+// B7 disposition (R-2, §9): this is an integration suite that runs a REAL hub
+// app against REAL worker-bundle/workflow/installer artifact trees. After the
+// split those trees live in the worker/backend/hub repos respectively — the
+// suite stays as a GPU Hub integration/CI test (standalone hub checkout or
+// composed staging), NOT as a backend unit test. Without the worker bundle
+// checkout the worker-bundle describe below has no material to serve, so the
+// suite skips cleanly instead of aborting on ENOENT.
+const WORKER_BUNDLE_AVAILABLE = !!REAL_WORKER_DIR;
 
 async function startHub(config) {
     const app = buildHubApp({
@@ -99,7 +108,8 @@ function sha256(buf) {
     return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
-describe('GPU hub — setup contract artifacts (Phase 3)', () => {
+describe('GPU hub — setup contract artifacts (Phase 3)', function () {
+    if (!WORKER_BUNDLE_AVAILABLE) return; // integration: needs the worker bundle tree (hub/worker CI post-split)
     let hub;
     let tmpDirs = [];
 

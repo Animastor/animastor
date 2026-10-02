@@ -194,7 +194,9 @@ describe('installer package boundary guards (@animastor/installer)', () => {
         // with the installer's own resolvers (engine/workflows.js candidates,
         // worker-bundle-source.js REPO_BUNDLE_DIRS, install-manifest.js
         // fallback). Extraction must not change any entry prefix.
-        const hubSrc = readSource(path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub', 'gpu-hub.js'));
+        // B7/R-4: hub source via the npm devDependency (monorepo hub dir
+        // disappears with filter-repo §8.5 — this assertion MOVES to hub CI).
+        const hubSrc = readSource(require.resolve('@animastor/gpu-hub/gpu-hub.js', { paths: [path.join(REPO_ROOT, 'backend')] }));
         const frozenPrefixes = [
             'animastor-installer/src/installer/${f}',
             'animastor-installer/ai/install-manifests/${f}',

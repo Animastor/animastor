@@ -42,17 +42,56 @@ function tierFiles() {
 }
 
 // ── Worker package relocation (preparation) ──────────────────────────────
-// The package boundary is being relocated: worker/ → packages/animastor-
-// worker/ (see docs/architecture/WORKER_PACKAGE_RELOCATION_CHECKLIST.md).
-// Resolve the CURRENT physical location — the canonical path once the move
-// lands, the legacy path until then — so guards keep passing through both
-// states and the `git mv` commit needs no test edits.
+// The worker bundle physically lives in packages/animastor-worker/ (canonical)
+// until the physical split. B7 (2026-10): the legacy `worker/` fallback is
+// REMOVED (§9 #15) — after filter-repo of the worker repo these paths do not
+// exist in the backend checkout, and suites that read worker sources must
+// SKIP (their assertions move to the worker repo / hub CI), not misfire on a
+// stale directory. Every consumer must null-check WORKER_* constants.
 const WORKER_PKG_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-worker'))
     ? path.join(REPO_ROOT, 'packages', 'animastor-worker')
-    : path.join(REPO_ROOT, 'worker');
-const WORKER_BUNDLE_DIR = path.join(WORKER_PKG_DIR, 'worker');
-const WORKER_TESTS_DIR = path.join(WORKER_PKG_DIR, 'tests');
-const SYNC_TOOL_PATH = path.join(WORKER_PKG_DIR, 'tools', 'sync-protocol.cjs');
+    : null;
+const WORKER_BUNDLE_DIR = WORKER_PKG_DIR ? path.join(WORKER_PKG_DIR, 'worker') : null;
+const WORKER_TESTS_DIR = WORKER_PKG_DIR ? path.join(WORKER_PKG_DIR, 'tests') : null;
+const SYNC_TOOL_PATH = WORKER_PKG_DIR ? path.join(WORKER_PKG_DIR, 'tools', 'sync-protocol.cjs') : null;
+
+// ── B7 standalone-safe package resolution ─────────────────────────────────
+// Architecture suites read extracted-package SOURCES directly. Pre-split the
+// authoring checkout lives at packages/<dir>; post-split the backend repo
+// keeps its own 15 packages there (§11 composition), while cross-repo trees
+// (worker, gpu-hub, web-*) are gone and must be consumed through the npm
+// install instead. PKG_SRC resolves the monorepo checkout first and falls
+// back to the npm-installed copy of the same package (every published
+// @animastor/* backend package ships src/ — verified byte-identical).
+function npmPkgDir(spec, fromDir) {
+    try {
+        const entry = require.resolve(spec, { paths: [fromDir] });
+        let dir = path.dirname(entry);
+        while (dir !== path.dirname(dir)) {
+            try {
+                const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+                if (pkg.name === spec) return dir;
+            } catch (_) { /* not the package root — keep walking up */ }
+            dir = path.dirname(dir);
+        }
+    } catch (_) { /* package not installed */ }
+    return null;
+}
+
+function PKG_SRC(dirName, ...relPath) {
+    const monorepo = path.join(REPO_ROOT, 'packages', dirName);
+    if (fs.existsSync(monorepo)) return relPath.length ? path.join(monorepo, ...relPath) : monorepo;
+    // npm fallback: monorepo dir name `animastor-<name>` ↔ npm scope entries
+    // are `@animastor/<name>`, EXCEPT the two unscoped packages (ai-connector,
+    // comfyui-workflow-connector) whose npm names carry the full animastor-
+    // prefix.
+    const spec = ['animastor-ai-connector', 'animastor-comfyui-workflow-connector'].includes(dirName)
+        ? dirName
+        : `@animastor/${dirName.replace(/^animastor-/, '')}`;
+    const npmDir = npmPkgDir(spec, path.join(REPO_ROOT, 'backend'));
+    if (npmDir) return relPath.length ? path.join(npmDir, ...relPath) : npmDir;
+    return null;
+}
 
 function listSourceFiles(rootDir, extensions = ['.js', '.cjs']) {
     const out = [];
@@ -128,6 +167,8 @@ module.exports = {
     WORKER_BUNDLE_DIR,
     WORKER_TESTS_DIR,
     SYNC_TOOL_PATH,
+    npmPkgDir,
+    PKG_SRC,
     listSourceFiles,
     readSource,
     rel,

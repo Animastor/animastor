@@ -57,11 +57,16 @@ const CONTRACTS_PKG_DIR = npmContractsPkgDir();
 const CONTRACTS_IMPL_PATH = path.join(CONTRACTS_PKG_DIR, 'src', 'job-protocol-v2.js');
 const CONTRACTS_INDEX_PATH = path.join(CONTRACTS_PKG_DIR, 'src', 'index.js');
 const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-schema.js');
-const gpuHubPath = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub', 'gpu-hub.js');
+// B7/R-4: hub source via the npm devDependency (the monorepo hub dir
+// disappears with filter-repo §8.5 — hub-side assertions MOVE to the hub repo).
+const gpuHubPath = require.resolve('@animastor/gpu-hub/gpu-hub.js', { paths: [path.join(REPO_ROOT, 'backend')] });
+// B7: the worker bundle (packages/animastor-worker) leaves at the split (§8.4)
+// — worker-side assertions are conditional; owned by the worker repo post-split.
 const WORKER_DIR = WORKER_BUNDLE_DIR;
-const workerPath = path.join(WORKER_DIR, 'worker.cjs');
+const WORKER_PRESENT = !!WORKER_DIR;
+const workerPath = WORKER_DIR ? path.join(WORKER_DIR, 'worker.cjs') : null;
 const LAC_DIR = path.join(REPO_ROOT, 'packages', 'animastor-ai-connector');
-const HUB_DIR = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub');
+const HUB_DIR = path.dirname(require.resolve('@animastor/gpu-hub/gpu-hub.js', { paths: [path.join(REPO_ROOT, 'backend')] }));
 
 function read(file) {
     return readSource(file);
@@ -145,9 +150,9 @@ describe('Phase 9C: backend job-schema stays a pure facade', () => {
         // job-protocol-v2.cjs). It is not a divergent schema — byte parity
         // is guarded by phase9d-worker-package.test.js — so it is excluded
         // here.
-        const GENERATED_WORKER_COPY = `${rel(WORKER_DIR)}/job-protocol-v2.cjs`;
+        const GENERATED_WORKER_COPY = WORKER_DIR ? `${rel(WORKER_DIR)}/job-protocol-v2.cjs` : null;
         const offenders = [];
-        for (const dir of [BACKEND_SRC, HUB_DIR, WORKER_DIR, LAC_DIR]) {
+        for (const dir of [BACKEND_SRC, HUB_DIR, WORKER_DIR, LAC_DIR].filter(Boolean)) {
             for (const file of listSourceFiles(dir)) {
                 const src = readSource(file);
                 if (!grammarDefRe.test(src)) continue;
@@ -170,12 +175,12 @@ describe('Phase 9C: backend job-schema stays a pure facade', () => {
         // the compose mount seam and carries no local literal.
         const allowed = new Set([
             'packages/animastor-contracts/src/job-protocol-v2.js', // canonical
-            `${rel(WORKER_DIR)}/job-protocol-v2.cjs`,  // GENERATED from canonical (Phase 9D, B2; path follows the package relocation)
+            ...(WORKER_DIR ? [`${rel(WORKER_DIR)}/job-protocol-v2.cjs`] : []),  // GENERATED from canonical (Phase 9D, B2; path follows the package relocation)
             'backend/src/routes/ai-connector-routes.cjs', // LAC protocol v1 (separate contract)
         ]);
         const offenders = [];
         const literalRe = /PROTOCOL_VERSION\s*=\s*\d/;
-        for (const dir of [BACKEND_SRC, HUB_DIR, WORKER_DIR, LAC_DIR, CONTRACTS_DIR]) {
+        for (const dir of [BACKEND_SRC, HUB_DIR, WORKER_DIR, LAC_DIR, CONTRACTS_DIR].filter(Boolean)) {
             for (const file of listSourceFiles(dir)) {
                 if (literalRe.test(readSource(file)) && !allowed.has(rel(file))) offenders.push(rel(file));
             }
@@ -216,7 +221,7 @@ describe('Phase 9C: dependency direction into contracts', () => {
             'backend/src/runtime/job-schema.js',
         ]);
         const offenders = [];
-        for (const dir of [BACKEND_SRC, HUB_DIR, WORKER_DIR, LAC_DIR]) {
+        for (const dir of [BACKEND_SRC, HUB_DIR, WORKER_DIR, LAC_DIR].filter(Boolean)) {
             for (const file of listSourceFiles(dir)) {
                 for (const { spec, target } of relativeTargets(file)) {
                     if (target.startsWith('packages/animastor-contracts/') && !allowed.has(rel(file))) {
@@ -269,7 +274,8 @@ describe('Phase 9C: cross-side Job Protocol v2 parity', () => {
         }
     });
 
-    it('worker split-regex family stays equal to canonical JOB_TYPES', () => {
+    it('worker split-regex family stays equal to canonical JOB_TYPES', function () {
+        if (!WORKER_PRESENT) this.skip(); // worker-repo owned after the split (§9 #29)
         const worker = read(workerPath);
         // Phase 9D: the worker no longer carries inline split literals —
         // both input-file naming splits consume JOB_ID_SPLIT_RE from the
@@ -304,9 +310,11 @@ describe('Phase 9C: cross-side Job Protocol v2 parity', () => {
         const v = (src) => [...src.matchAll(/PROTOCOL_VERSION\s*=\s*(\d+)/g)].map((m) => Number(m[1]));
         expect(v(read(CONTRACTS_IMPL_PATH)), 'contracts/src/job-protocol-v2.js').to.deep.equal([2]);
         expect(v(read(gpuHubPath)), 'gpu-hub/gpu-hub.js (Phase 10B: no local literal)').to.deep.equal([]);
-        expect(v(read(path.join(WORKER_DIR, 'job-protocol-v2.cjs'))), 'generated job-protocol-v2.cjs (generated)').to.deep.equal([2]);
-        // worker.cjs itself must have NO local literal (it consumes the copy)
-        expect(v(read(workerPath)), 'worker.cjs (no local literal)').to.deep.equal([]);
+        if (WORKER_PRESENT) {
+            expect(v(read(path.join(WORKER_DIR, 'job-protocol-v2.cjs'))), 'generated job-protocol-v2.cjs (generated)').to.deep.equal([2]);
+            // worker.cjs itself must have NO local literal (it consumes the copy)
+            expect(v(read(workerPath)), 'worker.cjs (no local literal)').to.deep.equal([]);
+        }
     });
 
     it('frozen parse vectors behave identically in contracts and via the backend facade', () => {

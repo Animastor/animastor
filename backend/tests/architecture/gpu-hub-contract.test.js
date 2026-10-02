@@ -23,7 +23,10 @@ const path = require('path');
 const { readSource, rel, REPO_ROOT, WORKER_BUNDLE_DIR } = require('./helpers');
 
 const gpuHubPath = require.resolve('@animastor/gpu-hub/gpu-hub.js', { paths: [path.join(REPO_ROOT, 'backend')] }); // B7/R-4: hub source via npm devDependency (monorepo path disappears after filter-repo)
-const workerPath = path.join(WORKER_BUNDLE_DIR, 'worker.cjs');
+// B7: worker-side contract reads are conditional — the bundle moves to its
+// own repository at the split (§8.4); those assertions travel with it.
+const WORKER_PRESENT = !!WORKER_BUNDLE_DIR;
+const workerPath = WORKER_PRESENT ? path.join(WORKER_BUNDLE_DIR, 'worker.cjs') : null;
 const dispatcherPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'gpu-dispatcher.js');
 const jobSchemaPath = path.join(REPO_ROOT, 'backend', 'src', 'runtime', 'job-schema.js');
 // Phase 9C: the canonical Job Protocol v2 implementation moved to the
@@ -71,7 +74,7 @@ describe('architecture: GPU Hub contract', () => {
         }
     });
 
-    it('protocol_version stays 2 (contracts canonical; hub consumes it with NO local literal)', () => {
+    it('protocol_version stays 2 (contracts canonical; hub consumes it with NO local literal)', function () {
         // Phase 9C: the backend-side literal lives in the contracts package
         // (canonical); job-schema.js is a facade without its own literal.
         // Phase 9D: the worker consumes the GENERATED copy of the canonical
@@ -80,16 +83,17 @@ describe('architecture: GPU Hub contract', () => {
         // compose mount seam — it carries NO local literal either.
         const contractsImpl = read(contractsImplPath);
         const hub = read(gpuHubPath);
-        const worker = read(workerPath);
-        const workerProtocol = read(path.join(WORKER_BUNDLE_DIR, 'job-protocol-v2.cjs'));
         const v = (src) => [...src.matchAll(/PROTOCOL_VERSION\s*=\s*(\d+)/g)].map((m) => Number(m[1]));
         expect(v(contractsImpl), 'contracts/src/job-protocol-v2.js (canonical)').to.deep.equal([2]);
         expect(v(hub), 'gpu-hub/gpu-hub.js (Phase 10B: no local literal)').to.deep.equal([]);
         expect(hub, 'gpu-hub must consume the canonical package').to.include("require('@animastor/contracts')");
+        expect(read(jobSchemaPath), 'backend facade must not define its own literal').to.not.match(/PROTOCOL_VERSION\s*=\s*\d/);
+        if (!WORKER_PRESENT) this.skip(); // worker-repo owned post-split (§8.4)
+        const worker = read(workerPath);
+        const workerProtocol = read(path.join(WORKER_BUNDLE_DIR, 'job-protocol-v2.cjs'));
         expect(v(workerProtocol), 'generated job-protocol-v2.cjs (generated from contracts)').to.deep.equal([2]);
         expect(v(worker), 'worker.cjs (no local literal)').to.deep.equal([]);
         expect(worker, 'worker.cjs must consume the generated copy').to.include('require("./job-protocol-v2.cjs")');
-        expect(read(jobSchemaPath), 'backend facade must not define its own literal').to.not.match(/PROTOCOL_VERSION\s*=\s*\d/);
     });
 
     it('SYNC anchors between the copies stay in place', () => {
@@ -123,7 +127,8 @@ describe('architecture: GPU Hub contract', () => {
         expect(hub).to.match(/timeout_ms/);
     });
 
-    it('worker still consumes the same hub surface (no protocol drift)', () => {
+    it('worker still consumes the same hub surface (no protocol drift)', function () {
+        if (!WORKER_PRESENT) this.skip(); // worker-repo owned after the split
         const worker = read(workerPath);
         expect(worker).to.include('`${HUB_URL}/beacon`');
         expect(worker).to.include('`${HUB_URL}/task/next?worker=${WORKER_ID}&type=${WORKER_TYPE}`');
@@ -194,7 +199,8 @@ describe('architecture: Job protocol consistency (job-schema SYNC copies)', () =
         expect(hub).to.include('animastor:result:${build_id}:');
     });
 
-    it('worker job_id split stays consistent with the backend job-schema', () => {
+    it('worker job_id split stays consistent with the backend job-schema', function () {
+        if (!WORKER_PRESENT) this.skip(); // worker-repo owned after the split
         const worker = read(workerPath);
         // Phase 9D: the split family lives in the generated canonical copy;
         // worker.cjs consumes JOB_ID_SPLIT_RE from it (no inline literal).
@@ -204,9 +210,10 @@ describe('architecture: Job protocol consistency (job-schema SYNC copies)', () =
             .to.include('JOB_ID_SPLIT_RE = /:(iu_image|image|audio|video)$/');
     });
 
-    it('protocol_version mismatch is rejected with 409 on every entry point', () => {
+    it('protocol_version mismatch is rejected with 409 on every entry point', function () {
         const hub = read(gpuHubPath);
         expect(hub).to.include('protocol_version_mismatch');
+        if (!WORKER_PRESENT) return; // hub half still asserted above
         const worker = read(workerPath);
         expect(worker).to.match(/Rejecting incompatible task/);
     });

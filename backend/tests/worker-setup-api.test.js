@@ -57,7 +57,15 @@ function writeHeartbeat(redis, workerType, workerId, ts = Date.now()) {
     return redis.set(key, JSON.stringify({ type: workerType, worker_id: workerId, ts }), 'EX', config.WORKER_HEARTBEAT_TTL);
 }
 
-describe('Private worker setup contract API (Phase 3)', () => {
+describe('Private worker setup contract API (Phase 3)', function () {
+    // B7 disposition (R-2, §9): integration suite driving the REAL hub app
+    // against REAL artifact trees (worker bundle + installer + manifests).
+    // Post-split: GPU Hub integration/CI test (standalone checkout/staging).
+    // Without the worker bundle checkout the hub config has no material —
+    // skip cleanly instead of failing on ENOENT inside `before`.
+    before(function () {
+        if (!require('./architecture/helpers').WORKER_BUNDLE_DIR) this.skip();
+    });
     let server;
     let hubServer;
     let base;

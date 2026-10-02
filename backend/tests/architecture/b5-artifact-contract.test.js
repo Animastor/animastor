@@ -21,8 +21,18 @@ const fs = require('fs');
 const crypto = require('crypto');
 
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
-const HUB_DIR = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub');
+// B7: the hub package dir — monorepo checkout pre-split, npm devDependency
+// copy post-split (both carry artifacts.lock.json + the gate script).
+const HUB_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub'))
+    ? path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub')
+    : path.dirname(require.resolve('@animastor/gpu-hub/gpu-hub.js', { paths: [path.join(REPO_ROOT, 'backend')] }));
 const LOCK_PATH = path.join(HUB_DIR, 'artifacts.lock.json');
+// The suite needs BOTH sides: hub-side artifacts (lock + staging gate) and
+// worker-side sources (worker-bundle group tree). Post-split the npm
+// tarball ships neither artifacts.lock.json nor verify-staged-artifacts.sh —
+// the whole suite then belongs to animastor-gpu-hub CI (prep plan §8.5).
+const LOCK_PRESENT = fs.existsSync(LOCK_PATH);
+const WORKER_PRESENT = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-worker', 'worker', 'package.json'));
 
 const GROUPS = [
     {
@@ -93,6 +103,7 @@ function stagedDigest(group) {
 let lock;
 
 describe('B5: artifact contract pre-split guards (prep plan §2)', () => {
+    if (!LOCK_PRESENT || !WORKER_PRESENT) return; // hub/worker CI post-split (§8.4/§8.5)
     before(() => {
         lock = JSON.parse(fs.readFileSync(LOCK_PATH, 'utf8'));
     });

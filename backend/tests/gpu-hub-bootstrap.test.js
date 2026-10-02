@@ -76,6 +76,14 @@ function execBash(scriptFile, { env = {}, timeout = 30000, args = '' } = {}) {
 }
 
 describe('Bootstrap installer (end-to-end)', function () {
+    // B7 disposition (R-2, §9): end-to-end bootstrap integration — runs the
+    // REAL hub serving REAL artifact trees against a bash-recorded installer.
+    // After the split this is a GPU Hub integration/CI test (standalone hub
+    // checkout / composed staging). Without the worker bundle checkout the
+    // hub cannot serve the worker-bundle leg — skip cleanly, never abort.
+    before(function () {
+        if (!require('./architecture/helpers').WORKER_BUNDLE_DIR) this.skip();
+    });
     this.timeout(60000);
 
     let tmpRoot;

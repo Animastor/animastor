@@ -23,8 +23,12 @@ const fs = require('fs');
 const { REPO_ROOT, BACKEND_SRC, listSourceFiles, readSource, rel, WORKER_BUNDLE_DIR } = require('./helpers');
 
 const LAC_DIR = path.join(REPO_ROOT, 'packages', 'animastor-ai-connector');
+// B7: worker/hub dirs may be absent post-split — scans over them are
+// conditional (their assertions MOVE to the owner repos per §9).
 const WORKER_DIR = WORKER_BUNDLE_DIR;
-const HUB_DIR = path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub');
+const HUB_DIR = fs.existsSync(path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub'))
+    ? path.join(REPO_ROOT, 'packages', 'animastor-gpu-hub')
+    : null;
 
 function walkSource(dir, extensions = ['.js', '.cjs']) {
     return listSourceFiles(dir, extensions);
@@ -66,7 +70,7 @@ describe('P7-T1: LAC stays an isolated package (extraction candidate)', () => {
 
     it('no repo file requires into LAC (the only interface is the WS protocol)', () => {
         const offenders = [];
-        for (const dir of [BACKEND_SRC, WORKER_DIR, HUB_DIR]) {
+        for (const dir of [BACKEND_SRC, WORKER_DIR, HUB_DIR].filter(Boolean)) {
             for (const file of walkSource(dir)) {
                 for (const { spec, target } of relativeTargets(file)) {
                     if (target.startsWith('packages/animastor-ai-connector/')) offenders.push(`${rel(file)}: ${spec}`);
@@ -81,7 +85,7 @@ describe('P7-T1: LAC stays an isolated package (extraction candidate)', () => {
 describe('P7-T2: worker bundle gains no inbound code dependencies', () => {
     it('no repo file requires into the worker package boundary', () => {
         const offenders = [];
-        for (const dir of [BACKEND_SRC, HUB_DIR, LAC_DIR]) {
+        for (const dir of [BACKEND_SRC, HUB_DIR, LAC_DIR].filter(Boolean)) {
             for (const file of walkSource(dir)) {
                 for (const { spec, target } of relativeTargets(file)) {
                     // covers the legacy worker/ boundary and the canonical
@@ -98,7 +102,7 @@ describe('P7-T2: worker bundle gains no inbound code dependencies', () => {
 describe('P7-T3: GPU Hub gains no inbound code dependencies', () => {
     it('no backend/worker/LAC file requires into gpu-hub/', () => {
         const offenders = [];
-        for (const dir of [BACKEND_SRC, WORKER_DIR, LAC_DIR]) {
+        for (const dir of [BACKEND_SRC, WORKER_DIR, LAC_DIR].filter(Boolean)) {
             for (const file of walkSource(dir)) {
                 for (const { spec, target } of relativeTargets(file)) {
                     if (target.startsWith('gpu-hub/')) offenders.push(`${rel(file)}: ${spec}`);

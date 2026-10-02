@@ -146,22 +146,27 @@ describe('orchestration stabilization: protocol contract', () => {
         // literal lives there; worker.cjs itself carries no local literal.
         // Phase 10B: the hub also consumes the canonical package directly
         // (no local literal) — strict version 2 comes from @animastor/contracts.
-        const workerProtocolSource = fs.readFileSync(
-            path.join(require('./architecture/helpers').WORKER_BUNDLE_DIR, 'job-protocol-v2.cjs'), 'utf8'
-        );
-        const workerSource = fs.readFileSync(
-            path.join(require('./architecture/helpers').WORKER_BUNDLE_DIR, 'worker.cjs'), 'utf8'
-        );
+        // B7: worker reads are conditional — the bundle moves to its own repo
+        // at the split (§8.4); those assertions travel to the worker suite.
+        const workerBundle = require('./architecture/helpers').WORKER_BUNDLE_DIR;
+        if (workerBundle) {
+            const workerProtocolSource = fs.readFileSync(
+                path.join(workerBundle, 'job-protocol-v2.cjs'), 'utf8'
+            );
+            const workerSource = fs.readFileSync(
+                path.join(workerBundle, 'worker.cjs'), 'utf8'
+            );
+            expect(workerProtocolSource).to.match(/const PROTOCOL_VERSION = 2;/);
+            expect(workerSource).to.include('require("./job-protocol-v2.cjs")');
+            expect(workerSource).to.match(/Hub rejected beacon/);
+        }
 
         expect(jobSchema.PROTOCOL_VERSION).to.equal(2);
         expect(hubSource).to.include("require('@animastor/contracts')");
         expect(hubSource).to.not.match(/PROTOCOL_VERSION\s*=\s*\d/);
-        expect(workerProtocolSource).to.match(/const PROTOCOL_VERSION = 2;/);
-        expect(workerSource).to.include('require("./job-protocol-v2.cjs")');
         expect(hubSource).to.match(/app\.post\("\/task", requireApiKey/);
         expect(hubSource).to.match(/worker_protocol_mismatch/);
         expect(hubSource).to.match(/redis\.lrem\("animastor:processing"/);
-        expect(workerSource).to.match(/Hub rejected beacon/);
     });
 
     it('keeps long video generation alive: per-job timeout is forwarded hub→worker, not a short fixed cap', () => {
@@ -170,29 +175,34 @@ describe('orchestration stabilization: protocol contract', () => {
             // packages/animastor-gpu-hub disappears after filter-repo).
             require.resolve('@animastor/gpu-hub/gpu-hub.js'), 'utf8'
         );
-        const workerSource = fs.readFileSync(
-            path.join(require('./architecture/helpers').WORKER_BUNDLE_DIR, 'worker.cjs'), 'utf8'
-        );
+        // B7: worker reads are conditional (bundle moves at the split, §8.4);
+        // the worker-side timeout assertions travel to the worker repo suite.
+        const workerBundle = require('./architecture/helpers').WORKER_BUNDLE_DIR;
+        const workerSource = workerBundle
+            ? fs.readFileSync(path.join(workerBundle, 'worker.cjs'), 'utf8')
+            : null;
 
         // gpu-hub принимает timeout_ms из body и кладёт его в очередь (task).
         // SH-2: policy_id joined the /task destructure after timeout_ms.
         expect(hubSource).to.match(/timeout_ms,\s*\n\s*policy_id\s*\n\s*}/);
         expect(hubSource).to.match(/timeout_ms: timeout_ms/);
 
-        // worker уважает per-job timeout из задачи вместо короткого дефолта
-        expect(workerSource).to.match(/task\.timeout_ms/);
-        expect(workerSource).to.match(/VIDEO_RESULT_TIMEOUT_MS/);
+        if (workerSource) {
+            // worker уважает per-job timeout из задачи вместо короткого дефолта
+            expect(workerSource).to.match(/task\.timeout_ms/);
+            expect(workerSource).to.match(/VIDEO_RESULT_TIMEOUT_MS/);
 
-        // Дефолт видео-таймаута воркера — НЕ короткий фиксированный потолок:
-        // ≥ 1 час (LTX-генерация 5-10 мин, слабый GPU — 20-30+ мин),
-        // а не 200 секунд.
-        const videoDefaultMatch = workerSource.match(
-            /VIDEO_RESULT_TIMEOUT_MS\s*=\s*Number\(process\.env\.VIDEO_RESULT_TIMEOUT_MS\s*\|\|\s*(\d+)/
-        );
-        expect(videoDefaultMatch).to.exist;
-        const videoDefaultMs = Number(videoDefaultMatch[1]);
-        expect(videoDefaultMs).to.be.at.least(3600000); // ≥ 1 час
-        expect(videoDefaultMs).to.be.above(200000);      // точно не 200 сек
+            // Дефолт видео-таймаута воркера — НЕ короткий фиксированный потолок:
+            // ≥ 1 час (LTX-генерация 5-10 мин, слабый GPU — 20-30+ мин),
+            // а не 200 секунд.
+            const videoDefaultMatch = workerSource.match(
+                /VIDEO_RESULT_TIMEOUT_MS\s*=\s*Number\(process\.env\.VIDEO_RESULT_TIMEOUT_MS\s*\|\|\s*(\d+)/
+            );
+            expect(videoDefaultMatch).to.exist;
+            const videoDefaultMs = Number(videoDefaultMatch[1]);
+            expect(videoDefaultMs).to.be.at.least(3600000); // ≥ 1 час
+            expect(videoDefaultMs).to.be.above(200000);      // точно не 200 сек
+        }
     });
 });
 

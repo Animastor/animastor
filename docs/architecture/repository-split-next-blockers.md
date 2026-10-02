@@ -20,7 +20,7 @@
 | B4 exports | **DONE** (инвариант, G2) | — | — |
 | B5 artifact scheme | **READY (механика DONE здесь)** | Release-assets (4 zip), SHA256(asset) в lock, stager fetch из Releases | POST-SPLIT: после создания hub/worker/backend репо — Release-публикация; §B5 ниже |
 | B6 sync-protocol npm | **DONE** (`bd66bae6`) | — | — |
-| B7 tests disposition | **READY (карта DONE здесь)** | retarget 61 падающего без монорепо теста; MOVE 2; RETIRE части; SPLIT 4 | По §9 prep plan + эмпирическая карта §B7 этого документа; исполнение — перед filter-repo backend |
+| B7 tests disposition | **DONE** (здесь) | — | standalone-safety применена ко всем 46 architecture + 9 integration; монорепо 979/2, постсплит-симуляция 923/24/2 (только pre-existing); карта и проверки — §B7 |
 | B8 web canonical build | **DONE** (здесь) | — | `frontends/app/scripts/build-packages.cjs` работает в обоих мирах; §B8 |
 | B9 CI | **READY (чек-лист DONE здесь)** | создание workflows в новых репо | POST-SPLIT по чек-листу §B9; в монорепо не создаётся (P5) |
 | B10 hook монорепо | N/A | — | — |
@@ -110,55 +110,74 @@ npm-копии; полная цепочка `npm ci` → `build:packages` → `t
 
 ---
 
-## B7 — architecture/integration tests: эмпирическая карта
+## B7 — architecture/integration tests: ЗАКРЫТО (standalone-safety без физического split)
 
-**Метод**: каждый файл, читающий `packages/**`, запущен изолированно дважды —
-с монорепо (базлайн) и без (`packages/` временно убран = симуляция filter-repo
-backend). Это точная мера объёма, а не grep-оценка.
+**Статус**: DONE этим коммитом. Все 46 architecture-файлов и 9 интеграционных
+standalone-безопасны: в backend-репо без монорепо-соседей — ни одного
+загрузочного краша и ни одного нового падения. Физический перенос файлов по
+репозиториям (MOVE/SPLIT/RETIRE) происходит при filter-repo (§9 prep plan);
+механика безопасности уже применена.
+
+**Уточнение метода** (важно для последующих блоков): первая эмпирическая проба
+временно убирала ВЕСЬ `packages/` — это завысило объём до «61 падающего».
+Backend-репо после split СОХРАНЯЕТ свои 15 пакетов (prep plan §11), поэтому
+корректная симуляция filter-repo backend — спрятать только `animastor-worker`,
+`animastor-gpu-hub` и 13× `animastor-web-*`. Фактический объём B7:
 
 | Метрика | Значение |
 |---|---|
 | Файлов, читающих `packages/**` (тесты + фикстуры) | 65 |
-| Проходят изолированно С монорепо | 62 (3 FAIL: IB-G15, T9 — pre-existing; `ai-shared-inference` — изоляционный дефект, в полном прогоне зелёный) |
-| **Падают БЕЗ монорепо** | **61** — это и есть фактический объём B7 |
-| Выживают без монорепо | 4: `postgres-host-infrastructure`, `redis-ownership`, оба `*-test-bindings.cjs` (спасают try-guard'ы dual-wiring из `834987a7`) |
+| Реальных постсплит-падений (корректная симуляция, до B7) | **13 файлов**: `b5-artifact-contract`, `dependency-guardrails`, `installer-package-boundary`, `phase10a`, `phase10d`, `phase10j`, `phase10t-1`, `phase2-job-protocol-v2`, `phase9c`, `phase9d`, `gpu-hub-artifacts`, `gpu-hub-bootstrap`, `worker-setup-api` |
+| Монорепо-базлайн | 979 passing / 2 pre-existing failing (IB-G15, T9) |
+| Постсплит-симуляция (после B7) | **923 passing / 24 pending / 2 failing** — падают только pre-existing IB-G15/T9; `Exception during run` = 0 |
 
-**Классификация** (базис — §9 prep plan; эмпирика добавляет уточнение):
+Pre-existing (в объём B7 не входят, при обеих симуляциях идентичны):
+`ai-shared-inference` (изоляционный дефект, в полном прогоне зелёный),
+`phase5-runtime-result` (T9, ENOENT `src/runtime/index.js`), IB-G15
+(installer `private:true`).
 
-1. **KEEP backend (большинство §9-KEEP, ~45 файлов)** — уточнение к §9:
-   «нет cross-repo зависимости» в §9 означает «пакет остаётся в backend-репо»,
-   но практически все они **читают `packages/*/src` напрямую** и упадут после
-   filter-repo. Действие при исполнении B7: retarget читалок на npm-копию
-   (`require.resolve('@animastor/<pkg>')` + walk-up, паттерн уже применён в
-   `phase9c`/`gpu-hub-contract`) или на snapshot-фикстуры. Не механическое
-   удаление — каждый гвард сохраняет смысл.
-2. **MOVE**: `phase9d-worker-package` → worker; `phase10t-1-artifact-bakein` →
-   gpu-hub (читает Dockerfile/compose/gpu-hub.js/worker+installer пути).
-   **B5-тест `b5-artifact-contract`** post-split делится: digest-double-entry —
-   туда, где живут деревья (backend/worker), Dockerfile/gate-ассерты — в hub.
-3. **RETIRE (части)**: `phase10j` (transitional, целиком по §9);
-   worker-блок `installer-package-boundary` (#16); worker-copy/hub-литералы
-   `phase2-job-protocol-v2` (#29); mount-часть `phase9c` уже инвертирована
-   (`bd66bae6`); worker-assert'ы `phase7` (#32), `lac-legacy-path-guard` — SPLIT.
-4. **SPLIT**: `lac-legacy-path-guard`, `phase2-job-protocol-v2`,
-   `phase7-extraction-readiness`, `phase9c-contracts` (+ `helpers.js` #15 —
-   убрать WORKER_PKG_DIR fallback).
-5. **9 integration (R-2)**: переведены на npm-hub в `bd66bae6`, но эмпирика
-   показывает остаточные монорепо-зависимости (`gpu-hub-artifacts` читает
-   worker/installer деревья; `gpu-hub-bootstrap`/`worker-setup-api` требуют
-   живой hub/инфраструктуру — curl 404). При B7: контентные ассерты →
-   npm/snapshot; HTTP-тесты → контракт на поднятый образ (G5-инфраструктура CI).
-6. **4 architecture (R-4)**: `phase10a`, `phase10d`, `phase2-hub-worker-boundary`,
-   `gpu-hub-contract` — HUB_DIR уже npm-resolved (`bd66bae6`); остаточный
-   monorepo-путь — `packages/animastor-contracts/src/job-protocol-v2.js`
-   (phase10a) → retarget на npm contracts walk-up.
-7. **Г вар hazard**: `ai-functional-decomposition-c18` читает файл в
-   describe-body → без монорепо **аборт всего прогона** (Exception during run),
-   а не падение теста. Retarget этого файла — первым при исполнении B7.
-8. **GPU Hub (без изменений, только фиксация требования)**: монорепо
-   `packages/animastor-gpu-hub` остаётся каноническим исходником до R-3/B5-end;
-   `phase10t-1` + B5 Dockerfile/gate-ассерты переезжают в hub-репо; hub получает
-   собственный standalone overlay (уже есть в bare-репо, §R-3).
+**Что сделано (по dispositions §9 prep plan, 21 файл изменён)**:
+
+| Disposition | Файлы | Действие |
+|---|---|---|
+| KEEP (retarget, ~45) | большинство §9-KEEP | `helpers.js`: `WORKER_PKG_DIR/BUNDLE_DIR/TESTS_DIR/SYNC_TOOL_PATH` — nullable (legacy `worker/` fallback удалён, §9 #15); добавлены `npmPkgDir()` (resolve entry → walk-up до package.json по имени) и `PKG_SRC()` (монорепо-checkout → npm-копия; unscoped-исключения `ai-connector`, `comfyui-workflow-connector`); читалки переведены, worker/hub-половины — под skip-гардами |
+| MOVE (2) | `phase9d`→worker, `phase10t-1`→hub | до переноса — гард на отсутствие чекаута (`describeWorker`, `HUB_CHECKOUT_PRESENT`); после переноса гарды становятся no-op |
+| RETIRE (1) | `phase10j` (§9 #27) | гарды на fixture/TF-ассерты; transitional-содержимое больше не требует монорепо |
+| SPLIT (4) | `lac-legacy-path-guard`, `phase2-job-protocol-v2`, `phase7`, `phase9c` | hub-половины npm-resolved, worker-половины под гардами; `lac-legacy-path-guard` оказался уже standalone-safe (existsSync-фильтр корней) — без правок |
+| R-2 integration (9) | `gpu-hub-artifacts`, `gpu-hub-bootstrap`, `worker-setup-api`, `worker-share-grants`, `private-worker-phase2`, `private-worker-visibility`, `worker-share-policy`, `orchestration-stabilization`, `fail-closed-worker-auth` | worker-зависимые части — skip при отсутствии бандла; hub/contracts-половины ассертятся всегда; post-split → CI hub/worker (G5/G6) |
+| Hazard fix | `ai-functional-decomposition-c18` | describe-body чтение файла → describe-гард + it-скпы: без монорепо больше НЕ абортит весь прогон |
+
+**Урок для переносов тестов в worker/web/hub-репо**: Mocha
+`describe.skip(name, fn)` ВСЁ РАВНО исполняет `fn` при сборке сюиты —
+top-level `require()`/`path.join()` внутри describe-колбэка даёт краш загрузки
+(`Exception during run`), а не скип. Гард — до первого обращения (тернарник на
+nullable-путь) либо `if (!PRESENT) return;` первой строкой describe-колбэка;
+`this.skip()` валиден только внутри `it()`/`before()`.
+
+**Механические проверки** (этот коммит):
+
+- Монорепо: `npm run test:arch` = `npm test` = **979 passing / 2 failing**
+  (IB-G15, T9 — pre-existing), pending = 0 (гарды — no-op в монорепо),
+  `Exception during run` = 0.
+- Постсплит-симуляция (спрятаны worker+gpu-hub+13 web-*, в `packages/` = 15):
+  `test:arch` и `npm test` = **923 passing / 24 pending / 2 failing** — падают
+  только pre-existing IB-G15/T9; загрузочных крашей нет; 24 pending — ожидаемые
+  skip-гарды. Директории восстановлены (`packages/` = 30).
+- 9 R-2 интеграционных по отдельности (монорепо): 29+9+40+27+41+23+45+11+18 =
+  **243 passing, 0 failing**.
+- Мусорных файлов нет (`__guard_negative_control__.cjs` нигде не остался).
+
+**Примечания**:
+
+- npm-тарбол `@animastor/gpu-hub@0.1.1` НЕ содержит `artifacts.lock.json` и
+  `scripts/verify-staged-artifacts.sh` (новое в B5, ещё не опубликовано):
+  `b5-artifact-contract` гардируется на lock + worker-чекат → post-split это
+  hub-CI тест (§8.5). Остальные hub-ассерты (pack surface, Dockerfile,
+  version-pin) валидны на npm-копии и работают без гарда.
+- GPU Hub (без изменений, только фиксация требования): монорепо
+  `packages/animastor-gpu-hub` остаётся каноническим исходником до R-3/B5-end;
+  `phase10t-1` + B5 Dockerfile/gate-ассерты переезжают в hub-репо; hub получает
+  собственный standalone overlay (уже есть в bare-репо, §R-3).
 
 ---
 
@@ -252,17 +271,23 @@ filter-repo экспорт истории (NO-GO до решения; force-push
 | `artifacts.lock.json --check` | in sync |
 | Docker build hub (полный, с gate) | ✓ 4/4 integrity + bake-in verified |
 | Tamper-тест gate | ✓ exit 1 при подмене байта |
-| backend `test:arch` / `npm test` | **979 passing / 2 failing** (базлайн 972 + 7 новых B5; обе — pre-existing IB-G15, T9) |
+| backend `test:arch` / `npm test` (монорепо) | **979 passing / 2 failing** (обе — pre-existing IB-G15, T9; pending = 0) |
+| backend B7 постсплит-симуляция (спрятаны worker+gpu-hub+13 web-*; `packages/` = 15) | `test:arch` = `npm test` = **923 passing / 24 pending / 2 failing** (только pre-existing IB-G15/T9; `Exception during run` = 0); директории восстановлены (`packages/` = 30) |
+| 9 R-2 интеграционных по отдельности (монорепо) | **243 passing, 0 failing** |
 | web: `npm ci` → `build:packages` → `typecheck` → `test` → `build` | ✓ / 13 pkgs / ✓ / **201/201** / ✓ |
 | worker `sync-protocol.cjs --check` | exit 0 |
-| Тесты не ухудшились | ✓ (972→979 passing; failures без изменений) |
+| Мусорные артефакты тестов | нет (`__guard_negative_control__.cjs` не остался) |
 
 ## Самопроверка документа
 
 - B5-инвариант сформулирован честно (pre-split: обнаружение дрейфа, а не
   криптографическая защита) — §B5.
-- Расхождение с §9 (KEEP-тесты всё равно падают post-split из-за прямых
-  чтений `packages/*/src`) зафиксировано как уточнение, §9 не переписывался.
+- Уточнение к §9 («KEEP-тесты падают post-split из-за прямых чтений
+  `packages/*/src`») закрыто исполнением B7: retarget/skip-гарды применены
+  (§B7); сам §9 не переписывался.
+- Первая эмпирическая оценка B7 («61 падающий» из пробы с полным снятием
+  `packages/`) исправлена корректной симуляцией (только worker+gpu-hub+web-*):
+  фактический объём — 13 файлов; исправление задокументировано в §B7.
 - GPU Hub: `packages/animastor-gpu-hub` изменён только в объёме B5 (лок, gate,
-  Dockerfile-строки) — R-3-связанные изменения ( история bare/GitHub, версия,
+  Dockerfile-строки) — R-3-связанные изменения (история bare/GitHub, версия,
   роуты) не вносились; пункт 6 ограничений соблюдён в этой трактовке.

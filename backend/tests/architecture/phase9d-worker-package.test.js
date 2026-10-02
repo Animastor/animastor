@@ -41,8 +41,16 @@ const {
     WORKER_BUNDLE_DIR, WORKER_TESTS_DIR, SYNC_TOOL_PATH,
 } = require('./helpers');
 
+// B7 (2026-10): the worker package moves to its own repository at the split
+// (prep plan §8.4) — this ENTIRE suite is its disposition MOVE. When the
+// checkout is absent (post-split backend, or the split simulation), skip
+// cleanly instead of aborting: every D1–D8 assertion here travels to the
+// worker repo's test suite unchanged.
+const WORKER_PRESENT = !!WORKER_BUNDLE_DIR;
+const describeWorker = WORKER_PRESENT ? describe : describe.skip;
+
 const BUNDLE_DIR = WORKER_BUNDLE_DIR;
-const CONTRACTS_IMPL_PATH = path.join(REPO_ROOT, 'packages', 'animastor-contracts', 'src', 'job-protocol-v2.js');
+const CONTRACTS_IMPL_PATH = require('./helpers').PKG_SRC('animastor-contracts', 'src', 'job-protocol-v2.js');
 const MANIFEST_ROOT = path.join(REPO_ROOT, 'packages', 'animastor-installer', 'ai', 'install-manifests');
 
 const RUNTIME_FILES = [
@@ -61,7 +69,7 @@ function sha256(buf) {
 }
 
 // ── D1 — package manifest ────────────────────────────────────────────────
-describe('Phase 9D: worker package manifest', () => {
+describeWorker('Phase 9D: worker package manifest', () => {
     it('stands alone: canonical version, private, zero runtime deps, engines pinned', () => {
         const pkg = JSON.parse(fs.readFileSync(path.join(BUNDLE_DIR, 'package.json'), 'utf8'));
         expect(pkg.name).to.equal('animastor-worker');
@@ -77,7 +85,7 @@ describe('Phase 9D: worker package manifest', () => {
 });
 
 // ── D2 — bundle surface freeze ───────────────────────────────────────────
-describe('Phase 9D: bundle surface freeze', () => {
+describeWorker('Phase 9D: bundle surface freeze', () => {
     it('the bundle dir contains exactly the runtime set (tests live one level up)', () => {
         const entries = fs.readdirSync(BUNDLE_DIR).sort();
         expect(entries, 'unexpected files would ship in the hub bundle tar (walkDir takes everything except .env*)').to.deep.equal(RUNTIME_FILES);
@@ -103,7 +111,7 @@ describe('Phase 9D: bundle surface freeze', () => {
 });
 
 // ── D3 — require containment (no monorepo reach-ins) ─────────────────────
-describe('Phase 9D: bundle require containment', () => {
+describeWorker('Phase 9D: bundle require containment', () => {
     it('all relative requires resolve INSIDE the worker package boundary', () => {
         const offenders = [];
         for (const file of listSourceFiles(BUNDLE_DIR)) {
@@ -149,8 +157,10 @@ describe('Phase 9D: bundle require containment', () => {
 });
 
 // ── D4 — generated protocol copy parity ──────────────────────────────────
-describe('Phase 9D: generated Job Protocol v2 copy (blocker B2, option B)', () => {
-    const syncTool = require(SYNC_TOOL_PATH);
+describeWorker('Phase 9D: generated Job Protocol v2 copy (blocker B2, option B)', () => {
+    // describe.skip still executes the suite callback during collection —
+    // SYNC_TOOL_PATH is null in post-split checkouts, so guard the require.
+    const syncTool = SYNC_TOOL_PATH ? require(SYNC_TOOL_PATH) : null;
 
     it('the generator exists and the copy is byte-parity in sync with @animastor/contracts', () => {
         expect(fs.existsSync(SYNC_TOOL_PATH), '<package>/tools/sync-protocol.cjs must exist').to.equal(true);
@@ -182,7 +192,7 @@ describe('Phase 9D: generated Job Protocol v2 copy (blocker B2, option B)', () =
 });
 
 // ── D5 — worker.cjs consumes the copy (no second implementation) ─────────
-describe('Phase 9D: worker runtime consumes the generated copy', () => {
+describeWorker('Phase 9D: worker runtime consumes the generated copy', () => {
     it('worker.cjs requires the copy and defines no local protocol literals', () => {
         const worker = readSource(path.join(BUNDLE_DIR, 'worker.cjs'));
         expect(worker).to.include('require("./job-protocol-v2.cjs")');
@@ -200,7 +210,7 @@ describe('Phase 9D: worker runtime consumes the generated copy', () => {
 });
 
 // ── D6 — install manifests ship the full runtime set ─────────────────────
-describe('Phase 9D: install manifests ship the runtime set', () => {
+describeWorker('Phase 9D: install manifests ship the runtime set', () => {
     it('every manifest lists the exact runtime file set (incl. the generated copy)', () => {
         for (const type of fs.readdirSync(MANIFEST_ROOT).sort()) {
             const typeDir = path.join(MANIFEST_ROOT, type);
@@ -217,7 +227,7 @@ describe('Phase 9D: install manifests ship the runtime set', () => {
 });
 
 // ── D7 — deployment wiring unchanged (compat channels stay wired) ────────
-describe('Phase 9D: deployment wiring unchanged', () => {
+describeWorker('Phase 9D: deployment wiring unchanged', () => {
     it('local dev overlay keeps the worker-bundle mount pinned (rollback-safe extraction)', () => {
         const overlay = fs.readFileSync(path.join(REPO_ROOT, 'docker/compose/overlay-gpu-hub-local.yml'), 'utf8');
         // Mount SOURCE is the canonical package location after relocation.
@@ -228,7 +238,7 @@ describe('Phase 9D: deployment wiring unchanged', () => {
 });
 
 // ── D8 — negative control: parity guard catches divergence ───────────────
-describe('Phase 9D: negative control — parity guard catches divergence', () => {
+describeWorker('Phase 9D: negative control — parity guard catches divergence', () => {
     it('a tampered copy body is rejected by the sync tool verification', () => {
         const syncTool = require(SYNC_TOOL_PATH);
         const canonical = fs.readFileSync(CONTRACTS_IMPL_PATH, 'utf8');

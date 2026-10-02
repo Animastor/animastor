@@ -34,7 +34,7 @@ const { listSourceFiles, readSource, rel, REPO_ROOT, WORKER_BUNDLE_DIR } = requi
 // from the backend repo after filter-repo. The npm copy ships the same
 // 9-file package (gpu-hub.js, server.js, tarball.js, bootstrap.js, ...).
 const HUB_DIR = path.dirname(require.resolve('@animastor/gpu-hub/gpu-hub.js', { paths: [path.join(REPO_ROOT, 'backend')] }));
-const CONTRACTS_IMPL = path.join(REPO_ROOT, 'packages', 'animastor-contracts', 'src', 'job-protocol-v2.js');
+const CONTRACTS_IMPL = require('./helpers').PKG_SRC('animastor-contracts', 'src', 'job-protocol-v2.js');
 const WORKER_REPO = path.join(REPO_ROOT, 'backend', 'src', 'storage', 'postgres', 'repositories', 'worker-repo.js');
 
 // ── G1 — GPU Hub does not import backend/worker/frontend ────────────────
@@ -104,12 +104,13 @@ describe('phase10a: Job Protocol version freeze', () => {
         expect(literals, 'gpu-hub.js must not define a protocol version literal — it consumes @animastor/contracts').to.deep.equal([]);
     });
 
-    it('worker generated copy and hub stay equal to the canonical value (no 3-way drift)', () => {
-        const canonical = require(CONTRACTS_IMPL).PROTOCOL_VERSION;
-        const workerProto = require(path.join(WORKER_BUNDLE_DIR, 'job-protocol-v2.cjs'));
+    it('worker generated copy and hub stay equal to the canonical value (no 3-way drift)', function () {
         const hub = require(hubPath);
-        expect(workerProto.PROTOCOL_VERSION).to.equal(canonical);
+        const canonical = require(CONTRACTS_IMPL).PROTOCOL_VERSION;
         expect(hub.PROTOCOL_VERSION).to.equal(canonical);
+        if (!require('./helpers').WORKER_BUNDLE_DIR) this.skip(); // worker-repo owned post-split (§9)
+        const workerProto = require(path.join(require('./helpers').WORKER_BUNDLE_DIR, 'job-protocol-v2.cjs'));
+        expect(workerProto.PROTOCOL_VERSION).to.equal(canonical);
     });
 });
 
