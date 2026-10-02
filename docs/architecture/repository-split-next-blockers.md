@@ -1057,11 +1057,11 @@ BRANCH=c21.4-physically-extract-analysis-from-backend
 NEWBRANCH=main            # имя корневой ветки НОВЫХ репо — решение владельца (п.10)
 git-filter-repo --version # обязан быть установлен: 2.47.0, /home/animastor/.local/bin/git-filter-repo
 
-# 0) backup + контроль неизменности источника (hardlink-клон ≈ 0 байт)
+# 0) backup + контроль неизменности источника (отдельная mirror-копия; её размер — не нулевой)
 mkdir -p "$SPLIT"
 test "$(git -C "$BARE" rev-parse "$SRC^{commit}")" = "$SRC"
 BEFORE=$(git -C "$BARE" for-each-ref --format='%(objectname) %(refname)' | sort)
-git clone --mirror "$BARE" "$SPLIT/backup-animastor.git"     # fallback-копия; оригинал не пишется
+git clone --mirror "$BARE" "$SPLIT/backup-animastor.git"     # обычная отдельная mirror-копия git-репозитория (fallback/backup) — НЕ hardlink-клон и НЕ «≈0 байт»: фактический размер равен размеру копируемых данных; оригинал не пишется
 git -C "$SPLIT/backup-animastor.git" rev-parse "$SRC"        # == $SRC
 
 # 1) P2-проверка (после FF master)
