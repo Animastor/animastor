@@ -1,12 +1,14 @@
-# Repository Split — Next Blockers (после `834987a7`)
+# Repository Split — Next Blockers (после `35ba2b82`)
 
 Продолжение цепочки: `repository-split-pre-split-fixes.md` (`bd66bae6`, верификация
-№2 — `834987a7`) → этот документ. Физический split **не выполнялся** (ограничения
-соблюдены: без filter-repo, force-push, новых GitHub-репо, npm publish, изменений
-существующих GPU Hub-репозиториев).
+№2 — `834987a7`) → `B7 closed` (`4d53be37`, `35ba2b82`) → этот документ.
+Физический split **не выполнялся** (ограничения соблюдены: без filter-repo,
+force-push, новых GitHub-репо, npm publish, изменений существующих GPU
+Hub-репозиториев). B7 считается **ЗАКРЫТЫМ**. Все проверки ниже выполнены на
+`35ba2b82` — mechanical-чеклист в §Mechanical.
 
-Статусы: **DONE** — закрыто в этом коммите · **READY** — код/план готовы, исполнение
-по триггеру · **POST-SPLIT** — возможно только после физического разделения ·
+Статусы: **DONE** — закрыто · **READY** — код/план готовы, исполнение по
+триггеру · **POST-SPLIT** — возможно только после физического разделения ·
 **BLOCKED** — ждёт внешнего действия · **OWNER DECISION** — требуется решение
 владельца.
 
@@ -15,77 +17,83 @@
 | Blocker | Status | Что осталось | Как закрывается |
 |---|---|---|---|
 | B1 backend deps/mounts | **DONE** (`bd66bae6`) | — | — |
-| B2 backend lock npm | **DONE** (`834987a7`) | — | — |
-| B3 web lock npm | **DONE** (`834987a7`) | — | — |
+| B2 backend lock npm | **DONE** (`834987a7`, re-verified `35ba2b82`) | — | — |
+| B3 web lock npm | **DONE** (`834987a7`, re-verified `35ba2b82`) | — | — |
 | B4 exports | **DONE** (инвариант, G2) | — | — |
-| B5 artifact scheme | **READY (механика DONE здесь)** | Release-assets (4 zip), SHA256(asset) в lock, stager fetch из Releases | POST-SPLIT: после создания hub/worker/backend репо — Release-публикация; §B5 ниже |
-| B6 sync-protocol npm | **DONE** (`bd66bae6`) | — | — |
-| B7 tests disposition | **DONE** (здесь) | — | standalone-safety применена ко всем 46 architecture + 9 integration; монорепо 979/2, постсплит-симуляция 923/24/2 (только pre-existing); карта и проверки — §B7 |
-| B8 web canonical build | **DONE** (здесь) | — | `frontends/app/scripts/build-packages.cjs` работает в обоих мирах; §B8 |
-| B9 CI | **READY (чек-лист DONE здесь)** | создание workflows в новых репо | POST-SPLIT по чек-листу §B9; в монорепо не создаётся (P5) |
+| B5 artifact scheme | **READY (механика DONE, re-verified здесь)** | POST-SPLIT: Release-assets (4 zip), sha256(asset) в lock, stager fetch, digest-pin базовых образов | §B5; mechanical: lock `--check` in sync, Docker build + gate + check-artifacts 6/6 green |
+| B6 sync-protocol npm | **DONE** (`bd66bae6`, re-verified `35ba2b82`) | — | — |
+| B7 tests disposition | **DONE** (`35ba2b82`) | — | standalone-safety применена; монорепо 979/2, постсплит-симуляция 923/24/2 (только pre-existing) |
+| B8 web canonical build | **DONE** (`cced5dd3`, re-verified здесь) | — | `build:packages` 13/13 в обоих мирах |
+| B9 CI | **READY (matrix finalize DONE здесь)** | создание workflows в новых репо; R-3-решение для hub CI | POST-SPLIT по финализированной матрице §B9; в монорепо не создаётся (P5) |
 | B10 hook монорепо | N/A | — | — |
 | B11 deploy cutover | POST-SPLIT | — | после filter-repo |
 | B12 root package.json | **DONE** (`bd66bae6`) | — | — |
 | P1 4 GitHub-репо | **BLOCKED (OWNER)** | создание backend/web/android/worker на GitHub | руками владельца |
 | P2 FF master | **BLOCKED (OWNER)** | 141+ коммит отставание | `git checkout master && git merge --ff-only c21.4-…` владельцем |
 | P3 npm token | **BLOCKED (OWNER)** | E401; publish недоступен | новый грант; нужен для B5-Release/NPM publish (post-split) |
-| P4 workflow.json | **READY** (каталог пуст, не в git) | удалить пустой каталог | команда в §P4; НЕ выполнялась (по ограничению) |
+| P4 workflow.json | **READY** (пустой каталог, не в git; re-verified) | удалить пустой каталог; android-compose-mount stale | команда в §P4; НЕ выполнялась |
 | P5 CI-инфраструктура | POST-SPLIT | — | репо должны существовать |
-| P6 диск | **ADEQUATE** (3.1G; нужно <2G) | headroom под filter-repo | освободители в §P6 (предложено, не выполнялись) |
-| R-3 GPU Hub | **OWNER DECISION** (верификация обновлена) | выбор A (адаптация) / B (замена историей) | сравнение и список переноса — §R-3 |
+| P6 диск | **ACTION REQUIRED (2.9G; нужно ≥5G)** | minimal cleanup перед filter-repo | §P6; pip cache purge ≈4.4G достаточно; команды предложены, не выполнялись |
+| R-3 GPU Hub | **OWNER DECISION** (verification обновлена) | выбор A (адаптация) / B (замена историей) | сравнение и список переноса — §R-3; gate для hub CI matrix |
 | R-5 parity | DONE (правило зафиксировано) | — | — |
 
 ---
 
-## B5 — Release artifacts (аудит + механика)
+## B5 — Release artifacts (consistency re-verification)
 
-### Что проверено (факт на `834987a7`)
+### Что проверено (факт на `35ba2b82`)
 
-1. **Состав групп соответствует §2.2 prep plan**: 4 группы, publisher'ы — worker (1)
-   и backend (3). Stager копирует ровно их (`packages/animastor-gpu-hub/Dockerfile`),
-   полная docker-сборка зелёная (stager + runtime + bake-in verification).
-2. **Дрейф факта против плана** (зафиксирован, план не переписывался):
-   - plan §2.2: «workflows — 8 файлов» → фактически **9** (`backend/ai/workflows/`):
-     7 активных + `old_img-qwen-image.json`, `old_video-ltx.json` (legacy);
-     базлайны манифестов (`baseline_sha256`) покрывают 7 активных — `old_*` в
-     контракте не участвуют, но попадают в bake и в digest группы;
-   - plan §2.2: «worker-bundle — 6 файлов» → в дереве 6 файлов из `files` манифеста
-     **+ `package.json`** (версионный якорь, читается hub'ом) = 7 в staging-дереве.
-3. **`scripts/check-artifacts.sh`** (root, 5162 байта): [3/6] version-compat
-   (`worker_bundle.min_version`) и [4/6] per-workflow SHA256 по базлайнам — существуют
-   и покрывают контентный уровень; post-build проверка.
-4. **Разрыв, который закрывал B5** (подтверждён final-readiness): SHA256-проверка
-   staging-дерева **до `COPY --from=stager` отсутствовала** — сборка могла бы
-   «незаметно» забake'ить изменённое содержимое.
+1. **4 группы, exact values** — `artifacts.lock.json` сверен с деревьями
+   (double-entry независимый пересчёт в b5-тесте + `--check`):
 
-### Что реализовано (этот коммит)
+   | Group | source_repository | release_tag | asset_filename | version | files | sha256_tree |
+   |---|---|---|---|---|---|---|
+   | `worker-bundle` | animastor-worker | `worker-bundle-v2.1.1` | `animastor-worker-bundle-2.1.1.zip` | 2.1.1 | 7 | `713ac011…03d44` |
+   | `hub-workflows` | animastor-backend | `hub-artifacts-v1` | `hub-workflows-v1.zip` | v1 | 9 | `0d51107d…eca738` |
+   | `installer-src` | animastor-backend | `hub-artifacts-v1` | `installer-src-v1.zip` | 0.1.0 | 32 | `6230aba4…c83ac` |
+   | `install-manifests` | animastor-backend | `hub-artifacts-v1` | `install-manifests-v1.zip` | v1 | 3 | `46f3c26a…f3e3` |
 
-| Файл | Роль |
-|---|---|
-| `packages/animastor-gpu-hub/artifacts.lock.json` | pin-файл §2.5: name → `source_repository`, `release_tag`, `asset_filename`, `version`, `files`, `sha256_tree` |
-| `packages/animastor-gpu-hub/tools/update-artifacts-lock.cjs` | writer/verifier лока (`--check`); дайджест = sha256 по сортированным `<sha256(file)>  <relpath>\n` (path-sort, C-locale); installer-src считается в **staged-плоской** раскладке (src/installer/* + package.json) |
-| `packages/animastor-gpu-hub/scripts/verify-staged-artifacts.sh` | POSIX-sh (busybox, без node/jq) gate: пересчитывает те же дайджесты по staging-дереву и сверяет с локом |
-| `packages/animastor-gpu-hub/Dockerfile` | stager: COPY лока+gate → `RUN sh verify-staged-artifacts.sh …` **до** runtime-стадии и её `COPY --from=stager` |
-| `backend/tests/architecture/b5-artifact-contract.test.js` | 7 гвардов: состав лока, поля §2.1, **независимый пересчёт** дайджестов (double-entry, не через writer), pin версии 2.1.1 ↔ worker manifest, gate POSIX, gate в stager до COPY, **казнящий** tamper-тест (чистое дерево проходит, подмена байта валит gate) |
+2. **Dockerfile gate ordering**: `RUN sh verify-staged-artifacts.sh` — строка 30
+   (stager stage); `COPY --from=stager` — строка 44 (runtime stage). Gate на 14
+   строк / полную stage-границу **раньше** bake-in. Invariant: любое изменение
+   байта в любой из 4 групп меняет `sha256_tree` → gate валит сборку до COPY.
+3. **Digest formula** (shared, три реализации идентичны): `sha256` over sorted
+   `"<sha256(file)>  <relpath>\n"` — C-locale path-sort, LF; writer
+   (`tools/update-artifacts-lock.cjs`), gate (`scripts/verify-staged-artifacts.sh`,
+   POSIX sh, busybox, без node/jq), b5-тест (independent double-entry).
+4. **Verification order** (полная цепочка): `update-artifacts-lock.cjs --check`
+   (lock freshness) → staging gate в docker build (stager, pre-COPY) → bake-in
+   RUN (4 dirs + worker package.json) → `check-artifacts.sh` post-build
+   (6/6: dirs, version, min_version compat, per-workflow SHA256, no monorepo
+   leaks, installer entry points). Mechanical: все 4 ступени зелёные.
+5. **Legacy `old_*.json`** (`old_img-qwen-image.json`, `old_video-ltx.json`):
+   входят в digest группы (`files: 9`), **НЕ** входят в manifest baselines
+   (`baseline_sha256` покрывает только 7 активных), исключены workflow
+   loader'ом (manifest notes: image/qwen-image.json:21, video/ltx-2.3.json:29).
+   **Не считать активными artifact workflows; не удалять** — drift detection
+   по группе остаётся активным.
 
-**Инвариант «незаметно другой артефакт невозможен»**: любое изменение байта в
-любой из 4 групп меняет `sha256_tree` → gate в stager валит сборку до
-`COPY --from=stager`; дрейф источников против закоммиченного лока ловит
-`--check` + double-entry тест (обновление лока = осознанный коммит, §2.5).
-Честная граница: pre-split лок генерируется из тех же деревьев, которые
-проверяет — он фиксирует контрактом текущее состояние и делает дрейф
-**обнаружимым**, а не невозможным; криптографический якорь против подмены
-появится с SHA256 Release-asset'ов (POST-SPLIT, после P3).
+### Документационные дрейфы (зафиксированы; старые доки не переписывались)
 
-**Единый формат**: все 4 группы описаны одной формулой (§2.1) и одним
-механизмом (лок + staging-gate + bake-in RUN + check-artifacts.sh).
-`artifacts.lock.json` предусмотрен архитектурным планом (§2.5) — создан.
+| Doc | Дрейф | Канон |
+|---|---|---|
+| prep-plan §2.2 «workflows — 8 файлов» | фактически **9** (7 active + 2 legacy) | lock `files: 9`; drift задокументирован §B5 (этот документ) |
+| prep-plan §2.2 «worker-bundle — 6 файлов» | фактически **7** в staging (6 manifest + package.json) | lock `files: 7`; drift задокументирован |
+| prep-plan §2.1/§2.5, pre-split-fixes §8.1, final-readiness §B5: pin = `{…, sha256}` (asset) | реализовано `{…, files, sha256_tree}` — tree digest, **не** asset sha256 | next-blockers §B5 честно фиксирует gap; asset-sha256 — POST-SPLIT |
+| final-readiness §B5 «SHA256-проверка ДО COPY не реализована» | **stale** — gate реализован (Dockerfile:28–30) | этот документ |
+| pre-split-fixes FINAL STATUS «BLOCKED — до B5» | **stale** — B5 механика DONE; осталось POST-SPLIT | этот документ |
+| execution-readiness §9 step 2: «stager на release-артефактах» — pre-split HARD | **противоречие** — next-blockers классифицирует как POST-SPLIT | этот документ (текущее состояние: stager COPY из монорепо) |
+
+**Инвариант «незаметно другой артефакт невозможен»**: pre-split лок
+фиксирует контрактом текущее состояние и делает дрейф **обнаружимым**;
+криптографический якорь против подмены появится с SHA256 Release-asset'ов
+(POST-SPLIT, после P3).
 
 **Осталось (POST-SPLIT)**: упаковка 4 asset-zip, публикация Release
-(`worker-bundle-v2.1.1` в worker-репо; `hub-artifacts-v1` в backend-репо),
-добавление `sha256` (asset-архива) в lock, перевод stager с монорепо-COPY на
-fetch pinned assets (механизм контрактом не фиксирован — §2.0), digest-pin
-базовых образов, G4/G5 в CI.
+(`worker-bundle-v2.1.1` в worker-репо; `hub-artifacts-v1` в backend-репо —
+**3 asset**), добавление `sha256` (asset-архива) в lock, перевод stager с
+монорепо-COPY на fetch pinned assets, digest-pin базовых образов
+(`alpine:3.19`, `node:20-slim` → `@sha256:…`), G4/G5 в CI.
 
 ---
 
@@ -103,168 +111,155 @@ symlink/file:, G1-инвариант не тронут):
    несут dist/ — пересборка пропускается с пометкой `skip`).
 
 **Верификация (после чистого `rm -rf node_modules && npm ci`)**: monorepo-ветка —
-13/13 built; симуляция post-split (временное удаление `packages/`) — 13/13 через
-npm-копии; полная цепочка `npm ci` → `build:packages` → `typecheck` → `vitest
-201/201` → `vite build` — зелёная. Registry-based `npm ci` не сломан
-(`.npmrc` legacy-peer-deps из `834987a7` сохранён).
+13/13 built; симуляция post-split — 13/13 через npm-копии; полная цепочка
+`npm ci` → `build:packages` → `typecheck` → `vitest 201/201` → `vite build` —
+зелёная (re-verified здесь).
 
 ---
 
-## B7 — architecture/integration tests: ЗАКРЫТО (standalone-safety без физического split)
+## B7 — architecture/integration tests: ЗАКРЫТО (в `35ba2b82`)
 
-**Статус**: DONE этим коммитом. Все 46 architecture-файлов и 9 интеграционных
-standalone-безопасны: в backend-репо без монорепо-соседей — ни одного
-загрузочного краша и ни одного нового падения. Физический перенос файлов по
-репозиториям (MOVE/SPLIT/RETIRE) происходит при filter-repo (§9 prep plan);
-механика безопасности уже применена.
+Статус: DONE. Standalone-safety применена ко всем 46 architecture + 9
+integration файлам. Монорепо 979/2 (IB-G15, T9 — pre-existing), постсплит-
+симуляция 923/24/2 (только pre-existing), `Exception during run` = 0.
 
-**Уточнение метода** (важно для последующих блоков): первая эмпирическая проба
-временно убирала ВЕСЬ `packages/` — это завысило объём до «61 падающего».
-Backend-репо после split СОХРАНЯЕТ свои 15 пакетов (prep plan §11), поэтому
-корректная симуляция filter-repo backend — спрятать только `animastor-worker`,
-`animastor-gpu-hub` и 13× `animastor-web-*`. Фактический объём B7:
+Детальная карта dispositions, R-2 classification (239 passing / 4 pending
+post-split vs 243/0 monorepo) — в истории документа (`35ba2b82`); здесь
+зафиксирован только факт закрытия и re-verification mechanical-чеков.
 
-| Метрика | Значение |
-|---|---|
-| Файлов, читающих `packages/**` (тесты + фикстуры) | 65 |
-| Реальных постсплит-падений (корректная симуляция, до B7) | **13 файлов**: `b5-artifact-contract`, `dependency-guardrails`, `installer-package-boundary`, `phase10a`, `phase10d`, `phase10j`, `phase10t-1`, `phase2-job-protocol-v2`, `phase9c`, `phase9d`, `gpu-hub-artifacts`, `gpu-hub-bootstrap`, `worker-setup-api` |
-| Монорепо-базлайн | 979 passing / 2 pre-existing failing (IB-G15, T9) |
-| Постсплит-симуляция (после B7) | **923 passing / 24 pending / 2 failing** — падают только pre-existing IB-G15/T9; `Exception during run` = 0 |
+---
 
-Pre-existing (в объём B7 не входят, при обеих симуляциях идентичны):
-`ai-shared-inference` (изоляционный дефект, в полном прогоне зелёный),
-`phase5-runtime-result` (T9, ENOENT `src/runtime/index.js`), IB-G15
-(installer `private:true`).
+## B9 — CI preparation (G1–G7 → финализированная post-split matrix)
 
-**Что сделано (по dispositions §9 prep plan, 21 файл изменён)**:
+**Не создаётся в монорепо** (P5: `.github/` отсутствует — re-verified:
+`find … -type d -name .github` = empty). Матрица ниже — готовая к копированию
+в каждое репо при создании. Исправления относительно предыдущей ревизии
+B9 зафиксированы в §B9-corrections.
 
-| Disposition | Файлы | Действие |
+### Определения G1–G7 (prep-plan §10)
+
+| Guard | Определение | Владелец после split |
 |---|---|---|
-| KEEP (retarget, ~45) | большинство §9-KEEP | `helpers.js`: `WORKER_PKG_DIR/BUNDLE_DIR/TESTS_DIR/SYNC_TOOL_PATH` — nullable (legacy `worker/` fallback удалён, §9 #15); добавлены `npmPkgDir()` (resolve entry → walk-up до package.json по имени) и `PKG_SRC()` (монорепо-checkout → npm-копия; unscoped-исключения `ai-connector`, `comfyui-workflow-connector`); читалки переведены, worker/hub-половины — под skip-гардами |
-| MOVE (2) | `phase9d`→worker, `phase10t-1`→hub | до переноса — гард на отсутствие чекаута (`describeWorker`, `HUB_CHECKOUT_PRESENT`); после переноса гарды становятся no-op |
-| RETIRE (1) | `phase10j` (§9 #27) | гарды на fixture/TF-ассерты; transitional-содержимое больше не требует монорепо |
-| SPLIT (4) | `lac-legacy-path-guard`, `phase2-job-protocol-v2`, `phase7`, `phase9c` | hub-половины npm-resolved, worker-половины под гардами; `lac-legacy-path-guard` оказался уже standalone-safe (existsSync-фильтр корней) — без правок |
-| R-2 integration (9) | `gpu-hub-artifacts`, `gpu-hub-bootstrap`, `worker-setup-api`, `worker-share-grants`, `private-worker-phase2`, `private-worker-visibility`, `worker-share-policy`, `orchestration-stabilization`, `fail-closed-worker-auth` | hub-зависимости — только npm `@animastor/gpu-hub`; первая итерация давала слишком широкие suite-level skip'ы — доведено точечной классификацией WORKER_REQUIRED/INDEPENDENT (см. «Доводка R-2» ниже); post-split → CI hub/worker (G5/G6) |
-| Hazard fix | `ai-functional-decomposition-c18` | describe-body чтение файла → describe-гард + it-скпы: без монорепо больше НЕ абортит весь прогон |
+| **G1** | `grep '"file:' package.json` = 0 (backend, web) | backend, web |
+| **G2** | exports/deep-subpath scan: `require('@animastor/…/sub')` по src ⊆ `exports` каждого пакета | backend (15 pkgs), web (13 pkgs) |
+| **G3** | protocol drift: `node tools/sync-protocol.cjs --check` (exit 1 on drift) | worker (+ backend facade pre-split) |
+| **G4** | hub standalone docker build без монорепо-контекста | gpu-hub |
+| **G5** | artifact integrity: staging-gate + `check-artifacts.sh` в собранном образе + сверка sha256 Release/pin | gpu-hub |
+| **G6** | boundary tests (перенесённый набор) в каждом репо | все 5 |
+| **G7** | parity-doc sync: snapshot commit+sha256 от репо-владельца; GitHub — зеркало | android→web, worker→backend, hub→backend |
 
-**Урок для переносов тестов в worker/web/hub-репо**: Mocha
-`describe.skip(name, fn)` ВСЁ РАВНО исполняет `fn` при сборке сюиты —
-top-level `require()`/`path.join()` внутри describe-колбэка даёт краш загрузки
-(`Exception during run`), а не скип. Гард — до первого обращения (тернарник на
-nullable-путь) либо `if (!PRESENT) return;` первой строкой describe-колбэка;
-`this.skip()` валиден только внутри `it()`/`before()`.
+Минимум до физического split: G1–G5 (G6 — сразу после переноса тестов, до
+пушей в новые bare). G7 — шаг 5 (с hook'ами).
 
-### Доводка R-2 (после 4d53be37): suite-level skip → точечная классификация
+### Post-split CI matrix
 
-Первая итерация B7 применила слишком широкие гарды на трёх suite'ах
-(`gpu-hub-artifacts` — гард всего describe; `gpu-hub-bootstrap`,
-`worker-setup-api` — skip всего suite через `before`): post-split не выполнялись
-тесты, не зависящие от worker-бандла — покрытие терялось ради зелёного прогона.
-Доводка: skip только для WORKER_REQUIRED тестов (индивидуально, с причиной);
-независимые проверки выполняются против синтетического минимального бандла
-(tmp: `worker.cjs` + `package.json`), который hub способен сервировать.
-Зависимости не возвращались: hub — только npm `@animastor/gpu-hub`;
-workflows/installer/manifests — backend-хранящиеся деревья.
+| Репо | Workflows (jobs) | npm registry-only deps | Токены | Checks ДО release | SHA256 verification | Impossible pre-split |
+|---|---|---|---|---|---|---|
+| **animastor-backend** | G1: `grep -rn '"file:' backend/package.json frontends/app/package.json` → empty. G2: exports/deep-subpath scan (src ⊆ exports, 15 pkgs). G6: `cd backend && npm ci && npm test` (= mocha tests/**, pretest syntax-smoke) + `npm run test:arch`. Docker build (context `./backend`). **Release job**: zip 3× hub-artifacts assets + sha256 → tag `hub-artifacts-v1` (**B9-correction D3: добавлено**). npm publish 15 pkgs — после P3. | 14× `@animastor/*` (ai-agent, ai-analysis, assistant, auth, contracts, editor, generation, installer, orchestration, parser, player, url-safety, vbook-runtime, comfyui-workflow-connector) + adm-zip/cors/express/express-rate-limit/helmet/ioredis/multer/music-metadata/pg/prom-client/sharp/ws; devDeps: gpu-hub, chai/mocha/nyc/proxyquire. Zero file:, zero link: (verified). | `NPM_TOKEN` (publish, POST-SPLIT P3); **`GITHUB_TOKEN` (Release job — B9-correction D3)** | G1, G2, G6 (979/2 baseline — 2 = pre-existing IB-G15/T9), docker build, syntax smoke | Consumer hub SHA256s (не publisher собственных); 3 Release assets несут sha256(asset) | workflow files (P1), Release publish (P1), npm publish (P3) |
+| **animastor-web** | G1: `"file:"` grep on `frontends/app/package.json`. G2: exports scan 13× `@animastor/web-*`. G6: `npm ci` → `build:packages` → `typecheck` → `test` (vitest) → `build` (vite). npm publish 13 pkgs — после P3. `.npmrc` (`legacy-peer-deps=true`) обязателен. | 13× `@animastor/web-*` + preact/@preact/signals/preact-router; devDeps: vite, vitest, typescript, @preact/preset-vite, @testing-library/*. Zero file:, zero link:. | `NPM_TOKEN` (publish, POST-SPLIT P3) | G1, G2, G6 (13 pkgs / 201 vitest / vite build) | — (parity — web output, verified by consumers) | workflow files (P1), npm publish (P3) |
+| **animastor-worker** | G3: `node tools/sync-protocol.cjs --check` (npm `check:protocol`). Bundle tests: `node tests/run-all.cjs` (6 suites: env, cleanup, cleanup-journal, job-protocol, package, standalone). Release job: zip `animastor-worker-bundle-2.1.1.zip` + sha256 в body Release, tag `worker-bundle-v2.1.1`. G7-parity snapshot: `JOB_PROTOCOL_V2.md` **из backend** (**B9-correction D4: не из web**). | Dev-harness: `@animastor/contracts ^0.1.1` only (`@animastor/worker-dev@2.1.1`, private). Bundle `animastor-worker@2.1.1`: zero-runtime-dep, files = 6 (worker.cjs, worker-env.cjs, worker-cleanup.cjs, worker-cleanup-journal.cjs, job-protocol-v2.cjs, .env.example). | `GITHUB_TOKEN` (Release zip + sha256). NPM_TOKEN не нужен (bundle не npm-published). | G3 exit 0, G6 run-all (mechanical: 45/0), G7 snapshot | **Own asset**: sha256(zip) в Release body; позже пинится в hub artifacts.lock.json | Release job (P1; zip не pre-exists — создаётся при Release), G7 fetch (bare + hooks, step 5) |
+| **animastor-gpu-hub** | G4: standalone docker build без монорепо-контекста (**после stager re-point на Release assets** — POST-SPLIT). G5: staging-gate `verify-staged-artifacts.sh` в build + `check-artifacts.sh` в собранном образе + сверка sha256 Release-assets. `node tools/update-artifacts-lock.cjs --check` (**после re-point writer на Release zips** — до тех пор monorepo-layout only, **B9-correction D6**). Package tests: `node tests/run-all.cjs` (22 checks). GHCR publish digest-pin. G7-parity snapshot: `JOB_PROTOCOL_V2.md` из **backend**. | `@animastor/contracts ^0.1.0`, cors, express ^4.19.2, ioredis (frozen; devDeps forbidden — run-all line 147). B5-тройка (lock, gate, writer) живёт в **repo**, не в npm tarball (`files` omits them). | `GHCR_TOKEN` (packages:write); artifact tokens только на build-time fetch. NPM_TOKEN не нужен для CI checks. | G4, G5 (staging-gate + post-build 6/6 + lock `--check` после re-point), npm test 22 checks, GHCR digest-pin | **3 layers**: (1) staging-gate sha256_tree vs lock **до** `COPY --from=stager`; (2) post-build `check-artifacts.sh` [3/6] min_version + [4/6] per-workflow SHA256; (3) **POST-SPLIT**: sha256 Release-asset vs lock (криптографический якорь) | G4 (Dockerfile paths monorepo-relative), G5 Release-asset digest (assets unpublished), GHCR digest-pin (R-3 NO-GO до решения), `--check` post-split (writer walkRoot monorepo-relative — re-point POST-SPLIT) |
+| **animastor-android** | G7-parity snapshot: fetch `ANDROID_WEB_PARITY.md` **из web** (canonical owner; R-5: из VPS bare, GitHub зеркало). Verify commit + sha256; auto-PR on change; android не редактирует контент кроме header `snapshot of web@<commit>`. G6-analog: gradle unit tests (`junit:junit:4.13.2`, PlayerGateTest.kt) — **B9-correction D5: пин явно**. APK build: `./gradlew assembleDebug` (build-apk.sh / apk-build.sh). | **None** — no package.json under frontends/android/; gradle-only (Maven deps). | None для checks (опц. signing keystore; GITHUB_TOKEN если APK → GitHub Release) | G7 snapshot (commit+sha256 vs web), gradle assembleDebug + JVM unit tests | G7 parity file sha256 vs canonical web; (release) APK asset sha256 | G7 fetch (bare + hooks, step 5) |
 
-| Suite | Классификация | Монорепо | Постсплит |
-|---|---|---|---|
-| `gpu-hub-artifacts` | **3 WORKER_REQUIRED** (реальный список файлов, canonical 2.1.1, security-скан реального бандла — §8.4 worker CI); **26 INDEPENDENT** (tar-детерминизм, integrity-заголовки, .env-исключение, path traversal, workflows, installer, bootstrap-скрипт); POST_SPLIT_GPU_HUB — целиком при filter-repo | 29/0 | 26 pass / 3 skip |
-| `gpu-hub-bootstrap` | **0 WORKER_REQUIRED** — реальный контент не пинится (stub-installer); **9 INDEPENDENT** (credential rejection, profile/mode validation, deterministic script, happy path, re-run, exit-code propagation) | 9/0 | 9 pass / 0 skip |
-| `worker-setup-api` | **0 WORKER_REQUIRED** — API-контракт backend↔hub, integrity-кросс-чеки самосогласованы (API checksum == отданные байты); **40 INDEPENDENT** | 40/0 | 40 pass / 0 skip |
-| `private-worker-phase2` | **1 WORKER_REQUIRED** (`worker.cjs` Bearer source-contract — уезжает в worker §8.4; describe-scoped `before`-skip); **40 INDEPENDENT** | 41/0 | 40 pass / 1 skip |
-| `worker-share-grants` | 27 INDEPENDENT (гарды не требовались) | 27/0 | 27/0 |
-| `private-worker-visibility` | 23 INDEPENDENT | 23/0 | 23/0 |
-| `worker-share-policy` | 45 INDEPENDENT | 45/0 | 45/0 |
-| `orchestration-stabilization` | 11 INDEPENDENT (worker-чтения conditional, hub-половина всегда) | 11/0 | 11/0 |
-| `fail-closed-worker-auth` | 18 INDEPENDENT | 18/0 | 18/0 |
+### B9-corrections (исправления относительно предыдущей ревизии матрицы)
 
-Итог доводки (9 suite'ов по отдельности, постсплит): **239 passing / 4 pending**
-(4 = WORKER_REQUIRED с явной причиной в коде) против 164 passing / 79 pending
-до доводки. Монорепо: **243 passing / 0 pending** — без изменений.
-POST_SPLIT_GPU_HUB: `gpu-hub-artifacts` + `gpu-hub-bootstrap` целиком и
-worker-бандл-ассерты `worker-setup-api` уезжают в hub/worker CI при filter-repo
-(§8.4/§8.5); до тех пор покрытие живёт в backend-репо.
-
-**Механические проверки** (этот коммит):
-
-- Монорепо: `npm run test:arch` = `npm test` = **979 passing / 2 failing**
-  (IB-G15, T9 — pre-existing), pending = 0 (гарды — no-op в монорепо),
-  `Exception during run` = 0.
-- Постсплит-симуляция (спрятаны worker+gpu-hub+13 web-*, в `packages/` = 15):
-  `test:arch` и `npm test` = **923 passing / 24 pending / 2 failing** — падают
-  только pre-existing IB-G15/T9; загрузочных крашей нет; 24 pending — ожидаемые
-  skip-гарды. Директории восстановлены (`packages/` = 30).
-- 9 R-2 интеграционных по отдельности (монорепо): 29+9+40+27+41+23+45+11+18 =
-  **243 passing, 0 failing**; после доводки — без изменений (979/2 сохранён).
-- Доводка R-2, постсплит (9 suites по отдельности): **239 passing / 4 pending**
-  (WORKER_REQUIRED: 3 в `gpu-hub-artifacts`, 1 в `private-worker-phase2`);
-  `gpu-hub-bootstrap` 9/9 и `worker-setup-api` 40/40 — восстановлено полное
-  покрытие; крашей нет; новых падений относительно 4d53be37 нет.
-- Мусорных файлов нет (`__guard_negative_control__.cjs` нигде не остался).
-
-**Примечания**:
-
-- npm-тарбол `@animastor/gpu-hub@0.1.1` НЕ содержит `artifacts.lock.json` и
-  `scripts/verify-staged-artifacts.sh` (новое в B5, ещё не опубликовано):
-  `b5-artifact-contract` гардируется на lock + worker-чекат → post-split это
-  hub-CI тест (§8.5). Остальные hub-ассерты (pack surface, Dockerfile,
-  version-pin) валидны на npm-копии и работают без гарда.
-- GPU Hub (без изменений, только фиксация требования): монорепо
-  `packages/animastor-gpu-hub` остаётся каноническим исходником до R-3/B5-end;
-  `phase10t-1` + B5 Dockerfile/gate-ассерты переезжают в hub-репо; hub получает
-  собственный standalone overlay (уже есть в bare-репо, §R-3).
-
----
-
-## B9 — CI preparation (G1–G7 → чек-лист post-split)
-
-Не создаётся в монорепо (P5: `.github/` отсутствует — некуда класть).
-Готовая матрица для копирования в каждое репо при создании:
-
-| Репо | Workflows (jobs) | Проверяет npm-install (не file:) | Проверяет artifacts SHA256 | Секреты |
-|---|---|---|---|---|
-| animastor-backend | G1 (`grep '"file:' → 0`), G2 (exports-скан), G6 (arch+unit suite), docker build (context ./backend), npm publish — после P3 | `npm ci && npm test` (lock registry-only) | — (consumer, не publisher) | `NPM_TOKEN` |
-| animastor-web | G1, G2 (13 пакетов), G6 (ci → build:packages → typecheck → vitest → vite build), npm publish 13 пакетов — после P3 | `npm ci` registry-only | — | `NPM_TOKEN` |
-| animastor-worker | G3 (`sync-protocol.cjs --check`), bundle tests (`tests/run-all.cjs`), Release job: zip `animastor-worker-bundle-<ver>.zip` + sha256 в body Release, G7-parity snapshot (commit+sha256 из web) | `npm ci` dev-harness (contracts из npm) | sha256 своего asset | `GITHUB_TOKEN` (Release) |
-| animastor-gpu-hub | G4 (standalone docker build без монорепо-контекста), G5 (`check-artifacts.sh` в собранном образе + staging-gate), `update-artifacts-lock.cjs --check`, GHCR publish digest-pin, G7-parity snapshot | `npm ci` (contracts из npm) | staging-gate до `COPY --from=stager` + G5 post-build + сверка sha256 Release-asset | `GHCR_TOKEN` (packages:write) |
-| animastor-android | G7-parity snapshot (по R-5: из VPS bare web), APK build (gradle) | — | — | — |
-
-Дополнения к §10 плана: (1) staging-gate B5 — новый G5-компонент build-time;
-(2) `--check` artifacts.lock в CI hub; (3) G7 у worker/hub/android — job'ы
-снапшотов, источник — репозиторий-владелец (web/backend), GitHub — зеркало.
+| # | Было (ошибка/пробел) | Стало |
+|---|---|---|
+| **D3** | backend row: нет Release job, нет `GITHUB_TOKEN`; secrets = только `NPM_TOKEN` | backend публикует 3× hub-artifacts assets (tag `hub-artifacts-v1`); нужен `GITHUB_TOKEN` для Release |
+| **D4** | worker G7 = «snapshot из web» | worker/hub G7 source = **backend** (`JOB_PROTOCOL_V2.md` canonical owner); только `ANDROID_WEB_PARITY.md` — web-owned |
+| **D5** | android G6 ambiguous / отсутствовал | android G6 = gradle unit tests (junit, PlayerGateTest.kt) — явно пинится |
+| **D6** | `--check` listed в hub CI как есть | `--check` monorepo-layout only до re-point writer на Release zips; в hub CI — после re-point (POST-SPLIT remainder) |
+| **D7** | (не ошибка, уточнение) | lock реализует `sha256_tree` (tree digest); asset `sha256` — POST-SPLIT поле; оба значения документированы §B5 |
+| **D8** | (уже отмечено) | base images `alpine:3.19`/`node:20-slim` не digest-pinned — POST-SPLIT |
+| **D9** | (уже отмечено) | npm tarball `@animastor/gpu-hub` не содержит B5-тройку → `b5-artifact-contract` = hub-CI post-split, не backend CI |
+| **D10** | (уже отмечено) | R-3 OWNER DECISION gate'ит hub CI matrix: существующий `animastor-gpu-hub` GitHub (43 коммита, свой ci.yml + ghcr-release.yml) — сверка workflows с матрицей B9 при выборе A |
+| **D11** | (усилено) | G2 не имеет standalone test file в монорепо — CI scan шаг **авторится в workflow** с нуля (эквивалентные инварианты живут в per-package boundary suites); G1 — pure CI grep |
 
 ---
 
 ## P4 — остаточный `workflow.json`
 
-Факт: `/home/animastor/animastor/workflow.json` — **пустой каталог** (не файл),
-`root:root drwxr-xr-x`, создан 2026-08-24; в git **не отслеживается**
-(`git ls-files` = 0); compose-mount `./workflow.json:/workflow.json:ro` удалён
-в `bd66bae6` (C7-гвард запрещает возврат). Runtime-файл отсутствует — удалять
-сейчас нечего и незачто.
+**Факт на `35ba2b82`** (re-verified): `/home/animastor/animastor/workflow.json`
+— **пустой каталог** (не файл), `root:root drwxr-xr-x`, создан 2026-08-24;
+в git **не отслеживается** (`git ls-files` = 0); `.gitignore` строка 43:
+`workflow.json/`; compose-mount `./workflow.json:/workflow.json:ro` удалён из
+**основного** `docker-compose.yml` в `bd66bae6` (C7-гвард запрещает возврат).
 
-Безопасная команда (выполняется владельцем при желании; `rmdir` отказывается
-удалять непустой каталог — риск нулевой, sudo нужен из-за root-владения):
+**Runtime**: backend/src, packages/, frontends/ — **никто не читает**
+`/workflow.json` как runtime-файл; `installer-phase15.test.js` использует
+строку `'somewhere/else/odd-workflow.json'` только как test-data path —
+не runtime mount. Runtime-файл отсутствует — удалять сейчас нечего и незачто.
+
+**Stale mount (новая находка)**: `frontends/android/docker-compose.yml:41`
+содержит `./workflow.json:/workflow.json:ro`. Docker compose резолвит
+относительные пути от каталога compose-файла → это
+`frontends/android/workflow.json` (**не** root). Каталога
+`frontends/android/workflow.json` не существует. Mount стейл (остаток
+старого layout). Основной `docker-compose.yml` mount уже удалён.
+**Не исправлено здесь** (ограничение: обновляется только next-blockers);
+зафиксировано для владельца: удалить строку из android-compose при следующем
+android-touchpoint.
+
+**Безопасная команда удаления** (выполняется владельцем при желании;
+`rmdir` отказывается удалять непустой каталог — риск нулевой, sudo нужен
+из-за root-владения):
 
 ```bash
 sudo rmdir /home/animastor/animastor/workflow.json
 ```
 
-## P6 — диск перед filter-repo
+Дополнительно (owner, android touchpoint): удалить строку
+`./workflow.json:/workflow.json:ro` из
+`frontends/android/docker-compose.yml:41`.
 
-Факт: `/` = 99G, занято 91G (**3.1G свободно**, 97%). Потребность
-последовательного filter-repo 5 репозиториев: mirror-клон монорепо ~73M (.git) +
-рабочая копия переписи ~2× пик истории → **< 2G суммарно с запасом**; 3.1G
-достаточно для последовательного исполнения. Для комфортного headroom
-(рекомендуется до ~6G) — безопасные освободители (НЕ выполнялись):
+---
 
-```bash
-npm cache clean --force        # ~792M (~/.npm)
-docker image prune -f          # только dangling; 6 активных образов staging НЕ трогать
-```
+## P6 — диск перед filter-repo (аудит на `35ba2b82`)
 
-`docker system df`: Images 13GB (6 active — ручное решение владельца по
-устаревшим), Build Cache 0B, Volumes reclaimable ~235M (не трогать — данные).
+**Факт**: `/` = `/dev/sda2` 99G, занято 92G, **свободно 2.9G** (97%).
+Потребность последовательного filter-repo 5 репозиториев: mirror-клон
+монорепо ~73M (.git) × 5 + рабочая копия переписи ~2× пик истории →
+**≈3.0–4.5G суммарно**. **2.9G — НЕ достаточно** с нормальным запасом
+(нет headroom под OS/npm/Docker churn). Минимум: **≥5G** (рекомендуется
+≥8G).
+
+| Компонент | Размер | Классификация |
+|---|---|---|
+| `.git` (monorepo) | **73M** (packs 56M, 8 pack files) | — |
+| npm cache `~/.npm` | **792M** (_cacache 692M, _npx 100M) | cache — deletable |
+| Docker images | **13GB** (6 active, все в употреблении) | runtime — НЕ трогать |
+| Docker volumes | 1.727GB total; reclaimable **235MB** | 3 linked (ollama-data 1.36G, pg, redis) — НЕ трогать; dangling — см. cleanup |
+| Build cache | **0B** | пусто |
+| `~/.cache/pip` | **4.4G** | cache — deletable |
+| `/tmp/opencode` | **2.8G** (ttsvenv 1.9G, sims, hometest) | tmp — deletable |
+| `/tmp/installer-cli-cpu-install-*` | **2.3G** (71 dirs) | tmp — deletable |
+| `~/.gradle/caches` | **1.1G** | cache — deletable (перескачается) |
+| `/var/log/journal` | **3.7G** on disk | system log — vacuum |
+| `backups/` (home + repo) | **4.0G** | **USER DATA — не трогать** |
+| `~/.local/share/opencode/opencode.db` | **8.8G** | **ACTIVE RUNTIME — не трогать** |
+
+### Minimal cleanup plan (команды предложены, НЕ выполнялись)
+
+| # | Команда (предложение) | Est. freed | Risk |
+|---|---|---|---|
+| 1 | `pip cache purge` | **~4.4G** | None — pure cache |
+| 2 | `npm cache clean --force` | **~692M** | None — cache |
+| 3 | `rm -rf /tmp/opencode` | **~2.8G** | Low — tmp scaffolding |
+| 4 | `rm -rf /tmp/installer-cli-cpu-install-*` | **~2.3G** | Low — install leftovers |
+| 5 | `rm -rf /tmp/pip-unpack-* /tmp/npm-inst /tmp/gh_2.62.0_linux_amd64` | **~330M** | Low — tmp leftovers |
+| 6 | `journalctl --vacuum-size=200M` (root) | **~3.5G** | Low — system logs |
+| 7 | `rm -rf ~/.gradle/caches` | **~1.1G** | Low — перескачается |
+| 8 | `docker volume rm $(docker volume ls -q --filter dangling=true)` | **~235M** | **Medium** — содержит `animastor_migration_*`, `animastor_sqlite-data`; inspect first |
+| 9 | `sudo apt-get clean` | **~136M** | None |
+| 10 | `rm -rf ~/.local/share/opencode/log` | **~52M** | Low — logs only |
+
+**Минимальный путь для 5 репозиториев**: шаг 1 (pip cache) → free ≈7.3G —
+**достаточно**. Шаги 1+2+3 → ≈13.4G — здоровый headroom.
+
+**Не трогать**: `backups/` (4.0G, user data, новейший backup 1 день),
+`opencode.db` (8.8G runtime), Docker images (6 active — 100% «reclaimable»
+только потому что в употреблении; удаление = слом стека), linked volumes
+(ollama-data/pg/redis — live data).
 
 ---
 
@@ -278,10 +273,10 @@ HEAD `7c7778c`) ↔ монорепо `packages/animastor-gpu-hub`:
 |---|---|---|---|
 | `gpu-hub.js` | есть deprecated `GET /worker-source`; каталоги артефактов напрямую `/app/*` | `/worker-source` удалён; `resolveArtifactDir` (baked-in → mount fallback, 10T.1) | ~45 строк только в bare, ~40 только в монорепо |
 | `package.json` | 0.1.0 | 0.1.1 (опубликован в npm) | version + repository.url |
-| `Dockerfile` | свой (standalone) | multi-stage stager с монорепо-COPY + **новый B5 gate** | разные стратегии доставки артефактов |
+| `Dockerfile` | свой (standalone) | multi-stage stager с монорепо-COPY + **B5 gate** | разные стратегии доставки артефактов |
 | `server.js`, `tarball.js`, `bootstrap.js`, `.dockerignore` | — | — | **байт-идентичны** |
 | есть только в bare | `.github/workflows/{ci,ghcr-release}.yml`, `tests/run-all.cjs`, `DEPLOYMENT.md`, `EXTRACTION.md`, `package-lock.json`, `.gitignore` | — | bare уже имеет CI — плюс для варианта A |
-| есть только в монорепо | — | `artifacts.lock.json`, `scripts/verify-staged-artifacts.sh`, `tools/update-artifacts-lock.cjs` (B5, этот коммит) | подлежат переносу при выборе A |
+| есть только в монорепо | — | `artifacts.lock.json`, `scripts/verify-staged-artifacts.sh`, `tools/update-artifacts-lock.cjs` (B5) | подлежат переносу при выборе A |
 
 **Если выбираем A (сохранение существующего repo + адаптация), список переноса**:
 (1) блок `resolveArtifactDir` из монорепо `gpu-hub.js`; (2) решение по
@@ -289,40 +284,60 @@ deprecated `/worker-source` (в монорепо удалён); (3) version 0.1.
 (+ npm publish после P3, т.к. 0.1.1 уже занят в registry); (4) B5-тройка
 (лок, gate, writer) + ассерты `phase10t-1`/B5-теста; (5) merge Dockerfile:
 standalone-контекст + stager по Release-assets (B5 end-state); (6) sync
-`tests/run-all.cjs` с монорепо-версией (22 теста); (7) сверка
-`.github/workflows` с матрицей B9. **Если B** — backup + freeze hook +
-filter-repo экспорт истории (NO-GO до решения; force-push исключён).
+`tests/run-all.cjs` с монорепо-версией; (7) сверка `.github/workflows` с
+матрицей B9. **Если B** — backup + freeze hook + filter-repo экспорт истории
+(NO-GO до решения; force-push исключён).
 
 Решение не принято — обе опции документированы, ничего не перезаписано.
+**R-3 gate'ит hub CI matrix** (D10): до выбора A/B hub workflows не авторятся.
 
 ---
 
-## Механические проверки (выполнены в этом коммите)
+## Mechanical checks (выполнены на `35ba2b82`)
 
 | Проверка | Результат |
 |---|---|
-| backend lock: `"link": true` / `"file:` / `resolved: ../packages` | **0 / 0 / 0** |
-| web lock: `"link": true` / `"file:` / `resolved: ../packages` | **0 / 0 / 0** |
-| `artifacts.lock.json --check` | in sync |
-| Docker build hub (полный, с gate) | ✓ 4/4 integrity + bake-in verified |
-| Tamper-тест gate | ✓ exit 1 при подмене байта |
-| backend `test:arch` / `npm test` (монорепо) | **979 passing / 2 failing** (обе — pre-existing IB-G15, T9; pending = 0) |
-| backend B7 постсплит-симуляция (спрятаны worker+gpu-hub+13 web-*; `packages/` = 15) | `test:arch` = `npm test` = **923 passing / 24 pending / 2 failing** (только pre-existing IB-G15/T9; `Exception during run` = 0); директории восстановлены (`packages/` = 30) |
-| 9 R-2 интеграционных по отдельности | монорепо **243 passing / 0 failing**; постсплит **239 passing / 4 pending** (WORKER_REQUIRED skips) / 0 failing |
-| web: `npm ci` → `build:packages` → `typecheck` → `test` → `build` | ✓ / 13 pkgs / ✓ / **201/201** / ✓ |
-| worker `sync-protocol.cjs --check` | exit 0 |
-| Мусорные артефакты тестов | нет (`__guard_negative_control__.cjs` не остался) |
+| backend lock: `"link": true` / `"file:` / `resolved: ../packages` | **0 / 0 / 0** ✓ |
+| web lock: `"link": true` / `"file:` / `resolved: ../packages` | **0 / 0 / 0** ✓ |
+| `"file:"` / `"link"` в backend/web package.json | **0** ✓ |
+| backend `npm ci` | exit 0, 399 packages ✓ |
+| web `npm ci` | exit 0, 227 packages ✓ |
+| backend `test:arch` / `npm test` | **979 passing / 2 failing** (IB-G15, T9 — pre-existing; не новые ошибки) ✓ |
+| web `build:packages` | 13/13 pkgs built ✓ |
+| web `typecheck` | exit 0 ✓ |
+| web `test` (vitest) | **201/201 passed** (15 files) ✓ |
+| web `build` (vite) | exit 0, built in 1.81s ✓ |
+| worker `sync-protocol.cjs --check` | exit 0 — «in sync with @animastor/contracts» ✓ |
+| worker `tests/run-all.cjs` | **45 pass / 0 fail** ✓ |
+| B5 `update-artifacts-lock.cjs --check` | «in sync with source trees» ✓ |
+| Docker Hub build (staging gate + bake-in) | exit 0; gate RUN passed; «artifact bake-in verified: 4 groups present» ✓ |
+| Docker `check-artifacts.sh` (post-build, в собранном образе) | **ALL CHECKS PASSED** — 6/6 ✓ |
+| `.github/` в монорепо | отсутствует (P5 confirmed) ✓ |
+| workflow.json | пустой каталог, не tracked, runtime не использует ✓ |
+
+**IB-G15 / T9** — pre-existing (в объём новых ошибок не входят):
+- IB-G15: `installer-package-boundary.test.js:243` — `pkg.private === true`
+  vs published `@animastor/installer@0.1.0` (нет `private` поля).
+- T9: `phase5-runtime-result.test.js:401` — ENOENT
+  `backend/src/runtime/index.js` (файл удалён из истории).
+
+---
 
 ## Самопроверка документа
 
-- B5-инвариант сформулирован честно (pre-split: обнаружение дрейфа, а не
-  криптографическая защита) — §B5.
-- Уточнение к §9 («KEEP-тесты падают post-split из-за прямых чтений
-  `packages/*/src`») закрыто исполнением B7: retarget/skip-гарды применены
-  (§B7); сам §9 не переписывался.
-- Первая эмпирическая оценка B7 («61 падающий» из пробы с полным снятием
-  `packages/`) исправлена корректной симуляцией (только worker+gpu-hub+web-*):
-  фактический объём — 13 файлов; исправление задокументировано в §B7.
-- GPU Hub: `packages/animastor-gpu-hub` изменён только в объёме B5 (лок, gate,
-  Dockerfile-строки) — R-3-связанные изменения (история bare/GitHub, версия,
-  роуты) не вносились; пункт 6 ограничений соблюдён в этой трактовке.
+- B9 matrix финализирована: D3 (backend Release + GITHUB_TOKEN), D4
+  (worker/hub G7 → backend), D5 (android G6 = gradle tests), D6
+  (`--check` — после re-point) — исправления зафиксированы в §B9-corrections.
+- P4: re-verified — пустой каталог, не tracked, runtime не использует;
+  stale android-compose-mount зафиксирован для owner.
+- P6: обновлён факт (2.9G — insufficient для 5 repos); minimal cleanup
+  (pip cache → 7.3G) документирован; команды не выполнялись.
+- B5: 4 группы exact values сверены; gate ordering (line 30 < line 44)
+  подтверждён; legacy `old_*` — в digest, не в baselines, не удалять;
+  документационные дрейфы старых доков зафиксированы (не переписывались).
+- Mechanical: все проверки зелёные; IB-G15/T9 — pre-existing, не новые.
+- Ограничения соблюдены: physical split не выполнялся; filter-repo нет;
+  новых GitHub repos нет; force-push нет; существующий GPU Hub repo не
+  изменён; npm publish нет; production architecture changes нет;
+  file:/symlink deps не возвращены; B7-тесты не изменены.
+- Единственный изменённый файл: этот документ.
