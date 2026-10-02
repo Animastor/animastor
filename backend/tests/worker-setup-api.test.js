@@ -20,6 +20,8 @@
 
 const { expect } = require('chai');
 const express = require('express');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const { query } = require('../src/storage/postgres/database');
@@ -58,14 +60,16 @@ function writeHeartbeat(redis, workerType, workerId, ts = Date.now()) {
 }
 
 describe('Private worker setup contract API (Phase 3)', function () {
-    // B7 disposition (R-2, §9): integration suite driving the REAL hub app
-    // against REAL artifact trees (worker bundle + installer + manifests).
-    // Post-split: GPU Hub integration/CI test (standalone checkout/staging).
-    // Without the worker bundle checkout the hub config has no material —
-    // skip cleanly instead of failing on ENOENT inside `before`.
-    before(function () {
-        if (!require('./architecture/helpers').WORKER_BUNDLE_DIR) this.skip();
-    });
+    // B7 R-2 refinement (post-4d53be37): NO suite-level skip — API-contract
+    // assertions (auth, profiles, methods, artifacts, workflows, instructions,
+    // plan, status, security) do not depend on REAL worker content. The hub
+    // under test only needs SERVABLE bundle material: without the checkout a
+    // synthetic minimal bundle covers it, and the integrity cross-checks stay
+    // self-consistent (API checksum == served bytes). §8.4 worker CI owns
+    // real-content pins after the split.
+    const REAL_WORKER_BUNDLE_DIR = require('./architecture/helpers').WORKER_BUNDLE_DIR;
+    let workerBundleDir = REAL_WORKER_BUNDLE_DIR;
+    let synthWorkerDir = null;
     let server;
     let hubServer;
     let base;
@@ -82,6 +86,18 @@ describe('Private worker setup contract API (Phase 3)', function () {
         await cleanup();
         redis = createMockRedis();
 
+        // Post-split fallback (§8.4): synthetic servable bundle when the
+        // worker checkout is absent — the API contract under test is
+        // backend↔hub, not worker content.
+        if (!workerBundleDir) {
+            synthWorkerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'setup-api-synth-worker-'));
+            fs.writeFileSync(path.join(synthWorkerDir, 'worker.cjs'),
+                '// synthetic worker bundle — post-split backend integration stub\n');
+            fs.writeFileSync(path.join(synthWorkerDir, 'package.json'),
+                JSON.stringify({ name: 'animastor-worker', version: '0.0.0-postsplit' }));
+            workerBundleDir = synthWorkerDir;
+        }
+
         // Real hub instance (real repo artifacts) — the setup contract
         // resolves artifact checksums against it, exactly like production.
         const hubApp = buildHubApp({
@@ -89,8 +105,8 @@ describe('Private worker setup contract API (Phase 3)', function () {
             config: {
                 BACKEND_URL: 'http://backend.test',
                 GPU_HUB_API_KEY: null,
-                WORKER_SOURCE_PATH: path.join(require('./architecture/helpers').WORKER_BUNDLE_DIR, 'worker.cjs'),
-                WORKER_BUNDLE_DIR: require('./architecture/helpers').WORKER_BUNDLE_DIR,
+                WORKER_SOURCE_PATH: path.join(workerBundleDir, 'worker.cjs'),
+                WORKER_BUNDLE_DIR: workerBundleDir,
                 WORKFLOW_DIR: path.join(REPO_ROOT, 'backend', 'ai', 'workflows'),
                 INSTALLER_SRC_DIR: path.join(REPO_ROOT, 'packages', 'animastor-installer', 'src', 'installer'),
                 INSTALLER_MANIFESTS_DIR: path.join(REPO_ROOT, 'packages', 'animastor-installer', 'ai', 'install-manifests'),
@@ -152,6 +168,8 @@ describe('Private worker setup contract API (Phase 3)', function () {
         this.timeout(30000);
         if (server) server.close();
         if (hubServer) hubServer.close();
+        if (synthWorkerDir) fs.rmSync(synthWorkerDir, { recursive: true, force: true });
+        synthWorkerDir = null;
         await cleanup();
     });
 

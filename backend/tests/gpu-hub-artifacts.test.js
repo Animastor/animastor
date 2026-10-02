@@ -27,7 +27,6 @@ const { buildHubApp } = require('@animastor/gpu-hub/gpu-hub.js');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
 const REAL_WORKER_DIR = require('./architecture/helpers').WORKER_BUNDLE_DIR; // null post-split (worker repo owns this surface)
-const REAL_WORKER_SOURCE = REAL_WORKER_DIR ? path.join(REAL_WORKER_DIR, 'worker.cjs') : null;
 const REAL_WORKFLOW_DIR = path.join(REPO_ROOT, 'backend', 'ai', 'workflows');
 const REAL_INSTALLER_SRC = path.join(REPO_ROOT, 'packages', 'animastor-installer', 'src', 'installer');
 const REAL_MANIFESTS = path.join(REPO_ROOT, 'packages', 'animastor-installer', 'ai', 'install-manifests');
@@ -35,24 +34,20 @@ const REAL_MANIFESTS = path.join(REPO_ROOT, 'packages', 'animastor-installer', '
 // (the hub bakes it into installer-src/package.json).
 const INSTALLER_PKG_JSON = require('../../packages/animastor-installer/package.json');
 
-const ARTIFACT_CONFIG = {
-    BACKEND_URL: 'http://backend.test',
-    GPU_HUB_API_KEY: null,
-    WORKER_SOURCE_PATH: REAL_WORKER_SOURCE,
-    WORKER_BUNDLE_DIR: REAL_WORKER_DIR,
-    WORKFLOW_DIR: REAL_WORKFLOW_DIR,
-    INSTALLER_SRC_DIR: REAL_INSTALLER_SRC,
-    INSTALLER_MANIFESTS_DIR: REAL_MANIFESTS,
-};
+// B7 R-2 refinement (post-4d53be37): the worker checkout is needed only as
+// SERVABLE bundle material for the hub under test, not as a test subject.
+// Classification:
+//   WORKER_REQUIRED — pins REAL bundle content (exact file list, canonical
+//     version 2.1.1, real-bundle secret scan): skip individually without
+//     the checkout (§8.4 worker CI owns them after the split).
+//   INDEPENDENT — tar determinism, checksum/integrity headers, .env
+//     exclusion, path traversal, workflow/installer/bootstrap-script
+//     contract: run against a synthetic minimal bundle when the checkout
+//     is absent, so hub-side coverage survives the backend split.
+const WORKER_PRESENT = !!REAL_WORKER_DIR;
+let SYNTH_WORKER_DIR = null;
 
-// B7 disposition (R-2, §9): this is an integration suite that runs a REAL hub
-// app against REAL worker-bundle/workflow/installer artifact trees. After the
-// split those trees live in the worker/backend/hub repos respectively — the
-// suite stays as a GPU Hub integration/CI test (standalone hub checkout or
-// composed staging), NOT as a backend unit test. Without the worker bundle
-// checkout the worker-bundle describe below has no material to serve, so the
-// suite skips cleanly instead of aborting on ENOENT.
-const WORKER_BUNDLE_AVAILABLE = !!REAL_WORKER_DIR;
+let ARTIFACT_CONFIG;
 
 async function startHub(config) {
     const app = buildHubApp({
@@ -109,9 +104,38 @@ function sha256(buf) {
 }
 
 describe('GPU hub — setup contract artifacts (Phase 3)', function () {
-    if (!WORKER_BUNDLE_AVAILABLE) return; // integration: needs the worker bundle tree (hub/worker CI post-split)
     let hub;
     let tmpDirs = [];
+
+    // No suite-level skip (B7 R-2 refinement): only REAL-bundle content pins
+    // are worker-dependent and skip individually below. Everything else runs
+    // against a synthetic minimal bundle when the checkout is absent.
+    before(function () {
+        if (!WORKER_PRESENT) {
+            SYNTH_WORKER_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-artifacts-synth-worker-'));
+            fs.writeFileSync(path.join(SYNTH_WORKER_DIR, 'worker.cjs'),
+                '// synthetic worker bundle — post-split backend integration stub (§8.4 worker CI owns real pins)\n');
+            fs.writeFileSync(path.join(SYNTH_WORKER_DIR, 'package.json'),
+                JSON.stringify({ name: 'animastor-worker', version: '0.0.0-postsplit' }));
+        }
+        const workerDir = WORKER_PRESENT ? REAL_WORKER_DIR : SYNTH_WORKER_DIR;
+        ARTIFACT_CONFIG = {
+            BACKEND_URL: 'http://backend.test',
+            GPU_HUB_API_KEY: null,
+            WORKER_SOURCE_PATH: path.join(workerDir, 'worker.cjs'),
+            WORKER_BUNDLE_DIR: workerDir,
+            WORKFLOW_DIR: REAL_WORKFLOW_DIR,
+            INSTALLER_SRC_DIR: REAL_INSTALLER_SRC,
+            INSTALLER_MANIFESTS_DIR: REAL_MANIFESTS,
+        };
+    });
+
+    after(function () {
+        if (SYNTH_WORKER_DIR) {
+            fs.rmSync(SYNTH_WORKER_DIR, { recursive: true, force: true });
+            SYNTH_WORKER_DIR = null;
+        }
+    });
 
     afterEach(async () => {
         if (hub) { await new Promise((r) => hub.server.close(r)); hub = null; }
@@ -135,7 +159,8 @@ describe('GPU hub — setup contract artifacts (Phase 3)', function () {
     // ══════════════════════════════════════════════════════════════════
 
     describe('GET /worker-bundle', () => {
-        it('serves the full bundle as tar.gz with all runtime files', async () => {
+        it('serves the full bundle as tar.gz with all runtime files', async function () {
+            if (!WORKER_PRESENT) this.skip(); // WORKER_REQUIRED: pins the real bundle file list + canonical version (§8.4)
             hub = await startHub(ARTIFACT_CONFIG);
             const res = await fetch(`${hub.base}/worker-bundle`);
             expect(res.status).to.equal(200);
@@ -164,7 +189,8 @@ describe('GPU hub — setup contract artifacts (Phase 3)', function () {
             }
         });
 
-        it('published sha256 matches the downloaded artifact (integrity)', async () => {
+        it('published sha256 matches the downloaded artifact (integrity)', async function () {
+            if (!WORKER_PRESENT) this.skip(); // WORKER_REQUIRED: pins the canonical version 2.1.1 (§8.4)
             hub = await startHub(ARTIFACT_CONFIG);
             const res = await fetch(`${hub.base}/worker-bundle`);
             const buf = Buffer.from(await res.arrayBuffer());
@@ -207,7 +233,8 @@ describe('GPU hub — setup contract artifacts (Phase 3)', function () {
 
         // Phase 3.1 §4 — unpack the REAL bundle and scan every file for
         // secrets: .env files, Worker Keys, tokens, token_hash, credentials.
-        it('security scan: unpacked real bundle contains no secrets', async () => {
+        it('security scan: unpacked real bundle contains no secrets', async function () {
+            if (!WORKER_PRESENT) this.skip(); // WORKER_REQUIRED: scans the REAL bundle (§8.4); synthetic exclusion covered above
             hub = await startHub(ARTIFACT_CONFIG);
             const res = await fetch(`${hub.base}/worker-bundle`);
             const buf = Buffer.from(await res.arrayBuffer());

@@ -76,13 +76,31 @@ function execBash(scriptFile, { env = {}, timeout = 30000, args = '' } = {}) {
 }
 
 describe('Bootstrap installer (end-to-end)', function () {
-    // B7 disposition (R-2, §9): end-to-end bootstrap integration — runs the
-    // REAL hub serving REAL artifact trees against a bash-recorded installer.
-    // After the split this is a GPU Hub integration/CI test (standalone hub
-    // checkout / composed staging). Without the worker bundle checkout the
-    // hub cannot serve the worker-bundle leg — skip cleanly, never abort.
+    // B7 R-2 refinement (post-4d53be37): NO suite-level skip. The worker
+    // checkout is only servable bundle material for the hub under test — the
+    // bootstrap flow (download → verify → execute stub installer) never pins
+    // REAL bundle content, so a synthetic minimal bundle covers it post-split
+    // (§8.4 worker CI owns real-content pins). All 9 tests run in both worlds.
+    const REAL_WORKER_BUNDLE_DIR = require('./architecture/helpers').WORKER_BUNDLE_DIR;
+    let WORKER_BUNDLE_DIR_EFF = REAL_WORKER_BUNDLE_DIR;
+    let SYNTH_WORKER_DIR = null;
+
     before(function () {
-        if (!require('./architecture/helpers').WORKER_BUNDLE_DIR) this.skip();
+        if (!WORKER_BUNDLE_DIR_EFF) {
+            SYNTH_WORKER_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'bootstrap-synth-worker-'));
+            fs.writeFileSync(path.join(SYNTH_WORKER_DIR, 'worker.cjs'),
+                '// synthetic worker bundle — post-split backend integration stub (§8.4 worker CI owns real pins)\n');
+            fs.writeFileSync(path.join(SYNTH_WORKER_DIR, 'package.json'),
+                JSON.stringify({ name: 'animastor-worker', version: '0.0.0-postsplit' }));
+            WORKER_BUNDLE_DIR_EFF = SYNTH_WORKER_DIR;
+        }
+    });
+
+    after(function () {
+        if (SYNTH_WORKER_DIR) {
+            fs.rmSync(SYNTH_WORKER_DIR, { recursive: true, force: true });
+            SYNTH_WORKER_DIR = null;
+        }
     });
     this.timeout(60000);
 
@@ -127,7 +145,7 @@ describe('Bootstrap installer (end-to-end)', function () {
     it('full happy path: download → verify → run installer with embedded profile/mode → temp dir wiped', async () => {
         hub = await startHub({
             INSTALLER_SRC_DIR: stubSrc,
-            WORKER_BUNDLE_DIR: require('./architecture/helpers').WORKER_BUNDLE_DIR,
+            WORKER_BUNDLE_DIR: WORKER_BUNDLE_DIR_EFF,
             WORKFLOW_DIR: path.join(REPO_ROOT, 'backend', 'ai', 'workflows'),
             INSTALLER_MANIFESTS_DIR: REAL_MANIFESTS,
         });
@@ -209,7 +227,7 @@ describe('Bootstrap installer (end-to-end)', function () {
     it('re-running the bootstrap is safe (fresh temp dir, installer invoked again)', async () => {
         hub = await startHub({
             INSTALLER_SRC_DIR: stubSrc,
-            WORKER_BUNDLE_DIR: require('./architecture/helpers').WORKER_BUNDLE_DIR,
+            WORKER_BUNDLE_DIR: WORKER_BUNDLE_DIR_EFF,
             WORKFLOW_DIR: path.join(REPO_ROOT, 'backend', 'ai', 'workflows'),
             INSTALLER_MANIFESTS_DIR: REAL_MANIFESTS,
         });
@@ -227,7 +245,7 @@ describe('Bootstrap installer (end-to-end)', function () {
     it('installer failures propagate (exit code + visible remediation pointer)', async () => {
         hub = await startHub({
             INSTALLER_SRC_DIR: stubSrc,
-            WORKER_BUNDLE_DIR: require('./architecture/helpers').WORKER_BUNDLE_DIR,
+            WORKER_BUNDLE_DIR: WORKER_BUNDLE_DIR_EFF,
             WORKFLOW_DIR: path.join(REPO_ROOT, 'backend', 'ai', 'workflows'),
             INSTALLER_MANIFESTS_DIR: REAL_MANIFESTS,
         });

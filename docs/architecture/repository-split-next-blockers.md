@@ -144,7 +144,7 @@ Pre-existing (в объём B7 не входят, при обеих симуля
 | MOVE (2) | `phase9d`→worker, `phase10t-1`→hub | до переноса — гард на отсутствие чекаута (`describeWorker`, `HUB_CHECKOUT_PRESENT`); после переноса гарды становятся no-op |
 | RETIRE (1) | `phase10j` (§9 #27) | гарды на fixture/TF-ассерты; transitional-содержимое больше не требует монорепо |
 | SPLIT (4) | `lac-legacy-path-guard`, `phase2-job-protocol-v2`, `phase7`, `phase9c` | hub-половины npm-resolved, worker-половины под гардами; `lac-legacy-path-guard` оказался уже standalone-safe (existsSync-фильтр корней) — без правок |
-| R-2 integration (9) | `gpu-hub-artifacts`, `gpu-hub-bootstrap`, `worker-setup-api`, `worker-share-grants`, `private-worker-phase2`, `private-worker-visibility`, `worker-share-policy`, `orchestration-stabilization`, `fail-closed-worker-auth` | worker-зависимые части — skip при отсутствии бандла; hub/contracts-половины ассертятся всегда; post-split → CI hub/worker (G5/G6) |
+| R-2 integration (9) | `gpu-hub-artifacts`, `gpu-hub-bootstrap`, `worker-setup-api`, `worker-share-grants`, `private-worker-phase2`, `private-worker-visibility`, `worker-share-policy`, `orchestration-stabilization`, `fail-closed-worker-auth` | hub-зависимости — только npm `@animastor/gpu-hub`; первая итерация давала слишком широкие suite-level skip'ы — доведено точечной классификацией WORKER_REQUIRED/INDEPENDENT (см. «Доводка R-2» ниже); post-split → CI hub/worker (G5/G6) |
 | Hazard fix | `ai-functional-decomposition-c18` | describe-body чтение файла → describe-гард + it-скпы: без монорепо больше НЕ абортит весь прогон |
 
 **Урок для переносов тестов в worker/web/hub-репо**: Mocha
@@ -153,6 +153,37 @@ top-level `require()`/`path.join()` внутри describe-колбэка даё�
 (`Exception during run`), а не скип. Гард — до первого обращения (тернарник на
 nullable-путь) либо `if (!PRESENT) return;` первой строкой describe-колбэка;
 `this.skip()` валиден только внутри `it()`/`before()`.
+
+### Доводка R-2 (после 4d53be37): suite-level skip → точечная классификация
+
+Первая итерация B7 применила слишком широкие гарды на трёх suite'ах
+(`gpu-hub-artifacts` — гард всего describe; `gpu-hub-bootstrap`,
+`worker-setup-api` — skip всего suite через `before`): post-split не выполнялись
+тесты, не зависящие от worker-бандла — покрытие терялось ради зелёного прогона.
+Доводка: skip только для WORKER_REQUIRED тестов (индивидуально, с причиной);
+независимые проверки выполняются против синтетического минимального бандла
+(tmp: `worker.cjs` + `package.json`), который hub способен сервировать.
+Зависимости не возвращались: hub — только npm `@animastor/gpu-hub`;
+workflows/installer/manifests — backend-хранящиеся деревья.
+
+| Suite | Классификация | Монорепо | Постсплит |
+|---|---|---|---|
+| `gpu-hub-artifacts` | **3 WORKER_REQUIRED** (реальный список файлов, canonical 2.1.1, security-скан реального бандла — §8.4 worker CI); **26 INDEPENDENT** (tar-детерминизм, integrity-заголовки, .env-исключение, path traversal, workflows, installer, bootstrap-скрипт); POST_SPLIT_GPU_HUB — целиком при filter-repo | 29/0 | 26 pass / 3 skip |
+| `gpu-hub-bootstrap` | **0 WORKER_REQUIRED** — реальный контент не пинится (stub-installer); **9 INDEPENDENT** (credential rejection, profile/mode validation, deterministic script, happy path, re-run, exit-code propagation) | 9/0 | 9 pass / 0 skip |
+| `worker-setup-api` | **0 WORKER_REQUIRED** — API-контракт backend↔hub, integrity-кросс-чеки самосогласованы (API checksum == отданные байты); **40 INDEPENDENT** | 40/0 | 40 pass / 0 skip |
+| `private-worker-phase2` | **1 WORKER_REQUIRED** (`worker.cjs` Bearer source-contract — уезжает в worker §8.4; describe-scoped `before`-skip); **40 INDEPENDENT** | 41/0 | 40 pass / 1 skip |
+| `worker-share-grants` | 27 INDEPENDENT (гарды не требовались) | 27/0 | 27/0 |
+| `private-worker-visibility` | 23 INDEPENDENT | 23/0 | 23/0 |
+| `worker-share-policy` | 45 INDEPENDENT | 45/0 | 45/0 |
+| `orchestration-stabilization` | 11 INDEPENDENT (worker-чтения conditional, hub-половина всегда) | 11/0 | 11/0 |
+| `fail-closed-worker-auth` | 18 INDEPENDENT | 18/0 | 18/0 |
+
+Итог доводки (9 suite'ов по отдельности, постсплит): **239 passing / 4 pending**
+(4 = WORKER_REQUIRED с явной причиной в коде) против 164 passing / 79 pending
+до доводки. Монорепо: **243 passing / 0 pending** — без изменений.
+POST_SPLIT_GPU_HUB: `gpu-hub-artifacts` + `gpu-hub-bootstrap` целиком и
+worker-бандл-ассерты `worker-setup-api` уезжают в hub/worker CI при filter-repo
+(§8.4/§8.5); до тех пор покрытие живёт в backend-репо.
 
 **Механические проверки** (этот коммит):
 
@@ -164,7 +195,11 @@ nullable-путь) либо `if (!PRESENT) return;` первой строкой 
   только pre-existing IB-G15/T9; загрузочных крашей нет; 24 pending — ожидаемые
   skip-гарды. Директории восстановлены (`packages/` = 30).
 - 9 R-2 интеграционных по отдельности (монорепо): 29+9+40+27+41+23+45+11+18 =
-  **243 passing, 0 failing**.
+  **243 passing, 0 failing**; после доводки — без изменений (979/2 сохранён).
+- Доводка R-2, постсплит (9 suites по отдельности): **239 passing / 4 pending**
+  (WORKER_REQUIRED: 3 в `gpu-hub-artifacts`, 1 в `private-worker-phase2`);
+  `gpu-hub-bootstrap` 9/9 и `worker-setup-api` 40/40 — восстановлено полное
+  покрытие; крашей нет; новых падений относительно 4d53be37 нет.
 - Мусорных файлов нет (`__guard_negative_control__.cjs` нигде не остался).
 
 **Примечания**:
@@ -273,7 +308,7 @@ filter-repo экспорт истории (NO-GO до решения; force-push
 | Tamper-тест gate | ✓ exit 1 при подмене байта |
 | backend `test:arch` / `npm test` (монорепо) | **979 passing / 2 failing** (обе — pre-existing IB-G15, T9; pending = 0) |
 | backend B7 постсплит-симуляция (спрятаны worker+gpu-hub+13 web-*; `packages/` = 15) | `test:arch` = `npm test` = **923 passing / 24 pending / 2 failing** (только pre-existing IB-G15/T9; `Exception during run` = 0); директории восстановлены (`packages/` = 30) |
-| 9 R-2 интеграционных по отдельности (монорепо) | **243 passing, 0 failing** |
+| 9 R-2 интеграционных по отдельности | монорепо **243 passing / 0 failing**; постсплит **239 passing / 4 pending** (WORKER_REQUIRED skips) / 0 failing |
 | web: `npm ci` → `build:packages` → `typecheck` → `test` → `build` | ✓ / 13 pkgs / ✓ / **201/201** / ✓ |
 | worker `sync-protocol.cjs --check` | exit 0 |
 | Мусорные артефакты тестов | нет (`__guard_negative_control__.cjs` не остался) |
