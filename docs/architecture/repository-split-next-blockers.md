@@ -1,12 +1,22 @@
-# Repository Split — Next Blockers (после `e1c63073`)
+# Repository Split — Next Blockers (после `4f947c56`)
 
 Продолжение цепочки: `repository-split-pre-split-fixes.md` (`bd66bae6`, верификация
 №2 — `834987a7`) → `B7 closed` (`4d53be37`, `35ba2b82`) → B9/P4/P6/B5 finalize
-(`e1c63073`) → этот документ (final CI matrix + full re-verification).
+(`e1c63073`) → этот документ (`4f947c56` — documentation-only finalization).
+
+**Разделение коммитов (важно для чтения документа):**
+
+- **`e1c63073`** — commit, на котором выполнялись все tests/mechanical
+  verification (B9/P4/P6/B5, locks, npm ci, test suites, Docker build,
+  tamper test). Результаты этих проверок — факты на `e1c63073`.
+- **`4f947c56`** — documentation-only commit: оформляет и уточняет результаты
+  этих проверок (переписанная матрица B9, уточнённые формулировки P4/P6/B5,
+  разделение фактов по коммитам). **Тесты НЕ перезапускались на `4f947c56`** —
+  этот commit не меняет код, тесты, lock-файлы или Dockerfile.
+
 Физический split **не выполнялся** (ограничения соблюдены: без filter-repo,
 force-push, новых GitHub-репо, npm publish, изменений существующих GPU
-Hub-репозиториев). B7 считается **ЗАКРЫТЫМ**. Все проверки ниже выполнены на
-`e1c63073` — mechanical-чеклист в §Mechanical.
+Hub-репозиториев). B7 считается **ЗАКРЫТЫМ**.
 
 Статусы: **DONE** — закрыто · **READY** — код/план готовы, исполнение по
 триггеру · **POST-SPLIT** — возможно только после физического разделения ·
@@ -21,11 +31,11 @@ Hub-репозиториев). B7 считается **ЗАКРЫТЫМ**. Вс�
 | B2 backend lock npm | **DONE** (`834987a7`, re-verified `e1c63073`) | — | — |
 | B3 web lock npm | **DONE** (`834987a7`, re-verified `e1c63073`) | — | — |
 | B4 exports | **DONE** (инвариант, G2) | — | — |
-| B5 artifact scheme | **READY (механика DONE, re-verified здесь включая tamper)** | POST-SPLIT: Release-assets (4 zip), sha256(asset) в lock, stager fetch, digest-pin базовых образов | §B5; mechanical: lock `--check` in sync, Docker gate 4/4, check-artifacts 6/6, tamper exit 1 ✓ |
+| B5 artifact scheme | **READY (механика DONE, re-verified on `e1c63073` включая tamper)** | POST-SPLIT: Release-assets (4 zip), sha256(asset) в lock, stager fetch, digest-pin базовых образов | §B5; mechanical (`e1c63073`): lock `--check` in sync, Docker gate 4/4, check-artifacts 6/6, tamper exit 1 ✓ |
 | B6 sync-protocol npm | **DONE** (`bd66bae6`, re-verified `e1c63073`) | — | — |
 | B7 tests disposition | **DONE** (`35ba2b82`) | — | standalone-safety применена; монорепо 979/2, постсплит-симуляция 923/24/2 (только pre-existing) |
-| B8 web canonical build | **DONE** (`cced5dd3`, re-verified здесь) | — | `build:packages` 13/13 в обоих мирах |
-| B9 CI | **READY (FINAL matrix DONE здесь)** | создание workflows в новых репо (9 workflow-файлов по матрице §B9.2); R-3-решение для hub CI | POST-SPLIT по матрице §B9.2; в монорепо не создаётся (P5) |
+| B8 web canonical build | **DONE** (`cced5dd3`, re-verified on `e1c63073`) | — | `build:packages` 13/13 в обоих мирах |
+| B9 CI | **READY (FINAL matrix DONE, `4f947c56` — doc finalization; verification — `e1c63073`)** | создание workflows в новых репо (9 unique workflow files / 12 workflow entries по матрице §B9.2); R-3-решение для hub CI | POST-SPLIT по матрице §B9.2; в монорепо не создаётся (P5) |
 | B10 hook монорепо | N/A | — | — |
 | B11 deploy cutover | POST-SPLIT | — | после filter-repo |
 | B12 root package.json | **DONE** (`bd66bae6`) | — | — |
@@ -178,8 +188,10 @@ workflow-план**: filename, repository, trigger, steps, tokens, checks.
 
 ### B9.2 — Workflow matrix (filename × steps × tokens)
 
-Всего **9 workflow-файлов** в 5 будущих репо. Файлы **не создаются** в
-монорепо — только в новых репо при P1.
+Всего **9 unique workflow files / 12 workflow entries** в 5 будущих репо
+(backend 2, web 2, worker 3, gpu-hub 3, android 2 — суммарно 12 entry;
+уникальных имён файлов 9, т.к. `ci.yml` и `parity.yml` повторяются между
+репо). Файлы **не создаются** в монорепо — только в новых репо при P1.
 
 #### animastor-backend (2 workflows)
 
@@ -427,7 +439,11 @@ filter-repo экспорт истории (NO-GO до решения; force-push
 
 ---
 
-## Mechanical checks (выполнены на `e1c63073`)
+## Mechanical checks (executed on `e1c63073`; documented in `4f947c56`)
+
+**Все проверки ниже выполнялись на рабочем дереве commit'а `e1c63073`.**
+Commit `4f947c56` — documentation-only: результаты перенесены в этот документ
+без повторного запуска тестов.
 
 | Проверка | Результат |
 |---|---|
@@ -448,7 +464,7 @@ filter-repo экспорт истории (NO-GO до решения; force-push
 | Docker Hub build (staging gate) | exit 0; **«artifact integrity gate: 4/4 groups match artifacts.lock.json (staging, pre-COPY)»** ✓ |
 | Docker Hub build (bake-in) | «artifact bake-in verified: 4 groups present» ✓ |
 | Docker `check-artifacts.sh` (post-build, в собранном образе) | **ALL CHECKS PASSED** — 6/6 ✓ |
-| **B5 tamper test (executed here)** | clean tree → gate **exit 0**; byte-append to `img-qwen-image.json` → gate **exit 1** («digest mismatch: staged=653af721… locked=0d51107d…») ✓ |
+| **B5 tamper test (executed on `e1c63073`)** | clean tree → gate **exit 0**; byte-append to `img-qwen-image.json` → gate **exit 1** («digest mismatch: staged=653af721… locked=0d51107d…») ✓ |
 | `.github/` в монорепо | отсутствует (P5 confirmed) ✓ |
 | workflow.json | пустой каталог, не tracked, runtime не использует ✓ |
 | Dockerfile gate lines | gate RUN = line 30; `COPY --from=stager` = line 44 — **SHA256 проверяется ДО COPY** ✓ |
@@ -470,24 +486,33 @@ transient состоянии. Baseline остаётся 979/2; при следу
 
 ## Самопроверка документа
 
-- B9 FINAL matrix: 9 workflow-файлов (2 backend + 2 web + 3 worker + 3 hub +
-  2 android = 12 rows, 9 unique filenames по репо), каждый с trigger,
-  npm install, typecheck, tests, build, tokens, pre-release, SHA256, docker,
-  split-only columns. D3–D11 corrections сохранены.
-- P4: re-verified — пустой каталог, не tracked, runtime не использует;
-  safe rmdir задокументирован; stale android-compose-mount зафиксирован.
+- **Коммитная атрибуция**: tests/mechanical verification — на `e1c63073`;
+  `4f947c56` — documentation-only finalization (тесты не перезапускались).
+- B9 FINAL matrix: **9 unique workflow files / 12 workflow entries** across
+  5 future repositories (backend 2 + web 2 + worker 3 + gpu-hub 3 + android 2
+  = 12 entries; уникальных имён — 9: `ci.yml` ×5, `release.yml` ×3,
+  `parity.yml` ×3, `ghcr-release.yml` ×1 — каждый с trigger, npm install,
+  typecheck, tests, build, tokens, pre-release, SHA256, docker, split-only
+  columns). D3–D11 corrections сохранены.
+- P4: re-verified (на `e1c63073`) — пустой каталог, не tracked, runtime не
+  использует; safe rmdir задокументирован; stale android-compose-mount
+  зафиксирован.
 - P6: обновлён факт (2.8G — insufficient для 5 repos; installer-cli tmp
   очищены между сессиями); minimal cleanup (pip cache → 7.2G) документирован;
   команды не выполнялись.
-- B5: 4 группы exact values (полные sha256) сверены; gate ordering
+- B5: 4 группы exact values (полные sha256_tree) сверены; gate ordering
   (line 30 < line 44) подтверждён по номерам строк; tamper test executed
   (clean pass / tamper fail); legacy `old_*` — в digest, не в baselines,
   loader-excluded, не удалять; документационные дрейфы старых доков
   зафиксированы (не переписывались).
-- Mechanical: все проверки зелёные; IB-G15/T9 — pre-existing; один
-  transient flake зафиксирован честно.
+- Mechanical (на `e1c63073`): все проверки зелёные; IB-G15/T9 — pre-existing;
+  один transient flake зафиксирован честно.
 - Ограничения соблюдены: physical split не выполнялся; filter-repo нет;
   новых GitHub repos нет; force-push нет; существующий GPU Hub repo не
   изменён; npm publish нет; production architecture changes нет;
   file:/symlink deps не возвращены; B7-тесты не изменены.
-- Единственный изменённый файл: этот документ.
+- `4f947c56` (этот commit): изменён только `docs/architecture/repository-split-next-blockers.md`
+  — production code, tests, package.json, package-lock, Dockerfile,
+  artifacts.lock, B5 scripts, B7 tests, CI files, `.github`, GPU Hub,
+  physical split, filter-repo, GitHub repositories, hooks, npm publish —
+  **не тронуты**.
