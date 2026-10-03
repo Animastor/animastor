@@ -18,6 +18,22 @@
 //                     NO backend/, NO packages/animastor-worker, NO
 //                     packages/animastor-installer.
 //
+//   assets-from-release <dir> <base> [lock]
+//                 materialises the 4 groups PURELY from a release URL —
+//                 the POST-SPLIT acquisition path (no monorepo source tree is
+//                 read): downloads
+//                   <base>/<source_repository>/releases/download/<tag>/<asset>
+//                 for every entry of <lock> (default: the committed pin file),
+//                 verifies each body against sha256_asset, and writes
+//                   <dir>/assets/<asset_filename>  (the downloaded zips)
+//                   <dir>/artifacts.lock.json      (the pin file, verbatim)
+//                   <dir>/repo/                    (same simulated standalone
+//                                                   repo as `make`)
+//                 Pre-split the committed pin is still null (§2.5), so G5
+//                 passes the fixture's test-pinned lock and a local base
+//                 (the stand-in release); post-split it passes the committed
+//                 pin and the real GitHub base. Same code, same checks.
+//
 //   serve <dir>   static HTTP server on 127.0.0.1 (port 0 → printed as
 //                 "PORT=<n>" on stdout, runs until killed). Files are served
 //                 by basename, so the stager URL
@@ -28,7 +44,7 @@
 // stager-release path (fetch → sha256_asset verify → sha256_tree gate →
 // COPY --from=stager) without publishing anything.
 //
-// Exit 0 = ok. Requires python3 (zip writer) for `make`.
+// Exit 0 = ok. `make` requires python3 (zip writer).
 // ============================================================================
 
 'use strict';
@@ -63,6 +79,40 @@ function sha256File(p) {
     return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 }
 
+// ── shared: simulated standalone repo (§8.5 whitelist subset) ──────────────
+
+function synthesizeRepo(dir, lockText) {
+    const repo = path.join(dir, 'repo');
+    const pkg = path.join(repo, 'packages', 'animastor-gpu-hub');
+    fs.mkdirSync(path.join(pkg, 'scripts'), { recursive: true });
+    fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true });
+    for (const f of ['Dockerfile', 'package.json', 'gpu-hub.js', 'server.js',
+        'tarball.js', 'bootstrap.js', 'README.md', 'LICENSE']) {
+        fs.copyFileSync(path.join(HUB_DIR, f), path.join(pkg, f));
+    }
+    for (const f of ['verify-staged-artifacts.sh', 'fetch-pinned-assets.sh']) {
+        fs.copyFileSync(path.join(HUB_DIR, 'scripts', f), path.join(pkg, 'scripts', f));
+    }
+    fs.copyFileSync(path.join(HUB_DIR, 'scripts', '..', '..', '..', 'scripts', 'check-artifacts.sh'),
+        path.join(repo, 'scripts', 'check-artifacts.sh'));
+    fs.writeFileSync(path.join(pkg, 'artifacts.lock.json'), lockText);
+
+    // forbidden monorepo paths must be physically absent from the fixture
+    const banned = [/animastor-worker/, /animastor-installer/, /(^|\/)backend\//];
+    const walk = (d) => {
+        for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+            const full = path.join(d, e.name);
+            const rel = path.relative(repo, full).split(path.sep).join('/');
+            if (banned.some((re) => re.test(rel))) {
+                die(`simulated standalone repo contains a monorepo path: ${rel}`);
+            }
+            if (e.isDirectory()) walk(full);
+        }
+    };
+    walk(repo);
+    return repo;
+}
+
 // ── make ────────────────────────────────────────────────────────────────────
 
 function make(dir) {
@@ -91,37 +141,64 @@ function make(dir) {
     const pinnedLock = JSON.stringify(lock, null, 2) + '\n';
     fs.writeFileSync(path.join(dir, 'artifacts.lock.json'), pinnedLock);
 
-    // 3. simulated standalone repo — §8.5 whitelist subset, hub paths only
-    const repo = path.join(dir, 'repo');
-    const pkg = path.join(repo, 'packages', 'animastor-gpu-hub');
-    fs.mkdirSync(path.join(pkg, 'scripts'), { recursive: true });
-    fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true });
-    for (const f of ['Dockerfile', 'package.json', 'gpu-hub.js', 'server.js',
-        'tarball.js', 'bootstrap.js', 'README.md', 'LICENSE']) {
-        fs.copyFileSync(path.join(HUB_DIR, f), path.join(pkg, f));
-    }
-    for (const f of ['verify-staged-artifacts.sh', 'fetch-pinned-assets.sh']) {
-        fs.copyFileSync(path.join(HUB_DIR, 'scripts', f), path.join(pkg, 'scripts', f));
-    }
-    fs.copyFileSync(path.join(HUB_DIR, 'scripts', '..', '..', '..', 'scripts', 'check-artifacts.sh'),
-        path.join(repo, 'scripts', 'check-artifacts.sh'));
-    fs.writeFileSync(path.join(pkg, 'artifacts.lock.json'), pinnedLock);
-
-    // 4. forbidden monorepo paths must be physically absent from the fixture
-    const banned = [/animastor-worker/, /animastor-installer/, /(^|\/)backend\//];
-    const walk = (d) => {
-        for (const e of fs.readdirSync(d, { withFileTypes: true })) {
-            const full = path.join(d, e.name);
-            const rel = path.relative(repo, full).split(path.sep).join('/');
-            if (banned.some((re) => re.test(rel))) {
-                die(`simulated standalone repo contains a monorepo path: ${rel}`);
-            }
-            if (e.isDirectory()) walk(full);
-        }
-    };
-    walk(repo);
+    // 3. simulated standalone repo
+    synthesizeRepo(dir, pinnedLock);
 
     console.log(`fixture ready: ${specs.length} zips + pinned lock + standalone repo → ${dir}`);
+}
+
+// ── assets-from-release (POST-SPLIT acquisition path) ──────────────────────
+// Reads the pin file ONLY — never a monorepo source tree.
+
+function download(url, dest, redirectsLeft) {
+    return new Promise((resolve, reject) => {
+        const mod = url.startsWith('https:') ? require('https') : http;
+        const req = mod.get(url, { headers: { 'user-agent': 'animastor-gpu-hub-assets' } }, (res) => {
+            const status = res.statusCode || 0;
+            if (status >= 300 && status < 400 && res.headers.location) {
+                res.resume();
+                if (redirectsLeft <= 0) return reject(new Error(`too many redirects for ${url}`));
+                return resolve(download(new URL(res.headers.location, url).toString(), dest, redirectsLeft - 1));
+            }
+            if (status !== 200) { res.resume(); return reject(new Error(`HTTP ${status} for ${url}`)); }
+            const out = fs.createWriteStream(dest);
+            out.on('error', reject);
+            out.on('close', resolve);
+            res.pipe(out);
+        });
+        req.on('error', reject);
+        req.setTimeout(60000, () => req.destroy(new Error(`timeout for ${url}`)));
+    });
+}
+
+async function assetsFromRelease(dir, base, lockPath) {
+    const src = lockPath || LOCK_PATH;
+    if (!fs.existsSync(src)) die(`lock not found: ${src}`);
+    const lockText = fs.readFileSync(src, 'utf8');
+    const lock = JSON.parse(lockText);
+    const assets = path.join(dir, 'assets');
+    fs.mkdirSync(assets, { recursive: true });
+
+    for (const g of GROUPS) {
+        const entry = lock.artifacts && lock.artifacts[g.name];
+        if (!entry) die(`'${g.name}' missing from ${src}`);
+        const sha = entry.sha256_asset;
+        if (!sha || sha === 'null') {
+            die(`'${g.name}' has no sha256_asset pin in ${src} — pin the released zip (POST-SPLIT, prep plan §2.5)`);
+        }
+        if (!/^[0-9a-f]{64}$/.test(sha)) die(`'${g.name}'.sha256_asset is not a 64-char hex digest`);
+        const url = `${String(base).replace(/\/+$/, '')}/${entry.source_repository}` +
+            `/releases/download/${entry.release_tag}/${entry.asset_filename}`;
+        const dest = path.join(assets, entry.asset_filename);
+        process.stdout.write(`  fetch: ${g.name} <- ${entry.asset_filename}\n`);
+        await download(url, dest, 5);
+        const actual = sha256File(dest);
+        if (actual !== sha) die(`asset sha256 mismatch for '${g.name}': downloaded=${actual} pinned=${sha}`);
+    }
+
+    fs.writeFileSync(path.join(dir, 'artifacts.lock.json'), lockText);
+    synthesizeRepo(dir, lockText);
+    console.log(`release assets materialised (sha256_asset verified): ${GROUPS.length}/4 → ${dir}`);
 }
 
 // ── serve ───────────────────────────────────────────────────────────────────
@@ -144,23 +221,38 @@ function serve(dir) {
     });
     server.on('error', (err) => die(`serve failed: ${err.message}`));
     server.listen(0, '127.0.0.1', () => {
-        // Machine-readable line consumed by g4/g5 (port = ephemeral, always fresh
-        // → the stager fetch RUN layer is cache-busted on every guard run).
+        // Machine-readable line consumed by g4/g5. The port is ephemeral
+        // (always fresh) and g4/g5 additionally append a per-run id to
+        // RELEASE_URL_BASE → the stager fetch RUN layer is cache-busted on
+        // every guard run, so a tampered asset can never be served from cache.
         console.log(`PORT=${server.address().port}`);
     });
 }
 
 // ── cli ─────────────────────────────────────────────────────────────────────
 
-const cmd = process.argv[2];
-if (cmd === 'make') {
-    const dir = process.argv[3];
-    if (!dir) die('usage: standalone-fixture.cjs make <dir>');
-    make(path.resolve(dir));
-} else if (cmd === 'serve') {
-    const dir = process.argv[3];
-    if (!dir) die('usage: standalone-fixture.cjs serve <asset-dir>');
-    serve(path.resolve(dir));
-} else {
-    die('usage: standalone-fixture.cjs make <dir> | serve <asset-dir>');
+const USAGE = 'usage: standalone-fixture.cjs make <dir> | assets-from-release <dir> <base> [lock] | serve <asset-dir>';
+
+function main() {
+    const cmd = process.argv[2];
+    if (cmd === 'make') {
+        const dir = process.argv[3];
+        if (!dir) die(USAGE);
+        make(path.resolve(dir));
+    } else if (cmd === 'assets-from-release') {
+        const dir = process.argv[3];
+        const base = process.argv[4];
+        if (!dir || !base) die(USAGE);
+        const lock = process.argv[5] ? path.resolve(process.argv[5]) : undefined;
+        return assetsFromRelease(path.resolve(dir), base, lock);
+    } else if (cmd === 'serve') {
+        const dir = process.argv[3];
+        if (!dir) die(USAGE);
+        serve(path.resolve(dir));
+    } else {
+        die(USAGE);
+    }
+    return undefined;
 }
+
+Promise.resolve(main()).catch((err) => die(err.message || String(err)));

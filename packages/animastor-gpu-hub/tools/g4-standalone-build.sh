@@ -36,6 +36,10 @@ DOCKERFILE="$HUB_DIR/Dockerfile"
 TAG_M=animastor-gpu-hub:guard
 TAG_S=animastor-gpu-hub:guard-standalone
 
+# Per-run id appended to the stand-in release URL: cache-busts the stager
+# fetch RUN layer even if the ephemeral fixture port is reused.
+RUN_ID=$(date +%s)-$$
+
 WORK=$(mktemp -d)
 LOG_M="$WORK/build-monorepo.log"
 LOG_S="$WORK/build-standalone.log"
@@ -140,7 +144,7 @@ if [ "$HAS_MONO" -eq 1 ]; then
     DOCKER_BUILDKIT=1 docker build --progress=plain --network=host \
         -f "$WORK/fixture/repo/packages/animastor-gpu-hub/Dockerfile" \
         --build-arg STAGER_STAGE=stager-release \
-        --build-arg RELEASE_URL_BASE="http://127.0.0.1:$PORT" \
+        --build-arg RELEASE_URL_BASE="http://127.0.0.1:$PORT/$RUN_ID" \
         -t "$TAG_S" "$WORK/fixture/repo" >"$LOG_S" 2>&1 \
         || { echo "G4 FAIL: standalone docker build failed" >&2; tail -n 40 "$LOG_S" >&2; exit 1; }
     grep -q 'pinned assets fetched and sha256-verified: 4/4' "$LOG_S" \
