@@ -20,9 +20,9 @@
 |---|---|
 | **Source SHA (единственный)** | **`64127b9e1dea2ac528a572b51b90a542b70c5ebb`** |
 | Branch | `c21.4-physically-extract-analysis-from-backend` (= `origin/…`) |
-| **Tip ветки (HEAD)** | **`e64b6afcf5acb71872b2acf64531d25ab6956df2`** — документационный tip **до** doc-коммита этого обновления = frozen source **+ 4 doc-коммита** (`5c34de54`, `2c6fdec6`, `c8341258`, `e64b6afc`); GitHub compare `64127b9e…e64b6afc` = ровно эти **4** документационных коммита (**не 2, не 3**); каждый следующий doc-коммит сдвигает tip на +1 и меняет только те же 2 файла |
+| **Tip ветки (HEAD)** | **`e768a7ccaa5a994a0698a4e5864f7271de536aff`** — документационный tip **до** doc-коммита этого обновления = frozen source **+ 5 doc-коммитов** (`5c34de54`, `2c6fdec6`, `c8341258`, `e64b6afc`, `e768a7cc`); GitHub compare `64127b9e…e768a7cc` = ровно эти **5** документационных коммитов; **источник истины по числу** — `git rev-list --count 64127b9e…HEAD`; каждый doc-коммит сдвигает tip на +1 и меняет только те же 2 файла |
 | **tip ≠ source** | tip — **только** документационный HEAD ветки; **`git filter-repo` выполняется исключительно от `64127b9e…`** (§0, §1, handoff §1/§10) |
-| DAG | `master` — прямой предок source (**YES**); source — прямой предок tip (**YES**); после source **4** коммита — все документационные, затронуты **только** `docs/architecture/{repository-split-final-gate,repository-split-next-blockers}.md`; merge = **0**, tags = **0** |
+| DAG | `master` — прямой предок source (**YES**); source — прямой предок tip (**YES**); после source **5** коммитов — все документационные, затронуты **только** `docs/architecture/{repository-split-final-gate,repository-split-next-blockers}.md`; merge = **0**, tags = **0** |
 | **`master`** | **`64127b9e…` == source == `origin/master`** → **P2 CLOSED** (FF `04da33ea → 64127b9e`, обычная экспедиция, без force; `master` — прямой предок source, 0 behind / 0 ahead) |
 | Working tree | чистый (`git status --porcelain` = 0 строк) на момент gate |
 | Merge-коммитов в истории | **0** (`git rev-list --merges --count` = 0), коммитов всего **1653 на source** |
@@ -52,7 +52,7 @@
 | P1 | 5 GitHub-репозиториев (backend/web/android/worker + gpu-hub) | **BLOCKED (OWNER)** | bare: только `animastor.git` + `animastor-gpu-hub.git`; GitHub API (read-only): `animastor-backend` / `animastor-web` / `animastor-android` / `animastor-worker` = **HTTP 404**; `Animastor/animastor-gpu-hub` = **HTTP 200** (private=false, size=105, default_branch=master, created 2026-09-06T16:19:30Z, pushed 2026-09-06T18:07:10Z, HEAD `7c7778c`, 43 коммита, forks=0, `/contents` непустой); **самостоятельно не создаются** | **ДА** (owner) |
 | P2 | FF `master` → source | **PASS (CLOSED)** | `git merge --ff-only 64127b9e…` + `git push origin master` → `04da33ea..64127b9e`, без force | нет |
 | P3 | npm-грант (`npm whoami`) | **FAIL — E401** (перепроверено 2026-10-03) | `npm whoami` → `E401 401 Unauthorized`; `npm view` работает; **не чинить в рамках gate** | только **post-split publish** (не блокирует filter-repo) |
-| P6 | Диск ≥ 5G свободно | **FAIL — 2.8G** | `df -B1 /` → total 105 496 965 120, used 97 991 680 000, **avail 2 988 183 552 B ≈ 2.8 GiB** (`df -h` 2.8G), 98%; `/dev/sda2` ext4, **одна** точка монтирования `/`; ничего не удалялось | **ДА** |
+| P6 | Диск ≥ 5G свободно | **FAIL — 2.8G** | `df -B1 /` (preflight, 2026-10-03): total 105 496 965 120, used 98 020 900 864, **avail 2 958 962 688 B ≈ 2.96 GB / 2.76 GiB** (`df -h` 2.8G), 98%; `/dev/sda2` ext4, **одна** точка монтирования `/`; ничего не удалялось (за сессию preflight: +2 guard-образа Docker от прогона G4/G5, disk −~30 МБ) | **ДА** |
 | R-3 | GPU Hub: A (адаптация) / B (замена историей) | **OWNER DECISION** | существующий `Animastor/animastor-gpu-hub` = `7c7778c` (bare идентичен), read-only, **не изменён и не заменён**; **оба варианта документированы**: A/B — `repository-split-pre-split-fixes.md` §5 (+ 7-пунктовый список переноса в `repository-split-next-blockers.md` §R-3), B-процедура = backup → заморозка hook → filter-repo §8.5 → force-push → верификация; командный лист §4.1.5 и карта §5.5 **гейтятся на R-3=B** (в этом gate исправлена неточная ссылка «процедура §8.5 prep-plan» → §5 «Вариант B» pre-split-fixes) | **ДА** (owner) |
 | P4 | `workflow.json` / stale android-mount гигиена | **READY (не выполнялась)** | пустой каталог, не tracked | нет |
 | P5 | `.github/` отсутствует в монорепо | **CONFIRMED** | `test -d .github` → отсутствует | нет |
@@ -121,7 +121,7 @@ Read-only разбор: каждый tracked-файл должен покрыв�
 |---|---|---|---|
 | **P1** | создать `animastor-backend`, `animastor-web`, `animastor-android`, `animastor-worker` (GitHub 200 + пустой bare + hook) | **ABSENT** (4 × HTTP 404, API перепроверен read-only) | owner; **GPU Hub отдельно не создавать** (уже существует, 200) |
 | **R-3** | зафиксировать **A** или **B** по `Animastor/animastor-gpu-hub` | **UNDECIDED** (repo read-only, `7c7778c`; оба варианта поддержаны документацией — см. §1 R-3) | owner; до решения не авторить hub-CI и не запускать §8.5 |
-| **P6** | ≥5G свободно для клонов/фильтрации | **2.8G (2 988 183 552 B) — FAIL**; ничего не очищалось. Кандидаты очистки **только по распоряжению владельца**: `pip cache purge` ≈4.4G → ≈7.2G, `npm cache clean --force` ≈0.8G, `/tmp`-мусор установщиков ≈1.4G. Старые доки (readiness §9, pre-split-fixes §7/§8) упоминают **≥3 GB** — устаревший, менее консервативный порог; актуальный **≥5G** (§P6, этот документ) | host; очистка — owner |
+| **P6** | ≥5G свободно для клонов/фильтрации | **2 958 962 688 B (≈2.96 GB) — FAIL** (preflight 2026-10-03); ничего не очищалось. Кандидаты очистки **только по распоряжению владельца**: `pip cache purge` ≈4.4G → ≈7.2G, `npm cache clean --force` ≈0.8G, `/tmp`-мусор установщиков ≈1.4G. Старые доки (readiness §9, pre-split-fixes §7/§8) упоминают **≥3 GB** — устаревший, менее консервативный порог; актуальный **≥5G** (§P6, этот документ) | host; очистка — owner |
 | **P3** | `npm whoami` ≠ E401 | **E401** (перепроверено 2026-10-03) | owner; нужен **до первого publish** (post-split) |
 
 ---
@@ -146,20 +146,21 @@ gpu-hub `run-all` 22 + G4 standalone + `check-artifacts.sh` 6/6).
 end-to-end (G5, включая tamper-отказ)**, тесты **без новых регрессий**
 (2 pre-existing: IB-G15, T9).
 
-Актуальные факты (перепроверка read-only на tip `e64b6afc…`, до doc-коммита
+Актуальные факты (перепроверка read-only на tip `e768a7cc…`, до doc-коммита
 этого обновления):
 
 | Поле | Значение |
 |---|---|
-| **HEAD (tip, документационный)** | `e64b6afcf5acb71872b2acf64531d25ab6956df2` = source + **4 doc-коммита** — **не** frozen source |
+| **HEAD (tip, документационный)** | `e768a7ccaa5a994a0698a4e5864f7271de536aff` = source + **5 doc-коммитов** — **не** frozen source |
 | **Frozen source** | `64127b9e1dea2ac528a572b51b90a542b70c5ebb` |
 | **master** | `64127b9e…` == source == `origin/master` (не перемещался в этом gate) |
-| **P6** | **FAIL** — 2 988 183 552 B (≈2.8 GiB) < 5G; очистка не выполнялась |
+| **P6** | **FAIL** — 2 958 962 688 B (≈2.96 GB / 2.76 GiB) < 5G; очистка не выполнялась |
 | **P1** | **OPEN** — 4 × HTTP 404; `animastor-gpu-hub` = 200 (не трогали) |
 | **P3** | **E401** (только post-split publish) |
 | **R-3** | **OWNER DECISION** (A и B поддержаны документацией) |
 | Git | merge 0, tags 0, working tree чист; изменённые после source файлы — только `docs/architecture/{repository-split-final-gate,repository-split-next-blockers}.md` |
 | GPU Hub safety | bare `7c7778c` + GitHub 200 + hook монорепо 2026-08-22 — **не изменены** |
+| **Read-only preflight (2026-10-03)** | G1–G5 **ALL GREEN** (`scripts/split-guards/run-all.sh`, лог `/tmp/opencode/preflight-g1g5.log`) · whitelist §8 = **1635 / 1635 / 0 uncovered** на `$SRC` · command-sheet audit **PASS** на `$SRC` · gpu-hub `npm test` = **22/0** · `backend` `test:arch` = **979 passing / 2 failing** (IB-G15 `installer-package-boundary.test.js:243`, T9 `phase5-runtime-result.test.js:401` — **pre-existing, воспроизводятся**) · GitHub **4 × 404 + gpu-hub 200** · `npm whoami` **E401** · `.github/` отсутствует · `workflow.json` существует (untracked) · `git filter-repo` **не запускался** (нет выходных каталогов split), force-push не выполнялся |
 
 Остаются **реальные pre-split блокеры**:
 

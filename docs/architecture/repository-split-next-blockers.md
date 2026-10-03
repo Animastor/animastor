@@ -608,7 +608,7 @@ deps, массовое переписывание документации — *
 
 | Параметр | Значение |
 |---|---|
-| Свободно сейчас | **2.9G** (99G total / 92G used / **98%** — перепроверено `df -h /` на `64127b9e`) |
+| Свободно (на момент P6-повтора) | **2.9G** (99G total / 92G used / **98%** — перепроверено `df -h /` на `64127b9e`); **актуальное значение — `repository-split-final-gate.md` §1/§4** (preflight 2026-10-03: 2 958 962 688 B, **FAIL**) |
 | Требование для последовательного filter-repo (5 репо) | **≥5G**, рекомендуется ≥8G (mirror `.git` 73M × 5 + рабочие деревья переписи ≈ 2× пик истории ≈ 3.0–4.5G суммарно + headroom) |
 | Заявлено в §P6 | 2.8G → 3.1G → **2.9G** (дефицит сохраняется; **FAIL на FINAL GATE**) |
 | Минимальная очистка | `pip cache purge` ≈ **4.4G** → ≈ **7.5G** (достаточно); шаги 1+2+3 §P6 → ≈13.6G |
@@ -813,7 +813,8 @@ execution (X-1, X-2, регенерация package-lock), остаётся ре
    §R-3) или B (замена историей monorepo) — **до** авторинга hub CI (B9.2) и
    **до** filter-repo gpu-hub. Ничего в существующем GPU Hub не менять до выбора.
 4. **P6 (НЕ ЗАКРЫТ — FAIL)**: освободить ≥5G (`pip cache purge` — минимум;
-   шаги §P6 по желанию); перепроверить `df -h /`. **Сейчас 2.9G свободно** —
+   шаги §P6 по желанию); перепроверить `df -h /`. **На момент записи ~2.9G
+   свободно** (актуальные цифры — final-gate §1, P6 = FAIL) —
    до очистки filter-repo не запускать.
 5. **P4**: `sudo rmdir /home/animastor/animastor/workflow.json`; удалить строку
    `./workflow.json:/workflow.json:ro` из `frontends/android/docker-compose.yml:41`
@@ -975,7 +976,7 @@ execution (X-1, X-2, регенерация package-lock), остаётся ре
 |---|---|
 | **Source для `git filter-repo` (единственный)** | **`64127b9e1dea2ac528a572b51b90a542b70c5ebb`** |
 | **Почему именно он** | это последний коммит, на котором **все** механические проверки выполнены заново **и подтверждены**: G1–G5 **ALL GREEN** (`scripts/split-guards/run-all.sh`), B7 `test:arch` = **979/2** (IB-G15, T9 — pre-existing), hub `npm test` = **22/0**, whitelist §8 = **1635/1635, 0 uncovered**, command sheet сверен со §8, B5/G5 постсплит-путь прогнан (4/4 assets + tamper-отказ + `check-artifacts.sh` 6/6 в standalone-образе), `npm whoami`/`df`/GitHub-API — факты этого же состояния |
-| Текущий HEAD ветки | `64127b9e…` **+ документационные коммиты этого gate'а** (на момент записи: **4** — `5c34de54`, `2c6fdec6`, `c8341258`, `e64b6afc`; каждый следующий doc-коммит даёт +1) — **только документационный HEAD, НЕ source** (см. правило ниже) |
+| Текущий HEAD ветки | `64127b9e…` **+ документационные коммиты этого gate'а** (на момент записи: **5** — `5c34de54`, `2c6fdec6`, `c8341258`, `e64b6afc`, `e768a7cc`; каждый следующий doc-коммит даёт +1; проверка на любом tip: `git rev-list --count 64127b9e…HEAD`) — **только документационный HEAD, НЕ source** (см. правило ниже) |
 | `master` / bare `master` / `origin/master` | **все три = `64127b9e…`** (P2 выполнен: `04da33ea` → `64127b9e`, push без force) |
 | **Relation с `master`** | `master` **==** frozen source → **разрыв 0**; **FF выполнен** |
 | **Требование P2** | **ВЫПОЛНЕНО** — `master` и есть frozen source; NO-GO №1 снят |
@@ -1020,7 +1021,7 @@ worker/gpu-hub). Основание: источник не должен зави
 | **R-3** | **A** — сохранить существующий `Animastor/animastor-gpu-hub` и адаптировать split под него (свой Dockerfile, `ci.yml`, `ghcr-release.yml`, история в `master`). **B** — после backup/freeze заменить его историей из монорепо (§8.5). **Никаких действий по GPU Hub repo до решения** | Определяет: запускается ли §8.5; какие CI-workflows авторить (B9-hub); куда идёт B5 (Release-assets vs GHCR из monorepo); судьбу `gpu-hub-rebuild.sh` (X-1). Блокирует авторинг hub-CI и `filter-repo` gpu-hub | **A**: `filter-repo` gpu-hub **не выполняется**, монорепо-frozen остаётся источником hub, существующие репо/hook не трогаются. **B**: gpu-hub идёт **последним** в очереди, старый bare+GitHub заменяются (только после backup) |
 | **P2** | **Exact source SHA** = `64127b9e…` (п.1) — **и `master` уже выровнен до него (CLOSED)** | Фильтрация от не-FF'нутого/не того tip даст репо с историей, не совпадающей с `master` и с результатом последующих проверок. NO-GO №1 final-readiness §7 — **снят** | `master` == source == `origin/master` (перепроверка: `git rev-parse master`); все 4 новых репо и архив-монорепо указывают на одну и ту же точку |
 | **P3** | npm credentials: **`npm whoami` → E401**, токен в `~/.npmrc` недействителен (1 `_authToken`); `npm view`/install работают | Без валидного токена закрыты **publish** и **Release**-путь B5 (4 zip + digest в `artifacts.lock.json`), а также публикация 15 backend + 13 web пакетов | Разблокируется первый publish из новых репо; **сам filter-repo НЕ блокируется** — позиционируется как POST-SPLIT requirement (до первого publish, не до split) |
-| **P6** | Минимальный свободный диск: **≥5G**, рекомендуется **≥8G**. Сейчас **2.9G** (99G/92G/**98%** — `64127b9e`) | Последовательный `filter-repo` × 5: mirror `.git` 73M × 5 + рабочие деревья переписи ≈ 2× пик истории ≈ 3.0–4.5G суммарно + headroom. **2.9G — почти гарантированный ENOSPC** посреди переезда | `pip cache purge` ≈ **4.4G** (факт: http 3548.4 MB + wheels 19.7 MB) → ≈ **7.5G** достаточно; шаги §P6 → ≈13.6G. Ничего из защищённого (backups/, opencode.db, Docker-образы, volumes) не трогается |
+| **P6** | Минимальный свободный диск: **≥5G**, рекомендуется **≥8G**. На момент аудита **2.9G** (99G/92G/**98%** — `64127b9e`); **актуальное значение и статус — final-gate §1/§4** (preflight 2026-10-03: 2 958 962 688 B, **FAIL**) | Последовательный `filter-repo` × 5: mirror `.git` 73M × 5 + рабочие деревья переписи ≈ 2× пик истории ≈ 3.0–4.5G суммарно + headroom. **2.9G — почти гарантированный ENOSPC** посреди переезда | `pip cache purge` ≈ **4.4G** (факт: http 3548.4 MB + wheels 19.7 MB) → ≈ **7.5G** достаточно; шаги §P6 → ≈13.6G. Ничего из защищённого (backups/, opencode.db, Docker-образы, volumes) не трогается |
 | **P5** | Интерпретация: workflows создаются **в новых репо**, а не в монорепо (расхождение с prep-plan §11.4) | `.github/` отсутствует в монорепо; CI в монорепо бессмыслен | Подтверждение снимает §FPSG.4 п.2 / §FPSG.8 п.6 |
 | **P4** | Гигиена: `rmdir /home/animastor/animastor/workflow.json` (пустой untracked-каталог) + снять stale android-compose-mount. **НЕ удалять** `workflow.json` как git-объект — его в дереве нет (no-op `--path`) | Каталог в корне мешает чистому `git status` в новых репо и попадает в whitelist §8.1 как no-op | Освобождает precondition §4 перед шагом 1; `--path workflow.json` исключается из команды backend (§4.1.1) |
 | **`tmp/parser-audit-backup`** | Подтвердить удаление ветки **`db5ff61f`** (`refs/heads/tmp/parser-audit-backup`, есть и в bare). **Сам подтверждение — решение владельца; до него ветку НЕ удалять** | Ветка пережила split-подготовку; её наличие в новом bare дало бы лишнюю ref | После подтверждения — `git branch -D tmp/parser-audit-backup` в монорепо и в backup-клоне; на извлечение не влияет |
@@ -1709,8 +1710,8 @@ D6/D7 оставить в backend-repo, в worker-repo оставить D1/D2/D3
 4. **R-3** — зафиксирован **A** или **B**; при **B** — подтверждён backup/freeze
    существующего `animastor-gpu-hub` (bare + GitHub, `7c7778c`).
    **До фиксации R-3 не авторить hub-CI и не запускать §8.5.**
-5. **P6 — НЕ ЗАКРЫТ**: свободно **≥5G** (сейчас **2.9G** — FAIL;
-   `pip cache purge` → ≈7.5G, только по распоряжению владельца).
+5. **P6 — НЕ ЗАКРЫТ**: свободно **≥5G** (≈**2.8G** — FAIL; точное значение —
+   final-gate §1/§4, `pip cache purge` → ≈7.5G, только по распоряжению владельца).
 6. **P3** — npm-грант обновлён (`npm whoami` ≠ E401) **до первого publish**
    (filter-repo не блокируется).
 7. **P4** — `rmdir workflow.json` выполнен, stale android-compose-mount снят.
