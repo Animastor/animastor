@@ -20,9 +20,9 @@
 |---|---|
 | **Source SHA (единственный)** | **`64127b9e1dea2ac528a572b51b90a542b70c5ebb`** |
 | Branch | `c21.4-physically-extract-analysis-from-backend` (= `origin/…`) |
-| **Tip ветки (HEAD)** | **`e768a7ccaa5a994a0698a4e5864f7271de536aff`** — документационный tip **до** doc-коммита этого обновления = frozen source **+ 5 doc-коммитов** (`5c34de54`, `2c6fdec6`, `c8341258`, `e64b6afc`, `e768a7cc`); GitHub compare `64127b9e…e768a7cc` = ровно эти **5** документационных коммитов; **источник истины по числу** — `git rev-list --count 64127b9e…HEAD`; каждый doc-коммит сдвигает tip на +1 и меняет только те же 2 файла |
+| **Tip ветки (HEAD)** | документационный tip = **frozen source + N doc-коммитов**, где **N = `git rev-list --count 64127b9e…HEAD`** (на момент этого обновления: **7** = `5c34de54`, `2c6fdec6`, `c8341258`, `e64b6afc`, `e768a7cc`, `8e925c5c`, doc-коммит EXECUTION PACK). Каждый doc-коммит сдвигает tip на +1 и меняет только те же **3** файла `docs/architecture/*.md`. Ранее зафиксированные значения (tip `e768a7cc`, «+ 5 doc-коммитов», «только те же 2 файла») — **исторические**, источник истины — команда, не список SHA |
 | **tip ≠ source** | tip — **только** документационный HEAD ветки; **`git filter-repo` выполняется исключительно от `64127b9e…`** (§0, §1, handoff §1/§10) |
-| DAG | `master` — прямой предок source (**YES**); source — прямой предок tip (**YES**); после source **5** коммитов — все документационные, затронуты **только** `docs/architecture/{repository-split-final-gate,repository-split-next-blockers}.md`; merge = **0**, tags = **0** |
+| DAG | `master` — прямой предок source (**YES**); source — прямой предок tip (**YES**); после source **7** коммитов — все документационные, затронуты **только** `docs/architecture/{repository-split-final-gate,repository-split-next-blockers,repository-split-execution-pack}.md`; merge = **0**, tags = **0** |
 | **`master`** | **`64127b9e…` == source == `origin/master`** → **P2 CLOSED** (FF `04da33ea → 64127b9e`, обычная экспедиция, без force; `master` — прямой предок source, 0 behind / 0 ahead) |
 | Working tree | чистый (`git status --porcelain` = 0 строк) на момент gate |
 | Merge-коммитов в истории | **0** (`git rev-list --merges --count` = 0), коммитов всего **1653 на source** |
@@ -48,7 +48,7 @@
 | H | GPU Hub `npm test` | **PASS 22/0** | `packages/animastor-gpu-hub` → `node tests/run-all.cjs` | нет |
 | T | Backend `npm run test:arch` | **979 passing / 2 failing** — IB-G15 (`installer-package-boundary.test.js:243`), T9 (`phase5-runtime-result.test.js:401` ENOENT) | pre-existing, воспроизводится на `b7e2f7cd` и до; этим gate тронуты только `packages/animastor-gpu-hub/tools/*` | **нет** (PRE-EXISTING) |
 | W | Whitelist §8 (prep-plan) vs `git ls-files` | **PASS — 1635 tracked / 1635 covered / 0 uncovered** | read-only аудит (см. §2); per-repo 1045/349/217/58/45 | нет |
-| C | Command-sheet audit (§4.1.0–4.1.6) | **PASS после 2 исправлений**: пути = §8 (кроме 3 задокументированных no-op/X-1 исключений), `--path-rename` отсутствует, все URL = `github.com/Animastor`, `SRC` объявлен, gpu-hub-шаг гейтится на R-3=B; **устаревшие счётчики 1040→1045 и 41→44 исправлены** | read-only аудит (см. §3) | нет |
+| C | Command-sheet audit (§4.1.0–4.1.6) | **PASS после двух docs-only ревизий**: пути = §8 (кроме 3 задокументированных no-op/X-1 исключений), `--path-rename` отсутствует, все URL = `github.com/Animastor`, `SRC` объявлен, gpu-hub-шаг гейтится на R-3=B; **устаревшие счётчики 1040→1045 и 41→44 исправлены**; вторая ревизия закрыла **I-1 reflog-блокер, I-2 молчаливые контроли, I-3 идемпотентность, I-6 версию, I-7 backup** и добавила per-repo leak/`--follow`/commit-count чеки (см. §3, `repository-split-execution-pack.md` §4) | read-only аудит (см. §3) | нет |
 | P1 | 5 GitHub-репозиториев (backend/web/android/worker + gpu-hub) | **BLOCKED (OWNER)** | bare: только `animastor.git` + `animastor-gpu-hub.git`; GitHub API (read-only): `animastor-backend` / `animastor-web` / `animastor-android` / `animastor-worker` = **HTTP 404**; `Animastor/animastor-gpu-hub` = **HTTP 200** (private=false, size=105, default_branch=master, created 2026-09-06T16:19:30Z, pushed 2026-09-06T18:07:10Z, HEAD `7c7778c`, 43 коммита, forks=0, `/contents` непустой); **самостоятельно не создаются** | **ДА** (owner) |
 | P2 | FF `master` → source | **PASS (CLOSED)** | `git merge --ff-only 64127b9e…` + `git push origin master` → `04da33ea..64127b9e`, без force | нет |
 | P3 | npm-грант (`npm whoami`) | **FAIL — E401** (перепроверено 2026-10-03) | `npm whoami` → `E401 401 Unauthorized`; `npm view` работает; **не чинить в рамках gate** | только **post-split publish** (не блокирует filter-repo) |
@@ -87,8 +87,10 @@ Read-only разбор: каждый tracked-файл должен покрыв�
 | animastor-gpu-hub | 27 | **45** | 0 |
 | **Итого** | | **tracked 1635 / covered 1635 / UNCOVERED 0** | |
 
-- **Tip ветки (после doc-коммитов этого gate'а): 1636 / 1636 / 0** — сюда
-  добавился только этот документ; для `filter-repo` релевантна строка **1635**.
+- **Tip ветки (после doc-коммитов этого gate'а): 1637 / 1637 / 0** — сюда
+  добавились только эти документы (`repository-split-final-gate.md` +
+  `repository-split-execution-pack.md`; `repository-split-next-blockers.md`
+  существовал уже на source); для `filter-repo` релевантна строка **1635**.
 
 - **Дубли (намеренные, задекларированы §8):** 75 файлов в >1 репо, сумма с
   пересечением **1714** (= 1635 + 79 instance'ов): backend+web 31,
@@ -112,6 +114,8 @@ Read-only разбор: каждый tracked-файл должен покрыв�
 | `SRC=` | объявлен и обязан равняться frozen source (§0) |
 | gpu-hub-шаг | гейтится на **R-3 = B** |
 | Счётчики `test "$(git ls-files \| wc -l)" -eq …` | backend **1040 → 1045**, gpu-hub **41 → 44** (исправлены; §8.5 = 45 файлов, минус `gpu-hub-rebuild.sh` при R-3=B — X-1); web 349, android 217, worker 58 — уже верны. Сверены **на `$SRC`** (`git ls-tree -r --name-only $SRC` под путями §8), а не на tip'а ветки |
+| **Повторный аудит (docs-only ревизия, `repository-split-execution-pack.md` §4)** | **FAIL до правок → PASS после.** Найдены и исправлены: **I-1 блокер** — `reset --hard` даёт 2 reflog-записи → `sanity_check` abort (добавлен `git reflog expire --expire=now --all` до `filter-repo`); **I-2** — `test … && echo OK` под `set -e` молча пропускается (переведено на `… \|\| { FAIL; exit 1 }`); **I-3** — нет guard'а повторного запуска (добавлен `test ! -e "$SPLIT/<repo>"`); **I-4** — `$SRC` не сверялся с `$BARE` (добавлены `rev-parse`/`merge-base`); **I-6** — `git-filter-repo --version` печатает `a40bce548d2c`, а не `2.47.0` (проверка через метаданные пакета); **I-7** — backup в `/tmp` volatile (добавлен durable `BK` в `backups/`); **I-11** — `symbolic-ref HEAD` перенесён до push; **I-13/I-14/I-15** — добавлены полные per-repo leak-паттерны, `git log --follow` и ожидаемые числа коммитов. Сохранены без изменений: **`--path-rename` отсутствует, `--force` отсутствует, URL только `github.com/Animastor/`, `SRC` = frozen source, gpu-hub-шаг гейтится на R-3=B** |
+| Стейл-счётчики (предыдущая ревизия) | исправлены: всего `package-lock.json` **33 → 34**; backend-домен **15 → 16** lock'ов (`packages/animastor-ai-analysis/package-lock.json` **существует**, добавлен `6798d786`); «4 из 15» → «4 из 16»; §6 п.4 «27 локов» → **28**; §5.5 `packages/animastor-gpu-hub/` **15 → 19**; §9 «изменён только next-blockers» → 3 документа. **Исторические** числа в §FPSG / §TECHNICAL CLOSURE на прошлых SHA не правились |
 
 ---
 
@@ -142,23 +146,23 @@ gpu-hub `run-all` 22 + G4 standalone + `check-artifacts.sh` 6/6).
 
 Закрыто этим gate'ом: **G1–G5 ALL GREEN** (дважды: source + tip), whitelist
 **0 uncovered**, command-sheet **консистентен** (перепроверен read-only на
-`$SRC`), **P2 (master FF) выполнен**, GPU Hub artifact flow **верифицирован
-end-to-end (G5, включая tamper-отказ)**, тесты **без новых регрессий**
-(2 pre-existing: IB-G15, T9).
+`$SRC`, вторая ревизия — `repository-split-execution-pack.md` §4), **P2 (master
+FF) выполнен**, GPU Hub artifact flow **верифицирован end-to-end (G5, включая
+tamper-отказ)**, тесты **без новых регрессий** (2 pre-existing: IB-G15, T9).
 
-Актуальные факты (перепроверка read-only на tip `e768a7cc…`, до doc-коммита
-этого обновления):
+Актуальные факты (перепроверка read-only; tip — документационный HEAD ветки,
+см. §0 — источник истины `git rev-list --count 64127b9e…HEAD`):
 
 | Поле | Значение |
 |---|---|
-| **HEAD (tip, документационный)** | `e768a7ccaa5a994a0698a4e5864f7271de536aff` = source + **5 doc-коммитов** — **не** frozen source |
+| **HEAD (tip, документационный)** | `64127b9e…` **+ 7 doc-коммитов** (`git rev-list --count 64127b9e…HEAD`) — **не** frozen source; прошлые значения (tip `e768a7cc`, «5 doc-коммитов») — исторические |
 | **Frozen source** | `64127b9e1dea2ac528a572b51b90a542b70c5ebb` |
 | **master** | `64127b9e…` == source == `origin/master` (не перемещался в этом gate) |
-| **P6** | **FAIL** — 2 958 962 688 B (≈2.96 GB / 2.76 GiB) < 5G; очистка не выполнялась |
+| **P6** | **FAIL** — 2 958 962 688 B (≈2.96 GB / 2.76 GiB) < 5G (preflight 2026-10-03; значение колеблется — источник истины `df -B1 /`); очистка не выполнялась |
 | **P1** | **OPEN** — 4 × HTTP 404; `animastor-gpu-hub` = 200 (не трогали) |
 | **P3** | **E401** (только post-split publish) |
 | **R-3** | **OWNER DECISION** (A и B поддержаны документацией) |
-| Git | merge 0, tags 0, working tree чист; изменённые после source файлы — только `docs/architecture/{repository-split-final-gate,repository-split-next-blockers}.md` |
+| Git | merge 0, tags 0, working tree чист; изменённые после source файлы — только `docs/architecture/{repository-split-final-gate,repository-split-next-blockers,repository-split-execution-pack}.md` |
 | GPU Hub safety | bare `7c7778c` + GitHub 200 + hook монорепо 2026-08-22 — **не изменены** |
 | **Read-only preflight (2026-10-03)** | G1–G5 **ALL GREEN** (`scripts/split-guards/run-all.sh`, лог `/tmp/opencode/preflight-g1g5.log`) · whitelist §8 = **1635 / 1635 / 0 uncovered** на `$SRC` · command-sheet audit **PASS** на `$SRC` · gpu-hub `npm test` = **22/0** · `backend` `test:arch` = **979 passing / 2 failing** (IB-G15 `installer-package-boundary.test.js:243`, T9 `phase5-runtime-result.test.js:401` — **pre-existing, воспроизводятся**) · GitHub **4 × 404 + gpu-hub 200** · `npm whoami` **E401** · `.github/` отсутствует · `workflow.json` существует (untracked) · `git filter-repo` **не запускался** (нет выходных каталогов split), force-push не выполнялся |
 

@@ -914,7 +914,10 @@ execution (X-1, X-2, регенерация package-lock), остаётся ре
   не удалено, не опубликовано, не перезаписано.
 - **FINAL SPLIT HANDOFF commit** (исходно `7df461fa`; далее — только
   документационные коммиты этого gate'а): изменён только
-  `docs/architecture/repository-split-next-blockers.md`; проверки —
+  `docs/architecture/repository-split-next-blockers.md` (позднее к списку
+  добавились `repository-split-final-gate.md` и
+  `repository-split-execution-pack.md` — итог: только `docs/architecture/*.md`);
+  проверки —
   read-only git-графика/grep/python-разбор whitelist'ов и локов. Во время
   этой итерации **не выполнялось**: `git filter-repo`, clone'ы, `npm install`
   / `npm ci`, создание репозиториев, force-push, правка hook'ов, npm publish.
@@ -976,7 +979,7 @@ execution (X-1, X-2, регенерация package-lock), остаётся ре
 |---|---|
 | **Source для `git filter-repo` (единственный)** | **`64127b9e1dea2ac528a572b51b90a542b70c5ebb`** |
 | **Почему именно он** | это последний коммит, на котором **все** механические проверки выполнены заново **и подтверждены**: G1–G5 **ALL GREEN** (`scripts/split-guards/run-all.sh`), B7 `test:arch` = **979/2** (IB-G15, T9 — pre-existing), hub `npm test` = **22/0**, whitelist §8 = **1635/1635, 0 uncovered**, command sheet сверен со §8, B5/G5 постсплит-путь прогнан (4/4 assets + tamper-отказ + `check-artifacts.sh` 6/6 в standalone-образе), `npm whoami`/`df`/GitHub-API — факты этого же состояния |
-| Текущий HEAD ветки | `64127b9e…` **+ документационные коммиты этого gate'а** (на момент записи: **5** — `5c34de54`, `2c6fdec6`, `c8341258`, `e64b6afc`, `e768a7cc`; каждый следующий doc-коммит даёт +1; проверка на любом tip: `git rev-list --count 64127b9e…HEAD`) — **только документационный HEAD, НЕ source** (см. правило ниже) |
+| Текущий HEAD ветки | `64127b9e…` **+ документационные коммиты этого gate'а** (на момент записи: **7** — `5c34de54`, `2c6fdec6`, `c8341258`, `e64b6afc`, `e768a7cc`, `8e925c5c` + doc-коммит EXECUTION PACK; каждый следующий doc-коммит даёт +1; **источник истины — команда, не список SHA**: `git rev-list --count 64127b9e…HEAD`) — **только документационный HEAD, НЕ source** (см. правило ниже) |
 | `master` / bare `master` / `origin/master` | **все три = `64127b9e…`** (P2 выполнен: `04da33ea` → `64127b9e`, push без force) |
 | **Relation с `master`** | `master` **==** frozen source → **разрыв 0**; **FF выполнен** |
 | **Требование P2** | **ВЫПОЛНЕНО** — `master` и есть frozen source; NO-GO №1 снят |
@@ -991,7 +994,8 @@ execution (X-1, X-2, регенерация package-lock), остаётся ре
 worker/gpu-hub). Основание: источник не должен зависеть от коммитов, добавленных
 **после** заморозки, иначе каждый документационный коммит меняет SHA, который
 оператор вставляет в командную строку. Коммиты после `64127b9e…` меняют
-**только** `docs/architecture/*.md` (сам handoff + `repository-split-final-gate.md`);
+**только** `docs/architecture/*.md` (этот handoff, `repository-split-final-gate.md`,
+`repository-split-execution-pack.md`);
 извлечение всех путей §8 **побайтово идентично** (по ним же — счётчики
 `1045 / 349 / 217 / 58 / 45` в command sheet, верны именно на source).
 Следствие: эти документы в новые репо **не попадают** (остаются в архиве-
@@ -1064,49 +1068,93 @@ P3 (npm) — **не** часть split-очереди: он нужен толь�
 
 #### 4.1.0 Общий блок (один раз)
 
+> **Ревизия (docs-only, см. `repository-split-execution-pack.md` §4):**
+> (1) добавлена `git reflog expire --expire=now --all` — **без неё `filter-repo`
+> abort'ится на sanity-check «expected at most one entry in the reflog»**;
+> (2) все контроли переведены с `test … && echo OK` на `… || { FAIL; exit 1 }`
+> — отдельный `test` в `&&`-списке **исключён** из `set -e` и молча
+> пропускается; (3) добавлены guard'ы повторного запуска и durable-бэкап;
+> (4) проверка версии через метаданные пакета.
+
 ```sh
 set -euo pipefail
 SRC=64127b9e1dea2ac528a572b51b90a542b70c5ebb
 BARE=/home/animastor/repos/animastor.git
 SPLIT=/tmp/split
 BRANCH=c21.4-physically-extract-analysis-from-backend
-NEWBRANCH=main            # имя корневой ветки НОВЫХ репо — решение владельца (п.10)
-git-filter-repo --version # обязан быть установлен: 2.47.0, /home/animastor/.local/bin/git-filter-repo
+NEWBRANCH=main            # имя корневой ветки НОВЫХ репо — решение владельца (п.10).
+                          # §FPSG.5 Этап 1 говорит `master`, триггеры §B9.2 — `main`:
+                          # имя ветки правится ТОЛЬКО здесь и сверяется с hook'ами P1
+                          # ДО первого push (I-12).
+
+# версия: `git filter-repo --version` печатает хеш сборки (`a40bce548d2c`), а НЕ номер
+# версии — 2.47.0 читается только из метаданных пакета
+python3 -c "import importlib.metadata as m; v=m.version('git-filter-repo'); assert v=='2.47.0', v"
+test -x /home/animastor/.local/bin/git-filter-repo
 
 # 0) backup + контроль неизменности источника (отдельная mirror-копия; её размер — не нулевой)
 mkdir -p "$SPLIT"
-test "$(git -C "$BARE" rev-parse "$SRC^{commit}")" = "$SRC"
+BK=/home/animastor/backups/animastor-pre-split-64127b9e.git   # durable; /tmp НЕ годится для backup:
+                                                              # volatile и тот же FS `/`, что P6-очистка (I-7)
+test ! -e "$BK" || { echo "FAIL: $BK уже существует — не перезаписывать"; exit 1; }
+test "$(git -C "$BARE" rev-parse "$SRC^{commit}")" = "$SRC" || { echo "FAIL: $SRC не найден в bare"; exit 1; }
+git -C "$BARE" merge-base --is-ancestor "$SRC" "$BRANCH" || { echo "FAIL: $SRC не предок $BRANCH"; exit 1; }
+test "$BRANCH" != master || { echo "FAIL: BRANCH не должен быть master"; exit 1; }
 BEFORE=$(git -C "$BARE" for-each-ref --format='%(objectname) %(refname)' | sort)
-git clone --mirror "$BARE" "$SPLIT/backup-animastor.git"     # обычная отдельная mirror-копия git-репозитория (fallback/backup) — НЕ hardlink-клон и НЕ «≈0 байт»: фактический размер равен размеру копируемых данных; оригинал не пишется
-git -C "$SPLIT/backup-animastor.git" rev-parse "$SRC"        # == $SRC
+git clone --mirror "$BARE" "$BK"     # обычная отдельная mirror-копия git-репозитория (fallback/backup) — НЕ hardlink-клон и НЕ «≈0 байт»: фактический размер равен размеру копируемых данных (≈38M); оригинал не пишется
+test "$(git -C "$BK" rev-parse "$SRC")" = "$SRC" || { echo "FAIL: backup не содержит $SRC"; exit 1; }
+echo "OK: backup $BK"
 
 # 1) P2-проверка (после FF master)
-test "$(git -C "$BARE" rev-parse refs/heads/master)" = "$SRC" && echo "OK: master == source"
+test "$(git -C "$BARE" rev-parse refs/heads/master)" = "$SRC" || { echo "FAIL: master != frozen source"; exit 1; }
+echo "OK: master == source"
 ```
+
+> **Верификация — только через `|| { echo "FAIL: …"; exit 1; }` + отдельный
+> `echo OK`.** Одна строка `test … && echo OK` под `set -e` **не останавливает
+> выполнение**: отдельная команда в `&&`-списке исключается из `set -e`,
+> поэтому падающий `test` ничего не печатает и shell идёт дальше.
+> Доказано: `bash -c 'set -e; test 1 -eq 2 && echo YES; echo end'` → печатает
+> `end`, exit **0** (I-2, execution-pack §4).
 
 После каждого репо — контроль того, что источник не тронут:
 
 ```sh
 AFTER=$(git -C "$BARE" for-each-ref --format='%(objectname) %(refname)' | sort)
-test "$BEFORE" = "$AFTER" && echo "OK: monorepo untouched"
+test "$BEFORE" = "$AFTER" || { echo "FAIL: refs монорепо изменились"; exit 1; }
+echo "OK: monorepo untouched"
 ```
 
-> **Почему две строки `reset` + `update-ref` (сверено с исходником
-> `git-filter-repo` 2.47.0):** sanity-check требует (а) рабочее дерево чистое,
-> (б) для каждой `refs/heads/X` существовать `refs/remotes/origin/X` с тем же
-> SHA, (в) ровно один remote `origin`, (г) 1 pack / 0 loose-объектов.
-> `git reset --hard $SRC` выполняет (а) и двигает только `refs/heads`;
-> вторая строка выравнивает remote-tracking ref. Иначе — `Aborting: … use --force`.
-> После успешного `filter-repo` remote `origin` удаляется сам.
+> **Почему три строки `reset` + `update-ref` + `reflog expire` (сверено с
+> исходником `git-filter-repo` 2.47.0, `RepoFilter.sanity_check`):**
+> sanity-check требует (а) рабочее дерево чистое, (б) для каждой `refs/heads/X`
+> существовать `refs/remotes/origin/X` с тем же SHA, (в) ровно один remote
+> `origin`, (г) 1 pack / 0 loose-объектов, **(д) не больше одной записи в reflog
+> для HEAD и для каждой ветки**.
+> `git reset --hard $SRC` выполняет (а) и двигает только `refs/heads`, но
+> пишет **вторую** запись в `.git/logs/HEAD` и `.git/logs/refs/heads/$BRANCH`
+> (первая — от `clone`) → **без `reflog expire` `filter-repo` прервётся именно
+> на (д)**: `Aborting: expected at most one entry in the reflog … use --force`,
+> а `--force` запрещён (проверено на эталонном репо: 2 entries → abort;
+> после `git reflog expire --expire=now --all` → 0 entries → проходит).
+> Вторая строка выравнивает remote-tracking ref (`update-ref` reflog не пишет),
+> третья обнуляет reflog'и. **Альтернатива:** `git clone -c
+> core.logAllRefUpdates=false …` — `.git/logs` не создаётся вовсе (тоже
+> проверено), но постоянная правка config нового репо нежелательна.
+> После успешного `filter-repo` remote `origin` удаляется сам (cleanup).
+> Если sanity-check всё же откажет — **не использовать `--force`**: удалить
+> клон, устранить причину, повторить с чистого `clone`.
 
 #### 4.1.1 `animastor-backend` — шаг 1/7
 
 ```sh
 cd "$SPLIT"
+test ! -e "$SPLIT/backend" || { echo "REFUSE: $SPLIT/backend существует — нужен свежий клон (повторный запуск в тот же каталог запрещён)"; exit 1; }
 git clone --no-local --single-branch --branch "$BRANCH" "$BARE" backend
 cd backend
 git reset --hard "$SRC"
 git update-ref "refs/remotes/origin/$BRANCH" "$SRC"
+git reflog expire --expire=now --all   # ОБЯЗАТЕЛЬНО до filter-repo — см. §4.1.0 (I-1)
 git filter-repo \
   --path backend \
   --path packages/animastor-ai-agent \
@@ -1145,19 +1193,31 @@ git filter-repo \
   --path .gitignore
 # НЕТ --path workflow.json (§8.1, 36-я запись): no-op + RETIRE/P4 — подтверждено проверкой whitelist
 
-# backup/verification
-git fsck --no-progress
-test "$(git ls-files | wc -l)" -eq 1045 && echo "OK: 1045"
-test -z "$(git ls-files | grep -E '^(frontends|tools)/')" && echo "OK: no leak"
-git status --porcelain | sed -n 1p; test -z "$(git status --porcelain)" && echo "OK: clean"
-git log --reverse --format=%s | sed -n 1p                # == "Recovery01: June 9 working state + dedup"
+# backup/verification (строгие контроли — §4.1.0)
+git fsck --no-progress || { echo "FAIL: fsck"; exit 1; }
+test "$(git ls-files | wc -l)" -eq 1045 || { echo "FAIL: ожидалось 1045 файлов"; exit 1; }
+echo "OK: 1045"
+test -z "$(git ls-files | grep -E '^(ANDROID_WEB_PARITY\.md$|apk-build\.sh$|app-web-rebuild\.sh$|build-apk\.sh$|frontends/|gpu-hub-rebuild\.sh$|tools/|workflow\.json$|local\.properties$|package\.json$|packages/animastor-(worker|gpu-hub|web-))' || :)" || { echo "FAIL: чужие пути в backend-repo"; exit 1; }
+echo "OK: no leak"
+test -z "$(git status --porcelain)" || { echo "FAIL: рабочее дерево грязное"; exit 1; }
+echo "OK: clean"
+test "$(git log --reverse --format=%s | sed -n 1p)" = "Recovery01: June 9 working state + dedup" || { echo "FAIL: исторический корень не Recovery01"; exit 1; }
+echo "OK: history root"
+test "$(git rev-list --count HEAD)" -eq 1267 || { echo "FAIL: ожидалось 1267 коммитов (счёт по prefix'ам §4.1.1, execution-pack §3.1)"; exit 1; }
+echo "OK: 1267 commits"
+# history «нельзя потерять» (§8.6)
+git log --follow --format='%h %ad %s' --date=short -- packages/animastor-contracts/src/job-protocol-v2.js | sed -n 1p
+git log --follow --format='%h %ad %s' --date=short -- backend/ai/workflows | sed -n 1p
+git log --follow --format='%h %ad %s' --date=short -- packages/animastor-installer/ai/install-manifests | sed -n 1p
+git log --follow --format='%h %ad %s' --date=short -- scripts/check-artifacts.sh | sed -n 1p
+git log --follow --format='%h %ad %s' --date=short -- docs/architecture/GPU_HUB_CONTRACT.md | sed -n 1p
 
 # первый push (bare создаётся в P1 владельцем)
 NEW=/home/animastor/repos/animastor-backend.git
 test -d "$NEW" || git init --bare "$NEW"
 git remote add origin "$NEW"
-git push -u origin "HEAD:refs/heads/$NEWBRANCH"
 git -C "$NEW" symbolic-ref HEAD "refs/heads/$NEWBRANCH"
+git push -u origin "HEAD:refs/heads/$NEWBRANCH"
 git ls-remote https://github.com/Animastor/animastor-backend.git "refs/heads/$NEWBRANCH"
 # post-receive hook (P1) зеркалит в GitHub: git push --mirror github
 ```
@@ -1168,10 +1228,12 @@ Smoke checks — §8, `animastor-backend` (в т.ч. `cd backend && npm ci`, `np
 
 ```sh
 cd "$SPLIT"
+test ! -e "$SPLIT/web" || { echo "REFUSE: $SPLIT/web существует — нужен свежий клон"; exit 1; }
 git clone --no-local --single-branch --branch "$BRANCH" "$BARE" web
 cd web
 git reset --hard "$SRC"
 git update-ref "refs/remotes/origin/$BRANCH" "$SRC"
+git reflog expire --expire=now --all   # ОБЯЗАТЕЛЬНО до filter-repo — см. §4.1.0 (I-1)
 git filter-repo \
   --path frontends/app \
   --path frontends/website \
@@ -1205,17 +1267,23 @@ git filter-repo \
   --path docs/architecture/web-workers-extraction-audit.md \
   --path LICENSE
 
-# backup/verification
-git fsck --no-progress
-test "$(git ls-files | wc -l)" -eq 349 && echo "OK: 349"
-test -z "$(git ls-files | grep -E '^(backend|packages/animastor-(contracts|gpu-hub|worker))')" && echo "OK: no leak"
-test ! -e .gitignore && echo "WARN: корневого .gitignore нет — создать (§5.2)"
+# backup/verification (строгие контроли — §4.1.0; полные паттерны — execution-pack §3.3)
+git fsck --no-progress || { echo "FAIL: fsck"; exit 1; }
+test "$(git ls-files | wc -l)" -eq 349 || { echo "FAIL: ожидалось 349 файлов"; exit 1; }
+echo "OK: 349"
+test -z "$(git ls-files | grep -E '^(backend/|docker/|proxy/|scripts/|frontends/android/|gpu-hub-rebuild\.sh$|apk-build\.sh$|build-apk\.sh$|backend-rebuild\.sh$|front-backend-rebuild\.sh$|src-backup\.sh$|MiM\.vbook$|docker-compose\.yml$|\.dockerignore$|\.env\.example$|\.gitignore$|ARCHITECTURE\.md$|CONTRIBUTING\.md$|MEMORY\.md$|README\.md$|SECURITY\.md$|THIRD_PARTY_NOTICES\.md$|workflow\.json$|local\.properties$|package\.json$|packages/animastor-(ai-|assistant|auth|comfyui|contracts|editor|generation|gpu-hub|installer|orchestration|parser|player|url-safety|vbook|worker))' || :)" || { echo "FAIL: чужие пути в web-repo"; exit 1; }
+echo "OK: no leak"
+test -z "$(git ls-files | grep '^docs/' | grep -vE '^docs/(05-frontend/|08-mobile-web-migration/|09-desktop-migration/|architecture/(ANDROID_WEB_PARITY|web-[a-z0-9-]+)\.md$)' || :)" || { echo "FAIL: лишние файлы docs/ в web-repo"; exit 1; }
+echo "OK: docs subset"
+test "$(git rev-list --count HEAD)" -eq 275 || { echo "FAIL: ожидалось 275 коммитов (execution-pack §3.1)"; exit 1; }
+echo "OK: 275 commits"
+if test ! -e .gitignore; then echo "WARN: корневого .gitignore нет — создать (§5.2)"; fi
 
 NEW=/home/animastor/repos/animastor-web.git
 test -d "$NEW" || git init --bare "$NEW"
 git remote add origin "$NEW"
-git push -u origin "HEAD:refs/heads/$NEWBRANCH"
 git -C "$NEW" symbolic-ref HEAD "refs/heads/$NEWBRANCH"
+git push -u origin "HEAD:refs/heads/$NEWBRANCH"
 git ls-remote https://github.com/Animastor/animastor-web.git "refs/heads/$NEWBRANCH"
 ```
 
@@ -1225,10 +1293,12 @@ Smoke checks — §8, `animastor-web` (`cd frontends/app && npm ci`, `npm run bu
 
 ```sh
 cd "$SPLIT"
+test ! -e "$SPLIT/android" || { echo "REFUSE: $SPLIT/android существует — нужен свежий клон"; exit 1; }
 git clone --no-local --single-branch --branch "$BRANCH" "$BARE" android
 cd android
 git reset --hard "$SRC"
 git update-ref "refs/remotes/origin/$BRANCH" "$SRC"
+git reflog expire --expire=now --all   # ОБЯЗАТЕЛЬНО до filter-repo — см. §4.1.0 (I-1)
 git filter-repo \
   --path frontends/android \
   --path apk-build.sh \
@@ -1237,16 +1307,20 @@ git filter-repo \
   --path LICENSE
 # НЕТ --path local.properties (§8.3, 6-я запись): no-op + VPS-local/untracked
 
-git fsck --no-progress
-test "$(git ls-files | wc -l)" -eq 217 && echo "OK: 217"
-test -z "$(git ls-files | grep -E '^(backend|docs|docker|packages)')" && echo "OK: no leak"
-test ! -e .gitignore && echo "WARN: корневого .gitignore нет — создать (§5.3)"
+git fsck --no-progress || { echo "FAIL: fsck"; exit 1; }
+test "$(git ls-files | wc -l)" -eq 217 || { echo "FAIL: ожидалось 217 файлов"; exit 1; }
+echo "OK: 217"
+test -z "$(git ls-files | grep -Ev '^(frontends/android/|apk-build\.sh$|build-apk\.sh$|ANDROID_WEB_PARITY\.md$|LICENSE$)' || :)" || { echo "FAIL: чужие пути в android-repo"; exit 1; }
+echo "OK: no leak"
+test "$(git rev-list --count HEAD)" -eq 107 || { echo "FAIL: ожидалось 107 коммитов (execution-pack §3.1)"; exit 1; }
+echo "OK: 107 commits"
+if test ! -e .gitignore; then echo "WARN: корневого .gitignore нет — создать (§5.3)"; fi
 
 NEW=/home/animastor/repos/animastor-android.git
 test -d "$NEW" || git init --bare "$NEW"
 git remote add origin "$NEW"
-git push -u origin "HEAD:refs/heads/$NEWBRANCH"
 git -C "$NEW" symbolic-ref HEAD "refs/heads/$NEWBRANCH"
+git push -u origin "HEAD:refs/heads/$NEWBRANCH"
 git ls-remote https://github.com/Animastor/animastor-android.git "refs/heads/$NEWBRANCH"
 ```
 
@@ -1256,10 +1330,12 @@ Smoke checks — §8, `animastor-android`: npm **не выполняется** (
 
 ```sh
 cd "$SPLIT"
+test ! -e "$SPLIT/worker" || { echo "REFUSE: $SPLIT/worker существует — нужен свежий клон"; exit 1; }
 git clone --no-local --single-branch --branch "$BRANCH" "$BARE" worker
 cd worker
 git reset --hard "$SRC"
 git update-ref "refs/remotes/origin/$BRANCH" "$SRC"
+git reflog expire --expire=now --all   # ОБЯЗАТЕЛЬНО до filter-repo — см. §4.1.0 (I-1)
 git filter-repo \
   --path packages/animastor-worker \
   --path docker/worker \
@@ -1281,16 +1357,20 @@ git filter-repo \
   --path docs/architecture/LINUX_INSTALLER_RECONNAISSANCE.md \
   --path LICENSE
 
-git fsck --no-progress
-test "$(git ls-files | wc -l)" -eq 58 && echo "OK: 58"
-test -z "$(git ls-files | grep -E '^(backend|frontends|packages/animastor-(contracts|gpu-hub))')" && echo "OK: no leak"
-test ! -e .gitignore && echo "WARN: корневого .gitignore нет — создать (§5.4)"
+git fsck --no-progress || { echo "FAIL: fsck"; exit 1; }
+test "$(git ls-files | wc -l)" -eq 58 || { echo "FAIL: ожидалось 58 файлов"; exit 1; }
+echo "OK: 58"
+test -z "$(git ls-files | grep -Ev '^(packages/animastor-worker/|docker/worker/|docs/architecture/(JOB_PROTOCOL_V2|PHASE_9|WORKER_PACKAGE_RELOCATION|EXPERIMENTAL_BETA_|LINUX_INSTALLER_RECONNAISSANCE)|LICENSE$)' || :)" || { echo "FAIL: чужие пути в worker-repo"; exit 1; }
+echo "OK: no leak"
+test "$(git rev-list --count HEAD)" -eq 24 || { echo "FAIL: ожидалось 24 коммита (execution-pack §3.1)"; exit 1; }
+echo "OK: 24 commits"
+if test ! -e .gitignore; then echo "WARN: корневого .gitignore нет — создать (§5.4)"; fi
 
 NEW=/home/animastor/repos/animastor-worker.git
 test -d "$NEW" || git init --bare "$NEW"
 git remote add origin "$NEW"
-git push -u origin "HEAD:refs/heads/$NEWBRANCH"
 git -C "$NEW" symbolic-ref HEAD "refs/heads/$NEWBRANCH"
+git push -u origin "HEAD:refs/heads/$NEWBRANCH"
 git ls-remote https://github.com/Animastor/animastor-worker.git "refs/heads/$NEWBRANCH"
 ```
 
@@ -1301,10 +1381,12 @@ Smoke checks — §8, `animastor-worker` (`cd packages/animastor-worker && npm c
 
 ```sh
 cd "$SPLIT"
+test ! -e "$SPLIT/gpu-hub" || { echo "REFUSE: $SPLIT/gpu-hub существует — нужен свежий клон"; exit 1; }
 git clone --no-local --single-branch --branch "$BRANCH" "$BARE" gpu-hub
 cd gpu-hub
 git reset --hard "$SRC"
 git update-ref "refs/remotes/origin/$BRANCH" "$SRC"
+git reflog expire --expire=now --all   # ОБЯЗАТЕЛЬНО до filter-repo — см. §4.1.0 (I-1)
 git filter-repo \
   --path packages/animastor-gpu-hub \
   --path scripts/check-artifacts.sh \
@@ -1334,10 +1416,14 @@ git filter-repo \
   --path LICENSE
 # НЕТ --path gpu-hub-rebuild.sh (§8.5, 3-я запись) при R-3=B — X-1, §7.1
 
-git fsck --no-progress
-test "$(git ls-files | wc -l)" -eq 44 && echo "OK: 44"   # §8.5 = 45 файлов, минус gpu-hub-rebuild.sh (X-1 при R-3=B)
-test -z "$(git ls-files | grep -E '^(backend|frontends)')" && echo "OK: no leak"
-test ! -e .gitignore && echo "WARN: корневого .gitignore нет — создать (§5.5)"
+git fsck --no-progress || { echo "FAIL: fsck"; exit 1; }
+test "$(git ls-files | wc -l)" -eq 44 || { echo "FAIL: ожидалось 44 файла (§8.5 = 45, минус gpu-hub-rebuild.sh — X-1 при R-3=B)"; exit 1; }
+echo "OK: 44"
+test -z "$(git ls-files | grep -Ev '^(packages/animastor-gpu-hub/|scripts/check-artifacts\.sh$|docker/compose/overlay-gpu-hub-standalone\.yml$|docs/architecture/(GPU_HUB_CONTRACT|JOB_PROTOCOL_V2|PHASE_10[A-Z]?_)|LICENSE$)' || :)" || { echo "FAIL: чужие пути в gpu-hub-repo"; exit 1; }
+echo "OK: no leak"
+test "$(git rev-list --count HEAD)" -eq 37 || { echo "FAIL: ожидалось 37 коммитов (без gpu-hub-rebuild.sh; execution-pack §3.1)"; exit 1; }
+echo "OK: 37 commits"
+if test ! -e .gitignore; then echo "WARN: корневого .gitignore нет — создать (§5.5)"; fi
 ```
 
 **Push/замена существующего `Animastor/animastor-gpu-hub` в этот лист НЕ входит**
@@ -1353,13 +1439,22 @@ test ! -e .gitignore && echo "WARN: корневого .gitignore нет — с�
 
 - **Backup/verification** — общий блок §4.1.0 (до и после каждого репо).
 - **Первый push** — см. каждый блок: `git remote add origin <новый bare>` →
-  `git push -u origin HEAD:refs/heads/$NEWBRANCH` → `ls-remote` на GitHub.
+  `git -C "$NEW" symbolic-ref HEAD "refs/heads/$NEWBRANCH"` (**до** push, чтобы
+  HEAD нового bare никогда не висел) → `git push -u origin
+  HEAD:refs/heads/$NEWBRANCH` → `ls-remote` на GitHub.
 - **Smoke checks** — §8; регенерация lock'ов — §6 (до тестов, после `filter-repo`).
 - **Имя корневой ветки** (`$NEWBRANCH=main`) и **URL-префикс** GitHub-организации
   сверяются владельцем; если hook'и P1 требуют иного имени ветки — правится только
-  `$NEWBRANCH`.
+  `$NEWBRANCH`. Запись «`master`» в §FPSG.5 (Этап 1) — историческая; исполняемое
+  имя берётся **только** из `$NEWBRANCH` (I-12).
 - Если sanity-check `git-filter-repo` всё же откажется — **не использовать
-  `--force`**; пересоздать клон и повторить (§4.1.0).
+  `--force`**; `rm -rf` клона и повторить с чистого `clone` (§4.1.0). Наиболее
+  вероятная причина — пропущенный `git reflog expire` (I-1).
+- **Per-repo спеки** (ожидаемый layout, package-идентичность, запрещённые пути,
+  полные leak-паттерны, `git log --follow`, ожидаемое число коммитов) —
+  `repository-split-execution-pack.md` §3.
+- **Идемпотентность / безопасность / rollback / GO-чеклист** — там же §4, §5, §6.
+  Запускать лист без пункта **G-E/G-F/G-G** (P1/P6/R-3) нельзя.
 
 Запрещено: `--path-rename`, force-push, изменение monorepo hook'а, создание
 репо GPU Hub, любые действия в существующем `animastor-gpu-hub`.
@@ -1376,7 +1471,7 @@ Layout сохраняется (нет `--path-rename`) → `backend/`, `frontend
 
 | Repo | Что входит | package.json | lock'и |
 |---|---|---|---|
-| `animastor-backend` | **backend + 15 backend-пакетов** (+ `docs/`, `docker/`, `proxy/`, `scripts/`, compose, root-доки) | 16 | **15** (4 → регенерация, §6) |
+| `animastor-backend` | **backend + 15 backend-пакетов** (+ `docs/`, `docker/`, `proxy/`, `scripts/`, compose, root-доки) | 16 | **16** (4 → регенерация, §6) |
 | `animastor-web` | **frontends/app + frontends/website + 13 web-пакетов** (+ `tools/*-tester`, 4 подмножества docs) | 14 | 14 (2 → регенерация) |
 | `animastor-android` | **Android tree / build-ассеты** (`frontends/android`, `apk-build.sh`, `build-apk.sh`) — **без npm** | 0 | 0 |
 | `animastor-worker` | **worker bundle + protocol/docs** (`packages/animastor-worker`, `docker/worker`, 16 protocol/audit-доков) | 3 | 3 (0 → регенерация) |
@@ -1391,7 +1486,7 @@ Layout сохраняется (нет `--path-rename`) → `backend/`, `frontend
 | исчезают каталоги/пути | `frontends/**` (app, website, android), `tools/**`, `packages/animastor-worker`, `packages/animastor-gpu-hub`, `packages/animastor-web-*` (13), `gpu-hub-rebuild.sh`, `app-web-rebuild.sh`, `apk-build.sh`, `build-apk.sh`, `ANDROID_WEB_PARITY.md`, `workflow.json`, `local.properties` |
 | package.json | **16**: `backend/` + 15 пакетов (gpu-hub/web/worker — нет) |
 | root package.json **репо** | **отсутствует** (в whitelist нет корневого `package.json`) → корневой манифест = **`backend/package.json`** (`name: animastor-backend`, workspaces нет) |
-| lockfiles → регенерация | **4 из 15** (в backend-repo **15** lock'ов на 16 манифестов — `packages/animastor-ai-analysis/package-lock.json` отсутствует): `packages/animastor-{comfyui-workflow-connector(4), generation(2), orchestration(108), vbook-runtime(1)}` — 115/117 относ. записей; `backend/package-lock.json` и остальные 11 локов — **0** относ. записей → не трогать |
+| lockfiles → регенерация | **4 из 16** (в backend-repo **16** lock'ов на 16 манифестов, в т.ч. `packages/animastor-ai-analysis/package-lock.json` — добавлен `6798d786`, содержит **0** относ. записей): `packages/animastor-{comfyui-workflow-connector(4), generation(2), orchestration(108), vbook-runtime(1)}` — 115/117 относ. записей; `backend/package-lock.json` и остальные 11 локов — **0** относ. записей → не трогать |
 | runtime npm deps (остаются) | внутренние: `@animastor/{ai-agent,ai-analysis,assistant,auth,contracts,editor,generation,installer,orchestration,parser,player,url-safety,vbook-runtime}` + `animastor-comfyui-workflow-connector`; внешние: `adm-zip`, `cors`, `express`, `express-rate-limit`, `helmet`, `iconv-lite`, `ioredis`, `multer`, `music-metadata`, `pg`, `prom-client`, `sharp`, `tinyld`, `ws` |
 | devDependencies (остаются) | `@animastor/gpu-hub`, `chai`, `mocha`, `nyc`, `proxyquire` (все опубликованы/registry-доступны) |
 | root layout (21) | `.dockerignore` `.env.example` `.gitignore` `ARCHITECTURE.md` `CONTRIBUTING.md` `LICENSE` `MEMORY.md` `MiM.vbook` `README.md` `SECURITY.md` `THIRD_PARTY_NOTICES.md` `backend/` `backend-rebuild.sh` `docker/` `docker-compose.yml` `docs/` `front-backend-rebuild.sh` `packages/` (15) `proxy/` `scripts/` `src-backup.sh` |
@@ -1454,7 +1549,7 @@ Layout сохраняется (нет `--path-rename`) → `backend/`, `frontend
 | package.json | **1**: `packages/animastor-gpu-hub/package.json` (`@animastor/gpu-hub` 0.1.1, devDeps отсутствуют) |
 | runtime npm deps | `@animastor/contracts`, `cors`, `express`, `ioredis` |
 | devDependencies | **нет** (run-all — zero-dep) |
-| root layout (5) | `LICENSE` `docker/compose/overlay-gpu-hub-standalone.yml` `docs/architecture/` (22) `packages/animastor-gpu-hub/` (15) `scripts/check-artifacts.sh` |
+| root layout (5) | `LICENSE` `docker/compose/overlay-gpu-hub-standalone.yml` `docs/architecture/` (22) `packages/animastor-gpu-hub/` (19) `scripts/check-artifacts.sh` |
 | ⚠ gap | корневого `.gitignore` и `README.md` нет → создать сразу; `packages/animastor-gpu-hub/.dockerignore` остаётся |
 | сразу после extraction | `git fsck`; `git status` чист; отсутствие `docker-compose.yml`, `docker/compose/overlay-gpu-hub-local.yml`, `backend/`; `cd packages/animastor-gpu-hub && npm ci && npm test` → `node tests/run-all.cjs` (22); `node tools/update-artifacts-lock.cjs --check` (см. D6 ниже); Docker G4-сборка standalone-контекстом; **X-4-адаптация тестов — §7.4** |
 
@@ -1507,7 +1602,7 @@ Layout сохраняется (нет `--path-rename`) → `backend/`, `frontend
    Android — **не применяется**.
 4. **Regeneration package-lock** — ровно **6 локов** (те, что содержат
    monorepo-relative `../`-записи; **117** записей суммарно). Остальные
-   **27** локов (в т.ч. `backend/package-lock.json` и
+   **28** локов (в т.ч. `backend/package-lock.json` и
    `frontends/app/package-lock.json` — **0** относ. записей) **не трогать**:
    регенерация была бы чистой косметикой.
 
@@ -1689,8 +1784,9 @@ D6/D7 оставить в backend-repo, в worker-repo оставить D1/D2/D3
   владельца);
 - возврат `file:`/symlink-зависимостей · удаление файлов «для чистоты».
 
-Изменён **только** `docs/architecture/repository-split-next-blockers.md`,
-**одним** commit'ом.
+Изменены **только** `docs/architecture/*.md` — этот handoff,
+`repository-split-final-gate.md`, `repository-split-execution-pack.md`,
+**одним** docs-only commit'ом.
 
 ### 10. Что владелец обязан подтвердить перед запуском
 
