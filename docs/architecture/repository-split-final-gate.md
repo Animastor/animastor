@@ -121,11 +121,16 @@ Read-only разбор: каждый tracked-файл должен покрыв�
 
 ## 4. External prerequisites (не закрываются этим gate'ом)
 
+Детальная раскладка **P1** (visibility, default branch, `$NEWBRANCH`, порядок
+создания, пустота репозиторий, hook, remote `github`), **P6** (измеренные факты
+и оценка места под split) и **R-3** (сравнение A/B без выбора) + сквозной
+чеклист **GO-01…GO-15** — `repository-split-pre-split-go-blockers.md` §2–§6.
+
 | ID | Что нужно | Статус | Кто |
 |---|---|---|---|
-| **P1** | создать `animastor-backend`, `animastor-web`, `animastor-android`, `animastor-worker` (GitHub 200 + пустой bare + hook) | **ABSENT** (4 × HTTP 404, API перепроверен read-only) | owner; **GPU Hub отдельно не создавать** (уже существует, 200) |
-| **R-3** | зафиксировать **A** или **B** по `Animastor/animastor-gpu-hub` | **UNDECIDED** (repo read-only, `7c7778c`; оба варианта поддержаны документацией — см. §1 R-3) | owner; до решения не авторить hub-CI и не запускать §8.5 |
-| **P6** | ≥5G свободно для клонов/фильтрации | **2 958 962 688 B (≈2.96 GB) — FAIL** (preflight 2026-10-03); ничего не очищалось. Кандидаты очистки **только по распоряжению владельца**: `pip cache purge` ≈4.4G → ≈7.2G, `npm cache clean --force` ≈0.8G, `/tmp`-мусор установщиков ≈1.4G. Старые доки (readiness §9, pre-split-fixes §7/§8) упоминают **≥3 GB** — устаревший, менее консервативный порог; актуальный **≥5G** (§P6, этот документ) | host; очистка — owner |
+| **P1** | создать `animastor-backend`, `animastor-web`, `animastor-android`, `animastor-worker` (GitHub 200 + пустой bare + hook **+ remote `github`**) | **ABSENT** (4 × HTTP 404, API перепроверен read-only); план — pre-split-go-blockers §2, новые блокеры **I-16** (нет remote `github` → hook падает), **I-17** (непустой repo → нужен запрещённый force-push), **I-18** (push-права ключа) | owner; **GPU Hub отдельно не создавать** (уже существует, 200) |
+| **R-3** | зафиксировать **A** или **B** по `Animastor/animastor-gpu-hub` | **UNDECIDED** (repo read-only, `7c7778c`; оба варианта поддержаны документацией — см. §1 R-3; сравнение A/B — pre-split-go-blockers §4) | owner; до решения не авторить hub-CI и не запускать §8.5 |
+| **P6** | ≥5G свободно для клонов/фильтрации | **2 958 962 688 B (≈2.96 GB) — FAIL** (preflight 2026-10-03); ничего не очищалось. Кандидаты очистки **только по распоряжению владельца**: `pip cache purge` ≈4.4G → ≈7.2G, `npm cache clean --force` ≈0.8G, `/tmp`-мусор установщиков ≈1.4G. Старые доки (readiness §9, pre-split-fixes §7/§8) упоминают **≥3 GB** — устаревший, менее консервативный порог; актуальный **≥5G** (§P6, этот документ). **Измеренное требование split** (pre-split-go-blockers §3): пик ≈ **431 MB**, минимум **1 073 741 824 B (1 GiB)** → текущий запас ≈ **2.76×** измеренного минимума, но **0.55×** задокументированного ≥5G; **перебазировка порога — решение владельца**, до него P6 считается FAIL | host; очистка — owner |
 | **P3** | `npm whoami` ≠ E401 | **E401** (перепроверено 2026-10-03) | owner; нужен **до первого publish** (post-split) |
 
 ---

@@ -14,6 +14,8 @@
 
 Авторитетный GO/NO-GO — `repository-split-final-gate.md`.
 Исполняемый командный лист — `repository-split-next-blockers.md` §4.1.0–§4.1.6.
+PRE-SPLIT блокеры P1 / P6 / R-3, план создания репозиториев и единый GO-чеклист —
+`repository-split-pre-split-go-blockers.md`.
 Этот документ **не заменяет** их: он добавляет то, чего в них не было —
 per-repo спеки с проверяемыми grep/`--follow`-командами, аудит идемпотентности
 и безопасности командного листа с фактическими FAIL'ами и их фиксами,
@@ -212,11 +214,16 @@ git log --follow --format='%h %ad %s' --date=short -- packages/animastor-gpu-hub
 | **I-13** | Per-repo leak-чек | **Неполный.** backend — только `^(frontends\|tools)/`; остальные — по 1 короткому паттерну; web не проверял `docs/`-подмножества | добавлены полные паттерны §3.2–§3.6 (все проверены: 0 leak на симулированных 1045/349/217/58/44) |
 | **I-14** | `git log --follow` | **Нет команд.** §8.6 перечисляет файлы, но не команды и не per-repo scoping | добавлены §3.2–§3.6 (все 13 путей существуют и логируются на `$SRC`) |
 | **I-15** | Ожидаемое число коммитов | **Не задано** — `git log --oneline \| wc -l ≠ 0` ничего не гарантирует | добавлены точные ожидания (§3.1) |
+| **I-16** | **remote `github` в новых bare** | **BLOCKER.** Ни один документ не содержит `git remote add github` (проверено grep'ом по `docs/`), а `post-receive` делает `git push --mirror github` → падение «no such remote» на первом push, зеркало не появится, `git ls-remote https://…` вернёт пустоту | добавлено в P1-план: `git remote add github git@github.com:Animastor/<name>.git` **до** первого push (pre-split-go-blockers §2.1/§2.3, чеклист GO-04) |
+| **I-17** | **Пустота целевых GitHub-репозиториев** | **BLOCKER.** README/LICENSE/`.gitignore` при создании → первый push = non-fast-forward → нужен **запрещённый** force-push | зафиксировано требование «пусто»: `size=0`, `pushed_at=null`, `default_branch=""` (pre-split-go-blockers §2.1, чеклист GO-01) |
+| **I-18** | **Push-права SSH-ключа на новые репо** | **BLOCKER.** hook ходит ключом `~/.ssh/github_ed25519` (читает org — проверено, `HEAD=64127b9e`); при создании репо **другим** аккаунтом mirror будет отклонён | закрывается созданием репо **этим же** GitHub-аккаунтом (pre-split-go-blockers §2.1) |
 
 **Итог аудита:** до правок командный лист **не был пригоден к слепому
 copy/paste-исполнению** (I-1 — гарантированный abort на первом же репо;
 I-2 — контроли молчат при провале). После правок §4.1 каждый блок —
-строгий, идемпотентный и самопроверяемый.
+строгий, идемпотентный и самопроверяемый. Дополнительно аудит охватил **P1**:
+там же найдены I-16 — I-18 (закрываются **до** первого push, а I-16 — до самого
+первого push в новый bare).
 
 ---
 
@@ -272,10 +279,15 @@ GPU Hub bare или GitHub, — **staged action**: требует письмен
 | **G-J** | `$NEWBRANCH` сверён с hook'ами P1 | `grep` hook'а | имя совпадает | не выполнялся (требует G-E) |
 | **G-K** | `$SPLIT` пуст / целевые каталоги отсутствуют | `test ! -e "$SPLIT/backend"` (и т.д.) | exit 0 | **READY** (`/tmp/split` отсутствует) |
 | **G-L** | Whitelist не изменился | `git ls-tree -r --name-only $SRC \| wc -l` | 1635 | **READY** |
-| **G-M** | `$BARE` не тронут (`BEFORE` сохранён) | `git -C $BARE for-each-ref \| sort` | сохранено в переменную | стадия B |
+| **G-M** | `$BARE` не тронут (`BEFORE` сохранён) | `git -C $BARE for-each-ref \| sort` | сохранено в переменную; **после каждого репо** — сверка `AFTER` | стадия B |
+| **G-N** | **P1** — remote `github` в каждом bare (**I-16**) | `git -C "$NEW" config --get remote.github.url` | `git@github.com:Animastor/<name>.git` для всех 4 | **BLOCKED** (bare не созданы) |
+| **G-O** | **P1** — репозитории **пустые** + public (**I-17**, **I-18**) | `curl … /repos/Animastor/<name>` | `size=0`, `pushed_at=null`, `default_branch=""`, `private=false` | **BLOCKED** (4 × 404) |
+| **G-P** | **P1** — hook 91 байт, 0755, до первого push | `test -x "$NEW/hooks/post-receive" && test "$(wc -c < "$NEW/hooks/post-receive")" -eq 91` | совпадает с §2.2 pre-split-go-blockers | **BLOCKED** |
 
-**Сейчас: G-E = BLOCKED, G-F = FAIL, G-G = UNDECIDED → GO-состояние НЕ
-достигнуто. Физический split не выполняется.**
+**Сейчас: G-E / G-N / G-O / G-P = BLOCKED, G-F = FAIL, G-G = UNDECIDED,
+G-H / G-I / G-J / G-M = не выполнялись → GO-состояние НЕ достигнуто.
+Физический split не выполняется.** Детальная раскладка P1 / P6 / R-3 и
+сквозной чеклист GO-01…GO-15 — `repository-split-pre-split-go-blockers.md` §2–§6.
 
 ---
 
@@ -300,6 +312,10 @@ GPU Hub bare или GitHub, — **staged action**: требует письмен
 | **E13** | §4.1.1–4.1.5 | `symbolic-ref HEAD` после push | перенесено перед push (I-11) |
 | **E14** | final-gate §0 / §6, handoff §1 | после source изменены **2** файла; с этим документом — **3** | исправлено (final-gate §0, §6) |
 | **E15** | final-gate §0 / §6, handoff §1 | «tip = source + 5 doc-коммитов» и список `5c34de54…e768a7cc` устарел | исправлено: **7**, источник истины — `git rev-list --count 64127b9e…HEAD` |
+| **E16** | P1 (§FPSG §3, final-gate §4, handoff §3) | не задано **действие** в новых bare: `post-receive` есть в списке, но `git remote add github` **нигде не упоминается** → hook падает на первом push | добавлено I-16 + P1-план (pre-split-go-blockers §2.1/§2.3, G-N, GO-04) |
+| **E17** | P1 | не задано требование **пустого** репозитория → риск non-fast-forward и запрещённого force-push | добавлено I-17 + проверки `size=0 / pushed_at=null / default_branch=""` (G-O, GO-01) |
+| **E18** | P1 / §4.1.1–§4.1.4 | не указана **visibility** целевых репо, при этом командные проверки идут `git ls-remote https://…` **без** credentials → при private репо дали бы ложный FAIL | зафиксировано **public** (консистентно с `Animastor/animastor` и `animastor-gpu-hub`) + I-18 (G-O, GO-01) |
+| **E19** | §6 чеклист | P1 был одной строкой G-E; P6/R-3 — одной; не было пунктов про remote `github`, пустоту репо, hook-размер и фиксацию refs монорепо до/после | добавлены G-N…G-P; сквозной чеклист GO-01…GO-15 — pre-split-go-blockers §6 |
 
 ---
 
