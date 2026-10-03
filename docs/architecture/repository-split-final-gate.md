@@ -21,7 +21,7 @@
 | Branch | `c21.4-physically-extract-analysis-from-backend` (= `origin/…`) |
 | **`master`** | **`64127b9e…` == source == `origin/master`** → **P2 CLOSED** (FF `04da33ea → 64127b9e`, обычная экспедиция, без force; `master` — прямой предок source, 0 behind / 0 ahead) |
 | Working tree | чистый (`git status --porcelain` = 0 строк) на момент gate |
-| Merge-коммитов в истории | **0** (`git rev-list --merges --count` = 0), коммитов всего 1653 |
+| Merge-коммитов в истории | **0** (`git rev-list --merges --count` = 0), коммитов всего **1653 на source** (tip ветки — +2 doc-коммита этого gate'а) |
 | origin | `/home/animastor/repos/animastor.git` (bare; `post-receive` от 2026-08-22, не изменялся) → зеркало `github.com:Animastor/animastor.git` |
 | Что менялось в этом gate | **только** `docs/architecture/*.md` (см. §6) — production-код, тесты, Dockerfile, compose, `artifacts.lock.json`, B7-тесты, hook'и, `.github` — **не тронуты** |
 
@@ -44,7 +44,7 @@
 | H | GPU Hub `npm test` | **PASS 22/0** | `packages/animastor-gpu-hub` → `node tests/run-all.cjs` | нет |
 | T | Backend `npm run test:arch` | **979 passing / 2 failing** — IB-G15 (`installer-package-boundary.test.js:243`), T9 (`phase5-runtime-result.test.js:401` ENOENT) | pre-existing, воспроизводится на `b7e2f7cd` и до; этим gate тронуты только `packages/animastor-gpu-hub/tools/*` | **нет** (PRE-EXISTING) |
 | W | Whitelist §8 (prep-plan) vs `git ls-files` | **PASS — 1635 tracked / 1635 covered / 0 uncovered** | read-only аудит (см. §2); per-repo 1045/349/217/58/45 | нет |
-| C | Command-sheet audit (§4.1.0–4.1.6) | **PASS после 2 исправлений**: пути = §8 (кроме 3 задокументированных no-op исключений), `--path-rename` отсутствует, все URL = `github.com/Animastor`, `SRC` объявлен, gpu-hub-шаг гейтится на R-3=B; **устаревшие счётчики 1040→1045 и 41→45 исправлены** | read-only аудит (см. §3) | нет |
+| C | Command-sheet audit (§4.1.0–4.1.6) | **PASS после 2 исправлений**: пути = §8 (кроме 3 задокументированных no-op/X-1 исключений), `--path-rename` отсутствует, все URL = `github.com/Animastor`, `SRC` объявлен, gpu-hub-шаг гейтится на R-3=B; **устаревшие счётчики 1040→1045 и 41→44 исправлены** | read-only аудит (см. §3) | нет |
 | P1 | 5 GitHub-репозиториев (backend/web/android/worker + gpu-hub) | **BLOCKED (OWNER)** | bare: только `animastor.git` + `animastor-gpu-hub.git`; GitHub: `Animastor/animastor-gpu-hub` = HTTP 200 (`7c7778c`, 43 коммита), остальные 4 = **HTTP 404**; **самостоятельно не создаются** | **ДА** (owner) |
 | P2 | FF `master` → source | **PASS (CLOSED)** | `git merge --ff-only 64127b9e…` + `git push origin master` → `04da33ea..64127b9e`, без force | нет |
 | P3 | npm-грант (`npm whoami`) | **FAIL — E401** | `npm whoami` → 401; `npm view` работает; **не чинить в рамках gate** | только **post-split publish** (не блокирует filter-repo) |
@@ -60,6 +60,11 @@
 **Сводка blocker'ов:** G1–G5 = PASS · whitelist = PASS · command-sheet = PASS ·
 тесты = PASS (2 known pre-existing) · **P6 = FAIL** · **P1 = BLOCKED** ·
 **R-3 = UNDECIDED** · P3 = post-split only.
+
+G1–G5 прогнаны дважды: на **source `64127b9e…`** и повторно на **tip'е ветки**
+(после doc-коммитов) — оба раза `split guards: ALL GREEN (G1 G2 G3 G4 G5)`
+(`scripts/split-guards/run-all.sh`, сессионные логи
+`/tmp/opencode/gate-g1g5.log` и `/tmp/opencode/gate-g1g5-final.log`).
 
 ---
 
@@ -88,7 +93,8 @@ Read-only разбор: каждый tracked-файл должен покрыв�
 - `LICENSE` → все 5; `JOB_PROTOCOL_V2.md` → backend+worker+gpu-hub;
   `PHASE_10*` → backend+gpu-hub; `ANDROID_WEB_PARITY.md` → web+android.
 - Устаревшие числа в старых доках: **1626 → 1635**, backend **1040 → 1045**,
-  gpu-hub **41 → 45** — исправлены в этом же gate.
+  gpu-hub §8 **41 → 45** (в командном листе — **44**, минус `gpu-hub-rebuild.sh`
+  при R-3=B) — исправлено в этом же gate.
 
 ---
 
@@ -96,7 +102,7 @@ Read-only разбор: каждый tracked-файл должен покрыв�
 
 | Проверка | Результат |
 |---|---|
-| Пути `--path …` командного листа ↔ §8 | совпадают, кроме 3 задокументированных исключений: `workflow.json`, `local.properties`, `gpu-hub-rebuild.sh` (последний — только при R-3=A) — все три упоминаются **только** в строках `# НЕТ …` |
+| Пути `--path …` командного листа ↔ §8 | совпадают, кроме 3 задокументированных исключений: `workflow.json` (no-op), `local.properties` (no-op), `gpu-hub-rebuild.sh` (X-1 — исключается **при R-3=B**) — все три упоминаются **только** в строках-комментариях `# НЕТ …`, исполняемых путей не содержат |
 | `--path-rename` | **отсутствует** |
 | URL push | **только** `github.com/Animastor/…` |
 | `SRC=` | объявлен и обязан равняться frozen source (§0) |
