@@ -1333,8 +1333,12 @@ test ! -e .gitignore && echo "WARN: корневого .gitignore нет — с�
 
 **Push/замена существующего `Animastor/animastor-gpu-hub` в этот лист НЕ входит**
 (это force-push в действующий репозиторий `7c7778c`). Замена истории выполняется
-только по отдельной процедуре **§8.5 prep-plan** после письменного
-подтверждения backup/freeze владельцем (п.10 №4).
+только по процедуре **`repository-split-pre-split-fixes.md` §5 «Вариант B»**
+(mirror-backup в `backups/animastor-gpu-hub-pre-split.git` → заморозка
+`hooks/post-receive` → filter-repo по whitelist **§8.5 prep-plan** → `--force`-push
+в bare → верификация §6/§7 readiness → возврат hook → mirror в GitHub) после
+письменного подтверждения backup/freeze владельцем (п.10 №4). §8.5 prep-plan —
+это только whitelist путей, а не сама процедура замены.
 
 #### 4.1.6 Прочее
 

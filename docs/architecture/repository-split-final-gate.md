@@ -1,5 +1,6 @@
 # Repository Split — FINAL GATE (GO/NO-GO)
 
+> **FINAL STATUS: BLOCKED — PHYSICAL SPLIT NOT AUTHORIZED**
 > **PHYSICAL SPLIT: NOT EXECUTED**
 > **git filter-repo: NOT EXECUTED**
 > **force-push: NOT EXECUTED · новых GitHub-репозиториев: NOT CREATED ·
@@ -19,9 +20,11 @@
 |---|---|
 | **Source SHA (единственный)** | **`64127b9e1dea2ac528a572b51b90a542b70c5ebb`** |
 | Branch | `c21.4-physically-extract-analysis-from-backend` (= `origin/…`) |
+| **Tip ветки (HEAD)** | **`c8341258514f0313adb0f7ae9348dec90c510e27`** — tip **до** doc-коммита этого обновления = source + **3 doc-коммита** (`5c34de54`, `2c6fdec6`, `c8341258`); каждый следующий doc-коммит сдвигает tip на +1 и меняет только те же 2 файла |
+| DAG | `master` — прямой предок source (**YES**); source — прямой предок tip (**YES**); после source **3** коммита, затронуты **только** `docs/architecture/{repository-split-final-gate,repository-split-next-blockers}.md`; merge = **0**, tags = **0** |
 | **`master`** | **`64127b9e…` == source == `origin/master`** → **P2 CLOSED** (FF `04da33ea → 64127b9e`, обычная экспедиция, без force; `master` — прямой предок source, 0 behind / 0 ahead) |
 | Working tree | чистый (`git status --porcelain` = 0 строк) на момент gate |
-| Merge-коммитов в истории | **0** (`git rev-list --merges --count` = 0), коммитов всего **1653 на source** (tip ветки — +2 doc-коммита этого gate'а) |
+| Merge-коммитов в истории | **0** (`git rev-list --merges --count` = 0), коммитов всего **1653 на source** |
 | origin | `/home/animastor/repos/animastor.git` (bare; `post-receive` от 2026-08-22, не изменялся) → зеркало `github.com:Animastor/animastor.git` |
 | Что менялось в этом gate | **только** `docs/architecture/*.md` (см. §6) — production-код, тесты, Dockerfile, compose, `artifacts.lock.json`, B7-тесты, hook'и, `.github` — **не тронуты** |
 
@@ -45,21 +48,21 @@
 | T | Backend `npm run test:arch` | **979 passing / 2 failing** — IB-G15 (`installer-package-boundary.test.js:243`), T9 (`phase5-runtime-result.test.js:401` ENOENT) | pre-existing, воспроизводится на `b7e2f7cd` и до; этим gate тронуты только `packages/animastor-gpu-hub/tools/*` | **нет** (PRE-EXISTING) |
 | W | Whitelist §8 (prep-plan) vs `git ls-files` | **PASS — 1635 tracked / 1635 covered / 0 uncovered** | read-only аудит (см. §2); per-repo 1045/349/217/58/45 | нет |
 | C | Command-sheet audit (§4.1.0–4.1.6) | **PASS после 2 исправлений**: пути = §8 (кроме 3 задокументированных no-op/X-1 исключений), `--path-rename` отсутствует, все URL = `github.com/Animastor`, `SRC` объявлен, gpu-hub-шаг гейтится на R-3=B; **устаревшие счётчики 1040→1045 и 41→44 исправлены** | read-only аудит (см. §3) | нет |
-| P1 | 5 GitHub-репозиториев (backend/web/android/worker + gpu-hub) | **BLOCKED (OWNER)** | bare: только `animastor.git` + `animastor-gpu-hub.git`; GitHub: `Animastor/animastor-gpu-hub` = HTTP 200 (`7c7778c`, 43 коммита), остальные 4 = **HTTP 404**; **самостоятельно не создаются** | **ДА** (owner) |
+| P1 | 5 GitHub-репозиториев (backend/web/android/worker + gpu-hub) | **BLOCKED (OWNER)** | bare: только `animastor.git` + `animastor-gpu-hub.git`; GitHub API (read-only): `animastor-backend` / `animastor-web` / `animastor-android` / `animastor-worker` = **HTTP 404**; `Animastor/animastor-gpu-hub` = **HTTP 200** (private=false, size=105, default_branch=master, created 2026-09-06T16:19:30Z, pushed 2026-09-06T18:07:10Z, HEAD `7c7778c`, 43 коммита, forks=0, `/contents` непустой); **самостоятельно не создаются** | **ДА** (owner) |
 | P2 | FF `master` → source | **PASS (CLOSED)** | `git merge --ff-only 64127b9e…` + `git push origin master` → `04da33ea..64127b9e`, без force | нет |
-| P3 | npm-грант (`npm whoami`) | **FAIL — E401** | `npm whoami` → 401; `npm view` работает; **не чинить в рамках gate** | только **post-split publish** (не блокирует filter-repo) |
-| P6 | Диск ≥ 5G свободно | **FAIL — 2.9G** | `df -h`: `/dev/sda2` 99G, 98% used, **2.9G free** (требуется ≥5G; единственная точка монтирования) | **ДА** |
-| R-3 | GPU Hub: A (адаптация) / B (замена историей) | **OWNER DECISION** | существующий `Animastor/animastor-gpu-hub` = `7c7778c` (bare идентичен), read-only, **не изменён и не заменён** | **ДА** (owner; план поддерживает оба варианта) |
+| P3 | npm-грант (`npm whoami`) | **FAIL — E401** (перепроверено 2026-10-03) | `npm whoami` → `E401 401 Unauthorized`; `npm view` работает; **не чинить в рамках gate** | только **post-split publish** (не блокирует filter-repo) |
+| P6 | Диск ≥ 5G свободно | **FAIL — 2.8G** | `df -B1 /` → total 105 496 965 120, used 97 991 680 000, **avail 2 988 183 552 B ≈ 2.8 GiB** (`df -h` 2.8G), 98%; `/dev/sda2` ext4, **одна** точка монтирования `/`; ничего не удалялось | **ДА** |
+| R-3 | GPU Hub: A (адаптация) / B (замена историей) | **OWNER DECISION** | существующий `Animastor/animastor-gpu-hub` = `7c7778c` (bare идентичен), read-only, **не изменён и не заменён**; **оба варианта документированы**: A/B — `repository-split-pre-split-fixes.md` §5 (+ 7-пунктовый список переноса в `repository-split-next-blockers.md` §R-3), B-процедура = backup → заморозка hook → filter-repo §8.5 → force-push → верификация; командный лист §4.1.5 и карта §5.5 **гейтятся на R-3=B** (в этом gate исправлена неточная ссылка «процедура §8.5 prep-plan» → §5 «Вариант B» pre-split-fixes) | **ДА** (owner) |
 | P4 | `workflow.json` / stale android-mount гигиена | **READY (не выполнялась)** | пустой каталог, не tracked | нет |
 | P5 | `.github/` отсутствует в монорепо | **CONFIRMED** | `test -d .github` → отсутствует | нет |
 | FS | **PHYSICAL SPLIT** | **NOT EXECUTED** | разделение не выполнялось; новые bare/GitHub-репо не создавались | — |
 | FR | **`git filter-repo`** | **NOT EXECUTED** | не запускался; история не переписывалась; force-push не выполнялся | — |
-| GH | Hooks / существующий GPU Hub | **NOT MODIFIED** | `hooks/post-receive` монорепо не тронут; `animastor-gpu-hub.git` HEAD = `7c7778c` | — |
+| GH | Hooks / существующий GPU Hub | **NOT MODIFIED** (перепроверено 2026-10-03) | `hooks/post-receive` монорепо не тронут (mtime 2026-08-22 07:29:58Z); bare `animastor-gpu-hub.git` HEAD = `7c7778c`; GitHub `Animastor/animastor-gpu-hub` = 200, pushed 2026-09-06T18:07:10Z | — |
 | B5 | GPU Hub artifact flow (post-split путь) | **READY — механика DONE и верифицирована** | dual-stage Dockerfile (stager + `fetch-pinned-assets.sh`, пин по tag/digest), `artifacts.lock.json` (`sha256_tree` + `sha256_asset`), G5 реально прогоняет post-split слой (materialise 4 zip → sha256 → tamper-отказ), per-run cache-bust `RUN_ID` | нет |
 
 **Сводка blocker'ов:** G1–G5 = PASS · whitelist = PASS · command-sheet = PASS ·
-тесты = PASS (2 known pre-existing) · **P6 = FAIL** · **P1 = BLOCKED** ·
-**R-3 = UNDECIDED** · P3 = post-split only.
+тесты = PASS (2 known pre-existing) · **P6 = FAIL (2.8G < 5G)** ·
+**P1 = BLOCKED** · **R-3 = UNDECIDED** · P3 = post-split only.
 
 G1–G5 прогнаны дважды: на **source `64127b9e…`** и повторно на **tip'е ветки**
 (после doc-коммитов) — оба раза `split guards: ALL GREEN (G1 G2 G3 G4 G5)`
@@ -115,10 +118,10 @@ Read-only разбор: каждый tracked-файл должен покрыв�
 
 | ID | Что нужно | Статус | Кто |
 |---|---|---|---|
-| **P1** | создать `animastor-backend`, `animastor-web`, `animastor-android`, `animastor-worker` (GitHub 200 + пустой bare + hook) | **ABSENT** (4 × 404) | owner; **GPU Hub отдельно не создавать** |
-| **R-3** | зафиксировать **A** или **B** по `Animastor/animastor-gpu-hub` | **UNDECIDED** (repo read-only, `7c7778c`) | owner; до решения не авторить hub-CI и не запускать §8.5 |
-| **P6** | ≥5G свободно для клонов/фильтрации | **2.9G — FAIL** | host; `pip cache purge` → ≈7.5G **только по распоряжению владельца** |
-| **P3** | `npm whoami` ≠ E401 | **E401** | owner; нужен **до первого publish** (post-split) |
+| **P1** | создать `animastor-backend`, `animastor-web`, `animastor-android`, `animastor-worker` (GitHub 200 + пустой bare + hook) | **ABSENT** (4 × HTTP 404, API перепроверен read-only) | owner; **GPU Hub отдельно не создавать** (уже существует, 200) |
+| **R-3** | зафиксировать **A** или **B** по `Animastor/animastor-gpu-hub` | **UNDECIDED** (repo read-only, `7c7778c`; оба варианта поддержаны документацией — см. §1 R-3) | owner; до решения не авторить hub-CI и не запускать §8.5 |
+| **P6** | ≥5G свободно для клонов/фильтрации | **2.8G (2 988 183 552 B) — FAIL**; ничего не очищалось. Кандидаты очистки **только по распоряжению владельца**: `pip cache purge` ≈4.4G → ≈7.2G, `npm cache clean --force` ≈0.8G, `/tmp`-мусор установщиков ≈1.4G. Старые доки (readiness §9, pre-split-fixes §7/§8) упоминают **≥3 GB** — устаревший, менее консервативный порог; актуальный **≥5G** (§P6, этот документ) | host; очистка — owner |
+| **P3** | `npm whoami` ≠ E401 | **E401** (перепроверено 2026-10-03) | owner; нужен **до первого publish** (post-split) |
 
 ---
 
@@ -136,18 +139,36 @@ gpu-hub `run-all` 22 + G4 standalone + `check-artifacts.sh` 6/6).
 
 # BLOCKED — PHYSICAL SPLIT NOT AUTHORIZED
 
-Закрыто этим gate'ом: **G1–G5 ALL GREEN**, whitelist **0 uncovered**,
-command-sheet **консистентен**, **P2 (master FF) выполнен**,
-GPU Hub artifact flow **верифицирован end-to-end (G5, включая tamper-отказ)**,
-тесты **без новых регрессий** (2 pre-existing: IB-G15, T9).
+Закрыто этим gate'ом: **G1–G5 ALL GREEN** (дважды: source + tip), whitelist
+**0 uncovered**, command-sheet **консистентен** (перепроверен read-only на
+`$SRC`), **P2 (master FF) выполнен**, GPU Hub artifact flow **верифицирован
+end-to-end (G5, включая tamper-отказ)**, тесты **без новых регрессий**
+(2 pre-existing: IB-G15, T9).
+
+Актуальные факты (перепроверка read-only на tip `c8341258…`):
+
+| Поле | Значение |
+|---|---|
+| **HEAD (tip)** | `c8341258514f0313adb0f7ae9348dec90c510e27` |
+| **Frozen source** | `64127b9e1dea2ac528a572b51b90a542b70c5ebb` |
+| **master** | `64127b9e…` == source == `origin/master` (не перемещался в этом gate) |
+| **P6** | **FAIL** — 2 988 183 552 B (≈2.8 GiB) < 5G; очистка не выполнялась |
+| **P1** | **OPEN** — 4 × HTTP 404; `animastor-gpu-hub` = 200 (не трогали) |
+| **P3** | **E401** (только post-split publish) |
+| **R-3** | **OWNER DECISION** (A и B поддержаны документацией) |
+| Git | merge 0, tags 0, working tree чист; изменённые после source файлы — только `docs/architecture/{repository-split-final-gate,repository-split-next-blockers}.md` |
+| GPU Hub safety | bare `7c7778c` + GitHub 200 + hook монорепо 2026-08-22 — **не изменены** |
 
 Остаются **реальные pre-split блокеры**:
 
-1. **P6 — 2.9G < 5G** (технический блокер, фильтрация 5 репо не влезает);
+1. **P6 — 2.8G < 5G** (технический блокер, фильтрация 5 репо не влезает);
 2. **P1 — 4 целевых репозитория отсутствуют** (owner);
 3. **R-3 — не выбран вариант A/B** (owner).
 
 P3 (npm E401) — **post-split publish** blocker, filter-repo не блокирует.
+Очистка диска (`pip cache purge` и т.п.) — **только по распоряжению владельца**.
 
 **PHYSICAL SPLIT: NOT EXECUTED.**
 **git filter-repo: NOT EXECUTED.**
+**FORCE-PUSH: NOT EXECUTED · новых GitHub-репозиториев: NOT CREATED ·
+`Animastor/animastor-gpu-hub` / hooks: NOT MODIFIED · npm publish: NOT EXECUTED**
