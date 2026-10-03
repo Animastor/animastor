@@ -1,5 +1,14 @@
 # Repository Split — Next Blockers (после `b7e2f7cd`)
 
+> **АКТУАЛЬНОЕ СОСТОЯНИЕ → `repository-split-final-gate.md`.** Авторитетный
+> GO/NO-GO по финальному pre-split gate'у, frozen source и whitelist'ам — там
+> (source SHA **`64127b9e1dea2ac528a572b51b90a542b70c5ebb`**, `master` ==
+> source, **P2 закрыт**). В этом файле **обновлены** текущие утверждения:
+> source SHA/`SRC`, whitelist-числа (**1635/1635**, backend **1045**, gpu-hub
+> **45**), счётчики command sheet, статусы **P2/P6**. Формулировки со словами
+> «на `b7e2f7cd`»/«на `e1c63073`» — **исторические факты** аудитов на тех SHA
+> и не переписываются.
+
 Продолжение цепочки: `repository-split-pre-split-fixes.md` (`bd66bae6`, верификация
 №2 — `834987a7`) → `B7 closed` (`4d53be37`, `35ba2b82`) → B9/P4/P6/B5 finalize
 (`e1c63073`) → документационная финализация (`4f947c56`) → **FINAL PRE-SPLIT
@@ -50,7 +59,7 @@ Hub-репозиториев). B7 считается **ЗАКРЫТЫМ**.
 | B2 backend lock npm | **DONE** (`834987a7`, re-verified `e1c63073`) | — | — |
 | B3 web lock npm | **DONE** (`834987a7`, re-verified `e1c63073`) | — | — |
 | B4 exports | **DONE** (инвариант, G2) | — | — |
-| B5 artifact scheme | **READY (механика DONE, re-verified на `b7e2f7cd` включая tamper)** | POST-SPLIT: Release-assets (4 zip), sha256(asset) в lock, stager fetch, digest-pin базовых образов | §B5; mechanical (`e1c63073`, `--check` перезапущен на `b7e2f7cd`): lock `--check` in sync ✓, Docker gate 4/4, check-artifacts 6/6, tamper exit 1 ✓ |
+| B5 artifact scheme | **READY** (механика DONE, re-verified на `b7e2f7cd` включая tamper; **G5 постсплит-путь прогнан на `64127b9e`**) | POST-SPLIT: реальные Release-assets (4 zip ещё не существуют) и digest-pin базовых образов. **Сделано pre-split:** dual-stage Dockerfile + `scripts/fetch-pinned-assets.sh` (stager fetch по tag/pin), `sha256_asset` в `artifacts.lock.json`, per-run cache-bust `RUN_ID` | §B5; mechanical (`e1c63073`, `--check` перезапущен на `b7e2f7cd`): lock `--check` in sync ✓, Docker gate 4/4, check-artifacts 6/6, tamper exit 1 ✓; **G5 на `64127b9e`:** 4/4 assets materialised + sha256 verified, tampered asset rejected, lock/tree mismatch rejected, `check-artifacts.sh` 6/6 в standalone-образе |
 | B6 sync-protocol npm | **DONE** (`bd66bae6`, `--check` перезапущен на `b7e2f7cd` → exit 0) | — | — |
 | B7 tests disposition | **DONE** (`35ba2b82`; `test:arch` перезапущен на `b7e2f7cd`) | — | standalone-safety применена; монорепо **979/2** (IB-G15, T9 — pre-existing), постсплит-симуляция 923/24/2 (только pre-existing) |
 | B8 web canonical build | **DONE** (`cced5dd3`, re-verified on `e1c63073`; агрегатор `frontends/app/scripts/build-packages.cjs` присутствует на `b7e2f7cd`) | — | `build:packages` 13/13 в обоих мирах |
@@ -59,19 +68,19 @@ Hub-репозиториев). B7 считается **ЗАКРЫТЫМ**.
 | B11 deploy cutover | POST-SPLIT | — | после filter-repo |
 | B12 root package.json | **DONE** (`bd66bae6`; `package.json` в корне отсутствует — re-verified на `b7e2f7cd`) | — | — |
 | P1 5 GitHub-репо | **BLOCKED (OWNER)** | создать backend/web/android/worker (4 × HTTP 404 на `b7e2f7cd`); `animastor-gpu-hub` — существует (HTTP 200) | руками владельца; см. §FPSG.3 |
-| P2 FF master | **BLOCKED (OWNER)** | `master` = `8118f766`, до source `b7e2f7cd` отстаёт на **150** коммитов (до tip'а ветки — 153, только документация) | `git checkout master && git merge --ff-only b7e2f7cd…`; исходная точка split = `b7e2f7cd` — §FPSG.3 и §FINAL SPLIT HANDOFF п.1 |
+| P2 FF master | **DONE — выполнен в FINAL GATE** (`04da33ea` → **`64127b9e`**, обычная экспедиция, 0 behind / 0 ahead; `master` = `origin/master` = frozen source) | — | `git merge --ff-only 64127b9e…` уже выполнен и запушен; исходная точка split = `64127b9e…` — `repository-split-final-gate.md` §0 |
 | P3 npm token | **BLOCKED (OWNER)** | E401 перепроверен на `b7e2f7cd`; `npm view` работает | новый грант; нужен для B5-Release/NPM publish (post-split) |
 | P4 workflow.json | **READY** (пустой каталог, не git; re-verified на `b7e2f7cd`) | удалить пустой каталог; android-compose-mount stale | команда в §P4; НЕ выполнялась |
 | P5 CI-инфраструктура | POST-SPLIT | — | репо должны существовать; **расхождение с prep-plan §11.4 — §FPSG.4 п.2, §FPSG.8 п.6** |
-| P6 диск | **BLOCKED (3.1G свободно; нужно ≥5G)** | minimal cleanup перед filter-repo | §P6; pip cache purge ≈4.4G → ≈7.5G достаточно; команды предложены, не выполнялись |
+| P6 диск | **BLOCKED (2.9G свободно — перепроверено на `64127b9e`; нужно ≥5G)** | minimal cleanup перед filter-repo | §P6; pip cache purge ≈4.4G → ≈7.5G достаточно; команды предложены, не выполнялись (очистка — только по распоряжению владельца) |
 | R-3 GPU Hub | **OWNER DECISION** (GitHub `Animastor/animastor-gpu-hub` = `7c7778c`, 43 коммита — сверено на `b7e2f7cd`) | выбор A (адаптация) / B (замена историей) | сравнение и список переноса — §R-3; gate для hub CI matrix |
 | R-5 parity | DONE (правило зафиксировано) | — | — |
 | R-6 `test:connector-core` | **DONE** (переведён на `npm test --prefix node_modules/…`) | — | — |
-| R-7 отставание master | **DONE (факт: 150 до source `b7e2f7cd`; 153 до tip'а `7df461fa`, вся разница — документация)** | — | — |
+| R-7 отставание master | **DONE — закрыто**: `master` выровнен (**P2**) до source **`64127b9e`** (0 behind / 0 ahead); исторический факт «150 до `b7e2f7cd`» сохранён ниже | — | — |
 | X-1/X-2/X-3/X-4 | **POST-SPLIT (не pre-split blocker)** | действия в момент split/cutover — по строкам в §FINAL PRE-SPLIT TECHNICAL CLOSURE | там же |
 | package-lock зависимости | **EXPECTED PRE-SPLIT** (117 записей / 6 локов) | порядок `backend/npm ci` → package `npm ci` (2 лока); регенерация после split | §FPSG.7, §FINAL PRE-SPLIT TECHNICAL CLOSURE |
 | финальный grep (production) | **0 BLOCKER** | — | §FINAL PRE-SPLIT TECHNICAL CLOSURE |
-| whitelist §8 vs `git ls-files` | **DONE — 1626/1626 покрыто** | исключить 2 no-op `--path` | §FPSG.5 |
+| whitelist §8 vs `git ls-files` | **DONE — 1635/1635 покрыто** (пересчёт на `64127b9e`; старое число 1626 — до doc-коммитов) | исключить 2 no-op `--path` | §FPSG.5; полный протокол — `repository-split-final-gate.md` §2 |
 
 ---
 
@@ -280,14 +289,14 @@ workflow-план**: filename, repository, trigger, steps, tokens, checks.
 | **npm install** | `cd packages/animastor-gpu-hub && npm ci` (contracts из npm) | — | — |
 | **Typecheck** | — (JS-only) | — | — |
 | **Tests** | `node tests/run-all.cjs` (22 checks: package smoke, dependency isolation, canonical contracts, protocol parity, frozen 13-route surface, Redis ownership, artifact bake-in/Dockerfile) | — | — |
-| **Build** | **G4**: standalone docker build **без монорепо-контекста** (после stager re-point на Release assets — POST-SPLIT) | GHCR publish image с **digest-pin** | — |
+| **Build** | **G4**: standalone docker build **без монорепо-контекста** — **DONE pre-split** (`scripts/split-guards/run-all.sh` → `tools/g4-standalone-build.sh` + `tools/standalone-fixture.cjs`, **PASSED на `64127b9e`**); dual-stage Dockerfile подтягивает пиновые assets (`scripts/fetch-pinned-assets.sh`) — реальные Release zips появятся POST-SPLIT | GHCR publish image с **digest-pin** | — |
 | **Registry-only deps check** | lock 0/0/0; deps frozen: `@animastor/contracts ^0.1.0`, cors, express ^4.19.2, ioredis (devDeps forbidden — run-all:147) | — | — |
-| **G5 / B5 checks** | (1) `node tools/update-artifacts-lock.cjs --check` (**после re-point writer на Release zips** — до тех пор monorepo-layout only, D6); (2) staging gate `verify-staged-artifacts.sh` в build (**SHA256 ДО `COPY --from=stager`** — Dockerfile:30 < 44); (3) post-build `check-artifacts.sh` 6/6 в собранном образе | — | — |
+| **G5 / B5 checks** | (1) `node tools/update-artifacts-lock.cjs --check` (**после re-point writer на Release zips** — до тех пор monorepo-layout only, D6); (2) staging gate `verify-staged-artifacts.sh` в build (**SHA256 ДО `COPY --from=stager`**); (3) post-build `check-artifacts.sh` 6/6 в собранном образе; (4) **все 3 слоя прогнаны pre-split в `g5-artifact-integrity.sh`** (включая materialise 4/4 + `sha256_asset` verified + tamper-отказ) | — | — |
 | **Токены** | — | `GHCR_TOKEN` (packages:write) или `GITHUB_TOKEN` к ghcr.io; artifact tokens только на build-time fetch | `GITHUB_TOKEN` (PR creation) |
 | **Pre-release checks** | G4, G5 (3 layers), npm test 22 checks | ci.yml checks + image digest записан | snapshot == backend canonical |
-| **Artifact SHA256** | **3 layers**: (1) staging-gate `sha256_tree` vs lock **до** `COPY --from=stager`; (2) post-build `check-artifacts.sh` [3/6] min_version + [4/6] per-workflow SHA256; (3) **POST-SPLIT**: sha256 Release-asset vs lock (криптографический якорь) | image digest-pin (GHCR) | — |
+| **Artifact SHA256** | **3 layers**: (1) staging-gate `sha256_tree` vs lock **до** `COPY --from=stager`; (2) post-build `check-artifacts.sh` [3/6] min_version + [4/6] per-workflow SHA256; (3) **sha256 Release-asset vs lock** (`sha256_asset`) — механика **DONE pre-split** (fixture), **реальный** pin — POST-SPLIT (первый релиз, `sha256_asset` в lock = `null`) | image digest-pin (GHCR) | — |
 | **Docker checks** | Standalone build (G4) + staging gate + bake-in RUN + check-artifacts | GHCR push + digest verification | — |
-| **Split-only checks** | G4 (paths monorepo-relative до re-point), `--check` post-split (writer walkRoot monorepo-relative), GHCR digest-pin (**R-3 NO-GO до решения**) | GHCR publish (R-3 gate) | G7 fetch: `JOB_PROTOCOL_V2.md` из **backend** |
+| **Split-only checks** | G4 **уже выполнен pre-split** (fixture-контекст); `--check` — monorepo-layout (D6: writer walkRoot), эквивалент после split — слой 1b (pin vs materialised assets); GHCR digest-pin (**R-3 NO-GO до решения**) | GHCR publish (R-3 gate) | G7 fetch: `JOB_PROTOCOL_V2.md` из **backend** |
 
 #### animastor-android (2 workflows)
 
@@ -323,13 +332,13 @@ workflow-план**: filename, repository, trigger, steps, tokens, checks.
 | # | Check | Причина |
 |---|---|---|
 | 1 | Любое `.github/workflows` execution в 5 репо | `.github/` отсутствует в монорепо (P5 confirmed) |
-| 2 | G4 standalone hub docker build | Dockerfile paths monorepo-relative; stager re-point — POST-SPLIT |
-| 3 | G5 Release-asset digest check | 4 Release zips не существуют; P1 repos absent; P3 E401 |
+| 2 | G4 standalone hub docker build | ~~невозможно pre-split~~ → **ВЫПОЛНЕНО pre-split** (`g4-standalone-build.sh`, PASSED на `64127b9e`): dual-stage Dockerfile + `standalone-fixture.cjs` дают standalone-контекст; в hub-repo CI — после P1 и R-3 |
+| 3 | G5 Release-asset digest check | **механика DONE pre-split** (fixture materialise 4/4 + tamper-отказ в `g5-artifact-integrity.sh`); реальные 4 Release zips не существуют (`sha256_asset` = `null`), P1 repos absent, P3 E401 — pin появится на первом релизе POST-SPLIT |
 | 4 | G7 parity-snapshot jobs | Требуют bare + hooks + canonical repos (step 5) |
 | 5 | npm publish CI (backend 15, web 13) | P3 E401 token; publish из split-repo |
 | 6 | Worker Release job (zip + sha256) | P1 repos absent; zip создаётся при Release |
 | 7 | GHCR digest-pin publish hub image | R-3 NO-GO: существующий `animastor-gpu-hub` GitHub не перезаписывается до owner decision |
-| 8 | `update-artifacts-lock.cjs --check` в hub repo post-split | Writer walkRoot monorepo-relative; re-point — POST-SPLIT |
+| 8 | `update-artifacts-lock.cjs --check` в hub repo post-split | Writer walkRoot monorepo-relative; re-point — POST-SPLIT (pre-split эквивалент уже есть: слой 1b в G5 — pin vs materialised assets) |
 | 9 | Full G6 в filtered repos | B7 standalone-safe готово; filtered clones — только после filter-repo |
 | 10 | `b5-artifact-contract` suite post-split в backend repo | Self-skips (npm tarball lacks B5 triple) — hub-CI post-split (D9) |
 
@@ -340,8 +349,8 @@ workflow-план**: filename, repository, trigger, steps, tokens, checks.
 | **D3** | backend row: нет Release job, нет `GITHUB_TOKEN` | backend `release.yml`: 3× hub-artifacts assets + `GITHUB_TOKEN` |
 | **D4** | worker G7 = «snapshot из web» | worker/hub G7 source = **backend** (`JOB_PROTOCOL_V2.md`); только `ANDROID_WEB_PARITY.md` — web-owned |
 | **D5** | android G6 ambiguous / отсутствовал | android `ci.yml`: gradle unit tests (junit, PlayerGateTest.kt) — явно пинится |
-| **D6** | `--check` listed в hub CI как есть | `--check` monorepo-layout only до re-point writer на Release zips; в hub CI — после re-point (POST-SPLIT remainder) |
-| **D7** | (уточнение) | lock реализует `sha256_tree` (tree digest); asset `sha256` — POST-SPLIT поле; оба значения документированы §B5 |
+| **D6** | `--check` listed в hub CI как есть | `--check` monorepo-layout only до re-point writer на Release zips; в hub CI — после re-point (POST-SPLIT remainder; подтверждено на `64127b9e`: G5 печатает «lock --check needs monorepo source trees» и использует слой 1b) |
+| **D7** | (уточнение) | lock реализует `sha256_tree` (tree digest, заполнен) **и** `sha256_asset` (поле в schema; `null` до первого релиза, fixture заполняет локально) — оба задокументированы §B5 |
 | **D8** | (уже отмечено) | base images `alpine:3.19`/`node:20-slim` не digest-pinned — POST-SPLIT |
 | **D9** | (уже отмечено) | npm tarball `@animastor/gpu-hub` не содержит B5-тройку → `b5-artifact-contract` = hub-CI post-split, не backend CI |
 | **D10** | (уже отмечено) | R-3 OWNER DECISION gate'ит hub CI: существующий `animastor-gpu-hub` GitHub (43 коммита, свой ci.yml + ghcr-release.yml) — сверка workflows с матрицей B9 при выборе A |
@@ -549,11 +558,11 @@ deps, массовое переписывание документации — *
 | **B11** | **POST-SPLIT** | — |
 | **B12** | **DONE** | корневой `package.json` **отсутствует**; читателей корневого `package.json` в коде нет |
 | **P1** | **BLOCKED (OWNER)** | bare: `animastor.git` + `animastor-gpu-hub.git` существуют; GitHub: `Animastor/animastor-gpu-hub` = **HTTP 200** (`7c7778c`, 43 коммита = bare), `animastor-backend/web/android/worker` = **HTTP 404** |
-| **P2** | **BLOCKED (OWNER)** | `master` `8118f766`, −**150**; FF-merge безопасен (merge-base = master) |
+| **P2** | **BLOCKED (OWNER)** — *исторический статус; **закрыт**: см. §0* | `master` `8118f766`, −**150**; FF-merge безопасен (merge-base = master) |
 | **P3** | **BLOCKED (OWNER)** | `npm whoami` → **E401**; `npm view @animastor/contracts\|gpu-hub` → 0.1.1 ✓ (registry/install работает) |
 | **P4** | **READY** | пустой untracked каталог + стейл android-mount; safe-команда §P4 |
 | **P5** | **POST-SPLIT** | `.github/` отсутствует; workflows создаются в новых репо (см. расхождение §FPSG.4/6) |
-| **P6** | **BLOCKED** | `/` = 99G, занято 92G, **свободно 3.1G (97%)** — см. §FPSG.3 |
+| **P6** | **BLOCKED** | `/` = 99G, занято 92G, **свободно 3.1G (97%)** — см. §FPSG.3; **на FINAL GATE (`64127b9e`) — 2.9G (98%), FAIL** |
 | **R-3** | **OWNER DECISION** | bare 43 коммита ↔ GitHub `7c7778c`; ничего не перезаписано — §R-3 |
 | **R-5** | **DONE** | — |
 
@@ -572,15 +581,15 @@ deps, массовое переписывание документации — *
 Оговорка: 404 по GitHub API без токена неотличим от приватного репо; при
 наличии токена владельцу стоит подтвердить отсутствие (creds-проверка).
 
-**P2 — master freeze / исходная точка split**
+**P2 — master freeze / исходная точка split — ВЫПОЛНЕНО**
 
-- Текущее `master`: **`8118f766d315c16cf3812eacf534d30e6a50ab0e`** (150 позади до
-  source `b7e2f7cd`; до tip'а ветки — 153 на `7df461fa`, 154 с этим коммитом —
-  вся разница документационная).
-- **SHA, который должен стать исходной точкой split (после FF):**
-  **`b7e2f7cd73e0320b90f298226a4510bb1ae74e43`**
-- Команда (владелец): `git checkout master && git merge --ff-only c21.4-physically-extract-analysis-from-backend && git push origin master`
-- До FF запускать filter-repo нельзя (NO-GO №1 final-readiness §7).
+- **`master` = `64127b9e1dea2ac528a572b51b90a542b70c5ebb`** (= `origin/master` =
+  frozen source; **0 behind / 0 ahead**). Выполнено в FINAL GATE:
+  `git checkout master && git merge --ff-only 64127b9e… && git push origin master`
+  (было `04da33ea`, отставание **2** коммита — оба guard-фикса).
+- **SHA, который является исходной точкой split:**
+  **`64127b9e1dea2ac528a572b51b90a542b70c5ebb`**
+- До FF запускать filter-repo нельзя (NO-GO №1 final-readiness §7) — **снято**.
 
 **P3 — npm credentials (только готовность публикации, publish НЕ выполнялся)**
 
@@ -593,9 +602,9 @@ deps, массовое переписывание документации — *
 
 | Параметр | Значение |
 |---|---|
-| Свободно сейчас | **3.1G** (99G total / 92G used / 97%) |
+| Свободно сейчас | **2.9G** (99G total / 92G used / **98%** — перепроверено `df -h /` на `64127b9e`) |
 | Требование для последовательного filter-repo (5 репо) | **≥5G**, рекомендуется ≥8G (mirror `.git` 73M × 5 + рабочие деревья переписи ≈ 2× пик истории ≈ 3.0–4.5G суммарно + headroom) |
-| Заявлено в §P6 | 2.8G → стало **3.1G** (не критично; дефицит сохраняется) |
+| Заявлено в §P6 | 2.8G → 3.1G → **2.9G** (дефицит сохраняется; **FAIL на FINAL GATE**) |
 | Минимальная очистка | `pip cache purge` ≈ **4.4G** → ≈ **7.5G** (достаточно); шаги 1+2+3 §P6 → ≈13.6G |
 | НЕ трогать | `backups/` (4.0G), `~/.local/share/opencode/opencode.db` (8.8G), 6 активных Docker-образов (13G), linked volumes (ollama/pg/redis) |
 
@@ -661,8 +670,8 @@ deps, массовое переписывание документации — *
 
 ```sh
 git status                                    # должен быть clean
-git checkout master && git merge --ff-only c21.4-physically-extract-analysis-from-backend
-git push origin master                        # P2: master == b7e2f7cd
+# P2 ВЫПОЛНЕН: master == origin/master == 64127b9e1dea2ac528a572b51b90a542b70c5ebb
+git rev-parse master                          # обязан вернуть frozen source (§FINAL SPLIT HANDOFF п.1)
 git checkout c21.4-physically-extract-analysis-from-backend
 git branch -D tmp/parser-audit-backup && git push origin --delete tmp/parser-audit-backup   # по подтверждению
 sudo rmdir /home/animastor/animastor/workflow.json    # P4 (rmdir откажется удалять непустой)
@@ -790,14 +799,16 @@ execution (X-1, X-2, регенерация package-lock), остаётся ре
 
 ### FPSG.8 — что должен решить/сделать владелец ДО запуска split
 
-1. **P2 (обязательно, первым)**: FF `master` до `b7e2f7cd` + push.
+1. **P2 — ЗАКРЫТ**: `master` выровнен до frozen source `64127b9e…` + push
+   (перепроверка: `git rev-parse master` == source).
 2. **P1**: создать 4 GitHub-repo (backend/web/android/worker) + 4 bare + hooks
    до первых push; **`animastor-gpu-hub` не создавать/не удалять/не force-push**.
 3. **R-3**: письменно выбрать A (сохранить существующий GPU Hub + адаптация по
    §R-3) или B (замена историей monorepo) — **до** авторинга hub CI (B9.2) и
    **до** filter-repo gpu-hub. Ничего в существующем GPU Hub не менять до выбора.
-4. **P6**: освободить ≥5G (`pip cache purge` — минимум; шаги §P6 по желанию);
-   перепроверить `df -h /`.
+4. **P6 (НЕ ЗАКРЫТ — FAIL)**: освободить ≥5G (`pip cache purge` — минимум;
+   шаги §P6 по желанию); перепроверить `df -h /`. **Сейчас 2.9G свободно** —
+   до очистки filter-repo не запускать.
 5. **P4**: `sudo rmdir /home/animastor/animastor/workflow.json`; удалить строку
    `./workflow.json:/workflow.json:ro` из `frontends/android/docker-compose.yml:41`
    (android-touchpoint).
@@ -838,7 +849,7 @@ execution (X-1, X-2, регенерация package-lock), остаётся ре
 | **Final grep — cross-domain в runtime** | **0 BLOCKER** | web-prod → backend/worker/hub = только комментарии/i18n-строки; android → `frontends/app` = только комментарии parity; worker → backend = только комментарий в тесте; hub-runtime → см. X-2b | — |
 | **X-3 (новое)** `repository.url` у 29 пакетов + 1 вложенный манифест = **30** | **POST-SPLIT (метаданные)** | все `packages/*/package.json` → `git+https://github.com/Animastor/animastor.git` + `directory: packages/…` — после split укажет в замороженный монорепо | обновить `repository.url`/`directory` **перед первым npm publish** из нового репо (рядом с P3) |
 | **X-4 (новое)** `phase10t-1-artifact-bakein.test.js` | **POST-SPLIT (адаптация при B7-MOVE)** | гард `HUB_CHECKOUT_PRESENT` сделает suite пустым в backend-repo ✓; но при переносе в hub-repo (disposition MOVE) гард становится no-op, а suite читает `docker-compose.yml:72`, `packages/animastor-installer/src/installer/{install-manifest,setup-contract}.js:110,120`, `docker/compose/overlay-gpu-hub-local.yml:173` — **в hub-repo этих файлов нет → ENOENT** | при переносе suite в hub-repo оставить только AB1/AB3/AB5/AB7 (Dockerfile, `gpu-hub.js`, `check-artifacts.sh`) и AB8 перевести на standalone-overlay; AB2/AB4 считать backend-repo-спецификой. **Не изменять сейчас** (запрет на правку B7) |
-| **Whitelist verification §8** | **DONE — 100%** | автоматический сверочный прогон §8.1–8.5 против `git ls-files` (1626 tracked): **непокрытых файлов = 0**, т.е. ни один tracked-файл не теряется. `--path`-записей без tracked-файла ровно **2** — `workflow.json` и `local.properties` (оба untracked, уже задокументированы как no-op/исключаемые). Сумма по репо с перекрытием: backend 1040, web 349, android 217, worker 58, gpu-hub 41 = 1705 (= 1626 + 79 задекларированных дублей) | исключить эти 2 `--path` из выполняемых команд (§FPSG.5) |
+| **Whitelist verification §8** | **DONE — 100%** | автоматический сверочный прогон §8.1–8.5 против `git ls-files` (**1635 tracked** на `64127b9e`; было 1626 до doc-коммитов): **непокрытых файлов = 0**, т.е. ни один tracked-файл не теряется. `--path`-записей без tracked-файла ровно **2** — `workflow.json` и `local.properties` (оба untracked, уже задокументированы как no-op/исключаемые). Сумма по репо с перекрытием: backend **1045**, web 349, android 217, worker 58, gpu-hub **45** = **1714** (= 1635 + 79 задекларированных дублей) | исключить эти 2 `--path` из выполняемых команд (§FPSG.5) |
 | **Whitelist — дубли (осознанные)** | **DONE** | `backend+web`: 31 doc; `backend+gpu-hub`: 23 (docs + `overlay-gpu-hub-standalone.yml`); `backend+worker`: 18 (`docker/worker/*` + docs); `web+android`: 1 (`ANDROID_WEB_PARITY.md`); `backend+worker+gpu-hub`: 1 (`JOB_PROTOCOL_V2.md`); все 5: `LICENSE` | — |
 | **Whitelist — лишние пути** | **0 найдено** | ни один `--path` не захватывает чужой домен (все top-level набора backend: `backend`, `packages`, `docs`, `docker`, `scripts`, `proxy`, root-файлы; web: `packages`, `frontends`, `tools`, `docs`; android: `frontends`, root-скрипты; worker: `packages`, `docs`, `docker`; gpu-hub: `docs`, `packages`, `docker`, `scripts`, `gpu-hub-rebuild.sh`) | — |
 | **Межрепозиторные зависимости после split** | **DONE (задокументированы)** | hub→worker/bck (Release-assets, B5); hub/worker→backend (npm `@animastor/contracts`, G7 `JOB_PROTOCOL_V2.md`); android→web (G7 parity); backend→web/hub (compose-mount'ы **B11**); package-локи → `backend/node_modules` (2 лока / 12 записей) | — |
@@ -911,24 +922,25 @@ execution (X-1, X-2, регенерация package-lock), остаётся ре
   `3505286b`): новых blocker'ов 0.** X-1, X-2 = POST-SPLIT (R-3=B / B11-G4);
   package-lock = EXPECTED PRE-SPLIT (117 записей в 6 локах, 12 →
   `backend/node_modules`, порядок `backend/npm ci` первым); финальный grep по
-  production = 0; whitelist §8 = 1626/1626 покрыто, 2 no-op `--path` исключаются;
+  production = 0; whitelist §8 = **1635/1635** покрыто (пересчёт на `64127b9e`;
+  на `3505286b` было 1626/1626), 2 no-op `--path` исключаются;
   X-3 (`repository.url`) и X-4 (`phase10t-1` при B7-MOVE) = POST-SPLIT.
-- **Owner decisions:** **P2** (FF `master` `8118f766` → **`b7e2f7cd`**, **−150** до
-  source) · **P1** (создать 4 репо backend/web/android/worker; gpu-hub
-  существует — не трогать) · **R-3** (A/B по GPU Hub, до B9-hub и до
+- **Owner decisions:** **P2 — ЗАКРЫТ** (`master` = source `64127b9e…`, FF уже
+  выполнен и запушен) · **P1** (создать 4 репо backend/web/android/worker;
+  gpu-hub существует — не трогать) · **R-3** (A/B по GPU Hub, до B9-hub и до
   filter-repo gpu-hub) · **P5-интерпретация** · **удаление
   `tmp/parser-audit-backup`**.
-- **External blockers:** **P1** (4 × GitHub 404) · **P2** (−150 до source) ·
-  **P3** (npm E401 — publish только; install работает) · **P6**
-  (3.1G свободно, нужно ≥5G) · **R-3** (GPU Hub OWNER DECISION).
+- **External blockers:** **P1** (4 × GitHub 404) · **P3** (npm E401 — publish
+  только; install работает) · **P6** (**2.9G** свободно, нужно ≥5G — FAIL) ·
+  **R-3** (GPU Hub OWNER DECISION). **P2 снят.**
 - **Physical split:** **NOT EXECUTED** (нет filter-repo, force-push, новых
   GitHub-репо, изменений существующего GPU Hub/его hook, npm publish,
-  изменений B7/production; изменён только этот документ).
-- **Ready to execute after:** 1) FF `master` до `b7e2f7cd`; 2) ≥5G диска;
-  3) 4 bare + 4 GitHub-repo + hooks (P1); 4) решение R-3 до авторинга
-  hub-CI и до filter-repo gpu-hub; 5) подтверждение P5-интерпретации и
-  удаления `tmp/parser-audit-backup`; 6) P4-гигиена (`rmdir workflow.json`,
-  android-mount); 7) P3 — до первого publish. Тогда шаги §FPSG.5:
+  изменений B7/production; изменены только документы `docs/architecture/*.md`).
+- **Ready to execute after:** ~~1) FF `master`~~ **(выполнено)**; 1) ≥5G диска
+  (P6); 2) 4 bare + 4 GitHub-repo + hooks (P1); 3) решение R-3 до авторинга
+  hub-CI и до filter-repo gpu-hub; 4) подтверждение P5-интерпретации и
+  удаления `tmp/parser-audit-backup`; 5) P4-гигиена (`rmdir workflow.json`,
+  android-mount); 6) P3 — до первого publish. Тогда шаги §FPSG.5:
   filter-repo backend → web → android → worker → (gpu-hub при R-3=B) →
   smoke §FPSG.6 → freeze → cutover (B11).
 
@@ -937,8 +949,9 @@ execution (X-1, X-2, регенерация package-lock), остаётся ре
 ## FINAL SPLIT HANDOFF
 
 Последний технический пакет перед физическим `filter-repo`. Основание — HEAD
-ветки `c21.4-physically-extract-analysis-from-backend` (**`7df461fa`** на момент
-написания), рабочее дерево чистое, 1626 tracked-файлов. Все проверки ниже —
+ветки `c21.4-physically-extract-analysis-from-backend` (**frozen source
+`64127b9e…`**, §1; первоначальная запись — на `7df461fa`), рабочее дерево
+чистое, **1635 tracked-файлов** (было 1626). Все проверки ниже —
 **read-only** (git-графика, grep, python-разбор §8, `npm view`, `npm whoami`,
 `df`, GitHub API). Ничего не фильтровалось, не клонировалось, не публиковалось.
 
@@ -946,45 +959,35 @@ execution (X-1, X-2, регенерация package-lock), остаётся ре
 
 **Один точный SHA для физического `git filter-repo`:**
 
-> **`b7e2f7cd73e0320b90f298226a4510bb1ae74e43`**
+> **`64127b9e1dea2ac528a572b51b90a542b70c5ebb`**
+>
+> (см. также `repository-split-final-gate.md` §0 — авторитетный статус)
 
 | Поле | Значение (факт) |
 |---|---|
-| **Source для `git filter-repo` (единственный)** | **`b7e2f7cd73e0320b90f298226a4510bb1ae74e43`** |
-| **Почему именно он** | это единственный коммит, на котором **все** механические проверки выполнены заново: B5 tamper + Docker gate 4/4 + check-artifacts 6/6, B6 `sync-protocol.cjs --check` = 0, B7 `test:arch` = **979/2**, B8 `build:packages` = 13/13, B12 root `package.json` отсутствует, npm ci/install, `df` = 3.1G, GitHub-API статусы, whitelist-аудит. Проверки подтверждены **неизменными до сих пор** (read-only). |
-| Текущий HEAD ветки | `7df461faf86c06097a5257db6a8866188e19104e` (+ этот коммит) |
-| `master` / bare `master` | `8118f766d315c16cf3812eacf534d30e6a50ab0e` (work и bare совпадают) |
-| **Relation с `master`** | `master` — **прямой предок** `b7e2f7cd` (merge-base = `master`), **0 behind / 150 ahead** → **FF безопасен** |
-| **Требование P2** | **перед split** выполнить `git checkout master && git merge --ff-only b7e2f7cd…` → `master` **и есть** frozen source (разрыв 0); без этого — NO-GO №1 |
-| `master` до tip'а ветки | **150** до source; **153** до tip'а на `7df461fa` (**154** с этим коммитом) — вся разница = документация |
-| Цепочка `b7e2f7cd` → HEAD | `b7e2f7cd` → `3505286b` → `e6763c67` → `7df461fa` → (этот коммит); **merge-коммитов 0** |
-| Delta `b7e2f7cd..HEAD` | **ровно 1 файл**: `docs/architecture/repository-split-next-blockers.md` (+784/−22, 3 doc-коммита + этот) |
+| **Source для `git filter-repo` (единственный)** | **`64127b9e1dea2ac528a572b51b90a542b70c5ebb`** |
+| **Почему именно он** | это последний коммит, на котором **все** механические проверки выполнены заново **и подтверждены**: G1–G5 **ALL GREEN** (`scripts/split-guards/run-all.sh`), B7 `test:arch` = **979/2** (IB-G15, T9 — pre-existing), hub `npm test` = **22/0**, whitelist §8 = **1635/1635, 0 uncovered**, command sheet сверен со §8, B5/G5 постсплит-путь прогнан (4/4 assets + tamper-отказ + `check-artifacts.sh` 6/6 в standalone-образе), `npm whoami`/`df`/GitHub-API — факты этого же состояния |
+| Текущий HEAD ветки | `64127b9e…` **+ документационные коммиты этого gate'а** (см. правило ниже) |
+| `master` / bare `master` / `origin/master` | **все три = `64127b9e…`** (P2 выполнен: `04da33ea` → `64127b9e`, push без force) |
+| **Relation с `master`** | `master` **==** frozen source → **разрыв 0**; **FF выполнен** |
+| **Требование P2** | **ВЫПОЛНЕНО** — `master` и есть frozen source; NO-GO №1 снят |
+| Цепочка `b7e2f7cd` → source | `b7e2f7cd` → `3505286b` → `e6763c67` → `7df461fa` → `f675f7eb` → `c69f5fd5` → `925d309d` → `6798d786` → `04da33ea` → `63c75362` → **`64127b9e`**; **merge-коммитов 0** |
+| Delta `b7e2f7cd..source` | **13 файлов** (+3675/−56): guard-скрипты `scripts/split-guards/*` (4), gpu-hub standalone/g5/stager (`Dockerfile`, `artifacts.lock.json`, `scripts/fetch-pinned-assets.sh`, `tools/{g4-standalone-build,g5-artifact-integrity,standalone-fixture,update-artifacts-lock}.*`), `packages/animastor-ai-analysis/package-lock.json`, этот handoff-документ |
 | Теги | **0** → `--tag-rename` не нужен |
-| Всего коммитов от HEAD | 1646 (первый — `380a7773`, 2026-06-11) |
-| bare `refs/heads/c21.4-…` ↔ GitHub | `7df461fa` ↔ `7df461fa` (зеркало сходится) |
-
-**Сверка с DAG — расхождения и их устранение (только в этом файле):**
-
-1. §0 / §FPSG.3 / сводный блок утверждали «`master` отстаёт на 150» и одновременно
-   «−153». Обе цифры **верны, но для разных точек**: до source `b7e2f7cd` = **150**
-   (это и есть величина для команды P2), до tip'а ветки = **153/154** (только
-   документационные коммиты). Везде разведено: P2-строки указывают **150 до
-   source**, tip-строки помечены как «только документация».
-2. P2-команда в §FPSG.3 (`git merge --ff-only c21.4-…`) перевела бы `master` на
-   **tip ветки**, а не на заявленный source `b7e2f7cd` — внутреннее
-   противоречие. Исправлено: `git merge --ff-only b7e2f7cd…`.
-3. Всё остальное по DAG сходится: `b7e2f7cd` — предок HEAD, `master` —
-   предок всех трёх doc-коммитов, расхождений tip'ов bare/GitHub нет.
+| Всего коммитов от HEAD (на source) | 1653 (первый — `380a7773`, «Recovery01: June 9 working state + dedup») |
+| bare ↔ GitHub | `master` = `64127b9e…` в обоих (зеркало сходится; `post-receive` не изменялся) |
 
 **Правило source (единственное, что исполняется):** `filter-repo` запускается
-**только** от **`b7e2f7cd…`** — и для **всех пяти** репо (backend/web/android/
+**только** от **`64127b9e…`** — и для **всех пяти** репо (backend/web/android/
 worker/gpu-hub). Основание: источник не должен зависеть от коммитов, добавленных
 **после** заморозки, иначе каждый документационный коммит меняет SHA, который
-оператор вставляет в командную строку. Три doc-коммита после `b7e2f7cd`
-(и этот) меняют **ровно один файл** — handoff-документ; извлечение всех путей
-§8 **побайтово идентично**. Следствие: сам handoff в новые репо **не попадает**
-(он остаётся в архиве-монорепо), но оператору он и нужен из архива — это
-не потеря. Выбор SHA подтверждается владельцем — п.10.
+оператор вставляет в командную строку. Коммиты после `64127b9e…` меняют
+**только** `docs/architecture/*.md` (сам handoff + `repository-split-final-gate.md`);
+извлечение всех путей §8 **побайтово идентично** (по ним же — счётчики
+`1045 / 349 / 217 / 58 / 45` в command sheet, верны именно на source).
+Следствие: эти документы в новые репо **не попадают** (остаются в архиве-
+монорепо), но оператору они и нужны из архива — это не потеря.
+Выбор SHA подтверждается владельцем — п.10.
 
 ### 2. Technical status
 
@@ -994,7 +997,7 @@ worker/gpu-hub). Основание: источник не должен зави
 | B5 (artifact scheme), B9 (CI matrix) | **READY** — POST-SPLIT остаток (Release-assets / workflows в новых репо) |
 | B11 (deploy cutover) | **POST-SPLIT** |
 | B7 (disposition тестов) | **DONE** (`35ba2b82`); изменения B7 запрещены |
-| whitelist §8 vs `git ls-files` | **DONE — 1626/1626 покрыто**, 0 потерь; 2 no-op `--path` + 1 исключение при R-3=B (§7.1) |
+| whitelist §8 vs `git ls-files` | **DONE — 1635/1635 покрыто**, 0 потерь; 2 no-op `--path` + 1 исключение при R-3=B (§7.1) |
 | package-lock | **EXPECTED PRE-SPLIT** — 117 относ. записей в 6 локах, 0 в `backend/` и `frontends/app/` |
 | финальный grep (production) | **0 BLOCKER** |
 | registry/install path | **OPEN** — 29/30 пакетов опубликованы (`npm view` = read OK); `@animastor/worker-dev` в registry отсутствует (его никто не импортирует) |
@@ -1007,9 +1010,9 @@ worker/gpu-hub). Основание: источник не должен зави
 |---|---|---|---|
 | **P1** | Создать GitHub-repo **`Animastor/animastor-backend`**, **`Animastor/animastor-web`**, **`Animastor/animastor-android`**, **`Animastor/animastor-worker`** + 4 пустых bare на VPS + post-receive hooks. **GPU Hub отдельно НЕ создавать и НЕ заменять** (существующий `Animastor/animastor-gpu-hub` = HTTP 200, `7c7778c`, 43 коммита) | 4 × HTTP 404 (проверено на HEAD этого документа). Без репо и hook'ов `git push` после filter-repo физически невозможен; hook обязан существовать до первого push (§7.2 prep-plan) | Разблокируется шаг 6 очереди §FPSG.5: появляются куда push-ить backend/web/android/worker; hub остаётся нетронутым |
 | **R-3** | **A** — сохранить существующий `Animastor/animastor-gpu-hub` и адаптировать split под него (свой Dockerfile, `ci.yml`, `ghcr-release.yml`, история в `master`). **B** — после backup/freeze заменить его историей из монорепо (§8.5). **Никаких действий по GPU Hub repo до решения** | Определяет: запускается ли §8.5; какие CI-workflows авторить (B9-hub); куда идёт B5 (Release-assets vs GHCR из monorepo); судьбу `gpu-hub-rebuild.sh` (X-1). Блокирует авторинг hub-CI и `filter-repo` gpu-hub | **A**: `filter-repo` gpu-hub **не выполняется**, монорепо-frozen остаётся источником hub, существующие репо/hook не трогаются. **B**: gpu-hub идёт **последним** в очереди, старый bare+GitHub заменяются (только после backup) |
-| **P2** | **Exact source SHA** = `b7e2f7cd…` (п.1) **и** команда FF `master` (`8118f766` → `b7e2f7cd`, −150) | Фильтрация от не-FF'нутого/не того tip даст репо с историей, не совпадающей с `master` и с результатом последующих проверок. NO-GO №1 final-readiness §7 | `master` == source → все 4 новых репо и архив-монорепо указывают на одну и ту же точку; после этого запуск filter-repo разрешён |
+| **P2** | **Exact source SHA** = `64127b9e…` (п.1) — **и `master` уже выровнен до него (CLOSED)** | Фильтрация от не-FF'нутого/не того tip даст репо с историей, не совпадающей с `master` и с результатом последующих проверок. NO-GO №1 final-readiness §7 — **снят** | `master` == source == `origin/master` (перепроверка: `git rev-parse master`); все 4 новых репо и архив-монорепо указывают на одну и ту же точку |
 | **P3** | npm credentials: **`npm whoami` → E401**, токен в `~/.npmrc` недействителен (1 `_authToken`); `npm view`/install работают | Без валидного токена закрыты **publish** и **Release**-путь B5 (4 zip + digest в `artifacts.lock.json`), а также публикация 15 backend + 13 web пакетов | Разблокируется первый publish из новых репо; **сам filter-repo НЕ блокируется** — позиционируется как POST-SPLIT requirement (до первого publish, не до split) |
-| **P6** | Минимальный свободный диск: **≥5G**, рекомендуется **≥8G**. Сейчас **3.1G** (99G/92G/97%) | Последовательный `filter-repo` × 5: mirror `.git` 73M × 5 + рабочие деревья переписи ≈ 2× пик истории ≈ 3.0–4.5G суммарно + headroom. 3.1G — риск ENOSPC посреди переезда | `pip cache purge` ≈ **4.4G** (факт: http 3548.4 MB + wheels 19.7 MB) → ≈ **7.5G** достаточно; шаги §P6 → ≈13.6G. Ничего из защищённого (backups/, opencode.db, Docker-образы, volumes) не трогается |
+| **P6** | Минимальный свободный диск: **≥5G**, рекомендуется **≥8G**. Сейчас **2.9G** (99G/92G/**98%** — `64127b9e`) | Последовательный `filter-repo` × 5: mirror `.git` 73M × 5 + рабочие деревья переписи ≈ 2× пик истории ≈ 3.0–4.5G суммарно + headroom. **2.9G — почти гарантированный ENOSPC** посреди переезда | `pip cache purge` ≈ **4.4G** (факт: http 3548.4 MB + wheels 19.7 MB) → ≈ **7.5G** достаточно; шаги §P6 → ≈13.6G. Ничего из защищённого (backups/, opencode.db, Docker-образы, volumes) не трогается |
 | **P5** | Интерпретация: workflows создаются **в новых репо**, а не в монорепо (расхождение с prep-plan §11.4) | `.github/` отсутствует в монорепо; CI в монорепо бессмыслен | Подтверждение снимает §FPSG.4 п.2 / §FPSG.8 п.6 |
 | **P4** | Гигиена: `rmdir /home/animastor/animastor/workflow.json` (пустой untracked-каталог) + снять stale android-compose-mount. **НЕ удалять** `workflow.json` как git-объект — его в дереве нет (no-op `--path`) | Каталог в корне мешает чистому `git status` в новых репо и попадает в whitelist §8.1 как no-op | Освобождает precondition §4 перед шагом 1; `--path workflow.json` исключается из команды backend (§4.1.1) |
 | **`tmp/parser-audit-backup`** | Подтвердить удаление ветки **`db5ff61f`** (`refs/heads/tmp/parser-audit-backup`, есть и в bare). **Сам подтверждение — решение владельца; до него ветку НЕ удалять** | Ветка пережила split-подготовку; её наличие в новом bare дало бы лишнюю ref | После подтверждения — `git branch -D tmp/parser-audit-backup` в монорепо и в backup-клоне; на извлечение не влияет |
@@ -1018,7 +1021,9 @@ worker/gpu-hub). Основание: источник не должен зави
 
 **Предусловия** (все закрываются **до** шага 1; полный список — п.10):
 
-- **P2** — `git checkout master && git merge --ff-only b7e2f7cd… && git push origin master` (+ P4-гигиена: `rmdir workflow.json`, снять stale android-compose-mount, `tmp/parser-audit-backup` — по подтверждению);
+- **P2 — ВЫПОЛНЕН** (`master` == `origin/master` == `64127b9e…`; перед запуском
+  только перепроверить `git rev-parse master`)
+  (+ P4-гигиена: `rmdir workflow.json`, снять stale android-compose-mount, `tmp/parser-audit-backup` — по подтверждению);
 - **P6** — ≥5G свободно (`pip cache purge` → ≈7.5G);
 - **P1** — 4 bare + 4 GitHub-repo + `post-receive` hook'и (см. §4.1.0);
 - **R-3** — зафиксирован **A** или **B** (до авторинга hub-CI и до шага 5).
@@ -1043,14 +1048,16 @@ P3 (npm) — **не** часть split-очереди: он нужен толь�
 
 ### 4.1 Exact command sheet (copy/paste; **сейчас НЕ выполнять**)
 
-Все пути и SHA сверены с реальным деревом VPS на `b7e2f7cd`. Лист приведён
+Все пути и SHA сверены с реальным деревом VPS; счётчики `git ls-files | wc -l`
+пересчитаны **на frozen source `64127b9e…`** (см. `repository-split-final-gate.md`
+§3). Лист приведён
 готовым к исполнению **после** owner approval. Ничего из этого здесь не запускалось.
 
 #### 4.1.0 Общий блок (один раз)
 
 ```sh
 set -euo pipefail
-SRC=b7e2f7cd73e0320b90f298226a4510bb1ae74e43
+SRC=64127b9e1dea2ac528a572b51b90a542b70c5ebb
 BARE=/home/animastor/repos/animastor.git
 SPLIT=/tmp/split
 BRANCH=c21.4-physically-extract-analysis-from-backend
@@ -1131,7 +1138,7 @@ git filter-repo \
 
 # backup/verification
 git fsck --no-progress
-test "$(git ls-files | wc -l)" -eq 1040 && echo "OK: 1040"
+test "$(git ls-files | wc -l)" -eq 1045 && echo "OK: 1045"
 test -z "$(git ls-files | grep -E '^(frontends|tools)/')" && echo "OK: no leak"
 git status --porcelain | sed -n 1p; test -z "$(git status --porcelain)" && echo "OK: clean"
 git log --reverse --format=%s | sed -n 1p                # == "Recovery01: June 9 working state + dedup"
@@ -1319,7 +1326,7 @@ git filter-repo \
 # НЕТ --path gpu-hub-rebuild.sh (§8.5, 3-я запись) при R-3=B — X-1, §7.1
 
 git fsck --no-progress
-test "$(git ls-files | wc -l)" -eq 41 && echo "OK: 41"
+test "$(git ls-files | wc -l)" -eq 44 && echo "OK: 44"   # §8.5 = 45 файлов, минус gpu-hub-rebuild.sh (X-1 при R-3=B)
 test -z "$(git ls-files | grep -E '^(backend|frontends)')" && echo "OK: no leak"
 test ! -e .gitignore && echo "WARN: корневого .gitignore нет — создать (§5.5)"
 ```
@@ -1366,7 +1373,7 @@ Layout сохраняется (нет `--path-rename`) → `backend/`, `frontend
 
 | Поле | Значение |
 |---|---|
-| source commit | `b7e2f7cd…` |
+| source commit | `64127b9e…` |
 | whitelist | §8.1 — **36 записей → исполняется 35** (без `--path workflow.json`): `backend`, 15 × `packages/animastor-{ai-agent,ai-analysis,ai-connector,assistant,auth,comfyui-workflow-connector,contracts,editor,generation,installer,orchestration,parser,player,url-safety,vbook-runtime}`, `docs`, `docker`, `proxy`, `scripts`, `docker-compose.yml`, `MiM.vbook`, `{backend,front-backend,src}-…rebuild.sh`, `README/ARCHITECTURE/MEMORY/CONTRIBUTING/SECURITY/THIRD_PARTY_NOTICES/LICENSE`, `.env.example`, `.dockerignore`, `.gitignore` |
 | исчезают каталоги/пути | `frontends/**` (app, website, android), `tools/**`, `packages/animastor-worker`, `packages/animastor-gpu-hub`, `packages/animastor-web-*` (13), `gpu-hub-rebuild.sh`, `app-web-rebuild.sh`, `apk-build.sh`, `build-apk.sh`, `ANDROID_WEB_PARITY.md`, `workflow.json`, `local.properties` |
 | package.json | **16**: `backend/` + 15 пакетов (gpu-hub/web/worker — нет) |
@@ -1381,7 +1388,7 @@ Layout сохраняется (нет `--path-rename`) → `backend/`, `frontend
 
 | Поле | Значение |
 |---|---|
-| source commit | `b7e2f7cd…` |
+| source commit | `64127b9e…` |
 | whitelist | §8.2 — 31 `--path`: `frontends/app`, `frontends/website`, 13 × `packages/animastor-web-*`, `tools/desktop-web-tester`, `tools/mobile-web-tester`, `app-web-rebuild.sh`, `ANDROID_WEB_PARITY.md`, `docs/05-frontend`, `docs/08-mobile-web-migration`, `docs/09-desktop-migration`, 7 × `docs/architecture/web-*`, `LICENSE` |
 | исчезают | `backend/`, `docker/`, `proxy/`, `scripts/`, `docs/` (кроме 4 подмножеств), все root-`*.md`, 15 backend-пакетов, `packages/animastor-{worker,gpu-hub}`, `apk/build-apk.sh`, `gpu-hub-rebuild.sh` |
 | package.json | **14**: `frontends/app` + 13 web-пакетов (`frontends/website/package.json` отсутствует и в монорепо) |
@@ -1397,7 +1404,7 @@ Layout сохраняется (нет `--path-rename`) → `backend/`, `frontend
 
 | Поле | Значение |
 |---|---|
-| source commit | `b7e2f7cd…` |
+| source commit | `64127b9e…` |
 | whitelist | §8.3 — **6 записей → исполняется 5** (без `--path local.properties`): `frontends/android`, `apk-build.sh`, `build-apk.sh`, `ANDROID_WEB_PARITY.md`, `LICENSE` |
 | исчезают | вообще всё, кроме 5 позиций выше: `backend/`, `docs/`, `docker/`, `proxy/`, `scripts/`, `tools/`, **всё `packages/`** (backend/web/worker/hub), все npm-манифесты |
 | package.json | **0** — npm-резолв не применяется; только Gradle (`junit:junit:4.13.2`) |
@@ -1413,7 +1420,7 @@ Layout сохраняется (нет `--path-rename`) → `backend/`, `frontend
 
 | Поле | Значение |
 |---|---|
-| source commit | `b7e2f7cd…` |
+| source commit | `64127b9e…` |
 | whitelist | §8.4 — 19 `--path`: `packages/animastor-worker`, `docker/worker`, `docs/architecture/{JOB_PROTOCOL_V2, PHASE_9*, WORKER_PACKAGE_RELOCATION_*, EXPERIMENTAL_BETA_*, LINUX_INSTALLER_RECONNAISSANCE}.md`, `LICENSE` |
 | исчезают | `backend/`, `frontends/`, `proxy/`, `scripts/`, `docs/` (кроме 16), `docker/` (кроме `docker/worker`), `docker-compose.yml`, все root-`*.md`, все пакеты кроме `animastor-worker`, `tools/` |
 | package.json | **3**: `packages/animastor-worker/package.json` (`@animastor/worker-dev`), `packages/animastor-worker/worker/package.json` (canonical bundle version `2.1.1`), `packages/animastor-worker/image/worker/package.json` |
@@ -1428,7 +1435,7 @@ Layout сохраняется (нет `--path-rename`) → `backend/`, `frontend
 
 | Поле | Значение |
 |---|---|
-| source commit | `b7e2f7cd…` |
+| source commit | `64127b9e…` |
 | whitelist | §8.5 — **27 записей → при R-3=B исполняется 26** (без `--path gpu-hub-rebuild.sh`): `packages/animastor-gpu-hub`, `scripts/check-artifacts.sh`, `docker/compose/overlay-gpu-hub-standalone.yml`, 22 × `docs/architecture/{GPU_HUB_CONTRACT, JOB_PROTOCOL_V2, PHASE_10*}`, `LICENSE` |
 | исчезают | `backend/`, `frontends/`, `proxy/`, `scripts/` (кроме `scripts/check-artifacts.sh`), **`docker-compose.yml`**, `docker/compose/overlay-gpu-hub-local.yml`, `docker/e2e/`, все пакеты кроме `animastor-gpu-hub`, `tools/` |
 | package.json | **1**: `packages/animastor-gpu-hub/package.json` (`@animastor/gpu-hub` 0.1.1, devDeps отсутствуют) |
@@ -1445,22 +1452,23 @@ Layout сохраняется (нет `--path-rename`) → `backend/`, `frontend
 
 #### 5.6 Whitelist verification (§8 prep-plan vs `git ls-files`)
 
-Сверка повторена на текущем HEAD (1626 tracked-файлов, рабочее дерево чистое);
+Сверка повторена на frozen source `64127b9e…` (**1635 tracked-файлов**,
+рабочее дерево чистое; ранее — 1626 на `7df461fa`);
 скрипт — покрытие «`--path` = файл сам или под каталогом», read-only.
 
 | Проверка | Результат |
 |---|---|
-| tracked files (`git ls-files`) | **1626** |
+| tracked files (`git ls-files`) | **1635** |
 | всего `--path` (§8.1–8.5) | **119** = 36 + 31 + 6 + 19 + 27 |
-| **покрыто** | **1626 / 1626 = 100 %** |
+| **покрыто** | **1635 / 1635 = 100 %** |
 | **непокрытые** | **0** |
-| per-repo (с учётом дублей) | backend **1040**, web **349**, android **217**, worker **58**, gpu-hub **41** → сумма **1705** |
-| **намеренные дубли** | **79 вхождений** сверх 1626 → это **75 уникальных файлов**, попавших в >1 репо |
+| per-repo (с учётом дублей) | backend **1045**, web **349**, android **217**, worker **58**, gpu-hub **45** → сумма **1714** |
+| **намеренные дубли** | **79 вхождений** сверх 1635 → это **75 уникальных файлов**, попавших в >1 репо |
 | — backend+web | **31** (общие `LICENSE`, `ANDROID_WEB_PARITY.md`, `docs/architecture/…`, `packages/animastor-editor` т.п.) |
 | — backend+gpu-hub | **23** (общие `docs/architecture/PHASE_10*`, `JOB_PROTOCOL_V2.md`, `LICENSE`, …) |
 | — backend+worker | **18** (общие `docs/architecture/…`, `docker/worker`, `LICENSE`, …) |
 | — web+android | **1** (`ANDROID_WEB_PARITY.md`) |
-| — backend+web+worker+gpu-hub | **1** (`LICENSE`) |
+| — все 5 (backend+web+android+worker+gpu-hub) | **1** (`LICENSE`) |
 | — backend+worker+gpu-hub | **1** (`docs/architecture/JOB_PROTOCOL_V2.md`) |
 | **no-op `--path`** | **2**: `workflow.json` (§8.1), `local.properties` (§8.3) — в дереве **нет** ни одного tracked-файла под этими путями → исключение из whitelist **не меняет извлечение** |
 | исключение при R-3=B | `gpu-hub-rebuild.sh` (§8.5) — файл **трекается**, поэтому исключение **реально** уменьшает hub-repo на 1 файл (X-1, §7.1) |
@@ -1660,19 +1668,21 @@ D6/D7 оставить в backend-repo, в worker-repo оставить D1/D2/D3
 Чек-лист, **все пункты — до первого `git filter-repo`** (порядок соответствует §4):
 
 1. **Source SHA** — зафиксирован и подтверждается владельцем:
-   **`b7e2f7cd73e0320b90f298226a4510bb1ae74e43`** (§1). Альтернатива
+   **`64127b9e1dea2ac528a572b51b90a542b70c5ebb`** (§1). Альтернатива
    «tip ветки» **отклонена как правило** (SHA должен быть неизменным между
-   итерациями документации); все doc-коммиты после `b7e2f7cd` меняют только
-   этот файл и на извлечение не влияют.
-2. **P2** — `git checkout master && git merge --ff-only b7e2f7cd… && git push origin master`
-   (сейчас `master` = `8118f766`, −150 до source). Без этого — NO-GO №1.
+   итерациями документации); все doc-коммиты после `64127b9e…` меняют только
+   `docs/architecture/*.md` и на извлечение путей §8 не влияют.
+2. **P2 — ВЫПОЛНЕН**: `master` = `origin/master` = frozen source `64127b9e…`
+   (перепроверка: `git rev-parse master`). NO-GO №1 снят; без повторной
+   проверки перед запуском — не продолжать.
 3. **P1** — созданы `animastor-backend`, `animastor-web`, `animastor-android`,
    `animastor-worker` (GitHub 200 + пустой bare + post-receive hook).
    **GPU Hub отдельно не создавать и не заменять.**
 4. **R-3** — зафиксирован **A** или **B**; при **B** — подтверждён backup/freeze
    существующего `animastor-gpu-hub` (bare + GitHub, `7c7778c`).
    **До фиксации R-3 не авторить hub-CI и не запускать §8.5.**
-5. **P6** — свободно **≥5G** (сейчас 3.1G; `pip cache purge` → ≈7.5G).
+5. **P6 — НЕ ЗАКРЫТ**: свободно **≥5G** (сейчас **2.9G** — FAIL;
+   `pip cache purge` → ≈7.5G, только по распоряжению владельца).
 6. **P3** — npm-грант обновлён (`npm whoami` ≠ E401) **до первого publish**
    (filter-repo не блокируется).
 7. **P4** — `rmdir workflow.json` выполнен, stale android-compose-mount снят.
