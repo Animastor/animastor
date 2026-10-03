@@ -5,17 +5,21 @@
 > (source SHA **`64127b9e1dea2ac528a572b51b90a542b70c5ebb`**, `master` ==
 > source, **P2 закрыт**). В этом файле **обновлены** текущие утверждения:
 > source SHA/`SRC`, whitelist-числа (**1635/1635**, backend **1045**, gpu-hub
-> **45**), счётчики command sheet, статусы **P2/P6**. Формулировки со словами
-> «на `b7e2f7cd`»/«на `e1c63073`» — **исторические факты** аудитов на тех SHA
-> и не переписываются.
+> **45**), счётчики command sheet, статусы **P2/P6**, reference'ы на HEAD
+> (§7.5 и «этот коммит» → фактические doc-коммиты). Формулировки со словами
+> «на `b7e2f7cd`»/«на `e1c63073`»/«на `e6763c67`»/«на `7df461fa`» —
+> **исторические факты** аудитов на тех SHA и не переписываются; **текущий tip
+> ветки — только документационные коммиты после `64127b9e…` и source'ом
+> (`git filter-repo`) не является**.
 
 Продолжение цепочки: `repository-split-pre-split-fixes.md` (`bd66bae6`, верификация
 №2 — `834987a7`) → `B7 closed` (`4d53be37`, `35ba2b82`) → B9/P4/P6/B5 finalize
 (`e1c63073`) → документационная финализация (`4f947c56`) → **FINAL PRE-SPLIT
 GATE** (`3505286b`, факт-аудит на `b7e2f7cd`, §FPSG ниже) → **FINAL PRE-SPLIT
 TECHNICAL CLOSURE** (`e6763c67`, X-1/X-2, lock-зависимости, финальный grep,
-сверка whitelist) → **FINAL SPLIT HANDOFF** (`7df461fa` + этот коммит, §FINAL
-SPLIT HANDOFF ниже).
+сверка whitelist) → **FINAL SPLIT HANDOFF** (первоначальная запись — на `7df461fa`;
+дальше **только** документационные коммиты этого gate'а **после** frozen source
+`64127b9e…`, §FINAL SPLIT HANDOFF ниже).
 
 > **FINAL PRE-SPLIT GATE** выполнен на HEAD `b7e2f7cd73e0320b90f298226a4510bb1ae74e43`
 > (ветка `c21.4-physically-extract-analysis-from-backend`). Результаты
@@ -24,7 +28,9 @@ SPLIT HANDOFF ниже).
 > зависимостей, финального grep и сверки whitelist §8) — на HEAD **`e6763c67`**,
 > read-only. **FINAL SPLIT HANDOFF** — frozen source, owner decisions, точная
 > карта извлечения, command sheet, lock-процедура, X-1…X-4, whitelist и финальный
-> grep — на HEAD **`7df461fa`** + этот коммит. Физический split **не выполнялся**.
+> grep — **первоначально** на HEAD **`7df461fa`**, далее актуализирован только
+> документационными коммитами **после** frozen source **`64127b9e…`** (§1);
+> **`7df461fa` — не frozen source** и не текущий tip. Физический split **не выполнялся**.
 
 **Разделение коммитов (важно для чтения документа):**
 
@@ -868,8 +874,9 @@ execution (X-1, X-2, регенерация package-lock), остаётся ре
   `4f947c56` — documentation-only finalization (тесты не перезапускались).
   Закрывающий технический аудит (§FINAL PRE-SPLIT TECHNICAL CLOSURE) — на
   `e6763c67`, read-only, ничего не создано/удалено/отфильтровано.
-  FINAL SPLIT HANDOFF (§FINAL SPLIT HANDOFF) — `7df461fa` + этот коммит,
-  read-only.
+  FINAL SPLIT HANDOFF (§FINAL SPLIT HANDOFF) — исходная запись на `7df461fa`,
+  далее только документационные коммиты этого gate'а (read-only); авторитетный
+  source — `64127b9e…`, а не текущий tip.
 - B9 FINAL matrix: **9 unique workflow files / 12 workflow entries** across
   5 future repositories (backend 2 + web 2 + worker 3 + gpu-hub 3 + android 2
   = 12 entries; уникальных имён — 9: `ci.yml` ×5, `release.yml` ×3,
@@ -904,7 +911,8 @@ execution (X-1, X-2, регенерация package-lock), остаётся ре
   `test:arch`, `sync-protocol --check`, `update-artifacts-lock --check`,
   `npm whoami`/`npm view`, `df`, GitHub API GET) — ничего не создано,
   не удалено, не опубликовано, не перезаписано.
-- **FINAL SPLIT HANDOFF commit** (`7df461fa` + этот): изменён только
+- **FINAL SPLIT HANDOFF commit** (исходно `7df461fa`; далее — только
+  документационные коммиты этого gate'а): изменён только
   `docs/architecture/repository-split-next-blockers.md`; проверки —
   read-only git-графика/grep/python-разбор whitelist'ов и локов. Во время
   этой итерации **не выполнялось**: `git filter-repo`, clone'ы, `npm install`
@@ -967,7 +975,7 @@ execution (X-1, X-2, регенерация package-lock), остаётся ре
 |---|---|
 | **Source для `git filter-repo` (единственный)** | **`64127b9e1dea2ac528a572b51b90a542b70c5ebb`** |
 | **Почему именно он** | это последний коммит, на котором **все** механические проверки выполнены заново **и подтверждены**: G1–G5 **ALL GREEN** (`scripts/split-guards/run-all.sh`), B7 `test:arch` = **979/2** (IB-G15, T9 — pre-existing), hub `npm test` = **22/0**, whitelist §8 = **1635/1635, 0 uncovered**, command sheet сверен со §8, B5/G5 постсплит-путь прогнан (4/4 assets + tamper-отказ + `check-artifacts.sh` 6/6 в standalone-образе), `npm whoami`/`df`/GitHub-API — факты этого же состояния |
-| Текущий HEAD ветки | `64127b9e…` **+ документационные коммиты этого gate'а** (см. правило ниже) |
+| Текущий HEAD ветки | `64127b9e…` **+ документационные коммиты этого gate'а** (на момент записи: **4** — `5c34de54`, `2c6fdec6`, `c8341258`, `e64b6afc`; каждый следующий doc-коммит даёт +1) — **только документационный HEAD, НЕ source** (см. правило ниже) |
 | `master` / bare `master` / `origin/master` | **все три = `64127b9e…`** (P2 выполнен: `04da33ea` → `64127b9e`, push без force) |
 | **Relation с `master`** | `master` **==** frozen source → **разрыв 0**; **FF выполнен** |
 | **Требование P2** | **ВЫПОЛНЕНО** — `master` и есть frozen source; NO-GO №1 снят |
@@ -1601,14 +1609,30 @@ unchanged»): `CONTRACTS_IMPL_PATH = PKG_SRC('animastor-contracts', …)` рез
 `node_modules/@animastor/contracts` (pkg ships `src/`, версия 0.1.1 совпадает),
 D6/D7 оставить в backend-repo, в worker-repo оставить D1/D2/D3/D5/D8.
 
-#### 7.5 Final grep audit (read-only, HEAD `7df461fa`)
+#### 7.5 Final grep audit (read-only; исходный прогон — HEAD `7df461fa`, пере-сверено на frozen source `64127b9e…`)
+
+> **`7df461fa` — исторический HEAD исходного прогона; это НЕ frozen source и НЕ
+> текущий tip ветки.** Единственный source для `git filter-repo` — **`64127b9e…`**
+> (§1; правило source). Текущее состояние документации — документационные
+> коммиты после source (см. §0 final-gate).
+>
+> **Пере-сверка read-only на `64127b9e…` (та же матрица паттернов, tracked
+> файлы):** non-doc выборка **+6 / −0** — добавились
+> `scripts/split-guards/{g1-registry-only,g3-protocol-parity,run-all}.sh` и
+> `packages/animastor-gpu-hub/tools/{g4-standalone-build,g5-artifact-integrity,standalone-fixture}.*`
+> (guard/инструментальная обвязка split: комментарии и негативные проверки вида
+> «нет `packages/animastor-worker`» — не production-обращения); doc выборка
+> **+1 / −0** — `repository-split-final-gate.md` (DOC). Новых классов и
+> новых blocker'ов нет: **0 technical blockers** сохраняется.
 
 Шаблоны: `file:` · `"link": true` · `../packages/` · `../../packages/` ·
 `../../backend/node_modules` · `packages/*/src` · hardcoded monorepo-paths ·
 `repository.url` · `repository.directory` · `packages/animastor-gpu-hub` ·
 `packages/animastor-worker` · `packages/animastor-contracts/src` ·
 `../../../backend/src`. Выборки — **без учёта самого этого файла** (он матчит
-часть паттернов своим текстом); `skip` = бинарные расширения.
+часть паттернов своим текстом); `skip` = бинарные расширения. Числа в таблице
+ниже — факт исходного прогона на `7df461fa`; расхождения с `64127b9e…` — только
++6 non-doc guard/инструментов и +1 doc (см. пере-сверку выше).
 
 | Паттерн | Найдено (files / lines, excl. self) | Классификация |
 |---|---|---|

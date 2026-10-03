@@ -20,8 +20,9 @@
 |---|---|
 | **Source SHA (единственный)** | **`64127b9e1dea2ac528a572b51b90a542b70c5ebb`** |
 | Branch | `c21.4-physically-extract-analysis-from-backend` (= `origin/…`) |
-| **Tip ветки (HEAD)** | **`c8341258514f0313adb0f7ae9348dec90c510e27`** — tip **до** doc-коммита этого обновления = source + **3 doc-коммита** (`5c34de54`, `2c6fdec6`, `c8341258`); каждый следующий doc-коммит сдвигает tip на +1 и меняет только те же 2 файла |
-| DAG | `master` — прямой предок source (**YES**); source — прямой предок tip (**YES**); после source **3** коммита, затронуты **только** `docs/architecture/{repository-split-final-gate,repository-split-next-blockers}.md`; merge = **0**, tags = **0** |
+| **Tip ветки (HEAD)** | **`e64b6afcf5acb71872b2acf64531d25ab6956df2`** — документационный tip **до** doc-коммита этого обновления = frozen source **+ 4 doc-коммита** (`5c34de54`, `2c6fdec6`, `c8341258`, `e64b6afc`); GitHub compare `64127b9e…e64b6afc` = ровно эти **4** документационных коммита (**не 2, не 3**); каждый следующий doc-коммит сдвигает tip на +1 и меняет только те же 2 файла |
+| **tip ≠ source** | tip — **только** документационный HEAD ветки; **`git filter-repo` выполняется исключительно от `64127b9e…`** (§0, §1, handoff §1/§10) |
+| DAG | `master` — прямой предок source (**YES**); source — прямой предок tip (**YES**); после source **4** коммита — все документационные, затронуты **только** `docs/architecture/{repository-split-final-gate,repository-split-next-blockers}.md`; merge = **0**, tags = **0** |
 | **`master`** | **`64127b9e…` == source == `origin/master`** → **P2 CLOSED** (FF `04da33ea → 64127b9e`, обычная экспедиция, без force; `master` — прямой предок source, 0 behind / 0 ahead) |
 | Working tree | чистый (`git status --porcelain` = 0 строк) на момент gate |
 | Merge-коммитов в истории | **0** (`git rev-list --merges --count` = 0), коммитов всего **1653 на source** |
@@ -145,11 +146,12 @@ gpu-hub `run-all` 22 + G4 standalone + `check-artifacts.sh` 6/6).
 end-to-end (G5, включая tamper-отказ)**, тесты **без новых регрессий**
 (2 pre-existing: IB-G15, T9).
 
-Актуальные факты (перепроверка read-only на tip `c8341258…`):
+Актуальные факты (перепроверка read-only на tip `e64b6afc…`, до doc-коммита
+этого обновления):
 
 | Поле | Значение |
 |---|---|
-| **HEAD (tip)** | `c8341258514f0313adb0f7ae9348dec90c510e27` |
+| **HEAD (tip, документационный)** | `e64b6afcf5acb71872b2acf64531d25ab6956df2` = source + **4 doc-коммита** — **не** frozen source |
 | **Frozen source** | `64127b9e1dea2ac528a572b51b90a542b70c5ebb` |
 | **master** | `64127b9e…` == source == `origin/master` (не перемещался в этом gate) |
 | **P6** | **FAIL** — 2 988 183 552 B (≈2.8 GiB) < 5G; очистка не выполнялась |
