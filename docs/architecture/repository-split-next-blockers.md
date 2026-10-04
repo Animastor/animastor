@@ -1151,8 +1151,17 @@ P3 (npm) — **не** часть split-очереди: он нужен толь�
 > GitHub = bare = **`efa4b2937bc1954900c0e5aa9501667f42d6a70d`** (ровно
 > `refs/heads/main` + github-дубль). Журнал —
 > `repository-split-execution-pack.md` **§13**.
-> **§4.1.4 (worker) — НЕ ВЫПОЛНЯЛОСЬ** (отдельная авторизация владельца);
-> **§4.1.5 (gpu-hub) — REJECTED, НЕ ИСПОЛНЯЕТСЯ**.
+> **§4.1.4 (worker) — ВЫПОЛНЕНО (2026-10-04)** стадией C: свежий клон →
+> `reset --hard $SRC` → `update-ref` → `reflog expire` → `filter-repo` (19
+> `--path`, **без `--path-rename`, без `--force`**, RC=0) → AFTER-проверки
+> **58 файлов / 24 коммита / leak 0 / fsck чисто / clean tree /
+> tracked-set == whitelist / корень `docs(beta): private worker…`** → guard'ы
+> пустого bare и `origin == $NEW` → **push `HEAD:refs/heads/main` без `--force`**
+> → hook → GitHub = bare = **`73671b6b4e2986bd33c88c0ef165cb39a67e875d`** (ровно
+> `refs/heads/main` + github-дубль). Журнал —
+> `repository-split-execution-pack.md` **§14**. Все 4 физических split
+> (backend/web/android/worker) **ВЫПОЛНЕНЫ**; **§4.1.5 (gpu-hub) — REJECTED,
+> НЕ ИСПОЛНЯЕТСЯ**.
 
 Все пути и SHA сверены с реальным деревом VPS; счётчики `git ls-files | wc -l`
 пересчитаны **на frozen source `64127b9e…`** (см. `repository-split-final-gate.md`
@@ -1504,8 +1513,12 @@ Smoke checks — §8, `animastor-android`: npm **не выполняется** (
 
 #### 4.1.4 `animastor-worker` — шаг 4/7
 
-> **СТАТУС (2026-10-04): НЕ ВЫПОЛНЯЛОСЬ.** Bare `animastor-worker.git` = 0 refs /
-> 0 objects, GitHub = 0 refs. Шаг выполняется отдельной авторизацией владельца.
+> **СТАТУС (2026-10-04): ВЫПОЛНЕНО.** Блок исполнен дословно. `filter-repo`
+> RC=0 → **58 файлов / 24 коммита / leak 0 / fsck чисто / clean tree /
+> tracked-set == whitelist / корень `docs(beta): private worker / gpu hub
+> architectural reconnaissance`** → первый push **без `--force`** → hook →
+> bare == GitHub == **`73671b6b4e2986bd33c88c0ef165cb39a67e875d`**. Журнал —
+> `repository-split-execution-pack.md` **§14**.
 
 ```sh
 cd "$SPLIT"

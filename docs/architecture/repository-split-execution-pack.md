@@ -524,7 +524,7 @@ G-P = PASS** (P1 закрыт, P6 = PASS, стадия B выполнена: bac
 решение по **`tmp/parser-audit-backup`**; (post-split) **P3** npm E401.
 **Технических BLOCKER'ов не найдено.**
 
-### 9.7 Очередь — **BACKEND + WEB + ANDROID ВЫПОЛНЕНЫ (2026-10-04)**
+### 9.7 Очередь — **BACKEND + WEB + ANDROID + WORKER ВЫПОЛНЕНЫ (2026-10-04)**
 
 **Порядок:** `backend` → `web` → `android` → `worker` → smoke каждого репо →
 freeze монорепо + cutover B11. Шаги 1–4 независимы (отдельные свежие клоны),
@@ -554,15 +554,21 @@ root/107 → `--follow` ×2 → guard'ы пустого bare и URL origin →
 GitHub → **bare == GitHub == `efa4b2937bc1954900c0e5aa9501667f42d6a70d`**.
 Полный журнал — **§13**.
 
-**Шаг 4 (worker) — НЕ ВЫПОЛНЯЛСЯ**: требует отдельной авторизации владельца.
+**Шаг 4 (worker) — ВЫПОЛНЕН** по `repository-split-next-blockers.md`
+**§4.1.0 → §4.1.4**: clone → `reset --hard 64127b9e` → `update-ref` →
+`reflog expire` → `filter-repo` (19 `--path`, RC=0) → fsck/58/leak 0/clean/
+root/24 → `--follow` ×4 → guard'ы пустого bare и URL origin →
+`push HEAD:refs/heads/main` **без `--force`** → hook mirror → `ls-remote`
+GitHub → **bare == GitHub == `73671b6b4e2986bd33c88c0ef165cb39a67e875d`**.
+Полный журнал — **§14**. Все 4 физических split выполнены.
 **Шаг 5 (gpu-hub) — REJECTED (R-3 = A), не исполняется.**
 
 ---
 
 ## 10. Что НЕ выполнялось (остаётся NOT EXECUTED)
 
-**PHYSICAL SPLIT: web (§12) и android (§13) — EXECUTED; worker — NOT EXECUTED.**
-**git filter-repo: web (§12) / android (§13) — EXECUTED; worker / gpu-hub — NOT EXECUTED.**
+**PHYSICAL SPLIT: backend (§11), web (§12), android (§13), worker (§14) — EXECUTED; gpu-hub — NOT EXECUTED (REJECTED).**
+**git filter-repo: backend/web/android/worker — EXECUTED; gpu-hub — NOT EXECUTED.**
 **force-push: NOT EXECUTED ни для одного репозитория.**
 **`--path-rename`: NOT EXECUTED.**
 **`Animastor/animastor-gpu-hub` / bare `animastor-gpu-hub.git`: NOT MODIFIED ·
@@ -575,14 +581,14 @@ backup / BEFORE-snapshot / `tmp/parser-audit-backup`: NOT MODIFIED.**
 без очистки**), выбор R-3 (решён ранее: A), `--path-rename`, force-push,
 изменение `master`, hook'ов, production-кода и B7-тестов, регенерацию текущих
 monorepo lock-файлов, удаление `tmp/parser-audit-backup`, `npm publish`,
-split worker (шаг 4) и gpu-hub (§4.1.5 = REJECTED).
+и gpu-hub (§4.1.5 = REJECTED). **Worker split — ВЫПОЛНЕН (§14).**
 
 **Выполнено подготовительными ревизиями (стадия B, 2026-10-04):** запись в
 **новые** каталоги `backups/` — mirror-backup монорепо (GO-08) и BEFORE-snapshot
 refs `animastor.git` + `animastor-gpu-hub.git` (GO-14), плюс owner-confirmation
 `NEWBRANCH=main` (GO-05).
 
-**Выполнено стадией C (2026-10-04):** **backend (§11), web (§12) и android (§13)**.
+**Выполнено стадией C (2026-10-04):** **backend (§11), web (§12), android (§13) и worker (§14)**.
 
 ---
 
@@ -975,6 +981,113 @@ post-receive hook (`git push --mirror github`).
 | force-push | **НЕ выполнялся** |
 
 **СТАТУС ANDROID = SPLIT / PUBLISHED.**
+
+---
+
+## 14. Стадия C — `animastor-worker`: SPLIT / PUBLISHED (2026-10-04)
+
+> Авторизация владельца: «STAGE C — PHYSICAL SPLIT: WORKER». Объём: **шаг 4/4**
+> (`worker`). backend (§11), web (§12), android (§13) — уже опубликованы;
+> gpu-hub — §4.1.5 REJECTED. Выполнены §4.1.0 (общий блок) + §4.1.4 (worker)
+> командного листа `repository-split-next-blockers.md` дословно, включая все
+> guard'ы и строгие `|| { echo "FAIL: …"; exit 1; }`-контроли. Frozen source
+> `64127b9e…` (master монорепо), fresh clone — `origin` удалён самим
+> `filter-repo`, `--path-rename` / `--force` **не использовались**.
+
+### 14.1 PRECHECK — все PASS
+
+| Проверка | Ожидание | Факт |
+|---|---|---|
+| `master` монорепо | `64127b9e…` | **PASS** |
+| backend / web / android | `f83f929c…` / `4c3ea0fb…` / `efa4b293…` | **PASS** (не изменялись) |
+| `animastor-worker.git` | 0 refs / 0 objects | **PASS** |
+| HEAD bare | `refs/heads/main` | **PASS** |
+| `post-receive` | 0755 / 91 байт / sha256 `6a63cb14…` | **PASS** (`cmp` — идентичен) |
+| `remote.github.url` | `git@github.com:Animastor/animastor-worker.git` | **PASS** |
+| GPU Hub | `7c7778c6…`, byte-identical | **PASS** (refs == snapshot) |
+| disk `df -B1 /` | ≥ 5 368 709 120 | **PASS** (6 668 865 536 B) |
+| `git-filter-repo` | 2.47.0 | **PASS** |
+| GitHub `ls-remote` | 0 refs | **PASS** (пустой) |
+| backup / BEFORE-snapshot | `$SRC` внутри, `MANIFEST` 11/11 | **PASS** |
+| предыдущий worker split | отсутствует | **PASS** |
+
+### 14.2 Точные SHA
+
+| Поле | Значение |
+|---|---|
+| Frozen source (`$SRC`) | **`64127b9e1dea2ac528a572b51b90a542b70c5ebb`** |
+| Docs-tip монорепо до split | `8938eedb4da8bb1197eae60e1a939937aeba7a28` |
+| **`master` монорепо — до и после** | **`64127b9e…` (не изменился)** |
+| `tmp/parser-audit-backup` | **`db5ff61f1079360cc848ff2fc131a12783bd97ad`** |
+| **Извлечённый worker `main` (bare == GitHub)** | **`73671b6b4e2986bd33c88c0ef165cb39a67e875d`** |
+| Корневой коммит worker | **`894c38c17f15bc7a87ed12672dffe2862f2fa3c4`** — «docs(beta): private worker / gpu hub architectural reconnaissance» |
+| GPU Hub (не трогался) | `master` = `HEAD` = **`7c7778c6f313dad19eb403d8509cd297226ec7ea`** |
+
+### 14.3 Выполнение (§4.1.0 + §4.1.4) и AFTER-проверки — все PASS
+
+Свежий клон `git clone --no-local --single-branch --branch $BRANCH $BARE` →
+`reset --hard $SRC` → `update-ref` → `reflog expire --expire=now --all`
+(reflog = 0) → `git filter-repo` **19 `--path`** (`packages/animastor-worker`,
+`docker/worker`, 16 `docs/architecture/*`, `LICENSE`; без `--force`/`--path-rename`)
+→ **RC=0**.
+
+| Проверка | Ожидание | Факт |
+|---|---|---|
+| `git fsck --full` | чисто | **PASS** |
+| tracked files | **58** | **58 PASS** |
+| tracked-set == whitelist §4.1.4 | побайтово | **IDENTICAL** |
+| leak (whitelist-форма) | **0** | **0 PASS** |
+| `git status --porcelain` | пусто | **0 PASS** |
+| исторический корень | `docs(beta): private worker / gpu hub architectural reconnaissance` | **PASS** |
+| `git rev-list --count HEAD` | **24** | **24 PASS** |
+| `git log --follow` ×4 (§3.5) | логируются | **4/4 PASS** |
+| workflow.json | отсутствует | **0 PASS** |
+| backend/web/android/GPU Hub пути | 0 | **0 PASS** |
+| tree `HEAD` vs `$SRC` ∩ 19-path whitelist | идентичны | **byte-identical PASS** |
+
+### 14.4 Lineage от frozen source — ПОДТВЕРЖДЁН
+
+| Проверка | Результат |
+|---|---|
+| `.git/filter-repo/ref-map` | `64127b9e…` → **`73671b6b…`** (`refs/heads/c21.4-…`) |
+| Все **24** «старых» SHA из `commit-map` — предки `$SRC` | **24/24 YES, 0 нарушений** |
+| Все **24** «новых» SHA существуют | **24/24 YES** |
+| Корень: `380a7773…` → `894c38c1…` (subject идентичен) | **PASS** |
+| `$SRC` сам в `commit-map` | → `0000…` (**dropped**, менял только gpu-hub-guard-файлы вне worker-whitelist) |
+| dropped (не трогали worker-пути) | **1629** коммитов монорепо |
+| prep-commit `efa4b293…` | это **новый** (rewritten) SHA, не монорепо-объект; в worker-истории **отсутствует** — подготовка relocation не путается с physical split |
+
+### 14.5 Push, parity и POST-PUSH CLONE
+
+До push: bare **0 refs / 0 objects**, `HEAD=refs/heads/main`, hook + remote
+проверены; `origin` отсутствовал → `git remote add origin $NEW` + guard
+`origin == $NEW` → `push -u origin HEAD:refs/heads/main` **без `--force`** →
+post-receive hook (`git push --mirror github`).
+
+| Проверка | Результат |
+|---|---|
+| bare refs | ровно `refs/heads/main` + github-дубль = **`73671b6b…`** |
+| `ls-remote` GitHub SSH | `HEAD` = `refs/heads/main` = **`73671b6b…`** |
+| **bare == GitHub** | **PARITY OK** (лишних refs нет) |
+| fresh clone из GitHub | `HEAD=73671b6b…`, ветка `main`, **clean**, **58** файлов |
+| tracked-set / leak / commits | IDENTICAL / 0 / **24** |
+| `git fsck` / root | чисто / `docs(beta): private worker…` |
+| backend/web/android/GPU Hub / workflow.json | 0 |
+
+### 14.6 Контроль монорепо / GPU Hub / артефактов — НЕ ИЗМЕНЕНЫ
+
+| Контроль | Результат |
+|---|---|
+| `master` монорепо | **`64127b9e…` PASS** |
+| `tmp/parser-audit-backup` | **`db5ff61f…` PASS** |
+| `backups/before-split-64127b9e-refs/` | **`MANIFEST.sha256` 11/11 OK**, не изменён |
+| backup `$BK` | **не пересоздавался**, `$SRC` внутри |
+| GPU Hub | `master` = `7c7778c6…`, refs == snapshot (byte-identical) |
+| backend / web / android bare | `f83f929c…` / `4c3ea0fb…` / `efa4b293…` (не менялись) |
+| force-push | **НЕ выполнялся** |
+
+**СТАТУС WORKER = SPLIT / PUBLISHED.** **Все 4 физических split завершены**
+(backend / web / android / worker); gpu-hub сохранён как есть.
 
 ---
 
