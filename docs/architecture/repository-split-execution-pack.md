@@ -524,7 +524,7 @@ G-P = PASS** (P1 закрыт, P6 = PASS, стадия B выполнена: bac
 решение по **`tmp/parser-audit-backup`**; (post-split) **P3** npm E401.
 **Технических BLOCKER'ов не найдено.**
 
-### 9.7 Очередь — **BACKEND + WEB ВЫПОЛНЕНЫ (2026-10-04)**
+### 9.7 Очередь — **BACKEND + WEB + ANDROID ВЫПОЛНЕНЫ (2026-10-04)**
 
 **Порядок:** `backend` → `web` → `android` → `worker` → smoke каждого репо →
 freeze монорепо + cutover B11. Шаги 1–4 независимы (отдельные свежие клоны),
@@ -546,15 +546,23 @@ docs-subset/root/275 → `--follow` ×2 → guard'ы пустого bare и URL 
 GitHub → **bare == GitHub == `4c3ea0fb2a1adb552ba1c9acd98abc41befdab3b`**.
 Полный журнал, точные SHA, BEFORE/AFTER и parity — **§12**.
 
-**Шаги 3–4 (android, worker) — НЕ ВЫПОЛНЯЛИСЬ**: требуют отдельной
-авторизации владельца. **Шаг 5 (gpu-hub) — REJECTED (R-3 = A), не исполняется.**
+**Шаг 3 (android) — ВЫПОЛНЕН** по `repository-split-next-blockers.md`
+**§4.1.0 → §4.1.3**: clone → `reset --hard 64127b9e` → `update-ref` →
+`reflog expire` → `filter-repo` (5 `--path`, RC=0) → fsck/217/leak 0/clean/
+root/107 → `--follow` ×2 → guard'ы пустого bare и URL origin →
+`push HEAD:refs/heads/main` **без `--force`** → hook mirror → `ls-remote`
+GitHub → **bare == GitHub == `efa4b2937bc1954900c0e5aa9501667f42d6a70d`**.
+Полный журнал — **§13**.
+
+**Шаг 4 (worker) — НЕ ВЫПОЛНЯЛСЯ**: требует отдельной авторизации владельца.
+**Шаг 5 (gpu-hub) — REJECTED (R-3 = A), не исполняется.**
 
 ---
 
 ## 10. Что НЕ выполнялось (остаётся NOT EXECUTED)
 
-**PHYSICAL SPLIT: web — EXECUTED (§12); android / worker — NOT EXECUTED.**
-**git filter-repo: web — EXECUTED (§12); android / worker / gpu-hub — NOT EXECUTED.**
+**PHYSICAL SPLIT: web (§12) и android (§13) — EXECUTED; worker — NOT EXECUTED.**
+**git filter-repo: web (§12) / android (§13) — EXECUTED; worker / gpu-hub — NOT EXECUTED.**
 **force-push: NOT EXECUTED ни для одного репозитория.**
 **`--path-rename`: NOT EXECUTED.**
 **`Animastor/animastor-gpu-hub` / bare `animastor-gpu-hub.git`: NOT MODIFIED ·
@@ -567,14 +575,14 @@ backup / BEFORE-snapshot / `tmp/parser-audit-backup`: NOT MODIFIED.**
 без очистки**), выбор R-3 (решён ранее: A), `--path-rename`, force-push,
 изменение `master`, hook'ов, production-кода и B7-тестов, регенерацию текущих
 monorepo lock-файлов, удаление `tmp/parser-audit-backup`, `npm publish`,
-split android/worker (шаги 3–4) и gpu-hub (§4.1.5 = REJECTED).
+split worker (шаг 4) и gpu-hub (§4.1.5 = REJECTED).
 
 **Выполнено подготовительными ревизиями (стадия B, 2026-10-04):** запись в
 **новые** каталоги `backups/` — mirror-backup монорепо (GO-08) и BEFORE-snapshot
 refs `animastor.git` + `animastor-gpu-hub.git` (GO-14), плюс owner-confirmation
 `NEWBRANCH=main` (GO-05).
 
-**Выполнено стадией C (2026-10-04):** **backend (§11) и web (§12)**.
+**Выполнено стадией C (2026-10-04):** **backend (§11), web (§12) и android (§13)**.
 
 ---
 
@@ -859,6 +867,114 @@ origin $NEW` + guard `origin == $NEW` → `push -u origin HEAD:refs/heads/main`
 | force-push | **НЕ выполнялся** |
 
 **СТАТУС WEB = SPLIT / PUBLISHED.**
+
+---
+
+## 13. Стадия C — `animastor-android`: SPLIT / PUBLISHED (2026-10-04)
+
+> Авторизация владельца: «STAGE C — ANDROID PHYSICAL SPLIT». Объём: **шаг 3/4**
+> (`android`). backend (§11) и web (§12) — уже опубликованы; worker — **не
+> выполнялся**; gpu-hub — §4.1.5 REJECTED. Выполнены §4.1.0 (общий блок) +
+> §4.1.3 (android) командного листа `repository-split-next-blockers.md`
+> дословно, включая все guard'ы и строгие `|| { echo "FAIL: …"; exit 1; }`-контроли.
+> Frozen source `64127b9e…` (master монорепо), fresh clone — `origin` удалён
+> самим `filter-repo`, `--path-rename` / `--force` / `--path local.properties`
+> / `--path workflow.json` **не использовались**.
+
+### 13.1 PRECHECK — все PASS
+
+| Проверка | Ожидание | Факт |
+|---|---|---|
+| `master` монорепо | `64127b9e…` | **PASS** (не изменён) |
+| backend / web | `f83f929c…` / `4c3ea0fb…` | **PASS** (не изменялись) |
+| `animastor-android.git` | 0 refs / 0 objects | **PASS** |
+| HEAD bare | `refs/heads/main` | **PASS** |
+| `post-receive` | 0755 / 91 байт / sha256 `6a63cb14…` | **PASS** (`cmp` — идентичен) |
+| `remote.github.url` | `git@github.com:Animastor/animastor-android.git` | **PASS** |
+| worker bare | 0 refs | **PASS** |
+| GPU Hub | `7c7778c6…`, byte-identical | **PASS** (refs дословно == snapshot) |
+| disk `df -B1 /` | ≥ 5 368 709 120 | **PASS** (6 690 570 240 B) |
+| `git-filter-repo` | 2.47.0 | **PASS** |
+| GitHub `ls-remote` | 0 refs | **PASS** (пустой) |
+| backup / BEFORE-snapshot | `$SRC` внутри, `MANIFEST` 11/11 | **PASS** |
+| предыдущий android split | отсутствует | **PASS** (`/tmp/split/android` не было) |
+
+### 13.2 Точные SHA
+
+| Поле | Значение |
+|---|---|
+| Frozen source (`$SRC`) | **`64127b9e1dea2ac528a572b51b90a542b70c5ebb`** |
+| Docs-tip монорепо до split | `3d3b594f01dbc9b508161d3cdaae42d83034ed13` |
+| **`master` монорепо — до и после** | **`64127b9e…` (не изменился)** |
+| `tmp/parser-audit-backup` | **`db5ff61f1079360cc848ff2fc131a12783bd97ad` (не удалён)** |
+| **Извлечённый android `main` (bare == GitHub)** | **`efa4b2937bc1954900c0e5aa9501667f42d6a70d`** |
+| Корневой коммит android | **`8abefe56cbfcfd530362f5e6eb16d5a35921c6ca`** — «Recovery01: June 9 working state + dedup» (из монорепо-`380a7773…`) |
+| GPU Hub (не трогался) | `master` = `HEAD` = **`7c7778c6f313dad19eb403d8509cd297226ec7ea`** |
+
+### 13.3 Выполнение (§4.1.0 + §4.1.3) и AFTER-проверки — все PASS
+
+Свежий клон `git clone --no-local --single-branch --branch $BRANCH $BARE` →
+`reset --hard $SRC` → `update-ref` → `reflog expire --expire=now --all`
+(reflog = 0) → `git filter-repo` **5 `--path`** (`frontends/android`,
+`apk-build.sh`, `build-apk.sh`, `ANDROID_WEB_PARITY.md`, `LICENSE`; без
+`local.properties`, без `workflow.json`, без `--force`/`--path-rename`) → **RC=0**.
+
+| Проверка | Ожидание | Факт |
+|---|---|---|
+| `git fsck --full` | чисто | **PASS** |
+| tracked files | **217** | **217 PASS** |
+| tracked-set == whitelist §4.1.3 | побайтово | **IDENTICAL** |
+| leak (whitelist-форма) | **0** | **0 PASS** |
+| `git status --porcelain` | пусто | **0 PASS** |
+| исторический корень | `Recovery01: June 9 working state + dedup` | **PASS** |
+| `git rev-list --count HEAD` | **107** | **107 PASS** |
+| `git log --follow` ×2 (§3.4) | логируются | **2/2 PASS** |
+| workflow.json | отсутствует | **0 PASS** |
+| backend/web/worker/GPU Hub пути | 0 | **0 PASS** |
+| tree `HEAD` vs `$SRC` ∩ 5-path whitelist | идентичны | **byte-identical PASS** |
+
+### 13.4 Lineage от frozen source — ПОДТВЕРЖДЁН
+
+| Проверка | Результат |
+|---|---|
+| `.git/filter-repo/ref-map` | `64127b9e…` → **`efa4b293…`** (`refs/heads/c21.4-…`) |
+| Все **107** «старых» SHA из `commit-map` — предки `$SRC` | **107/107 YES, 0 нарушений** |
+| Все **107** «новых» SHA существуют | **107/107 YES** |
+| Корень: `380a7773…` → `8abefe56…` | **PASS** (subject идентичен) |
+| `$SRC` сам в `commit-map` | → `0000…` (**dropped**): менял только gpu-hub-guard-файлы вне android-whitelist → пустой; содержимое = `$SRC`∩whitelist (tree-check) |
+| dropped (не трогали android-пути) | **1546** коммитов монорепо |
+
+### 13.5 Push, parity и POST-PUSH CLONE
+
+До push: bare **0 refs / 0 objects**, `HEAD=refs/heads/main`, hook + remote
+проверены; `origin` отсутствовал → `git remote add origin $NEW` + guard
+`origin == $NEW` → `push -u origin HEAD:refs/heads/main` **без `--force`** →
+post-receive hook (`git push --mirror github`).
+
+| Проверка | Результат |
+|---|---|
+| bare refs | ровно `refs/heads/main` + github-дубль = **`efa4b293…`** |
+| `ls-remote` GitHub SSH | `HEAD` = `refs/heads/main` = **`efa4b293…`** |
+| **bare == GitHub** | **PARITY OK** (лишних refs, `master`, tags — нет) |
+| fresh clone из GitHub | `HEAD=efa4b293…`, ветка `main`, **clean**, **217** файлов |
+| tracked-set / leak / commits | IDENTICAL / 0 / **107** |
+| `git fsck` / root | чисто / `Recovery01: June 9 working state + dedup` |
+| backend/web/worker/GPU Hub / workflow.json | 0 |
+
+### 13.6 Контроль монорепо / GPU Hub / артефактов — НЕ ИЗМЕНЕНЫ
+
+| Контроль | Результат |
+|---|---|
+| `master` монорепо | **`64127b9e…` PASS** |
+| `tmp/parser-audit-backup` | **`db5ff61f…` PASS** |
+| `backups/before-split-64127b9e-refs/` | **`MANIFEST.sha256` 11/11 OK**, не изменён |
+| backup `$BK` | **не пересоздавался**, `$SRC` внутри |
+| GPU Hub | `master` = `7c7778c6…`, refs == snapshot (byte-identical) |
+| backend / web bare | `f83f929c…` / `4c3ea0fb…` (не менялись) |
+| worker bare | **0 refs** |
+| force-push | **НЕ выполнялся** |
+
+**СТАТУС ANDROID = SPLIT / PUBLISHED.**
 
 ---
 

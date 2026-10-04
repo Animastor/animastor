@@ -1142,8 +1142,17 @@ P3 (npm) — **не** часть split-очереди: он нужен толь�
 > без `--force`** → hook → GitHub = bare = **`4c3ea0fb2a1adb552ba1c9acd98abc41befdab3b`**
 > (ровно `refs/heads/main` + github-дубль). Журнал —
 > `repository-split-execution-pack.md` **§12**.
-> **§4.1.3 (android), §4.1.4 (worker) — НЕ ВЫПОЛНЯЛИСЬ** (отдельная
-> авторизация владельца); **§4.1.5 (gpu-hub) — REJECTED, НЕ ИСПОЛНЯЕТСЯ**.
+> **§4.1.3 (android) — ВЫПОЛНЕНО (2026-10-04)** стадией C: свежий клон →
+> `reset --hard $SRC` → `update-ref` → `reflog expire` → `filter-repo` (5
+> `--path`, **без `--path-rename`, без `--force`**, RC=0) → AFTER-проверки
+> **217 файлов / 107 коммитов / leak 0 / fsck чисто / clean tree /
+> tracked-set == whitelist / корень `Recovery01`** → guard'ы пустого bare и
+> `origin == $NEW` → **push `HEAD:refs/heads/main` без `--force`** → hook →
+> GitHub = bare = **`efa4b2937bc1954900c0e5aa9501667f42d6a70d`** (ровно
+> `refs/heads/main` + github-дубль). Журнал —
+> `repository-split-execution-pack.md` **§13**.
+> **§4.1.4 (worker) — НЕ ВЫПОЛНЯЛОСЬ** (отдельная авторизация владельца);
+> **§4.1.5 (gpu-hub) — REJECTED, НЕ ИСПОЛНЯЕТСЯ**.
 
 Все пути и SHA сверены с реальным деревом VPS; счётчики `git ls-files | wc -l`
 пересчитаны **на frozen source `64127b9e…`** (см. `repository-split-final-gate.md`
@@ -1449,8 +1458,12 @@ Smoke checks — §8, `animastor-web` (`cd frontends/app && npm ci`, `npm run bu
 
 #### 4.1.3 `animastor-android` — шаг 3/7
 
-> **СТАТУС (2026-10-04): НЕ ВЫПОЛНЯЛОСЬ.** Bare `animastor-android.git` = 0 refs /
-> 0 objects, GitHub = 0 refs. Шаг выполняется отдельной авторизацией владельца.
+> **СТАТУС (2026-10-04): ВЫПОЛНЕНО.** Блок исполнен дословно. `filter-repo`
+> RC=0 → **217 файлов / 107 коммитов / leak 0 / fsck чисто / clean tree /
+> tracked-set == whitelist / корень `Recovery01: June 9 working state + dedup`**
+> → первый push **без `--force`** → hook → bare == GitHub ==
+> **`efa4b2937bc1954900c0e5aa9501667f42d6a70d`**. Журнал —
+> `repository-split-execution-pack.md` **§13**.
 
 ```sh
 cd "$SPLIT"
