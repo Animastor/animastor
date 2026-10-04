@@ -79,7 +79,7 @@ per-repo спеки с проверяемыми grep/`--follow`-командам
 | `animastor-android` | 6 → **5** (нет `local.properties`) | **217** | **107** | 0 | 0 | `Recovery01: June 9 working state + dedup` |
 | `animastor-worker` | 19 → **19** | **58** | **24** | 3 | 3 (0 → регенерация) | `docs(beta): private worker / gpu hub architectural reconnaissance` |
 | `animastor-gpu-hub` (**R-3 = B — REJECTED, не исполняется**) | 27 → **26** (нет `gpu-hub-rebuild.sh`) | 44 | 37 | 1 | 1 (0 → регенерация) | `docs: add MIT license + professional README + open-source files` |
-| **Итого** | 119 → **116**; **при R-3 = A (SELECTED): 90** | **при A: 1669 instance'ов = 1615 unique** (1045+349+217+58); из 1635 tracked **20 не копируются никуда** — 19 файлов `packages/animastor-gpu-hub/` + `gpu-hub-rebuild.sh` (они только в замороженном монорепо; сам компонент — в существующем standalone-репо). Строка «1714» считает 5 репо с gpu-hub = 45 | — | **33** (16+14+0+3) | **33** (при A — без gpu-hub) | — |
+| **Итого** | 119 → **116**; **при R-3 = A (SELECTED): 90** | **при A: 1669 instance'ов = 1615 unique** (1045+349+217+58); из 1635 tracked **20 не копируются никуда** — 19 файлов `packages/animastor-gpu-hub/` + `gpu-hub-rebuild.sh` (они только в замороженном монорепо; сам компонент — в существующем standalone-репо). строка «1714» — **историческая** (считает 5 репо с gpu-hub = 45) | — | **33** (16+14+0+3) | **33** (при A — без gpu-hub) | — |
 
 - **Формула ожидания коммитов** (та же, что даёт post-filter-история):
   `git rev-list --count $SRC -- <те же --path, что в §4.1.x>`.

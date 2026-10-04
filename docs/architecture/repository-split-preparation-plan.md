@@ -717,7 +717,7 @@ backend** — переводятся с source-level на контрактный
 - Опубликованных на npm: **29** (worker bundle — не npm-пакет) ✓
 - `file:`-зависимостей: **24** (11 backend + 13 web); скрытых: contracts (B1),
   untracked root package.json (B12) ✓
-- Названия пяти репозиториев — едины во всех разделах ✓
+- Названия новых репозиториев (и существующего `animastor-gpu-hub`) — едины во всех разделах ✓
 - GPU Hub deps: npm {contracts ^0.1.0, express, cors, ioredis} + 4 артефакта
   (1 от worker, 3 от backend) + check-artifacts.sh ✓
 - Worker: bundle 2.1.1, копия job-protocol-v2.cjs из contracts 0.1.1 (sha256

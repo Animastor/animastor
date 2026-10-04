@@ -5,6 +5,11 @@ HEAD: `709f112e` (rev 3.2 preparation plan)
 Статус: разведка исполнимости §7–§11 preparation plan. Физический split,
 `git filter-repo`, новые репозитории и изменения GitHub/VPS НЕ выполнялись.
 
+> **Обновление (2026-10-04): R-3 = A (SELECTED), B = REJECTED**
+> (`repository-split-r3-decision.md`). Создаются **4** новых репозитория
+> (backend/web/android/worker); `animastor-gpu-hub` существует и не трогается.
+> Упоминания «5 репозиториев» ниже — исторический статус на 2026-10-01.
+
 База: `docs/architecture/repository-split-preparation-plan.md` (rev 3.2),
 `repository-split-reconnaissance-audit.md`, Phase 10R/10S (artifact
 decoupling), Phase 9C/9D (contracts/worker).
@@ -237,7 +242,7 @@ guard по basename; hooks создаются **до** первого push; мо
 
 | ID | Что | Тип | Снятие | Класс |
 |---|---|---|---|---|
-| P1 | 5 GitHub-репозиториев не созданы | организационное | создать пустые (без README), default `master`; bare + hooks — §7.2 prep-plan | **HARD** — bare/GitHub/hooks должны существовать до первого push (§9, шаг 5) |
+| P1 | 4 новых GitHub-репозиториев не созданы (GPU Hub уже существует — R-3 = A) | организационное | создать пустые (без README), default `master`; bare + hooks — §7.2 prep-plan | **HARD** — bare/GitHub/hooks должны существовать до первого push (§9, шаг 5) |
 | P2 | работа в `c21.4-…`, `master` отстаёт на 136 коммитов | git-гигиена | FF `master` до c21.4 (§7.1 prep-plan — fast-forward по построению) | **HARD** — filter-repo запускается только на финальной линейной истории |
 | P3 | npm-токен недействителен (E401) — publish недоступен, npm install публичных пакетов работает | секреты | выпустить/обновить NPM_TOKEN; до этого publish-ветка CI не пройдёт | **POST-SPLIT** — сам filter-repo не блокирует; обязателен для publish-CI после split |
 | P4 | untracked root `package.json` / `workflow.json` / `local.properties` | данные | решение зафиксировано (этот документ): `workflow.json` — **RETIRE** (§2.1, §2.6: runtime не читает, mount мёртв, из whitelist исключён); `local.properties` — **VPS-local**, из whitelist §8.3 исключён (§2.3); root `package.json` — RETIRE (B12). До split: физически удалить каталог-заглушку `workflow.json` | **HARD** — определяет выполняемые whitelist'ы |

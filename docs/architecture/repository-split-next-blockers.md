@@ -337,7 +337,7 @@ workflow-план**: filename, repository, trigger, steps, tokens, checks.
 
 | # | Check | Причина |
 |---|---|---|
-| 1 | Любое `.github/workflows` execution в 5 репо | `.github/` отсутствует в монорепо (P5 confirmed) |
+| 1 | Любое `.github/workflows` execution в новых репо (4; GPU Hub CI уже есть в существующем репо, R-3 = A) | `.github/` отсутствует в монорепо (P5 confirmed) |
 | 2 | G4 standalone hub docker build | ~~невозможно pre-split~~ → **ВЫПОЛНЕНО pre-split** (`g4-standalone-build.sh`, PASSED на `64127b9e`): dual-stage Dockerfile + `standalone-fixture.cjs` дают standalone-контекст; в hub-repo CI — после P1 (**R-3 = A закрыт**) |
 | 3 | G5 Release-asset digest check | **механика DONE pre-split** (fixture materialise 4/4 + tamper-отказ в `g5-artifact-integrity.sh`); реальные 4 Release zips не существуют (`sha256_asset` = `null`), P1 repos absent, P3 E401 — pin появится на первом релизе POST-SPLIT |
 | 4 | G7 parity-snapshot jobs | Требуют bare + hooks + canonical repos (step 5) |
@@ -404,9 +404,10 @@ sudo rmdir /home/animastor/animastor/workflow.json
 ## P6 — диск перед filter-repo (аудит на `e1c63073`)
 
 **Факт**: `/` = `/dev/sda2` 99G, занято 92G, **свободно 2.8G** (98%).
-Потребность последовательного filter-repo 5 репозиториев: mirror-клон
-монорепо ~73M (.git) × 5 + рабочая копия переписи ~2× пик истории →
-**≈3.0–4.5G суммарно**. **2.8G — НЕ достаточно** с нормальным запасом
+Потребность последовательного filter-repo **4 репозиториев** (R-3 = A: GPU Hub
+не фильтруется; оценка делалась для 5 репо и потому **консервативна**):
+mirror-клон монорепо ~73M (.git) × 4–5 + рабочая копия переписи ~2× пик
+истории → **≈3.0–4.5G суммарно**. **2.8G — НЕ достаточно** с нормальным запасом
 (нет headroom под OS/npm/Docker churn). Минимум: **≥5G** (рекомендуется
 ≥8G).
 
@@ -440,7 +441,7 @@ sudo rmdir /home/animastor/animastor/workflow.json
 | 9 | `sudo apt-get clean` | **~136M** | None |
 | 10 | `rm -rf ~/.local/share/opencode/log` | **~52M** | Low — logs only |
 
-**Минимальный путь для 5 репозиториев**: шаг 1 (pip cache) → free ≈7.2G —
+**Минимальный путь (оценка для 5 репо; при R-3 = A их 4 — потребность не больше)**: шаг 1 (pip cache) → free ≈7.2G —
 **достаточно**. Шаги 1+2+3 → ≈13.3G — здоровый headroom.
 
 **Не трогать**: `backups/` (4.0G, user data), `opencode.db` (8.8G runtime),
@@ -609,7 +610,7 @@ deps, массовое переписывание документации — *
 | Параметр | Значение |
 |---|---|
 | Свободно (на момент P6-повтора) | **2.9G** (99G total / 92G used / **98%** — перепроверено `df -h /` на `64127b9e`); **актуальное значение — `repository-split-final-gate.md` §1/§4** (preflight 2026-10-03: 2 958 962 688 B, **FAIL**) |
-| Требование для последовательного filter-repo (5 репо) | **≥5G**, рекомендуется ≥8G (mirror `.git` 73M × 5 + рабочие деревья переписи ≈ 2× пик истории ≈ 3.0–4.5G суммарно + headroom) |
+| Требование для последовательного filter-repo (4 репо при R-3 = A; оценка сделана для 5 — консервативна) | **≥5G**, рекомендуется ≥8G (mirror `.git` 73M × 4–5 + рабочие деревья переписи ≈ 2× пик истории ≈ 3.0–4.5G суммарно + headroom) |
 | Заявлено в §P6 | 2.8G → 3.1G → **2.9G** (дефицит сохраняется; **FAIL на FINAL GATE**) |
 | Минимальная очистка | `pip cache purge` ≈ **4.4G** → ≈ **7.5G** (достаточно); шаги 1+2+3 §P6 → ≈13.6G |
 | НЕ трогать | `backups/` (4.0G), `~/.local/share/opencode/opencode.db` (8.8G), 6 активных Docker-образов (13G), linked volumes (ollama/pg/redis) |
