@@ -1,28 +1,40 @@
 # Repository Split — EXECUTION PACK (per-repo spec · идемпотентность · rollback · GO-чеклист)
 
-> **PHYSICAL SPLIT: NOT EXECUTED**
-> **git filter-repo: NOT EXECUTED**
-> **force-push: NOT EXECUTED · GitHub-репозитории этим документом: NOT CREATED ·
-> `Animastor/animastor-gpu-hub` / bare `animastor-gpu-hub.git`: NOT MODIFIED ·
-> hooks: NOT MODIFIED · npm publish: NOT EXECUTED**
+> **BACKEND: SPLIT / PUBLISHED (2026-10-04, стадия C, шаг 1/4)** —
+> `git filter-repo` **ВЫПОЛНЕН** для `animastor-backend`, первый push
+> **БЕЗ force** выполнен, `Animastor/animastor-backend` = `main` =
+> bare `refs/heads/main` = **`f83f929c732d8fc490bd150e72294d6b3c6e2f92`**.
+> Полный журнал стадии C — **§11**.
+> **web / android / worker: PHYSICAL SPLIT NOT EXECUTED** (3 оставшихся bare
+> по-прежнему 0 refs / 0 objects, GitHub 0 refs — выполняются отдельно).
+> **git filter-repo для web/android/worker/gpu-hub: NOT EXECUTED.**
+> **force-push: NOT EXECUTED ни для одного репозитория.**
+> `master` монорепо, `Animastor/animastor-gpu-hub` / bare
+> `animastor-gpu-hub.git`, hooks, backup, BEFORE-snapshot,
+> `tmp/parser-audit-backup`: **NOT MODIFIED** (§11, BEFORE == AFTER).
+> **npm publish: NOT EXECUTED**
 > **R-3 = A (SELECTED) · R-3 = B: REJECTED (не исполняется)**
 > **P6 = CLOSED / PASS (6.4G ≥ 5G, 2026-10-04) · P1 = CLOSED (4 пустых GitHub-репо
-> 2026-10-03 + 4 VPS bare/hooks/remote 2026-10-04, push не выполнялся)**
+> 2026-10-03 + 4 VPS bare/hooks/remote 2026-10-04)**
 > **GO-05 = CLOSED (`NEWBRANCH=main`, owner-confirmation) · стадия B =
 > ВЫПОЛНЕНА (GO-08 backup + GO-14 BEFORE-snapshot, 2026-10-04)**
-> **FINAL PRE-SPLIT AUDIT = PASS (2026-10-04, read-only: GO-01…GO-15 + dry-run
-> execution-plan + overlap/coverage + командный лист — §9) · стадия C НЕ авторизована**
+> **GO-01…GO-15 = PASS/READY/CLOSED/N/A при перепроверке перед стадией C
+> (2026-10-04) · авторизация стадии C для backend выдана владельцем**
 
-> **Статус этого документа: read-only deliverable + статус стадии B.**
-> Все команды ниже **исполнялись только в read-only режиме** (`ls-tree`,
-> `rev-list`, `log`, `count-objects`, `du`, `df`, `show-ref`) против frozen
-> source и существующих bare-репозиториев. `git filter-repo` **не запускался**,
-> клонов `$SPLIT` **не существует** (`/tmp/split` отсутствует), **push'ей нет**
-> (новые bare/GitHub пусты). Единственное, что **создавалось** подготовительными
-> ревизиями: 4 пустых bare + hook + remote (P1, 2026-10-04) и **артефакты стадии
-> B** — `backups/animastor-pre-split-64127b9e.git` и
-> `backups/before-split-64127b9e-refs/` (2026-10-04); production-репозиторий,
-> GPU Hub, hook'и и GitHub при этом **не изменялись**.
+> **Статус этого документа: read-only deliverable + статус стадий B и C
+> (backend).** Разделы §1–§10 остались read-only: команды ниже
+> **исполнялись в read-only режиме** (`ls-tree`, `rev-list`, `log`,
+> `count-objects`, `du`, `df`, `show-ref`) против frozen source и существующих
+> bare-репозиториев. **Исполнены** (2026-10-04, стадия C, backend): §4.1.0
+> (общий блок, только проверки) + **§4.1.1** — свежий клон `$SPLIT/backend`,
+> `git filter-repo` (35 `--path`), AFTER-проверки, первый `push HEAD:refs/heads/main`
+> **без `--force`**, post-receive hook + GitHub/bare parity. Подготовительные
+> ревизии создавали 4 пустых bare + hook + remote (P1, 2026-10-04) и
+> **артефакты стадии B** — `backups/animastor-pre-split-64127b9e.git` и
+> `backups/before-split-64127b9e-refs/` (2026-10-04). **Не изменялись:**
+> production-код монорепо, `master`, GPU Hub, hook'и, backup, snapshot,
+> `tmp/parser-audit-backup`; **не выполнялись:** §4.1.2–§4.1.4 (web/android/worker),
+> §4.1.5 (gpu-hub — REJECTED), `--path-rename`, `--force`, npm publish.
 
 Авторитетный GO/NO-GO — `repository-split-final-gate.md`.
 Исполняемый командный лист — `repository-split-next-blockers.md` §4.1.0–§4.1.6.
@@ -512,43 +524,217 @@ G-P = PASS** (P1 закрыт, P6 = PASS, стадия B выполнена: bac
 решение по **`tmp/parser-audit-backup`**; (post-split) **P3** npm E401.
 **Технических BLOCKER'ов не найдено.**
 
-### 9.7 Очередь и первый шаг (ГОТОВ, НЕ ВЫПОЛНЯТЬ)
+### 9.7 Очередь и первый шаг — **ВЫПОЛНЕН ДЛЯ BACKEND (2026-10-04)**
 
 **Порядок:** `backend` → `web` → `android` → `worker` → smoke каждого репо →
 freeze монорепо + cutover B11. Шаги 1–4 независимы (отдельные свежие клоны),
 `gpu-hub` исключён (R-3 = A).
 
-**Команды первого шага (backend) — готовы и проверены, но НЕ выполнялись:**
-`repository-split-next-blockers.md` **§4.1.0 (общий блок: guard'ы backup/snapshot,
-`master == $SRC`, `check_bare_snapshot`) → §4.1.1 (`animastor-backend`)**:
-clone → `reset --hard 64127b9e` → `update-ref` → `reflog expire` →
-`filter-repo` (35 `--path`) → fsck/1045/leak/clean/root/1267 → `--follow` ×5 →
-guard'ы пустого bare и URL origin → `push HEAD:refs/heads/main` → hook mirror →
-`ls-remote` GitHub. **Запуск требует письменной авторизации владельца (стадия C).**
+**Шаг 1 (backend) — ВЫПОЛНЕН** по `repository-split-next-blockers.md`
+**§4.1.0 → §4.1.1**: clone → `reset --hard 64127b9e` → `update-ref` →
+`reflog expire` → `filter-repo` (35 `--path`, RC=0) → fsck/1045/leak/clean/
+root/1267 → `--follow` ×5 → guard'ы пустого bare и URL origin →
+`push HEAD:refs/heads/main` **без `--force`** → hook mirror → `ls-remote`
+GitHub → **bare == GitHub == `f83f929c732d8fc490bd150e72294d6b3c6e2f92`**.
+Полный журнал, точные SHA, BEFORE/AFTER и parity — **§11**.
+
+**Шаги 2–4 (web, android, worker) — НЕ ВЫПОЛНЯЛИСЬ**: требуют отдельной
+авторизации владельца. **Шаг 5 (gpu-hub) — REJECTED (R-3 = A), не исполняется.**
 
 ---
 
-## 10. NOT EXECUTED
+## 10. Что НЕ выполнялось (остаётся NOT EXECUTED)
 
-**PHYSICAL SPLIT: NOT EXECUTED.**
-**git filter-repo: NOT EXECUTED.**
-**force-push: NOT EXECUTED · GitHub-репозитории этим документом: NOT CREATED ·
-`Animastor/animastor-gpu-hub` / bare `animastor-gpu-hub.git`: NOT MODIFIED ·
-hooks: NOT MODIFIED · npm publish: NOT EXECUTED.**
+**PHYSICAL SPLIT для web / android / worker: NOT EXECUTED.**
+**git filter-repo для web / android / worker / gpu-hub: NOT EXECUTED.**
+**force-push: NOT EXECUTED ни для одного репозитория.**
+**`--path-rename`: NOT EXECUTED.**
+**`Animastor/animastor-gpu-hub` / bare `animastor-gpu-hub.git`: NOT MODIFIED ·
+hooks: NOT MODIFIED · `master` монорепо: NOT MODIFIED · npm publish: NOT EXECUTED ·
+backup / BEFORE-snapshot / `tmp/parser-audit-backup`: NOT MODIFIED.**
 
 Этот документ **не выполнял** и **не авторизует**: создание репозиториев (P1;
 4 пустых GitHub-репо созданы владельцем 2026-10-03, 4 VPS bare + hook + remote —
 подготовительной ревизией 2026-10-04), очистку диска (**не требуется: P6 закрыт
-без очистки**), выбор R-3 (решён ранее: A), `git filter-repo`, force-push,
-`--path-rename`, изменение `master`, hook'ов, production-кода и B7-тестов,
-регенерацию текущих monorepo lock-файлов, удаление `tmp/parser-audit-backup`,
-push в новые bare/GitHub и **авторизацию стадии C**.
+без очистки**), выбор R-3 (решён ранее: A), `--path-rename`, force-push,
+изменение `master`, hook'ов, production-кода и B7-тестов, регенерацию текущих
+monorepo lock-файлов, удаление `tmp/parser-audit-backup`, `npm publish`,
+split web/android/worker (шаги 2–4) и gpu-hub (§4.1.5 = REJECTED).
 
-**Выполнено подготовительными ревизиями (не этим документом как инструкцией, а
-фактически, 2026-10-04): стадия B** — только запись в **новые** каталоги
-`backups/`: mirror-backup монорепо (GO-08) и BEFORE-snapshot refs `animastor.git`
-+ `animastor-gpu-hub.git` (GO-14), плюс owner-confirmation `NEWBRANCH=main`
-(GO-05). `$BARE`, GPU Hub, hook'и и GitHub при этом не изменялись.
+**Выполнено подготовительными ревизиями (стадия B, 2026-10-04):** запись в
+**новые** каталоги `backups/` — mirror-backup монорепо (GO-08) и BEFORE-snapshot
+refs `animastor.git` + `animastor-gpu-hub.git` (GO-14), плюс owner-confirmation
+`NEWBRANCH=main` (GO-05).
+
+**Выполнено стадией C (2026-10-04):** **только backend** — см. **§11**.
+
+---
+
+## 11. Стадия C — `animastor-backend`: SPLIT / PUBLISHED (2026-10-04)
+
+> Авторизация владельца: «НАЧАТЬ ФИЗИЧЕСКИЙ SPLIT BACKEND». Объём: **шаг 1/4**
+> (`backend`). web / android / worker — **не выполнялись**; gpu-hub — §4.1.5
+> REJECTED. Выполнены §4.1.0 (общий блок) + §4.1.1 (backend) командного листа
+> дословно, включая все guard'ы и строгие `|| { echo "FAIL: …"; exit 1; }`-контроли.
+
+### 11.1 Точные SHA
+
+| Поле | Значение |
+|---|---|
+| Frozen source (`$SRC`) | **`64127b9e1dea2ac528a572b51b90a542b70c5ebb`** |
+| Docs-tip монорепо до split (`BEFORE` docs-ветки) | **`4d07dd4e1214fd4596ea17d7b9b7169baee603a9`** |
+| Docs-tip монорепо после этого docs-only коммита | `git rev-list --count 64127b9e…HEAD` (см. final-gate §0) |
+| **`master` монорепо — до и после** | **`64127b9e…` (не изменился)** |
+| `tmp/parser-audit-backup` — до и после | **`db5ff61f1079360cc848ff2fc131a12783bd97ad` (не удалён, не изменён)** |
+| **Извлечённый backend `main` (bare == GitHub)** | **`f83f929c732d8fc490bd150e72294d6b3c6e2f92`** |
+| Корневой коммит backend | **`6d12eed36c7221cf6f82bbe1e56892384fd421c3`** — «Recovery01: June 9 working state + dedup» |
+| Корневой коммит монорепо (источник корня) | `380a777339a024451090de449cce28caf5d1db29` — тот же subject |
+| Выживший rewrite, чье дерево == `$SRC`∩whitelist | `04da33ea0066e8f95b19d86ae28bc9e18c81eab2` → `f83f929c…` |
+| GPU Hub (не трогался) | `master` = `HEAD` = **`7c7778c6f313dad19eb403d8509cd297226ec7ea`** |
+
+### 11.2 Preflight GO-01…GO-15 (перед запуском, 2026-10-04)
+
+Перепроверены **фактами**, не документацией — **все PASS / READY / CLOSED / N/A,
+ни одного FAIL**:
+
+| GO | Результат |
+|---|---|
+| GO-01 | GitHub API **4 × HTTP 200**, `size=0`, `private=false`, `default_branch=main`, `git ls-remote` = **0 refs** ×4 |
+| GO-02 | 4 bare: **0 refs / 0 loose**, `HEAD=refs/heads/main` ×4 |
+| GO-03 | 4 × `post-receive` = **0755 / 91 байт**, sha256 **`6a63cb14a1f76ca1a87de81cc54a1a46361ee11c224741fe3ea234d421a3130c`**, `cmp` с шаблоном монорепо → идентичны |
+| GO-04 | `remote.github.url = git@github.com:Animastor/<name>.git` ×4 |
+| GO-05 | `NEWBRANCH=main` (единственное присваивание во всех docs) + `default_branch=main` ×4 |
+| GO-06 | `df -B1 /` → avail **6 703 718 400 B ≥ 5 368 709 120** (1.25×) |
+| GO-07 | R-3 = **A (SELECTED)**, B = REJECTED (заголовок `repository-split-r3-decision.md`) |
+| GO-08 | `$BK` существует, `rev-parse $SRC` OK, `fsck` чисто, **22 431 724 B** |
+| GO-09 | NOT APPLICABLE (R-3 = A) |
+| GO-10 | `master == $SRC == rev-parse($SRC)` = `64127b9e…` |
+| GO-11 | `git status --porcelain` монорепо = **0 строк** |
+| GO-12 | `importlib.metadata.version('git-filter-repo')` = **2.47.0**, бинарник исполняем |
+| GO-13 | `/tmp/split` отсутствует (в т.ч. `backend`, `web`, `android`, `worker`, `gpu-hub`) |
+| GO-14 | `MANIFEST.sha256` **11/11 OK**; 4 неизменяемые refs == snapshot дословно; число refs **6/6**; docs-ветка — fast-forward; GPU Hub refs == snapshot дословно |
+| GO-15 | `merge-base --is-ancestor $SRC $BRANCH` = **YES**; whitelist = **1635**; `ls-remote Animastor/animastor.git HEAD` = `64127b9e…` |
+
+### 11.3 Выполнение (§4.1.0 + §4.1.1)
+
+1. Общий блок §4.1.0: guard'ы `$BK` / `$SNAP` / `check_bare_snapshot` /
+   GPU Hub / `master == $SRC` — **все OK**; `BEFORE` сохранён на диск
+   (`/tmp/split/.BEFORE.refs`, 6 refs).
+2. **Свежий клон** `git clone --no-local --single-branch --branch $BRANCH
+   /home/animastor/repos/animastor.git /tmp/split/backend` →
+   `git reset --hard $SRC` → `git update-ref refs/remotes/origin/$BRANCH $SRC`
+   → `git reflog expire --expire=now --all` (**reflog = 0 entries**, без неё
+   sanity-check потребовал бы запрещённого `--force`).
+   HEAD ровно **`64127b9e…`**, рабочее дерево чистое, один remote `origin`.
+3. **`git filter-repo`** — ровно **35 `--path`** из §4.1.1, **без `--path-rename`,
+   без `--force`, без `--path workflow.json`** → `RC=0`
+   («New history written», «Completely finished»).
+4. AFTER-проверки — §11.4.
+
+### 11.4 AFTER-проверки backend — все PASS
+
+| Проверка | Ожидание | Факт |
+|---|---|---|
+| `git fsck --no-progress` | чисто | **PASS** (0 ошибок) |
+| `git ls-files \| wc -l` | **1045** | **1045 PASS** |
+| leak-паттерн §3.2 (запрещённые пути) | **0** | **0 PASS** |
+| `git status --porcelain` | пусто | **0 PASS** (clean) |
+| исторический корень | `Recovery01: June 9 working state + dedup` | **PASS** |
+| `git rev-list --count HEAD` | **1267** | **1267 PASS** |
+| `git log --follow` ×5 (§3.2) | все логируются | **5/5 PASS** (1/2/1/2/3 коммита) |
+| tracked set == whitelist §4.1.1 | побайтово | **IDENTICAL** (`diff` пуст при `core.quotepath=false`) |
+| отсутствие `frontends/`, `tools/`, `packages/animastor-{worker,gpu-hub,web-*}` | 0 / 0 / 0 / 0 / 0 | **PASS** |
+| отсутствие `apk-build.sh`, `build-apk.sh`, `app-web-rebuild.sh`, `gpu-hub-rebuild.sh`, `ANDROID_WEB_PARITY.md`, `workflow.json`, `local.properties`, root `package.json` | 0 ×8 | **PASS** |
+| root layout (§3.2, 21 entry) | совпадает | **PASS** (`packages/` = ровно 15 backend-пакетов, `docs/` = **288**) |
+| web/android/worker/GPU Hub файлы | отсутствуют | **0 PASS** (см. таблицу выше) |
+
+### 11.5 Lineage от frozen source — ПОДТВЕРЖДЁН
+
+| Проверка | Результат |
+|---|---|
+| `.git/filter-repo/ref-map` | `64127b9e…` → **`f83f929c…`** (`refs/heads/c21.4-…`) |
+| Дерево `HEAD` vs `$SRC` ∩ 35-path whitelist | **`git ls-tree -r` обоих наборов идентичны** |
+| Все 1267 «старых» SHA из `commit-map` — предки `$SRC` | **1267/1267 YES, 0 нарушений** |
+| Все 1267 «новых» SHA существуют в извлечённом репо | **1267/1267 YES** |
+| Корень: `380a7773…` → `6d12eed3…` | **PASS** (subject идентичен) |
+| `$SRC` сам в `commit-map` | → `0000…` (**dropped**): `$SRC` менял **только** `packages/animastor-gpu-hub/tools/{g4-standalone-build,g5-artifact-integrity,standalone-fixture}.*` — **вне** backend-whitelist → после фильтрации коммит пустой. `git diff --name-only 04da33ea $SRC -- <35 paths>` = **0 файлов** → вклад `$SRC` в backend-дерево ровно **0**, содержимое = `$SRC`∩whitelist. Это **ожидаемое** поведение `--empty=drop`, а не потеря истории |
+| Число dropped (пустых после фильтрации) | **386** из 1653 → **1267 сохранено** = точному `git rev-list --count $SRC -- <35 paths>` |
+
+### 11.6 Bare до push / push / hook
+
+| Проверка | Ожидание | Факт |
+|---|---|---|
+| `refs` в `$NEW` **до** push | **пусто** (I-17) | **0 refs, 0 objects PASS** |
+| `symbolic-ref HEAD $NEW` | `refs/heads/main` **до** push | **PASS** |
+| hook | 0755 / 91 байт / byte-identical | **PASS** (`6a63cb14…`) |
+| `remote.github.url` | `git@github.com:Animastor/animastor-backend.git` | **PASS** |
+| guard `remote get-url origin` == `$NEW` | равенство | **PASS** (push не в тот remote исключён, D-1) |
+| push | `git push -u origin HEAD:refs/heads/main`, **без `--force`** | **RC=0**, `* [new branch] HEAD -> main` |
+| post-receive | `git push --mirror github` | **`remote: Mirroring to GitHub...` → `* [new branch] main -> main`** |
+| bare после push | `refs/heads/main = f83f929c…` + `refs/remotes/github/main = f83f929c…` | **PASS**; `fsck` чисто; `in-pack 13415 / packs 1 / size-pack 8203` |
+
+`refs/remotes/github/main` в bare — **remote-tracking ref**, который создаёт
+git после собственного `--mirror`-push hook'а (у `remote.github` есть fetch
+refspec `+refs/*:refs/*`); на момент отправки в bare был **только**
+`refs/heads/main`, поэтому на GitHub лишних refs нет (§11.7).
+
+### 11.7 GitHub / bare parity — СОВПАДАЮТ
+
+| Проверка | Результат |
+|---|---|
+| `git ls-remote git@github.com:Animastor/animastor-backend.git` | **ровно 2 записи**: `HEAD` и `refs/heads/main` = **`f83f929c732d8fc490bd150e72294d6b3c6e2f92`** |
+| лишние refs на GitHub (`master`, `refs/tags/*`, `refs/remotes/*`, `tmp/parser-audit-backup`) | **0 — отсутствуют** |
+| parity bare ↔ GitHub | **`refs/heads/main` идентичны: `f83f929c…` == `f83f929c…` PASS** |
+| GitHub API | `full_name=Animastor/animastor-backend`, `default_branch=main`, `private=false`, `fork=false`, **`pushed_at=2026-10-04T08:29:14Z`** (`size=0` — GitHub пересчитывает lazily, авторитет — `ls-remote`) |
+| число refs bare | 1 head (`main`) + 1 remote-tracking — как и ожидалось (§9.3) |
+
+### 11.8 Контроль монорепо / GPU Hub / артефактов — НЕ ИЗМЕНЕНЫ
+
+**BEFORE (сессионный, снят до фильтрации) == AFTER (перед push):**
+
+```
+4d07dd4e1214fd4596ea17d7b9b7169baee603a9 refs/heads/c21.4-physically-extract-analysis-from-backend
+4d07dd4e1214fd4596ea17d7b9b7169baee603a9 refs/remotes/github/c21.4-physically-extract-analysis-from-backend
+64127b9e1dea2ac528a572b51b90a542b70c5ebb refs/heads/master
+64127b9e1dea2ac528a572b51b90a542b70c5ebb refs/remotes/github/master
+db5ff61f1079360cc848ff2fc131a12783bd97ad refs/heads/tmp/parser-audit-backup
+db5ff61f1079360cc848ff2fc131a12783bd97ad refs/remotes/github/tmp/parser-audit-backup
+```
+
+| Контроль | Результат |
+|---|---|
+| `BEFORE == AFTER` (6 refs монорепо) | **IDENTICAL PASS** |
+| `master == 64127b9e…` | **PASS** (не изменён) |
+| `check_bare_snapshot` (GO-14) | **PASS** — immutable дословно, docs-ветка fast-forward |
+| `HEAD` / `config --local` / hook sha256 монорепо vs snapshot | **IDENTICAL PASS** |
+| `count-objects` монорепо vs snapshot | loose `1751 → 1759` = **+8 от docs-коммита `4d07dd4e` (07:26), запушенного ДО старта сессии при snapshot 04:04** → документационная ветка, тот же легальный fast-forward (D-10); **объекты не добавлялись этим запуском** |
+| GPU Hub `for-each-ref` vs snapshot | **IDENTICAL PASS** (2 refs, `master=HEAD=7c7778c6…`) |
+| GPU Hub `HEAD` / `config` / `count-objects` / hook sha vs snapshot | **IDENTICAL PASS** → byte-for-byte / ref-for-ref неизменен |
+| backup `$BK` | **22 431 724 B, не пересоздавался, `fsck` чисто** |
+| `backups/before-split-64127b9e-refs/` | **не изменён**, `MANIFEST.sha256` **11/11 OK**, режим 0444/0555 сохранён |
+| `tmp/parser-audit-backup` | **`db5ff61f…` присутствует, не удалён** |
+| рабочее дерево монорепо | `git status --porcelain` = **0 строк** (изменены только `docs/architecture/*.md` этим коммитом) |
+| 3 оставшихся bare (web/android/worker) | **0 refs / 0 objects** — не тронуты |
+
+### 11.9 Финальная проверка опубликованного backend (clone из GitHub)
+
+Клон `git clone git@github.com:Animastor/animastor-backend.git /tmp/split/backend-github-verify`:
+
+| Проверка | Ожидание | Факт |
+|---|---|---|
+| `HEAD` / ветка | `f83f929c…` / `main` | **PASS** |
+| `git status --porcelain` | 0 строк | **0 PASS** (clean) |
+| tracked files | **1045** | **1045 PASS** |
+| leak §3.2 | 0 | **0 PASS** |
+| commits | **1267** | **1267 PASS** |
+| root commit | `6d12eed3…` «Recovery01: June 9 working state + dedup» | **PASS** |
+| `git fsck` | чисто | **PASS** |
+| чужие компоненты (`frontends/`, `tools/`, `packages/animastor-{worker,gpu-hub,web-*}`) | 0 | **0 PASS** |
+| lineage frozen source | — | **§11.5 PASS** |
+
+**СТАТУС BACKEND = SPLIT / PUBLISHED.**
+
+---
 
 Изменены **только** `docs/architecture/*.md` — этим **одним** docs-only commit'ом
 (см. final-gate §0/§6 и handoff §1).

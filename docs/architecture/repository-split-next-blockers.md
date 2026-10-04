@@ -1122,7 +1122,19 @@ P3 (npm) — **не** часть split-очереди: он нужен толь�
 монорепо, создание/удаление/замена существующего GPU Hub, npm publish,
 изменение production-кода, изменение B7-тестов, регенерация текущих lock'ов.
 
-### 4.1 Exact command sheet (copy/paste; **сейчас НЕ выполнять**)
+### 4.1 Exact command sheet (copy/paste)
+
+> **СТАТУС ИСПОЛНЕНИЯ (2026-10-04):** **§4.1.0 + §4.1.1 (backend) —
+> ВЫПОЛНЕНО** владельцем-авторизованной стадией C: свежий клон →
+> `reset --hard $SRC` → `update-ref` → `reflog expire` → `filter-repo` (35
+> `--path`, **без `--path-rename`, без `--force`, без `--path workflow.json``,
+> RC=0) → AFTER-проверки **1045 файлов / 1267 коммитов / leak 0 / fsck чисто /
+> clean tree / корень `Recovery01` / `--follow` 5/5** → guard'ы пустого bare и
+> `origin == $NEW` → **первый push `HEAD:refs/heads/main` без `--force`** →
+> post-receive hook → GitHub = bare = **`f83f929c732d8fc490bd150e72294d6b3c6e2f92`**
+> (ровно 2 refs, лишних нет). Журнал — `repository-split-execution-pack.md` **§11**.
+> **§4.1.2 (web), §4.1.3 (android), §4.1.4 (worker) — НЕ ВЫПОЛНЯЛИСЬ** (отдельная
+> авторизация владельца); **§4.1.5 (gpu-hub) — REJECTED, НЕ ИСПОЛНЯЕТСЯ**.
 
 Все пути и SHA сверены с реальным деревом VPS; счётчики `git ls-files | wc -l`
 пересчитаны **на frozen source `64127b9e…`** (см. `repository-split-final-gate.md`
@@ -1266,6 +1278,13 @@ echo "OK: monorepo (GO-14) + GPU Hub == BEFORE-snapshot"
 
 #### 4.1.1 `animastor-backend` — шаг 1/7
 
+> **СТАТУС (2026-10-04): ВЫПОЛНЕНО.** Блок исполнен дословно (включая все
+> guard'ы и строгие контроли). Результат: `filter-repo` RC=0 → **1045 файлов /
+> 1267 коммитов / leak 0 / fsck чисто / clean tree / корень `Recovery01` /
+> `--follow` 5/5** → первый push **без `--force`** → hook → bare == GitHub ==
+> **`f83f929c732d8fc490bd150e72294d6b3c6e2f92`**. Журнал —
+> `repository-split-execution-pack.md` **§11**.
+
 ```sh
 cd "$SPLIT"
 test ! -e "$SPLIT/backend" || { echo "REFUSE: $SPLIT/backend существует — нужен свежий клон (повторный запуск в тот же каталог запрещён)"; exit 1; }
@@ -1347,6 +1366,9 @@ Smoke checks — §8, `animastor-backend` (в т.ч. `cd backend && npm ci`, `np
 
 #### 4.1.2 `animastor-web` — шаг 2/7
 
+> **СТАТУС (2026-10-04): НЕ ВЫПОЛНЯЛОСЬ.** Bare `animastor-web.git` = 0 refs /
+> 0 objects, GitHub = 0 refs. Шаг выполняется отдельной авторизацией владельца.
+
 ```sh
 cd "$SPLIT"
 test ! -e "$SPLIT/web" || { echo "REFUSE: $SPLIT/web существует — нужен свежий клон"; exit 1; }
@@ -1414,6 +1436,9 @@ Smoke checks — §8, `animastor-web` (`cd frontends/app && npm ci`, `npm run bu
 
 #### 4.1.3 `animastor-android` — шаг 3/7
 
+> **СТАТУС (2026-10-04): НЕ ВЫПОЛНЯЛОСЬ.** Bare `animastor-android.git` = 0 refs /
+> 0 objects, GitHub = 0 refs. Шаг выполняется отдельной авторизацией владельца.
+
 ```sh
 cd "$SPLIT"
 test ! -e "$SPLIT/android" || { echo "REFUSE: $SPLIT/android существует — нужен свежий клон"; exit 1; }
@@ -1452,6 +1477,9 @@ git ls-remote https://github.com/Animastor/animastor-android.git "refs/heads/$NE
 Smoke checks — §8, `animastor-android`: npm **не выполняется** (0 package.json); при наличии JDK+SDK — `./gradlew --offline tasks` (опционально).
 
 #### 4.1.4 `animastor-worker` — шаг 4/7
+
+> **СТАТУС (2026-10-04): НЕ ВЫПОЛНЯЛОСЬ.** Bare `animastor-worker.git` = 0 refs /
+> 0 objects, GitHub = 0 refs. Шаг выполняется отдельной авторизацией владельца.
 
 ```sh
 cd "$SPLIT"
