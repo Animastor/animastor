@@ -43,7 +43,7 @@ decoupling), Phase 9C/9D (contracts/worker).
 | git / python | 2.34.1 / 3.10.12 | достаточно ✓ |
 | История | 1632 коммита; bare и working copy идентичны | фильтрация по полному клону ✓ |
 | Bare ↔ mirror | post-receive `git push --mirror github`; SSH-ключ `github_ed25519` | схема §7.2 воспроизводима для новых bare ✓ |
-| Размер | pack 55.7 MiB; диск 3.5 GB свободно | 5 клонов + рабочих деревьев достаточно, но впритык — P6 |
+| Размер | pack 55.7 MiB; диск **исторически** 3.5 GB свободно (**2026-10-04: 6.4G ≥ 5G → P6 CLOSED/PASS**) | 4–5 клонов + рабочих деревьев достаточно (запас после 2026-10-04 нормальный) |
 | node_modules в git | 0 tracked файлов; dist/ не tracked | клон чист, фильтрации мешает только размер рабочего дерева |
 | Симлинки | только 3 в `node_modules` (untracked) + untracked внутри пакетов | в историю не попадают; физически не переносятся ✓ |
 | Секреты | `.env`, `proxy/conf/.htpasswd` — untracked/ignored; `LETS_ENCRYPT_DIR` — вне репо | в split-историю не попадут ✓ |
@@ -213,7 +213,7 @@ Generated-артефакты, получаемые НЕ из Git-истории:
 | animastor-web | origin=VPS bare | `--mirror` → `Animastor/animastor-web` | NPM_TOKEN | G1, G2 (13 pkgs), G6, G7-канон (parity) |
 | animastor-android | origin=VPS bare | `--mirror` → `Animastor/animastor-android` | (опц.) signing keystore | G6, G7-snapshot |
 | animastor-worker | origin=VPS bare | `--mirror` → `Animastor/animastor-worker` | GITHUB_TOKEN (Release zip + sha256) | G3 (protocol drift), G6, G7-snapshot |
-| animastor-gpu-hub | origin=VPS bare | `--mirror` → `Animastor/animastor-gpu-hub` | GHCR_TOKEN (или GITHUB_TOKEN к ghcr.io), артефактные токены только на build-time fetch | G4 (standalone build), G5 (artifact integrity), G6, G7-snapshot |
+| animastor-gpu-hub | **⛔ REJECTED при R-3 = A — НЕ ИСПОЛНЯТЬ** (`--mirror` в `Animastor/animastor-gpu-hub` **запрещён бессрочно**) | — | — | — |
 
 Hook-требования (§7.2 prep-plan): один bare = один hook = один mirror-remote;
 guard по basename; hooks создаются **до** первого push; монорепо-hook не меняется.
@@ -242,12 +242,12 @@ guard по basename; hooks создаются **до** первого push; мо
 
 | ID | Что | Тип | Снятие | Класс |
 |---|---|---|---|---|
-| P1 | 4 новых GitHub-репозиториев не созданы (GPU Hub уже существует — R-3 = A) | организационное | создать пустые (без README), default `master`; bare + hooks — §7.2 prep-plan | **HARD** — bare/GitHub/hooks должны существовать до первого push (§9, шаг 5) |
+| P1 | **2026-10-04: 4 пустых GitHub-репо СОЗДАНЫ владельцем** (200 / `size=0` / 0 refs, `default_branch=main`); **bare + hooks отсутствуют**; GPU Hub уже существует — R-3 = A | организационное | `git init --bare` 4 каталогов в `/home/animastor/repos/` + `post-receive` + remote `github`; **gpu-hub — ничего не создавать** | **HARD (частично закрыт)** — bare/GitHub/hooks должны существовать до первого push (§9, шаг 5) |
 | P2 | работа в `c21.4-…`, `master` отстаёт на 136 коммитов | git-гигиена | FF `master` до c21.4 (§7.1 prep-plan — fast-forward по построению) | **HARD** — filter-repo запускается только на финальной линейной истории |
 | P3 | npm-токен недействителен (E401) — publish недоступен, npm install публичных пакетов работает | секреты | выпустить/обновить NPM_TOKEN; до этого publish-ветка CI не пройдёт | **POST-SPLIT** — сам filter-repo не блокирует; обязателен для publish-CI после split |
 | P4 | untracked root `package.json` / `workflow.json` / `local.properties` | данные | решение зафиксировано (этот документ): `workflow.json` — **RETIRE** (§2.1, §2.6: runtime не читает, mount мёртв, из whitelist исключён); `local.properties` — **VPS-local**, из whitelist §8.3 исключён (§2.3); root `package.json` — RETIRE (B12). До split: физически удалить каталог-заглушку `workflow.json` | **HARD** — определяет выполняемые whitelist'ы |
 | P5 | CI отсутствует во всех будущих репо (`.github/` нет) | процесс | создать workflows до split (§11 prep-plan шаг 4); минимум G1–G5 (§10 prep-plan) | **HARD** — §10 prep-plan: G1–G5 до физического split |
-| P6 | диск 3.5 GB свободно (97% занято) | ресурсы | освободить ≥3 GB (5 клонов×~60 MB + working trees + docker-контекст) | **HARD** — клон/filter-repo могут упасть посреди операции |
+| P6 | диск исторически 3.5 GB свободно (97% занято); **актуально 2026-10-04: 6 839 934 976 B ≈6.4 GiB ≥ 5G** | ресурсы | ~~освободить ≥3 GB~~ — **не требуется** (порог ≥5G выполнен без очистки) | **CLOSED / PASS** — не блокирует |
 
 Блокеров, требующих изменения архитектуры/кода/плана: **нет**. B1–B12 —
 обязательные этапы исполнения ДО filter-repo (§9, шаги 1–4), а не опция:

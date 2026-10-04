@@ -2,9 +2,10 @@
 
 > **PHYSICAL SPLIT: NOT EXECUTED**
 > **git filter-repo: NOT EXECUTED**
-> **force-push: NOT EXECUTED · GitHub-репозитории: NOT CREATED ·
+> **force-push: NOT EXECUTED · GitHub-репозитории этим документом: NOT CREATED ·
 > `master` / `Animastor/animastor-gpu-hub` / hooks / npm publish: NOT MODIFIED ·
-> **R-3 = A (SELECTED) · R-3 = B: REJECTED** · очистка диска: НЕ ВЫПОЛНЯЛАСЬ**
+> **R-3 = A (SELECTED) · R-3 = B: REJECTED** · очистка диска: НЕ ВЫПОЛНЯЛАСЬ ·
+> **P6 = CLOSED / PASS (2026-10-04) · P1 = PARTIAL**
 
 > **Статус документа: только подготовка и документация.** Все числа ниже получены
 > **read-only** (`df`, `du`, `git count-objects`, `git clone` во временный каталог
@@ -25,8 +26,8 @@
 
 | ID | Блокер | Статус | Кто закрывает |
 |---|---|---|---|
-| **P1** | 4 GitHub-repo + 4 bare + hook + remote `github` | **BLOCKED** — API: 4 × HTTP **404** (`animastor-backend`, `-web`, `-android`, `-worker`); `Animastor/animastor` = 200, `Animastor/animastor-gpu-hub` = 200 | owner |
-| **P6** | диск ≥ задокументированного порога | **FAIL** — avail `2 966 122 496 B` < `5 368 709 120 B` (≥5G). **Измеренное** требование split ≈ **431 MB** пик / **1 GiB** минимум → текущий запас = **2.76×** минимума, но **0.55×** задокументированного порога. Перебазировка порога — **решение владельца**; ничего не удалялось | host / owner |
+| **P1** | 4 GitHub-repo + 4 bare + hook + remote `github` | **PARTIAL (2026-10-04)** — GitHub-часть **ГОТОВА**: API **4 × HTTP 200** (`animastor-backend`, `-web`, `-android`, `-worker`), `size=0`, **0 refs** (`git ls-remote` ssh rc=0), `default_branch=main`, созданы 2026-10-03T23:53–23:55Z; `Animastor/animastor` = 200, `Animastor/animastor-gpu-hub` = 200. **Локальная часть BLOCKED:** `/home/animastor/repos/` = только `animastor.git` + `animastor-gpu-hub.git` → **4 bare / hook / remote `github` отсутствуют** (GO-02…GO-04) | owner |
+| **P6** | диск ≥ задокументированного порога | **CLOSED / PASS (2026-10-04)** — `df -B1 /` → avail **`6 839 934 976 B`** ≥ `5 368 709 120 B` (≥5G) → **1.27×** порога и **6.4×** измеренного минимума (**431 MB** пик / **1 GiB** минимум). **Очистка не выполнялась и не требуется** (перебазировка порога не понадобилась). Историческое pre-cleanup: `2 966 122 496 B` (2026-10-03, **FAIL**) — только audit trail | **нет** |
 | **R-3** | A (сохранить) / B (заменить) GPU Hub | **CLOSED — A (SELECTED), B = REJECTED** (`repository-split-r3-decision.md`); `Animastor/animastor-gpu-hub` = 200, `7c7778c`, **не изменён и не будет меняться** | закрыто |
 | **I-16** | в новых bare нет remote `github` → hook `git push --mirror github` упадёт | **НАЙДЕН В ЭТОЙ РЕВИЗИИ** — закрывается в P1, до первого push | закрывается в P1 |
 | **I-17** | непустой GitHub-repo → non-fast-forward → нужен **запрещённый** force-push | **НАЙДЕН В ЭТОЙ РЕВИЗИИ** — требование «repo пустой» в P1 (§2) | owner при создании |
@@ -45,11 +46,11 @@
 |---|---|---|
 | Репозитории | `Animastor/animastor-backend` · `Animastor/animastor-web` · `Animastor/animastor-android` · `Animastor/animastor-worker` | §FINAL SPLIT HANDOFF п.3; **GPU Hub отдельно НЕ создавать** — `Animastor/animastor-gpu-hub` уже существует (200) |
 | **visibility** | **public** (`private: false`, `visibility: "public"`) | консистентно с `Animastor/animastor` (`private=false`, `visibility=public`) и `Animastor/animastor-gpu-hub` (`private=false`). **Техническое требование:** командные проверки `git ls-remote https://github.com/Animastor/<name>.git` в §4.1.1–§4.1.4 работают **без credentials только для публичных** репо; при private репо эти проверки дадут 401/404 и ложно покажут провал |
-| **default branch** | на момент создания — **не задан** (репо без коммитов); фактическое имя задаётся **первым push** | GitHub API: `default_branch=""`, `size=0`, `pushed_at=null` до первого push. После push — проверить `default_branch == $NEWBRANCH`, при расхождении `PATCH /repos/Animastor/<name>` с `{"default_branch":"$NEWBRANCH"}` |
+| **default branch** | на момент создания — **не задан** (репо без коммитов); фактическое имя задаётся **первым push** | **Факт 2026-10-04:** GitHub API возвращает `default_branch="main"` (предпочтение аккаунта), `size=0`, **0 refs** (`git ls-remote` пусто), `pushed_at=2026-10-03T23:5x:xxZ` (= created_at — API заполняет его уже при создании; **`pushed_at=null` не наблюдается**, поэтому критерий пустоты — `size=0` **и** 0 refs). После первого push — проверить `default_branch == $NEWBRANCH`, при расхождении `PATCH /repos/Animastor/<name>` с `{"default_branch":"$NEWBRANCH"}` |
 | **NEWBRANCH** | `$NEWBRANCH` из §4.1.0 (**сейчас `main`**) — **единственный** источник имени ветки | §FPSG.5 Этап 1 упоминает `master` (историческая запись), матрица §B9.2 триггеры — `main`; правится **только** переменная `$NEWBRANCH`. В `git init --bare` ветка по умолчанию `master` (`init.defaultBranch` не задан) → **обязательна** строка `git -C "$NEW" symbolic-ref HEAD "refs/heads/$NEWBRANCH"` **до** push (уже в §4.1.x) |
-| **Пустота до первого push** | **ничего не добавлять**: без README, LICENSE, `.gitignore`, без `git init`, без веток | иначе первый push = non-fast-forward → потребуется `--force`, а **force-push запрещён**. Признаки «пусто»: `size = 0`, `pushed_at = null`, `default_branch = ""`, `contents` пусто/404 |
+| **Пустота до первого push** | **ничего не добавлять**: без README, LICENSE, `.gitignore`, без `git init`, без веток | иначе первый push = non-fast-forward → потребуется `--force`, а **force-push запрещён**. Признаки «пусто» (актуальные, 2026-10-04): **`size = 0` и `git ls-remote` возвращает 0 refs**, `contents` пусто/404. *(`pushed_at = null` / `default_branch = ""` — исторические признаки, фактически не выполняются: API отдаёт `pushed_at = created_at`, `default_branch = main`)* |
 | **Порядок создания** | 1 `animastor-backend` → 2 `animastor-web` → 3 `animastor-android` → 4 `animastor-worker` | равен очереди split §FINAL SPLIT HANDOFF §4 (**backend → web → android → worker**; слот `gpu-hub` **удалён — R-3 = A**). GPU Hub в этот список **не входит** |
-| **Bare на VPS** | `/home/animastor/repos/animastor-{backend,web,android,worker}.git` — `git init --bare` | в §4.1.x есть guard `test -d "$NEW" \|\| git init --bare`, но bare **обязан быть уже подготовлен** (hook + remote) **до** первого push |
+| **Bare на VPS** | `/home/animastor/repos/animastor-{backend,web,android,worker}.git` — `git init --bare` | в §4.1.x есть guard `test -d "$NEW" \|\| git init --bare`, но bare **обязан быть уже подготовлен** (hook + remote) **до** первого push. **Статус 2026-10-04: НЕ СОЗДАНЫ** — `/home/animastor/repos/` содержит только `animastor.git` и `animastor-gpu-hub.git` → **GO-02/GO-03/GO-04 = BLOCKED** |
 | **expected hook** | `hooks/post-receive`, **0755**, **91 байт**, байт-в-байт как в монорепо и в `animastor-gpu-hub` | см. §2.2 |
 | **remote `github`** | `git remote add github git@github.com:Animastor/<name>.git` — **обязателен до первого push** | см. **I-16** §5.1 |
 
@@ -150,14 +151,24 @@ curl -s https://api.github.com/repos/Animastor/$NAME | python3 -c "import json,s
 
 ### 3.4 Статус P6 и что решает владелец
 
-- **P6 = FAIL** относительно задокументированного порога **≥5G**: `2 966 122 496 < 5 368 709 120`.
-- **P6 = PASS** относительно измеренного минимума **1 GiB**: `2 966 122 496 ≈ 2.76 ×` минимума.
-- **Ничего не удалялось.** Кандидаты очистки (только по распоряжению владельца, как и раньше):
-  `pip cache purge` ≈4.4G → ≈7.3G; `npm cache clean --force` ≈0.8G; `/tmp`-мусор ≈1.4G.
-  Каталог `backups/` (2.93 GB) — **не трогать** (это и есть страховочный архив).
-- **Решение за владельцем (одно из):** (а) освободить ≥5G и оставить порог как есть;
-  (б) явно **перебазировать** порог на `1 073 741 824 B`, зафиксировав в
-  final-gate §1/§4 измерения §3.1–§3.3. До такого решения **P6 считается FAIL**.
+**Актуальный статус (2026-10-04): P6 = CLOSED / PASS — порог ≥5G выполнен
+без очистки.**
+
+- **P6 = PASS** относительно задокументированного порога **≥5G**:
+  `6 839 934 976 ≥ 5 368 709 120` (`df -B1 /`, перепроверка 2026-10-04;
+  `df -h /` → 6.4G; владелец фиксировал 6.5G) → **1.27×** порога,
+  **6.4×** измеренного минимума.
+- **P6 = PASS** относительно измеренного минимума **1 GiB**: `6 839 934 976 ≈ 6.4 ×`
+  минимума.
+- **Ничего не удалялось и удалять не требуется.** Кандидаты очистки из §3.1–§3.2
+  (`pip cache purge` ≈4.4G, `npm cache clean --force` ≈0.8G, `/tmp`-мусор ≈1.4G)
+  **отзываются как не нужные**; выполнять — только по отдельному распоряжению
+  владельца. Каталог `backups/` (2.93 GB) — **не трогать** (страховочный архив).
+- ~~**Решение за владельцем:** (а) освободить ≥5G / (б) перебазировать порог~~ —
+  **больше не требуется**: вариант (а) фактически достигнут (6.4G ≥ 5G) без
+  вмешательства. Перебазировка порога на `1 073 741 824 B` **не понадобилась**.
+- **Историческое состояние** (сохранено для audit trail): preflight 2026-10-03 —
+  `2 966 122 496 < 5 368 709 120` = **FAIL** (0.55× порога, 2.76× минимума).
 
 ---
 
@@ -181,7 +192,7 @@ curl -s https://api.github.com/repos/Animastor/$NAME | python3 -c "import json,s
 | Что требуется до старта | **ничего** (R-3 = A — это отказ от действий) | mirror-backup + заморозка hook + **письменное** подтверждение владельца (п.10 №4) |
 | Основной риск | аккуратный merge/бэкпорт: **7 пунктов** переноса (§R-3: `resolveArtifactDir`, `/worker-source`, 0.1.0→0.1.1, B5-тройка, Dockerfile, `tests/run-all.cjs`, `.github/workflows`) | необратимая утрата 43 коммитов без backup; активный mirror-hook может вытолкнуть частичную историю в GitHub, если заморозить поздно |
 | Что блокирует | авторинг hub-CI (D10) — до выбора A/B hub workflows не авторятся | авторинг hub-CI, **весь шаг 5 очереди**, `filter-repo` gpu-hub |
-| Статус | **не выбран** | **не выбран** |
+| Статус | **✅ SELECTED (решение зафиксировано)** | **⛔ REJECTED / NOT SELECTED — НЕ ИСПОЛНЯТЬ** |
 
 `Animastor/animastor-gpu-hub`: HTTP 200, `private=false`, `default_branch=master`,
 `size=105`, `pushed 2026-09-06T18:07:10Z`, HEAD `7c7778c`; bare
@@ -221,12 +232,12 @@ curl -s https://api.github.com/repos/Animastor/$NAME | python3 -c "import json,s
 
 | # | Пункт | Команда проверки | Ожидание | Статус |
 |---|---|---|---|---|
-| **GO-01** | **P1** — 4 репозитория существуют и пусты | `curl -s https://api.github.com/repos/Animastor/<name>` | 4 × 200; `size=0`, `pushed_at=null`, `default_branch=""`, `private=false` | **BLOCKED** (4 × 404) |
-| **GO-02** | **P1** — 4 bare подготовлены | `test -d /home/animastor/repos/<name>.git` | существует **до** push | **BLOCKED** |
-| **GO-03** | **hooks** — `post-receive` в каждом bare | `test -x "$NEW/hooks/post-receive" && test "$(wc -c < "$NEW/hooks/post-receive")" -eq 91` | 0755, 91 байт, содержимое §2.2 | **BLOCKED** (требует GO-02) |
+| **GO-01** | **P1** — 4 репозитория существуют и пусты | `curl -s https://api.github.com/repos/Animastor/<name>`; `git ls-remote git@github.com:Animastor/<name>.git` | 4 × 200; **`size=0` и 0 refs**; `private=false` (`pushed_at`/`default_branch` — см. §2.1, фактически `pushed_at=created_at`, `default_branch=main`) | **READY (2026-10-04)** — 4 × **200**, `size=0`, **0 refs**, `private=false`, `default_branch=main`, созданы 2026-10-03 |
+| **GO-02** | **P1** — 4 bare подготовлены | `test -d /home/animastor/repos/<name>.git` | существует **до** push | **BLOCKED (2026-10-04)** — `/home/animastor/repos/` = только `animastor.git` + `animastor-gpu-hub.git` |
+| **GO-03** | **hooks** — `post-receive` в каждом bare | `test -x "$NEW/hooks/post-receive" && test "$(wc -c < "$NEW/hooks/post-receive")" -eq 91` | 0755, 91 байт, содержимое §2.2 | **BLOCKED** (требует GO-02; hook существующих bare монорепо/GPU Hub **не трогались**) |
 | **GO-04** | **hooks** — remote `github` настроен (**I-16**) | `git -C "$NEW" config --get remote.github.url` | `git@github.com:Animastor/<name>.git` | **BLOCKED** (требует GO-02) |
-| **GO-05** | **NEWBRANCH** зафиксирован и согласован | `echo "$NEWBRANCH"`; `grep NEWBRANCH docs/architecture/repository-split-next-blockers.md` | одна переменная, значение подтверждено владельцем; `git -C "$NEW" symbolic-ref HEAD` == `refs/heads/$NEWBRANCH` | значение есть (`main`), **подтверждение владельца не выполнено** |
-| **GO-06** | **P6** — диск | `df -B1 /` | `avail` ≥ задокументированного порога `5 368 709 120` (или ≥ `1 073 741 824` после явной перебазировки порога владельцем) | **FAIL** — `2 966 122 496 B`; измеренный минимум покрыт (**2.76×**), порог ≥5G — нет |
+| **GO-05** | **NEWBRANCH** зафиксирован и согласован | `echo "$NEWBRANCH"`; `grep NEWBRANCH docs/architecture/repository-split-next-blockers.md` | одна переменная, значение подтверждено владельцем; `git -C "$NEW" symbolic-ref HEAD` == `refs/heads/$NEWBRANCH` | значение есть (`main`); **фактически согласовано с GitHub** (`default_branch=main` у 4 созданных репо), но **письменного подтверждения владельца нет** → **NOT YET EXECUTED** |
+| **GO-06** | **P6** — диск | `df -B1 /` | `avail` ≥ задокументированного порога `5 368 709 120` | **CLOSED / PASS (2026-10-04)** — `6 839 934 976 B` ≥ `5 368 709 120` (**1.27×** порога, **6.4×** минимума); очистка не выполнялась и не требуется; историческое `2 966 122 496 B` (2026-10-03) = FAIL → только audit trail |
 | **GO-07** | **R-3** — вариант зафиксирован | решение владельца | записано `A` или `B` | **READY = A (SELECTED)**; B = REJECTED |
 | **GO-08** | **backup** монорепо | `test -d "$BK" && git -C "$BK" rev-parse 64127b9e…^{commit}"` | exit 0; `$BK` = `backups/animastor-pre-split-64127b9e.git` | **не выполнялся** (стадия B) |
 | **GO-09** | ~~backup/freeze GPU Hub~~ | — | — | **NOT APPLICABLE (R-3 = A)** — существующий GPU Hub не пишется, откат не нужен; пункт исключён из GO-условий |
@@ -237,13 +248,22 @@ curl -s https://api.github.com/repos/Animastor/$NAME | python3 -c "import json,s
 | **GO-14** | **monorepo refs unchanged** — фиксация ДО старта | `BEFORE=$(git -C "$BARE" for-each-ref --format='%(objectname) %(refname)' \| sort)` | значение сохранено; **после каждого репо** сверяется `AFTER` (§4.1.0) | выполняется на стадии B |
 | **GO-15** | ancestry / whitelist / SSH | `merge-base --is-ancestor $SRC $BRANCH`; `git ls-tree -r --name-only $SRC \| wc -l`; `git ls-remote git@github.com:Animastor/animastor.git HEAD` | YES; 1635; `64127b9e…` | **READY** (все три проверены) |
 
-**Текущее состояние: GO-01…GO-04 = BLOCKED · GO-06 = FAIL · GO-07 = READY (A) ·
-GO-09 = NOT APPLICABLE · GO-08 = не выполнялся → итоговый вердикт `NO-GO`
-(остались P1 и P6).**
+#### Распределение пунктов по категориям (перепроверка 2026-10-04)
 
-**GO** наступает только после: закрытия P1 (GO-01…GO-04, GO-05),
-закрытия P6 (GO-06). **GO-07 = READY (R-3 = A), GO-09 = NOT APPLICABLE**;
-выполнения стадии B (GO-08) и GO-14.
+| Категория | Пункты |
+|---|---|
+| **CLOSED** (закрыто фактически, подтверждено read-only) | **GO-06 (P6)** — 6 839 934 976 B ≥ 5G · **GO-07** (R-3 = A) · **GO-09** (N/A при A) · **GO-10** (frozen SHA / `master` == source) · **GO-11** (clean tree) · **GO-12** (`git-filter-repo` 2.47.0) · **GO-13** (`/tmp/split` отсутствует) · **GO-15** (ancestry / 1635 / SSH) |
+| **READY** (проверено, исполнения не требует) | **GO-01** — 4 GitHub-repo 200 / `size=0` / 0 refs · **GO-05**-значение (`main`, согласуется с GitHub) |
+| **BLOCKED** (нужен владелец/внешнее) | **GO-02** (4 bare отсутствуют) · **GO-03** (hook'и) · **GO-04** (remote `github`, I-16) — все трое требуют GO-02 · **P3** npm E401 (post-split publish, не в GO-таблице) |
+| **NOT YET EXECUTED** (сознательно не выполнялось) | **GO-05**-подтверждение владельцем · **GO-08** (backup, стадия B) · **GO-14** (snapshot refs, стадия B) · **физический split** · **`git filter-repo`** · **force-push** · P4-гигиена · удаление `tmp/parser-audit-backup` · авторинг workflows · `npm publish` |
+
+**Итоговый вердикт: `NO-GO` — физический split НЕ авторизован.
+GO НЕ установлен автоматически.** Сняты: **P6 (GO-06 = CLOSED/PASS)**,
+**R-3 (GO-07 = READY A)**, **P1-GitHub (GO-01 = READY)**.
+**Осталось:** GO-02/GO-03/GO-04 (4 bare + hook + remote `github` — owner),
+GO-05 (письменное подтверждение `$NEWBRANCH`), плюс стадия B (GO-08, GO-14).
+**PHYSICAL SPLIT / `git filter-repo` / force-push = NOT EXECUTED** — и они
+остаются таковыми до отдельной авторизации владельцем.
 
 ---
 
@@ -251,7 +271,16 @@ GO-09 = NOT APPLICABLE · GO-08 = не выполнялся → итоговый
 
 | Проверка | Результат |
 |---|---|
-| `df -B1 /` | avail `2 966 122 496 B`, 98 % |
+| `df -B1 /` (2026-10-03, исторически) | avail `2 966 122 496 B`, 98 % |
+| **`df -B1 /` (2026-10-04, эта ревизия)** | total `105 496 965 120`, used `94 139 928 576`, **avail `6 839 934 976 B` ≈6.4 GiB** (`df -h /` → 6.4G) → **P6 PASS**; очистка не выполнялась |
+| **GitHub API GET ×4 (2026-10-04)** | `animastor-backend/-web/-android/-worker` = **200**, `private=false`, **`size=0`**, `default_branch=main`, `pushed_at=2026-10-03T23:5x:xxZ` → **GO-01 READY** |
+| **`git ls-remote git@github.com:Animastor/<name>.git` ×4 (2026-10-04)** | exit 0, **0 refs** (SSH-ключ авторизован; пустые репо) |
+| **`ls /home/animastor/repos`** | только `animastor.git`, `animastor-gpu-hub.git` → **4 bare отсутствуют (GO-02…GO-04 BLOCKED)** |
+| **`git branch -a`, `git show-ref` (`tmp/parser-audit-backup`)** | `db5ff61f` существует локально, в `origin` и в bare → **не удалена** |
+| **`workflow.json`, `frontends/android/docker-compose.yml:41`** | каталог существует; строка mount осталась → **P4 NOT YET EXECUTED** |
+| **`.github/` (tree + GitHub API)** | `git ls-tree 64127b9e` → 0 файлов; `Animastor/animastor/contents/.github/workflows` → **404** → **P5 фактически подтверждён** |
+| **`npm whoami`** | **E401** → P3 открыт (post-split) |
+| **`git rev-parse master` / `origin/master`** | `64127b9e…` == source → **P2/CLOSED, GO-10 READY** |
 | `du -sb` bare / backups | `34 243 705` / `273 015` / `2 933 881 591` |
 | `git count-objects -v` в `$BARE` | `packs 4`, `size-pack 22 797 KiB`, loose 1689 / 14 052 KiB |
 | GitHub API GET ×6 | `animastor` 200 (public, master) · `gpu-hub` 200 (public, master, `7c7778c`) · **backend/web/android/worker = 404** |
@@ -273,7 +302,8 @@ GO-09 = NOT APPLICABLE · GO-08 = не выполнялся → итоговый
 ## 8. NOT EXECUTED
 
 **PHYSICAL SPLIT: NOT EXECUTED · git filter-repo: NOT EXECUTED ·
-force-push: NOT EXECUTED · GitHub-репозитории: NOT CREATED ·
+force-push: NOT EXECUTED · GitHub-репозитории этим документом: NOT CREATED
+(4 пустых репо созданы владельцем 2026-10-03 вне этих документов) ·
 `master`: NOT MODIFIED · `Animastor/animastor-gpu-hub` / bare
 `animastor-gpu-hub.git`: NOT MODIFIED · hooks: NOT MODIFIED ·
 npm publish: NOT EXECUTED · **R-3 = A (SELECTED) / B = REJECTED** ·

@@ -529,6 +529,10 @@ worker получает его snapshot по §5-механизму (владе�
 > помечены **REJECTED / DO NOT EXECUTE**.
 
 ```sh
+# ⛔ REFUSE — §8.5 REJECTED при R-3 = A. Существующий GPU Hub не перезаписывается.
+echo "REFUSE: §8.5 REJECTED (R-3 = A) — filter-repo gpu-hub НЕ ВЫПОЛНЯЕТСЯ" >&2
+exit 1
+# --- ниже только историческая запись варианта B; выполнение запрещено ---
 git filter-repo \
   --path packages/animastor-gpu-hub \
   --path scripts/check-artifacts.sh \
@@ -703,9 +707,15 @@ backend** — переводятся с source-level на контрактный
    pin-файл, stager на артефактах, G4+G5.
 3. **Перенос тестов** (B7) по §9; G6.
 4. **CI** (B9): workflows в монорепо-путях так, чтобы переехали без переписывания.
-5. Создать 5 bare + 5 GitHub-репо (пустых); hooks (§7.2) **до** пушей; G7.
-6. Очередь: backend → web → android → worker → gpu-hub: filter-repo клон (§8)
+5. Создать **4 bare** + **4 GitHub-репо** (пустых: backend/web/android/worker);
+   hooks (§7.2) **до** пушей; G7.
+   **Статус 2026-10-04:** GitHub-репо **уже созданы** (4 × 200, `size=0`,
+   0 refs, `default_branch=main`); **4 bare/hook ещё нет**.
+   **GPU Hub — НЕ создаётся** (R-3 = A: `Animastor/animastor-gpu-hub` существует).
+6. Очередь: backend → web → android → worker: filter-repo клон (§8)
    → push в bare → зеркало → smoke (`npm ci && npm test`, G1–G6).
+   **Шаг gpu-hub исключён из очереди навсегда — R-3 = A
+   (`repository-split-r3-decision.md`); §8.5 не исполняется.**
 7. Freeze монорепо; сверка tips; зеркало монорепо — архив.
 8. Декомпозиция деплоя (B11): пути монтирования, CI deploy.
 

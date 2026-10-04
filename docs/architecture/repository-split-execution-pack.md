@@ -2,10 +2,12 @@
 
 > **PHYSICAL SPLIT: NOT EXECUTED**
 > **git filter-repo: NOT EXECUTED**
-> **force-push: NOT EXECUTED · новых GitHub-репозиториев: NOT CREATED ·
+> **force-push: NOT EXECUTED · GitHub-репозитории этим документом: NOT CREATED ·
 > `Animastor/animastor-gpu-hub` / bare `animastor-gpu-hub.git`: NOT MODIFIED ·
 > hooks: NOT MODIFIED · npm publish: NOT EXECUTED**
 > **R-3 = A (SELECTED) · R-3 = B: REJECTED (не исполняется)**
+> **P6 = CLOSED / PASS (6.4G ≥ 5G, 2026-10-04) · P1 = PARTIAL (4 пустых GitHub-репо
+> созданы владельцем 2026-10-03; bare + hook ещё нет)**
 
 > **Статус этого документа: read-only deliverable.** Все команды ниже
 > **исполнялись только в read-only режиме** (`ls-tree`, `rev-list`, `log`,
@@ -193,6 +195,10 @@ git log --follow --format='%h %ad %s' --date=short -- docs/architecture/JOB_PROT
 | **Запрещённые пути** | `backend/`, `frontends/`, `docker-compose.yml`, `docker/compose/overlay-gpu-hub-local.yml`, `docker/e2e/`, `tools/`, `gpu-hub-rebuild.sh` (X-1), все пакеты кроме `animastor-gpu-hub` |
 
 ```sh
+# ⛔ REFUSE — §3.6 REJECTED при R-3 = A. Существующий GPU Hub не перезаписывается.
+echo "REFUSE: §3.6 REJECTED (R-3 = A) — filter-repo gpu-hub НЕ ВЫПОЛНЯЕТСЯ" >&2
+exit 1
+# --- ниже только историческая запись варианта B; выполнение запрещено ---
 test "$(git ls-files | wc -l)" -eq 44 || { echo "FAIL: 44 файла"; exit 1; }
 test -z "$(git ls-files | grep -Ev '^(packages/animastor-gpu-hub/|scripts/check-artifacts\.sh$|docker/compose/overlay-gpu-hub-standalone\.yml$|docs/architecture/(GPU_HUB_CONTRACT|JOB_PROTOCOL_V2|PHASE_10[A-Z]?_)|LICENSE$)' || :)" || { echo "FAIL: чужие пути в gpu-hub-repo"; exit 1; }
 echo "OK: gpu-hub no leak"
@@ -285,8 +291,8 @@ GPU Hub bare или GitHub, — **staged action**: требует письмен
 | **G-B** | `master` == source | `git -C $BARE rev-parse refs/heads/master` | == `$SRC` | **READY** (P2 CLOSED) |
 | **G-C** | Рабочее дерево чистое | `git status --porcelain` | 0 строк | **READY** |
 | **G-D** | `git-filter-repo` установлен | `python3 -c "import importlib.metadata as m; assert m.version('git-filter-repo')=='2.47.0'"` | без вывода, exit 0 | **READY** (2.47.0) |
-| **G-E** | **P1** — 4 целевых репо + bare + hooks | `git ls-remote https://github.com/Animastor/animastor-backend.git` (×4) + наличие `$NEW` + `post-receive` | HTTP 200 (не 404), bare есть, hook есть **до** push | **BLOCKED** — 4 × 404, owner |
-| **G-F** | **P6** — диск ≥5G | `df -B1 /` | avail ≥ 5 368 709 120 | **FAIL** — ≈2.9 GB (2 971 721 728 B на момент записи; значение колеблется — источник истины **команда**, не число) |
+| **G-E** | **P1** — 4 целевых репо + bare + hooks | `git ls-remote https://github.com/Animastor/animastor-backend.git` (×4) + наличие `$NEW` + `post-receive` | HTTP 200 (не 404), bare есть, hook есть **до** push | **PARTIAL (2026-10-04)** — GitHub: 4 × 200 / 0 refs (**READY**); **bare + hooks отсутствуют → BLOCKED (owner, I-16/I-17/I-18)** |
+| **G-F** | **P6** — диск ≥5G | `df -B1 /` | avail ≥ 5 368 709 120 | **PASS (CLOSED, 2026-10-04)** — **6 839 934 976 B** (≈6.4 GiB) ≥ 5 368 709 120 → **1.27×**; историческое значение pre-cleanup **2 971 721 728 B — FAIL** (2026-10-03, только audit trail); значение колеблется — источник истины **команда**, не число; **очистка не выполнялась и не требуется** |
 | **G-G** | **R-3** — вариант зафиксирован | решение владельца | записано явно | **READY = A (SELECTED)** — `repository-split-r3-decision.md`; B → REJECTED |
 | **G-H** | Backup монорепо создан | `test -d "$BK" && git -C "$BK" rev-parse "$SRC"` | exit 0 | не выполнялся (стадия B) |
 | **G-I** | ~~Backup/freeze GPU Hub~~ | — | — | **NOT APPLICABLE при R-3 = A** — пункт исключён из GO-условий (GPU Hub не пишется) |
@@ -295,7 +301,7 @@ GPU Hub bare или GitHub, — **staged action**: требует письмен
 | **G-L** | Whitelist не изменился | `git ls-tree -r --name-only $SRC \| wc -l` | 1635 | **READY** |
 | **G-M** | `$BARE` не тронут (`BEFORE` сохранён) | `git -C $BARE for-each-ref \| sort` | сохранено в переменную; **после каждого репо** — сверка `AFTER` | стадия B |
 | **G-N** | **P1** — remote `github` в каждом bare (**I-16**) | `git -C "$NEW" config --get remote.github.url` | `git@github.com:Animastor/<name>.git` для всех 4 | **BLOCKED** (bare не созданы) |
-| **G-O** | **P1** — репозитории **пустые** + public (**I-17**, **I-18**) | `curl … /repos/Animastor/<name>` | `size=0`, `pushed_at=null`, `default_branch=""`, `private=false` | **BLOCKED** (4 × 404) |
+| **G-O** | **P1** — репозитории **пустые** + public (**I-17**, **I-18**) | `curl … /repos/Animastor/<name>`; `git ls-remote` | **`size=0` и 0 refs**, `private=false`, `default_branch=main` (`pushed_at`/`default_branch=""` — устаревшие критерии, см. go-blockers §2.1) | **READY (2026-10-04)** — 4 × 200, `size=0`, **0 refs**, `private=false` |
 | **G-P** | **P1** — hook 91 байт, 0755, до первого push | `test -x "$NEW/hooks/post-receive" && test "$(wc -c < "$NEW/hooks/post-receive")" -eq 91` | совпадает с §2.2 pre-split-go-blockers | **BLOCKED** |
 
 **Сейчас: G-E / G-N / G-O / G-P = BLOCKED, G-F = FAIL, G-G = READY (R-3 = A),
@@ -323,7 +329,7 @@ G-I = NOT APPLICABLE, G-H / G-J / G-M = не выполнялись → GO-со�
 | **E8** | §4.1.0–4.1.5 | не задано поведение повторного запуска | добавлены guard'ы (I-3) |
 | **E9** | §4.1.0 | `git-filter-repo --version` не даёт `2.47.0` (печатает `a40bce548d2c`) | проверка через метаданные пакета (I-6) |
 | **E10** | handoff §3 P1 | «существующий `animastor-gpu-hub` … 43 коммита» — подтверждено: bare `refs/heads/master` = `7c7778c`, `refs/remotes/github/master` = `7c7778c` (синхронизированы; doc-утверждение `b95870f` устарело) | исправлено |
-| **E11** | §P6 / чек-лист §10 п.5 | числа 2.8G / 2.9G / 2.96 GB расходятся (и колеблются в течение дня) | авторитетно final-gate §1/§4 + команда `df -B1 /`; в §6 чек-лист указано значение **на момент записи** с оговоркой, что источник истины — команда |
+| **E11** | §P6 / чек-лист §10 п.5 | числа 2.8G / 2.9G / 2.96 GB расходятся (и колеблются в течение дня) — **все исторические, до очистки** | авторитетно final-gate §1/§4 + команда `df -B1 /`; с **2026-10-04** P6 = **CLOSED/PASS** (**6 839 934 976 B ≥ 5G**), значения ниже 5G сохранены только как audit trail |
 | **E12** | §FPSG.5 Этап 0 | destructive-шаги (`branch -D`, `push --delete`, `rmdir`, `pip cache purge`) смешаны с read-only | явное разделение стадий A/B/C/D (§2) |
 | **E13** | §4.1.1–4.1.5 | `symbolic-ref HEAD` после push | перенесено перед push (I-11) |
 | **E14** | final-gate §0 / §6, handoff §1 | после source изменены **2** файла; с этим документом — **3** | исправлено (final-gate §0, §6) |
@@ -352,7 +358,7 @@ G-I = NOT APPLICABLE, G-H / G-J / G-M = не выполнялись → GO-со�
 | альтернатива | `git clone -c core.logAllRefUpdates=false …` → `reset --hard` | `.git/logs` не создаётся; `reflog expire` exit **0** |
 | `set -e` + `test &&` | `bash -c 'set -e; test 1 -eq 2 && echo YES; echo end'` | печатает **`end`**, exit **0** → контроли advisory-only |
 | Версия filter-repo | `pip`-метаданные / `git-filter-repo --version` | **2.47.0** / `a40bce548d2c` |
-| Диск | `df -B1 /` | avail **2 971 721 728 B** (≈2.97 GB) → P6 **FAIL**; значение колеблется, источник истины — команда |
+| Диск | `df -B1 /` | **2026-10-04: avail 6 839 934 976 B (≈6.4 GiB) → P6 PASS/CLOSED**; историческое (2026-10-03): 2 971 721 728 B → FAIL; значение колеблется, источник истины — команда; **очистка не выполнялась и не требуется** |
 | Размеры | `du -sb` | `$BARE` **34 143 255 B**, GPU Hub bare **408K**, `.git` чекаута **74M** |
 | Статус GPU Hub | `git show-ref` в `animastor-gpu-hub.git` | `master` = `7c7778c`, `github/master` = `7c7778c` (синхронизированы) |
 | Каталоги | `ls -d /tmp/split` | **отсутствует** → ничего не исполнялось |
@@ -364,12 +370,14 @@ G-I = NOT APPLICABLE, G-H / G-J / G-M = не выполнялись → GO-со�
 
 **PHYSICAL SPLIT: NOT EXECUTED.**
 **git filter-repo: NOT EXECUTED.**
-**force-push: NOT EXECUTED · новых GitHub-репозиториев: NOT CREATED ·
+**force-push: NOT EXECUTED · GitHub-репозитории этим документом: NOT CREATED ·
 `Animastor/animastor-gpu-hub` / bare `animastor-gpu-hub.git`: NOT MODIFIED ·
 hooks: NOT MODIFIED · npm publish: NOT EXECUTED.**
 
-Этот документ **не выполнял** и **не авторизует**: создание репозиториев (P1),
-очистку диска (P6), выбор R-3, `git filter-repo`, force-push, `--path-rename`,
+Этот документ **не выполнял** и **не авторизует**: создание репозиториев (P1;
+4 пустых GitHub-репо созданы владельцем 2026-10-03 **вне** этого документа —
+bare/hook ещё нет), очистку диска (**не требуется: P6 закрыт без очистки**),
+выбор R-3 (решён ранее: A), `git filter-repo`, force-push, `--path-rename`,
 изменение `master`, hook'ов, production-кода и B7-тестов, регенерацию текущих
 monorepo lock-файлов, удаление `tmp/parser-audit-backup`.
 

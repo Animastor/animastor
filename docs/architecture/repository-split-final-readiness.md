@@ -38,13 +38,13 @@ HEAD: `7848b49d` (execution readiness, unambiguous contract)
 
 | ID | Что проверено (факт) | Статус | Блокирует |
 |---|---|---|---|
-| P1 | bare на VPS: `animastor.git` + **`animastor-gpu-hub.git` уже существуют**; GitHub: 4 репо (`backend`, `web`, `android`, `worker`) отсутствуют, `animastor-gpu-hub` **существует с историей (43 коммита)** | OPEN | Создание bare/GitHub + filter-repo. Создавать `animastor-gpu-hub` заново НЕЛЬЗЯ — см. R-3 |
+| P1 | bare на VPS: `animastor.git` + **`animastor-gpu-hub.git` уже существуют**; GitHub: **4 репо (`backend`, `web`, `android`, worker) СОЗДАНЫ владельцем 2026-10-03** (200, `size=0`, 0 refs), `animastor-gpu-hub` **существует с историей (43 коммита)**; **4 bare/hook — отсутствуют** | **PARTIAL** | Нужны 4 bare + hooks + remote `github`. Создавать `animastor-gpu-hub` заново НЕЛЬЗЯ — см. R-3 |
 | P2 | `master` = `8118f766`, является предком HEAD; FF возможен; отставание выросло до **141** коммита (в readiness — 136 на момент `2078c5d3`) | OPEN | filter-repo (и формально — шаг 1 размонорепизации) |
 | P4 | решения зафиксированы (`workflow.json` RETIRE, `local.properties` VPS-local); физически untracked-заглушка `workflow.json` (пустой каталог, root-owned) ещё существует на VPS | OPEN (гигиена) | Ничего технически: оба пути untracked, в историю не попадают; удаление каталога — до filter-repo |
 | P5 | `.github/` в монорепо отсутствует (проверено) | OPEN | filter-repo (G1–G5 негде гонять) |
-| P6 | диск: **3.5 GB свободно (97% занято)** — без изменений | OPEN | filter-repo (5 клонов + рабочие деревья) |
+| P6 | диск: исторически **3.5 GB свободно (97% занято)**; **актуально 2026-10-04: `df -B1 /` = `6 839 934 976 B` ≈6.4 GiB ≥ 5G** | **CLOSED / PASS** | **не блокирует**; очистка не выполнялась и не требуется |
 | P3 | `npm whoami` → E401: токен по-прежнему недействителен | OPEN | только npm publish после split (POST-SPLIT REQUIREMENT); `npm view`/установка публичных пакетов работает |
-| R-3 | решение по существующему `animastor-gpu-hub` (VPS bare + GitHub) не принято | OPEN | filter-repo gpu-hub (последний в очереди) |
+| R-3 | ~~решение по существующему `animastor-gpu-hub` не принято~~ **РЕШЕНО: A = SELECTED, B = REJECTED** (`repository-split-r3-decision.md`) | **CLOSED** | **не блокирует**: `filter-repo` gpu-hub **не выполняется**, шаг из очереди исключён (строка ниже — историческая запись на 2026-10-01) |
 
 ## 2. Статус B1–B12 (факты, на которых основан статус)
 
@@ -71,7 +71,7 @@ HEAD: `7848b49d` (execution readiness, unambiguous contract)
 |---|---|---|---|
 | R-1 | §4.1 prep plan: «11 `file:` + **1 скрытый**» (contracts). Факт: скрытых **2** — ещё `animastor-comfyui-workflow-connector` (6 runtime-require'ов, deps нет, только mount) | B1 шире описания: добавить в `backend/package.json` ДВА dep | внести в чек-лист B1 (сам prep plan не менять) |
 | R-2 | prep plan §9 перечисляет 7 интеграционных с `require('../../packages/animastor-gpu-hub/gpu-hub')`. Факт: таких файлов **9** (`gpu-hub-cleanup` НЕ референсит hub; дополнительно `fail-closed-worker-auth`, `private-worker-visibility`); итого source-level hub-requires: 9 root + 2 architecture (`phase10j`, `phase10t-1`) | объём B7 чуть больше заявленного; действие то же (npm/HTTP-контракт) | учесть 9 файлов в чек-листе B7 |
-| R-3 | **`animastor-gpu-hub` уже существует**: VPS bare `/home/animastor/repos/animastor-gpu-hub.git` (43 коммита, root-layout, свой `post-receive --mirror github`, GitHub-зеркало живое; `refs/remotes/github/master` отстаёт от `master` bare на 1 коммит). Это репо эпохи Phase 10L/10N (свои `ci.yml` + `ghcr-release.yml`, README, Dockerfile root-layout). §8.5 prep plan порождает **вторую, несовместимую** (filter-repo, layout `packages/animastor-gpu-hub/`) историю | filter-repo gpu-hub в тот же bare/GitHub = force-перезапись существующей истории (mirror `--mirror` затирает). Необратимо | явное решение владельца ДО filter-repo gpu-hub: (a) заархивировать/переименовать существующее репо и пушить filter-repo-версию, или (b) признать существующее репо целевым и пересмотреть §8.5 (изменение плана). До решения — NO-GO (§7) |
+| R-3 | **`animastor-gpu-hub` уже существует**: VPS bare `/home/animastor/repos/animastor-gpu-hub.git` (43 коммита, root-layout, свой `post-receive --mirror github`, GitHub-зеркало живое; `refs/remotes/github/master` отстаёт от `master` bare на 1 коммит). Это репо эпохи Phase 10L/10N (свои `ci.yml` + `ghcr-release.yml`, README, Dockerfile root-layout). §8.5 prep plan порождает **вторую, несовместимую** (filter-repo, layout `packages/animastor-gpu-hub/`) историю | filter-repo gpu-hub в тот же bare/GitHub = force-перезапись существующей истории (mirror `--mirror` затирает). Необратимо | явное решение владельца ДО filter-repo gpu-hub: (a) заархивировать/переименовать существующее репо и пушить filter-repo-версию, или (b) признать существующее репо целевым и пересмотреть §8.5 (изменение плана). До решения — NO-GO (§7). **Статус 2026-10-04: решение принято — вариант A, `repository-split-r3-decision.md`; §8.5 не применяется, B-сценарий REJECTED** |
 | R-4 | 4 architecture-теста читают hub-исходники, но в §9 prep plan disposition не внесены: `gpu-hub-contract` (читает `gpu-hub.js`), `phase10a-gpu-hub-contract-freeze` (`HUB_DIR`), `phase10d-gpu-hub-package-boundary` (`HUB_DIR`), `phase2-hub-worker-boundary` (читает файлы hub) | после split в backend эти пути отсутствуют → тесты падают, если не обработаны | добавить в объём B7: MOVE в hub-тесты или перевод на npm `@animastor/gpu-hub`/snapshot (решение при исполнении B7) |
 | R-5 | readiness §2.3: «история parity НЕ переносится» ↔ prep plan §8.3 включает `--path ANDROID_WEB_PARITY.md` в whitelist android | двусмысленность: переносить ли историю parity в android | рекомендация: выполнять §8.3 как есть (перенос истории безвреден, файл ассимилируется), §5-механизм (CI snapshot по commit+sha256) — правило владения и обновления; формулировку readiness §2.3 уточнить в следующей документной ревизии (сейчас менять запрещено) |
 | R-6 | backend script `test:connector-core` (`cd ../packages/animastor-comfyui-workflow-connector`) и root `package.json` умирают при split | первый — битый script в backend-репо; второй — удаляется B12 | `test:connector-core` заменить на `npm test --prefix node_modules/animastor-comfyui-workflow-connector` (или удалить) в рамках B2; root `package.json` — B12 после B1/B2 |
@@ -105,7 +105,7 @@ prep plan, изм. только R-2/R-4 в объёме B7):
 3. Перенос тестов: B7 по §9 + R-2 + R-4; G6.
 4. CI: B9, минимум G1–G5 зелёные; P6 параллельно.
 5. Инфраструктура публикации: 4–5 bare + GitHub + hooks (P1; gpu-hub — после решения R-3); G7.
-6. filter-repo (только здесь), очередь: backend → web → android → worker → gpu-hub; whitelist §8.n c override'ами readiness §9-6b (`workflow.json`, `local.properties` исключены); после каждого — post-split verification, push в bare, mirror-verification.
+6. filter-repo (только здесь), очередь: backend → web → android → worker (**gpu-hub исключён — R-3 = A, `repository-split-r3-decision.md`**); whitelist §8.n c override'ами readiness §9-6b (`workflow.json`, `local.properties` исключены); после каждого — post-split verification, push в bare, mirror-verification.
 7. Freeze монорепо; сверка tips bare ↔ GitHub.
 8. Deployment cutover (B11): снятие mounts, nginx-пути на выкачки.
 
@@ -155,8 +155,12 @@ rm package.json   # untracked; в Git-историю не входит; удал
 
 1. **filter-repo до FF `master`** (P2) — фильтрация не той истории.
 2. **filter-repo при < ~3 GB свободно** (P6) — падение посреди переписывания.
+   **Статус 2026-10-04: P6 = CLOSED / PASS — `df -B1 /` = `6 839 934 976 B` ≈6.4 GiB ≥ 5G,
+   очистка не выполнялась и не требуется** (порог ≥5G в final-gate §1/§4).
 3. **filter-repo при невыполненных B1–B9** или G1–G5 не зелёных — порядок §9.
-4. **filter-repo gpu-hub до решения R-3** — необратимая перезапись живого репо (43 коммита, GHCR-CI) filter-repo-историей.
+4. **filter-repo gpu-hub** — необратимая перезапись живого репо (43 коммита, GHCR-CI)
+   filter-repo-историей. **R-3 = A → действие запрещено бессрочно**
+   (`repository-split-r3-decision.md` §3.1); пункт остаётся как постоянный запрет.
 5. **Прямой push из временного клона в GitHub** — запрещён §7.3 prep plan; только VPS bare + post-receive.
 6. **npm publish при недействительном токене** (P3, E401) — publish-шаги до возобновления NPM_TOKEN.
 7. **Удаление root `package.json` до B1/B2** — сломает VPS dev-резолв `animastor-comfyui-workflow-connector`/`animastor-ai-connector` для backend.
