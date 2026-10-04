@@ -73,7 +73,7 @@ Hub-репозиториев). B7 считается **ЗАКРЫТЫМ**.
 | B10 hook монорепо | **DONE (monorepo hook не изменён; содержимое сверено на `b7e2f7cd`)** | — | split-bare получают собственные hooks на этапе P1 |
 | B11 deploy cutover | POST-SPLIT | — | после filter-repo |
 | B12 root package.json | **DONE** (`bd66bae6`; `package.json` в корне отсутствует — re-verified на `b7e2f7cd`) | — | — |
-| P1 4 GitHub-репо + 4 bare | **PARTIAL (2026-10-04)**: GitHub-репо **созданы** (4 × HTTP **200**, `size=0`, 0 refs, `default_branch=main`, 2026-10-03); **bare + hook + remote `github` отсутствуют** | `/home/animastor/repos/` содержит только `animastor.git` и `animastor-gpu-hub.git` | руками владельца (создать 4 bare, hook 91 байт, `git remote add github`); см. §FPSG.3 |
+| P1 4 GitHub-репо + 4 bare | **CLOSED (2026-10-04)**: GitHub-репо **созданы владельцем** (4 × HTTP **200**, `size=0`, 0 refs, `default_branch=main`, 2026-10-03); **4 bare созданы 2026-10-04** — 0 refs/0 objects, `HEAD=refs/heads/main`, hook **0755/91 байт byte-identical**, remote `github` настроен | `/home/animastor/repos/` = `animastor.git`, `animastor-gpu-hub.git` **+ 4 новых bare** | ~~руками владельца~~ **выполнено**; **push не выполнялся**; см. §FPSG.3 |
 | P2 FF master | **DONE — выполнен в FINAL GATE** (`04da33ea` → **`64127b9e`**, обычная экспедиция, 0 behind / 0 ahead; `master` = `origin/master` = frozen source) | — | `git merge --ff-only 64127b9e…` уже выполнен и запушен; исходная точка split = `64127b9e…` — `repository-split-final-gate.md` §0 |
 | P3 npm token | **BLOCKED (OWNER)** | E401 перепроверен на `b7e2f7cd`; `npm view` работает | новый грант; нужен для B5-Release/NPM publish (post-split) |
 | P4 workflow.json | **NOT YET EXECUTED** (re-verified **2026-10-04**: каталог существует; `frontends/android/docker-compose.yml:41` mount остался; у живого контейнера `animastor-backend` — stale bind-mount) | удалить пустой каталог; android-compose-mount stale | команда в §P4; НЕ выполнялась |
@@ -583,7 +583,7 @@ deps, массовое переписывание документации — *
 | **B10** | **DONE** | `/home/animastor/repos/animastor.git/hooks/post-receive` = `cd "$GIT_DIR"; git push --mirror github` — **не изменён** |
 | **B11** | **POST-SPLIT** | — |
 | **B12** | **DONE** | корневой `package.json` **отсутствует**; читателей корневого `package.json` в коде нет |
-| **P1** | **PARTIAL (2026-10-04)** — *статус на `b7e2f7cd` был BLOCKED (4 × 404)* | bare: `animastor.git` + `animastor-gpu-hub.git` существуют, **4 новых bare — нет**; GitHub: `Animastor/animastor-gpu-hub` = **HTTP 200** (`7c7778c`, 43 коммита = bare), `animastor-backend/web/android/worker` = **HTTP 200, `size=0`, 0 refs** (созданы 2026-10-03) |
+| **P1** | **CLOSED (2026-10-04)** — *статус на `b7e2f7cd` был BLOCKED (4 × 404), на утренней ревизии — PARTIAL* | bare: `animastor.git` + `animastor-gpu-hub.git` + **4 новых bare** (`animastor-{backend,web,android,worker}.git`, 0 refs/0 objects, `HEAD=refs/heads/main`, hook 0755/91 байт, remote `github`); GitHub: `Animastor/animastor-gpu-hub` = **HTTP 200** (`7c7778c`, 43 коммита = bare), `animastor-backend/web/android/worker` = **HTTP 200, `size=0`, 0 refs** (созданы 2026-10-03). **Push не выполнялся** |
 | **P2** | **BLOCKED (OWNER)** — *исторический статус; **закрыт**: см. §0* | `master` `8118f766`, −**150**; FF-merge безопасен (merge-base = master) |
 | **P3** | **BLOCKED (OWNER)** | `npm whoami` → **E401**; `npm view @animastor/contracts\|gpu-hub` → 0.1.1 ✓ (registry/install работает) |
 | **P4** | **NOT YET EXECUTED** (re-verified 2026-10-04) | пустой untracked каталог **существует** + стейл android-mount **остался**; safe-команда §P4 |
@@ -598,17 +598,19 @@ deps, массовое переписывание документации — *
 
 | Repo | VPS bare | GitHub (API, `b7e2f7cd`) | GitHub (API + `ls-remote`, **2026-10-04**) | Действие |
 |---|---|---|---|---|
-| animastor-backend | **отсутствует** | **404** | **200**, `size=0`, **0 refs**, `default_branch=main`, public, created 2026-10-03T23:53:38Z | **GitHub готово**; создать bare + hook + remote `github` |
-| animastor-web | **отсутствует** | **404** | **200**, `size=0`, **0 refs**, `default_branch=main`, 2026-10-03T23:54:32Z | то же |
-| animastor-android | **отсутствует** | **404** | **200**, `size=0`, **0 refs**, `default_branch=main`, 2026-10-03T23:55:05Z | то же |
-| animastor-worker | **отсутствует** | **404** | **200**, `size=0`, **0 refs**, `default_branch=main`, 2026-10-03T23:55:36Z | то же |
+| animastor-backend | **создан 2026-10-04** (`animastor-backend.git`, 0 refs/0 objects, `HEAD=refs/heads/main`, hook 0755/91 байт, remote `github`) | **404** (на `b7e2f7cd`) | **200**, `size=0`, **0 refs**, `default_branch=main`, public, created 2026-10-03T23:53:38Z | **ГОТОВО** — bare + hook + remote **выполнены**, push **не выполнялся** |
+| animastor-web | **создан 2026-10-04** (то же) | **404** | **200**, `size=0`, **0 refs**, `default_branch=main`, 2026-10-03T23:54:32Z | **ГОТОВО** |
+| animastor-android | **создан 2026-10-04** (то же) | **404** | **200**, `size=0`, **0 refs**, `default_branch=main`, 2026-10-03T23:55:05Z | **ГОТОВО** |
+| animastor-worker | **создан 2026-10-04** (то же) | **404** | **200**, `size=0`, **0 refs**, `default_branch=main`, 2026-10-03T23:55:36Z | **ГОТОВО** |
 | animastor-gpu-hub | `/home/animastor/repos/animastor-gpu-hub.git` (43 коммита) | **200**, HEAD `7c7778c` | **200**, HEAD `7c7778c`, 0 releases, 0 tags, workflows `ci.yml`+`ghcr-release.yml` | **не создавать, не удалять, не force-push — запрещено всегда** (R-3 = A; `repository-split-r3-decision.md` §3.1) |
 
 Оговорка: 404 по GitHub API без токена неотличим от приватного репо; при
 наличии токена владельцу стоит подтвердить отсутствие (creds-проверка).
 **Статус 404 устарел**: перепроверка 2026-10-04 read-only (`API GET` + `git
 ls-remote` ssh rc=0 без credentials) показала **200 / пустые репозитории** —
-GitHub-часть P1 выполнена владельцем; локальная (bare/hook) — нет.
+GitHub-часть P1 выполнена владельцем; **локальная (bare/hook/remote) —
+выполнена 2026-10-04** (4 bare созданы, hook byte-identical, remote настроен;
+**push не выполнялся — обе стороны остаются пустыми**).
 
 **P2 — master freeze / исходная точка split — ВЫПОЛНЕНО**
 
@@ -716,8 +718,12 @@ df -h /                                       # должно быть ≥5G
 - Создать 4 пустых GitHub-repo: `Animastor/animastor-{backend,web,android,worker}`,
   default branch `master`, **без README**. `animastor-gpu-hub` **не трогать**.
 - Создать 4 bare на VPS `/home/animastor/repos/animastor-<name>.git`.
+  **СТАТУС: ВЫПОЛНЕНО 2026-10-04** (0 refs/0 objects, `HEAD=refs/heads/main`).
 - Положить в каждый bare свой `post-receive` (`git push --mirror github`),
   guard по basename; **монорепо-hook не менять**; hooks — **до** первого push.
+  **СТАТУС: ВЫПОЛНЕНО 2026-10-04** — 4 × **0755 / 91 байт / byte-identical**
+  шаблону (sha256 `6a63cb14…`) + `remote.github.url` настроен; **push не
+  выполнялся**.
 - ~~Разрешить R-3 (A или B)~~ → **выполнено: R-3 = A** (`repository-split-r3-decision.md`); hub-workflows авторятся в существующем репо (§B9.2).
 
 **Этап 2 — filter-repo (по одному репо; общий каркас)**
@@ -833,8 +839,11 @@ execution (X-1, X-2, регенерация package-lock), остаётся ре
 
 1. **P2 — ЗАКРЫТ**: `master` выровнен до frozen source `64127b9e…` + push
    (перепроверка: `git rev-parse master` == source).
-2. **P1**: создать 4 GitHub-repo (backend/web/android/worker) + 4 bare + hooks
-   до первых push; **`animastor-gpu-hub` не создавать/не удалять/не force-push**.
+2. ~~**P1**: создать 4 GitHub-repo + 4 bare + hooks~~ → **ВЫПОЛНЕНО**
+   (GitHub — владельцем 2026-10-03: 4 × 200 пустых; **bare + hooks + remote
+   `github` — 2026-10-04**: 4 bare пустые, `HEAD=refs/heads/main`, hook
+   0755/91 байт byte-identical, **push не выполнялся**);
+   **`animastor-gpu-hub` не создавать/не удалять/не force-push**.
 3. ~~**R-3**: письменно выбрать A или B~~ → **ВЫПОЛНЕНО: R-3 = A (SELECTED),
    B = REJECTED** — `repository-split-r3-decision.md`. Существующий GPU Hub
    **не меняется**; `filter-repo` gpu-hub не выполняется; hub CI (B9.2)
@@ -974,16 +983,19 @@ execution (X-1, X-2, регенерация package-lock), остаётся ре
   выполняется, новый репо не создаётся, force-push/overwrite/delete запрещены,
   standalone history канонична) · **P5-интерпретация** · **удаление
   `tmp/parser-audit-backup`**.
-- **External blockers:** **P1 — PARTIAL** (GitHub-repo 4 × 200 пустых, но
-  **4 bare + hook + remote `github` не созданы**) · **P3** (npm E401 — publish
+- **External blockers:** ~~**P1**~~ **СНЯТ / CLOSED (2026-10-04)** —
+  GitHub-repo 4 × 200 пустых **+ 4 bare + hooks + remote `github`** (push не
+  выполнялся, все стороны пусты) · **P3** (npm E401 — publish
   только; install работает) · ~~**P6**~~ **СНЯТ (6.4G ≥ 5G, 2026-10-04)** ·
   **R-3 — СНЯТ (A = SELECTED, B = REJECTED)**. **P2 снят.**
+  **GO-05 остаётся**: письменное подтверждение `$NEWBRANCH = main` владельцем.
 - **Physical split:** **NOT EXECUTED** (нет filter-repo, force-push, новых
   GitHub-репо, изменений существующего GPU Hub/его hook, npm publish,
   изменений B7/production; изменены только документы `docs/architecture/*.md`).
 - **Ready to execute after:** ~~1) FF `master`~~ **(выполнено)**;
   ~~1) ≥5G диска (P6)~~ **(выполнено без очистки: 6.4G ≥ 5G, 2026-10-04)**;
-  2) **4 bare + hook + remote `github`** (GitHub-репо уже созданы — P1-часть);
+  ~~2) 4 bare + hook + remote `github`~~ **(выполнено 2026-10-04: 4 bare пустые,
+  hook 0755/91 байт byte-identical, remote настроен; push не выполнялся)**;
   3) подтверждение `$NEWBRANCH = main` владельцем (GO-05);
   4) подтверждение P5-интерпретации и решение по `tmp/parser-audit-backup`;
   5) P4-гигиена (`rmdir workflow.json`, android-mount) — **гигиена, не
@@ -1052,7 +1064,7 @@ worker; **gpu-hub не фильтруется — R-3 = A**, `repository-split-r
 | registry/install path | **OPEN** — 29/30 пакетов опубликованы (`npm view` = read OK); `@animastor/worker-dev` в registry отсутствует (его никто не импортирует) |
 | publish path | **CLOSED** — `npm whoami` = E401 (перепроверено 2026-10-04) |
 | **P6 (диск)** | **CLOSED / PASS (2026-10-04)** — `df -B1 /` = `6 839 934 976 B` (≈6.4 GiB) ≥ 5G; очистка не выполнялась и не требуется |
-| **P1 (GitHub / bare)** | **PARTIAL (2026-10-04)** — GitHub: 4 × 200, `size=0`, 0 refs; VPS: **4 bare + hook + remote `github` отсутствуют** |
+| **P1 (GitHub / bare)** | **CLOSED (2026-10-04)** — GitHub: 4 × 200, `size=0`, 0 refs; VPS: **4 bare + hook + remote `github` созданы** (0 refs/0 objects, `HEAD=refs/heads/main`, hook 0755/91 байт byte-identical); **push не выполнялся** |
 | **P4 / P5 / `tmp/parser-audit-backup`** | **NOT YET EXECUTED** (гигиена/подтверждения: каталог `workflow.json` есть, android-mount остался, ветка `db5ff61f` есть) |
 | Physical split | **NOT EXECUTED** |
 
@@ -1060,7 +1072,7 @@ worker; **gpu-hub не фильтруется — R-3 = A**, `repository-split-r
 
 | Decision | Что именно нужно решить | Почему это нужно | Что произойдёт после решения |
 |---|---|---|---|
-| **P1** | ~~Создать GitHub-repo `animastor-{backend,web,android,worker}`~~ **GitHub-часть ВЫПОЛНЕНА владельцем (2026-10-03)**; **осталось**: 4 пустых bare на VPS + `post-receive` hooks + `git remote add github`. **GPU Hub отдельно НЕ создавать и НЕ заменять** (существующий `Animastor/animastor-gpu-hub` = HTTP 200, `7c7778c`, 43 коммита) | **Статус 404 устарел**: перепроверка 2026-10-04 — 4 × **HTTP 200**, `size=0`, **0 refs** (`git ls-remote` ssh rc=0), `default_branch=main`. Локально `/home/animastor/repos/` = только `animastor.git` + `animastor-gpu-hub.git` → **bare/hook отсутствуют**. Без hook'ов `git push` после filter-repo физически невозможен; hook обязан существовать до первого push (§7.2 prep-plan) | Разблокируется шаг 6 очереди §FPSG.5: появляются куда push-ить backend/web/android/worker; hub остаётся нетронутым |
+| **P1** | ~~Создать GitHub-repo `animastor-{backend,web,android,worker}` + 4 bare + hooks~~ → **ВЫПОЛНЕНО**: GitHub — владельцем (2026-10-03, 4 × 200, `size=0`, 0 refs, `default_branch=main`); **bare + hooks + remote `github` — 2026-10-04** (4 bare пустые, `HEAD=refs/heads/main`, hook 0755/91 байт byte-identical, remote настроен). **GPU Hub отдельно НЕ создавать и НЕ заменять** (существующий `Animastor/animastor-gpu-hub` = HTTP 200, `7c7778c`, 43 коммита) | **Статус 404 устарел**; **статус «bare отсутствуют» устарел с 2026-10-04**. Без hook'ов `git push` после filter-repo физически невозможен — hook обязан существовать **до** первого push (§7.2 prep-plan); **наличие подтверждено, push не выполнялся** | Шаг 6 очереди §FPSG.5 **готов технически** (куда push-ить backend/web/android/worker — есть); hub остаётся нетронутым |
 | **R-3** | **DECIDED — A (SELECTED)**: сохранить существующий `Animastor/animastor-gpu-hub` (свой Dockerfile, `ci.yml`, `ghcr-release.yml`, история в `master` — **канонична**). **B — REJECTED / NOT SELECTED** (замена историей монорепо, §8.5 — **не выполняется**) | Определяло: запускается ли §8.5; какие CI-workflows авторить (B9-hub); куда идёт B5; судьбу `gpu-hub-rebuild.sh` (X-1) — **решено: A** | **A (действует)**: `filter-repo` gpu-hub **не выполняется**, шаг 5 из очереди исключён, существующие репо/bare/hook/GitHub не трогаются, новых репо не создаётся; force-push/overwrite/delete — **запрещены бессрочно**. Вариант B — **REJECTED** |
 | **P2** | **Exact source SHA** = `64127b9e…` (п.1) — **и `master` уже выровнен до него (CLOSED)** | Фильтрация от не-FF'нутого/не того tip даст репо с историей, не совпадающей с `master` и с результатом последующих проверок. NO-GO №1 final-readiness §7 — **снят** | `master` == source == `origin/master` (перепроверка: `git rev-parse master`); все 4 новых репо и архив-монорепо указывают на одну и ту же точку |
 | **P3** | npm credentials: **`npm whoami` → E401**, токен в `~/.npmrc` недействителен (1 `_authToken`); `npm view`/install работают | Без валидного токена закрыты **publish** и **Release**-путь B5 (4 zip + digest в `artifacts.lock.json`), а также публикация 15 backend + 13 web пакетов | Разблокируется первый publish из новых репо; **сам filter-repo НЕ блокируется** — позиционируется как POST-SPLIT requirement (до первого publish, не до split) |
@@ -1078,8 +1090,9 @@ worker; **gpu-hub не фильтруется — R-3 = A**, `repository-split-r
   (+ P4-гигиена: `rmdir workflow.json`, снять stale android-compose-mount, `tmp/parser-audit-backup` — по подтверждению);
 - **P6 — ВЫПОЛНЕНО** (2026-10-04): ≥5G свободно (**6.4G**), очистка **не
   требовалась**; перед запуском — контрольная `df -B1 /`;
-- **P1** — GitHub-репо **уже созданы** (4 × 200, пустые); нужны **4 bare +
-  `post-receive` hook'и + remote `github`** (см. §4.1.0, GO-02…GO-04);
+- **P1 — ВЫПОЛНЕНО (2026-10-04)** — GitHub-репо (4 × 200, пустые) **+ 4 bare +
+  `post-receive` hook'и (0755/91 байт byte-identical) + remote `github`**
+  (см. §4.1.0, GO-01…GO-04 = CLOSED/READY; **push не выполнялся**);
 - **R-3** — **зафиксирован A (SELECTED), B = REJECTED**; hub-CI авторится в существующем репо, шаг 5 исключён из очереди.
 
 **Очередь — ровно такая** (§FPSG.5; **слот `gpu-hub` удалён — R-3 = A**):
@@ -1874,11 +1887,13 @@ D6/D7 оставить в backend-repo, в worker-repo оставить D1/D2/D3
 2. **P2 — ВЫПОЛНЕН**: `master` = `origin/master` = frozen source `64127b9e…`
    (перепроверка: `git rev-parse master`). NO-GO №1 снят; без повторной
    проверки перед запуском — не продолжать.
-3. **P1** — **ЧАСТИЧНО (2026-10-04)**: GitHub-репозитории `animastor-backend`,
+3. **P1 — ЗАКРЫТ (2026-10-04)**: GitHub-репозитории `animastor-backend`,
    `animastor-web`, `animastor-android`, `animastor-worker` **созданы владельцем**
-   (4 × HTTP **200**, `size=0`, **0 refs**, `default_branch=main`); **НЕ созданы**
-   4 пустых bare, `post-receive`-hook'и и remote `github` → подтвердить их
-   создание до первого push (I-16/I-17, GO-02…GO-04).
+   (4 × HTTP **200**, `size=0`, **0 refs**, `default_branch=main`, 2026-10-03);
+   **4 пустых bare, `post-receive`-hook'и (0755/91 байт byte-identical) и remote
+   `github` созданы 2026-10-04** → **I-16 закрыт, GO-02/GO-03 = CLOSED,
+   GO-04 = READY**; **push не выполнялся** (bare и GitHub пусты) → перед первым
+   push повторить I-17-проверку пустоты.
    **GPU Hub отдельно не создавать и не заменять.**
 4. **R-3 — ВЫПОЛНЕНО: A = SELECTED, B = REJECTED**
    (`repository-split-r3-decision.md`). Существующий `animastor-gpu-hub`

@@ -38,7 +38,7 @@ HEAD: `7848b49d` (execution readiness, unambiguous contract)
 
 | ID | Что проверено (факт) | Статус | Блокирует |
 |---|---|---|---|
-| P1 | bare на VPS: `animastor.git` + **`animastor-gpu-hub.git` уже существуют**; GitHub: **4 репо (`backend`, `web`, `android`, worker) СОЗДАНЫ владельцем 2026-10-03** (200, `size=0`, 0 refs), `animastor-gpu-hub` **существует с историей (43 коммита)**; **4 bare/hook — отсутствуют** | **PARTIAL** | Нужны 4 bare + hooks + remote `github`. Создавать `animastor-gpu-hub` заново НЕЛЬЗЯ — см. R-3 |
+| P1 | bare на VPS: `animastor.git` + `animastor-gpu-hub.git` **+ 4 новых bare (созданы 2026-10-04: 0 refs/0 objects, `HEAD=refs/heads/main`, hook 0755/91 байт byte-identical, remote `github`)**; GitHub: **4 репо (`backend`, `web`, `android`, worker) СОЗДАНЫ владельцем 2026-10-03** (200, `size=0`, 0 refs), `animastor-gpu-hub` **существует с историей (43 коммита, `7c7778c`)** | **CLOSED (2026-10-04)** | ~~нужны 4 bare + hooks + remote `github`~~ **выполнено; push не выполнялся**. Создавать `animastor-gpu-hub` заново НЕЛЬЗЯ — см. R-3 |
 | P2 | `master` = `8118f766`, является предком HEAD; FF возможен; отставание выросло до **141** коммита (в readiness — 136 на момент `2078c5d3`) | OPEN | filter-repo (и формально — шаг 1 размонорепизации) |
 | P4 | решения зафиксированы (`workflow.json` RETIRE, `local.properties` VPS-local); физически untracked-заглушка `workflow.json` (пустой каталог, root-owned) ещё существует на VPS | OPEN (гигиена) | Ничего технически: оба пути untracked, в историю не попадают; удаление каталога — до filter-repo |
 | P5 | `.github/` в монорепо отсутствует (проверено) | OPEN | filter-repo (G1–G5 негде гонять) |
@@ -91,7 +91,7 @@ HEAD: `7848b49d` (execution readiness, unambiguous contract)
 10. B7: перенос тестов по §9 + уточнения R-2 (9 файлов) и R-4 (4 теста); G6.
 11. B9: workflows G1–G7 по owner-матрице; G1–G5 зелёные.
 12. P6: освободить ≥3 GB.
-13. P1: создать 4 bare + 4 GitHub-репо (`backend`, `web`, `android`, `worker`) + hooks до первых push; для gpu-hub — предварительно решить R-3.
+13. ~~P1: создать 4 bare + 4 GitHub-репо + hooks~~ **— ВЫПОЛНЕНО 2026-10-04** (GitHub — владелец 2026-10-03; bare + hooks + remote `github` — 2026-10-04, push не выполнялся); для gpu-hub R-3 = A.
 14. P4-гигиена: физически удалить пустой каталог `workflow.json` на VPS (untracked, в историю не попадает).
 
 ## 5. Точный порядок выполнения

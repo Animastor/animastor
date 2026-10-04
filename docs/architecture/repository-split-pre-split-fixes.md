@@ -274,8 +274,10 @@ readiness §2.3/§5. Найденное расхождение: §8.3 перен
 5. **P4-гигиена**: физически удалить пустой каталог `workflow.json` на VPS (untracked).
 6. **R-3 — ВЫПОЛНЕНО**: вариант **A = SELECTED**, B = REJECTED
    (`repository-split-r3-decision.md`).
-7. **P1**: создать 4 bare (`backend`, `web`, `android`, `worker`) + 4 пустых
-   GitHub-репо + hooks до первых push; **для gpu-hub — ничего не создавать**
+7. **P1 — ВЫПОЛНЕНО (2026-10-04)**: 4 пустых GitHub-репо (владелец, 2026-10-03)
+   **+ 4 bare (`backend`, `web`, `android`, `worker`) + hooks + remote `github`**
+   (0 refs/0 objects, `HEAD=refs/heads/main`, hook 0755/91 байт byte-identical);
+   **push не выполнялся**; **для gpu-hub — ничего не создано**
    (репозиторий существует, R-3 = A).
 8. **filter-repo** (очередь: **backend → web → android → worker**; **gpu-hub
    исключён — R-3 = A**) c override'ами readiness §9-6b (`workflow.json`,

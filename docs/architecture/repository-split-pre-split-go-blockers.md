@@ -5,7 +5,7 @@
 > **force-push: NOT EXECUTED · GitHub-репозитории этим документом: NOT CREATED ·
 > `master` / `Animastor/animastor-gpu-hub` / hooks / npm publish: NOT MODIFIED ·
 > **R-3 = A (SELECTED) · R-3 = B: REJECTED** · очистка диска: НЕ ВЫПОЛНЯЛАСЬ ·
-> **P6 = CLOSED / PASS (2026-10-04) · P1 = PARTIAL**
+> **P6 = CLOSED / PASS (2026-10-04) · P1 = CLOSED (2026-10-04, GO-01…GO-04)**
 
 > **Статус документа: только подготовка и документация.** Все числа ниже получены
 > **read-only** (`df`, `du`, `git count-objects`, `git clone` во временный каталог
@@ -26,7 +26,7 @@
 
 | ID | Блокер | Статус | Кто закрывает |
 |---|---|---|---|
-| **P1** | 4 GitHub-repo + 4 bare + hook + remote `github` | **PARTIAL (2026-10-04)** — GitHub-часть **ГОТОВА**: API **4 × HTTP 200** (`animastor-backend`, `-web`, `-android`, `-worker`), `size=0`, **0 refs** (`git ls-remote` ssh rc=0), `default_branch=main`, созданы 2026-10-03T23:53–23:55Z; `Animastor/animastor` = 200, `Animastor/animastor-gpu-hub` = 200. **Локальная часть BLOCKED:** `/home/animastor/repos/` = только `animastor.git` + `animastor-gpu-hub.git` → **4 bare / hook / remote `github` отсутствуют** (GO-02…GO-04) | owner |
+| **P1** | 4 GitHub-repo + 4 bare + hook + remote `github` | **CLOSED (2026-10-04, вторая ревизия)** — **GitHub**: API **4 × HTTP 200**, `size=0`, **0 refs** (`git ls-remote` ssh rc=0), `default_branch=main`, `private=false`, созданы 2026-10-03T23:53–23:55Z. **VPS**: созданы **4 bare** `/home/animastor/repos/animastor-{backend,web,android,worker}.git` — 0 refs / 0 objects, `HEAD = refs/heads/main`, hook `post-receive` **0755 / 91 байт / byte-identical** шаблону (sha256 `6a63cb14…`), remote `github` настроен → **GO-01…GO-04 = READY/CLOSED**. **Push НЕ выполнялся** (все 4 bare и GitHub остаются пустыми) | закрыто (подготовительная стадия) |
 | **P6** | диск ≥ задокументированного порога | **CLOSED / PASS (2026-10-04)** — `df -B1 /` → avail **`6 839 934 976 B`** ≥ `5 368 709 120 B` (≥5G) → **1.27×** порога и **6.4×** измеренного минимума (**431 MB** пик / **1 GiB** минимум). **Очистка не выполнялась и не требуется** (перебазировка порога не понадобилась). Историческое pre-cleanup: `2 966 122 496 B` (2026-10-03, **FAIL**) — только audit trail | **нет** |
 | **R-3** | A (сохранить) / B (заменить) GPU Hub | **CLOSED — A (SELECTED), B = REJECTED** (`repository-split-r3-decision.md`); `Animastor/animastor-gpu-hub` = 200, `7c7778c`, **не изменён и не будет меняться** | закрыто |
 | **I-16** | в новых bare нет remote `github` → hook `git push --mirror github` упадёт | **НАЙДЕН В ЭТОЙ РЕВИЗИИ** — закрывается в P1, до первого push | закрывается в P1 |
@@ -50,8 +50,8 @@
 | **NEWBRANCH** | `$NEWBRANCH` из §4.1.0 (**сейчас `main`**) — **единственный** источник имени ветки | §FPSG.5 Этап 1 упоминает `master` (историческая запись), матрица §B9.2 триггеры — `main`; правится **только** переменная `$NEWBRANCH`. В `git init --bare` ветка по умолчанию `master` (`init.defaultBranch` не задан) → **обязательна** строка `git -C "$NEW" symbolic-ref HEAD "refs/heads/$NEWBRANCH"` **до** push (уже в §4.1.x) |
 | **Пустота до первого push** | **ничего не добавлять**: без README, LICENSE, `.gitignore`, без `git init`, без веток | иначе первый push = non-fast-forward → потребуется `--force`, а **force-push запрещён**. Признаки «пусто» (актуальные, 2026-10-04): **`size = 0` и `git ls-remote` возвращает 0 refs**, `contents` пусто/404. *(`pushed_at = null` / `default_branch = ""` — исторические признаки, фактически не выполняются: API отдаёт `pushed_at = created_at`, `default_branch = main`)* |
 | **Порядок создания** | 1 `animastor-backend` → 2 `animastor-web` → 3 `animastor-android` → 4 `animastor-worker` | равен очереди split §FINAL SPLIT HANDOFF §4 (**backend → web → android → worker**; слот `gpu-hub` **удалён — R-3 = A**). GPU Hub в этот список **не входит** |
-| **Bare на VPS** | `/home/animastor/repos/animastor-{backend,web,android,worker}.git` — `git init --bare` | в §4.1.x есть guard `test -d "$NEW" \|\| git init --bare`, но bare **обязан быть уже подготовлен** (hook + remote) **до** первого push. **Статус 2026-10-04: НЕ СОЗДАНЫ** — `/home/animastor/repos/` содержит только `animastor.git` и `animastor-gpu-hub.git` → **GO-02/GO-03/GO-04 = BLOCKED** |
-| **expected hook** | `hooks/post-receive`, **0755**, **91 байт**, байт-в-байт как в монорепо и в `animastor-gpu-hub` | см. §2.2 |
+| **Bare на VPS** | `/home/animastor/repos/animastor-{backend,web,android,worker}.git` — `git init --bare` | в §4.1.x есть guard `test -d "$NEW" \|\| git init --bare`, но bare **обязан быть уже подготовлен** (hook + remote) **до** первого push. **Статус 2026-10-04 (вторая ревизия): СОЗДАНЫ** — `/home/animastor/repos/` = `animastor.git`, `animastor-gpu-hub.git` **+ 4 новых bare** (0 refs / 0 objects, `HEAD=refs/heads/main`, hook + remote `github`) → **GO-02/GO-03/GO-04 = CLOSED**; **push не выполнялся** |
+| **expected hook** | `hooks/post-receive`, **0755**, **91 байт**, байт-в-байт как в монорепо и в `animastor-gpu-hub` | см. §2.2. **Факт 2026-10-04:** во всех 4 новых bare mode **0755**, 91 байт, `cmp` с шаблоном — **байт-в-байт идентичны**; mode самого шаблона — **775** (отличие только в group-write бите; содержимое идентично) |
 | **remote `github`** | `git remote add github git@github.com:Animastor/<name>.git` — **обязателен до первого push** | см. **I-16** §5.1 |
 
 ### 2.2 Точный hook (91 байт)
@@ -66,7 +66,11 @@ git push --mirror github
 ```
 
 Сверка: `wc -c` = 91; `git -C /home/animastor/repos/animastor.git/hooks/post-receive`
-и `…/animastor-gpu-hub.git/hooks/post-receive` — идентичны (сверено read-only).
+и `…/animastor-gpu-hub.git/hooks/post-receive` — идентичны (сверено read-only);
+`sha256 = 6a63cb14a1f76ca1a87de81cc54a1a46361ee11c224741fe3ea234d421a3130c`.
+**2026-10-04:** этот же файл скопирован **без изменений** в 4 новых bare
+(`install -m 0755`), `cmp` → идентичны; **hooks монорепо и GPU Hub не изменялись**
+(BEFORE == AFTER по `post-receive`).
 
 ### 2.3 Порядок действий владельца (P1) и проверки после каждого шага
 
@@ -207,9 +211,9 @@ curl -s https://api.github.com/repos/Animastor/$NAME | python3 -c "import json,s
 
 | # | Блокер | Почему это блокер | Где закрыт |
 |---|---|---|---|
-| **I-16** | В новых bare **нет remote `github`** — ни один документ не содержит `git remote add github` (проверено grep'ом по `docs/`) | `post-receive` выполняет `git push --mirror github` → падение «no such remote» на **первом push**; зеркало GitHub не появится, а `git ls-remote https://…` вернёт пустоту → оператор ложно сочтёт push провальным. Не блокирует сам `filter-repo`, но ломает шаг «первый push» | §2.1 / §2.3 (P1); добавлено в чеклист §6 |
-| **I-17** | Репозиторий на GitHub **не пустой** (README/LICENSE/`.gitignore`) | первый push = non-fast-forward → единственный выход — `--force`, а **force-push запрещён** | §2.1 «Пустота до первого push»; чеклист §6 |
-| **I-18** | Push-права SSH-ключа на **новые** репо не гарантированы | `post-receive` ходит по `git@github.com:` ключом `~/.ssh/github_ed25519` (читает org — проверено: `HEAD = 64127b9e`). Если репозитории создаст **другой** GitHub-аккаунт без прав для этого ключа — mirror будет отклонён | §2.1 (visibility/создание тем же аккаунтом), §2.3 п.3 |
+| **I-16** | ~~В новых bare **нет remote `github`**~~ → **ЗАКРЫТ (2026-10-04)**: `remote.github.url = git@github.com:Animastor/<name>.git` настроен во **всех 4** bare **до** push | `post-receive` выполняет `git push --mirror github`; раньше — падение «no such remote» на первом push. **Теперь remote есть**, но сам push **не выполнялся** → зеркалирование проверится только при первом push | **закрыто** (§2.1 / §6 = **GO-04 = READY**) |
+| **I-17** | Репозиторий на GitHub **не пустой** (README/LICENSE/`.gitignore`) | первый push = non-fast-forward → единственный выход — `--force`, а **force-push запрещён** | **условие выполнено (2026-10-04):** 4 × `size=0` / 0 refs, новые bare 0 refs / 0 objects; **повторить проверку непосредственно перед первым push** |
+| **I-18** | Push-права SSH-ключа на **новые** репо не гарантированы | `post-receive` ходит по `git@github.com:` ключом `~/.ssh/github_ed25519` (читает org — проверено: `HEAD = 64127b9e`, `ls-remote` новых репо rc=0). Если репозитории создаст **другой** GitHub-аккаунт без прав для этого ключа — mirror будет отклонён | read-права **подтверждены**; **push-права проверяются при первом push** (никаких push в этом задании не выполнялось) |
 
 ### 5.2 Проверено и **не** является блокером
 
@@ -233,9 +237,9 @@ curl -s https://api.github.com/repos/Animastor/$NAME | python3 -c "import json,s
 | # | Пункт | Команда проверки | Ожидание | Статус |
 |---|---|---|---|---|
 | **GO-01** | **P1** — 4 репозитория существуют и пусты | `curl -s https://api.github.com/repos/Animastor/<name>`; `git ls-remote git@github.com:Animastor/<name>.git` | 4 × 200; **`size=0` и 0 refs**; `private=false` (`pushed_at`/`default_branch` — см. §2.1, фактически `pushed_at=created_at`, `default_branch=main`) | **READY (2026-10-04)** — 4 × **200**, `size=0`, **0 refs**, `private=false`, `default_branch=main`, созданы 2026-10-03 |
-| **GO-02** | **P1** — 4 bare подготовлены | `test -d /home/animastor/repos/<name>.git` | существует **до** push | **BLOCKED (2026-10-04)** — `/home/animastor/repos/` = только `animastor.git` + `animastor-gpu-hub.git` |
-| **GO-03** | **hooks** — `post-receive` в каждом bare | `test -x "$NEW/hooks/post-receive" && test "$(wc -c < "$NEW/hooks/post-receive")" -eq 91` | 0755, 91 байт, содержимое §2.2 | **BLOCKED** (требует GO-02; hook существующих bare монорепо/GPU Hub **не трогались**) |
-| **GO-04** | **hooks** — remote `github` настроен (**I-16**) | `git -C "$NEW" config --get remote.github.url` | `git@github.com:Animastor/<name>.git` | **BLOCKED** (требует GO-02) |
+| **GO-02** | **P1** — 4 bare подготовлены | `test -d /home/animastor/repos/<name>.git` | существует **до** push | **CLOSED (2026-10-04)** — 4 bare созданы: **0 refs / 0 objects**, пустые; `HEAD=refs/heads/main` |
+| **GO-03** | **hooks** — `post-receive` в каждом bare | `test -x "$NEW/hooks/post-receive" && test "$(wc -c < "$NEW/hooks/post-receive")" -eq 91` | 0755, 91 байт, содержимое §2.2 | **CLOSED (2026-10-04)** — 4 × mode **0755**, **91 байт**, `cmp` с hook'ом монорепо (шаблон §2.2) → байт-в-байт идентичны (sha256 `6a63cb14…`); hook'и существующих bare **не трогались** (BEFORE == AFTER) |
+| **GO-04** | **hooks** — remote `github` настроен (**I-16**) | `git -C "$NEW" config --get remote.github.url` | `git@github.com:Animastor/<name>.git` | **READY (2026-10-04)** — 4 × `remote.github.url` = `git@github.com:Animastor/<name>.git`; **push не выполнялся**, зеркалирование проверится при первом push (hook только на receive) |
 | **GO-05** | **NEWBRANCH** зафиксирован и согласован | `echo "$NEWBRANCH"`; `grep NEWBRANCH docs/architecture/repository-split-next-blockers.md` | одна переменная, значение подтверждено владельцем; `git -C "$NEW" symbolic-ref HEAD` == `refs/heads/$NEWBRANCH` | значение есть (`main`); **фактически согласовано с GitHub** (`default_branch=main` у 4 созданных репо), но **письменного подтверждения владельца нет** → **NOT YET EXECUTED** |
 | **GO-06** | **P6** — диск | `df -B1 /` | `avail` ≥ задокументированного порога `5 368 709 120` | **CLOSED / PASS (2026-10-04)** — `6 839 934 976 B` ≥ `5 368 709 120` (**1.27×** порога, **6.4×** минимума); очистка не выполнялась и не требуется; историческое `2 966 122 496 B` (2026-10-03) = FAIL → только audit trail |
 | **GO-07** | **R-3** — вариант зафиксирован | решение владельца | записано `A` или `B` | **READY = A (SELECTED)**; B = REJECTED |
@@ -252,16 +256,18 @@ curl -s https://api.github.com/repos/Animastor/$NAME | python3 -c "import json,s
 
 | Категория | Пункты |
 |---|---|
-| **CLOSED** (закрыто фактически, подтверждено read-only) | **GO-06 (P6)** — 6 839 934 976 B ≥ 5G · **GO-07** (R-3 = A) · **GO-09** (N/A при A) · **GO-10** (frozen SHA / `master` == source) · **GO-11** (clean tree) · **GO-12** (`git-filter-repo` 2.47.0) · **GO-13** (`/tmp/split` отсутствует) · **GO-15** (ancestry / 1635 / SSH) |
-| **READY** (проверено, исполнения не требует) | **GO-01** — 4 GitHub-repo 200 / `size=0` / 0 refs · **GO-05**-значение (`main`, согласуется с GitHub) |
-| **BLOCKED** (нужен владелец/внешнее) | **GO-02** (4 bare отсутствуют) · **GO-03** (hook'и) · **GO-04** (remote `github`, I-16) — все трое требуют GO-02 · **P3** npm E401 (post-split publish, не в GO-таблице) |
+| **CLOSED** (закрыто фактически, подтверждено read-only) | **GO-01** — 4 GitHub-repo 200 / `size=0` / 0 refs · **GO-02** — 4 bare созданы (0 refs, 0 objects) · **GO-03** — 4 hook'а 0755/91 байт/byte-identical · **GO-06 (P6)** — 6 839 934 976 B ≥ 5G · **GO-07** (R-3 = A) · **GO-09** (N/A при A) · **GO-10** (frozen SHA / `master` == source) · **GO-11** (clean tree) · **GO-12** (`git-filter-repo` 2.47.0) · **GO-13** (`/tmp/split` отсутствует) · **GO-15** (ancestry / 1635 / SSH) |
+| **READY** (проверено, исполнения не требует) | **GO-04** — remote `github` настроен в 4 bare (push не выполнялся) · **GO-05**-значение (`main`: GitHub `default_branch` + `symbolic-ref HEAD` всех 4 bare) |
+| **BLOCKED** (нужен владелец/внешнее) | **P3** npm E401 (post-split publish, не в GO-таблице) |
 | **NOT YET EXECUTED** (сознательно не выполнялось) | **GO-05**-подтверждение владельцем · **GO-08** (backup, стадия B) · **GO-14** (snapshot refs, стадия B) · **физический split** · **`git filter-repo`** · **force-push** · P4-гигиена · удаление `tmp/parser-audit-backup` · авторинг workflows · `npm publish` |
 
 **Итоговый вердикт: `NO-GO` — физический split НЕ авторизован.
-GO НЕ установлен автоматически.** Сняты: **P6 (GO-06 = CLOSED/PASS)**,
-**R-3 (GO-07 = READY A)**, **P1-GitHub (GO-01 = READY)**.
-**Осталось:** GO-02/GO-03/GO-04 (4 bare + hook + remote `github` — owner),
-GO-05 (письменное подтверждение `$NEWBRANCH`), плюс стадия B (GO-08, GO-14).
+GO НЕ установлен автоматически.** Сняты: **P1 = CLOSED** (GO-01…GO-04 готовы:
+4 GitHub пустые + 4 bare + hook'и + remote `github`, **push не выполнялся**),
+**P6 (GO-06 = CLOSED/PASS)**, **R-3 (GO-07 = READY A)**.
+**Осталось:** GO-05 (письменное подтверждение `$NEWBRANCH = main` владельцем),
+стадия B (GO-08 backup, GO-14 snapshot refs) и **отдельная авторизация
+физического split'а**; плюс вне-таблица P3 (npm E401).
 **PHYSICAL SPLIT / `git filter-repo` / force-push = NOT EXECUTED** — и они
 остаются таковыми до отдельной авторизации владельцем.
 
@@ -275,7 +281,11 @@ GO-05 (письменное подтверждение `$NEWBRANCH`), плюс �
 | **`df -B1 /` (2026-10-04, эта ревизия)** | total `105 496 965 120`, used `94 139 928 576`, **avail `6 839 934 976 B` ≈6.4 GiB** (`df -h /` → 6.4G) → **P6 PASS**; очистка не выполнялась |
 | **GitHub API GET ×4 (2026-10-04)** | `animastor-backend/-web/-android/-worker` = **200**, `private=false`, **`size=0`**, `default_branch=main`, `pushed_at=2026-10-03T23:5x:xxZ` → **GO-01 READY** |
 | **`git ls-remote git@github.com:Animastor/<name>.git` ×4 (2026-10-04)** | exit 0, **0 refs** (SSH-ключ авторизован; пустые репо) |
-| **`ls /home/animastor/repos`** | только `animastor.git`, `animastor-gpu-hub.git` → **4 bare отсутствуют (GO-02…GO-04 BLOCKED)** |
+| `ls /home/animastor/repos` (до подготовки, 2026-10-04) | только `animastor.git`, `animastor-gpu-hub.git` → 4 bare отсутствовали (GO-02…GO-04 = BLOCKED) |
+| **`git init --bare` ×4 + hook + remote (2026-10-04, эта ревизия)** | созданы `animastor-{backend,web,android,worker}.git`: `refs=0`, `objects=0`, `HEAD=refs/heads/main`, `hooks/post-receive` = **0755 / 91 байт / `cmp` → идентичны шаблону** (sha256 `6a63cb14…`), `remote.github.url = git@github.com:Animastor/<name>.git` → **GO-02 = GO-03 = GO-04 = READY/CLOSED**; **push не выполнялся** |
+| **`git -C <new> ls-remote github`** | **0 refs** ×4 — зеркало не тронуто |
+| **GitHub API + `ls-remote` после подготовки (2026-10-04)** | 4 × **200**, `size=0`, **0 refs**, `default_branch=main`, `pushed_at` не изменился (`2026-10-03T23:5x:xxZ`) → **GO-01 = READY** |
+| **BEFORE/AFTER старых bare (2026-10-04)** | `animastor.git` и `animastor-gpu-hub.git`: `refs`, `for-each-ref`, `HEAD`, `config --local --list`, `count-objects -v`, `hooks/post-receive` (+mode/size) — **14/14 файлов IDENTICAL**; `animastor.master = 64127b9e…`, **`animastor-gpu-hub.master = 7c7778c6…`** — не изменены |
 | **`git branch -a`, `git show-ref` (`tmp/parser-audit-backup`)** | `db5ff61f` существует локально, в `origin` и в bare → **не удалена** |
 | **`workflow.json`, `frontends/android/docker-compose.yml:41`** | каталог существует; строка mount осталась → **P4 NOT YET EXECUTED** |
 | **`.github/` (tree + GitHub API)** | `git ls-tree 64127b9e` → 0 файлов; `Animastor/animastor/contents/.github/workflows` → **404** → **P5 фактически подтверждён** |
@@ -302,8 +312,10 @@ GO-05 (письменное подтверждение `$NEWBRANCH`), плюс �
 ## 8. NOT EXECUTED
 
 **PHYSICAL SPLIT: NOT EXECUTED · git filter-repo: NOT EXECUTED ·
-force-push: NOT EXECUTED · GitHub-репозитории этим документом: NOT CREATED
-(4 пустых репо созданы владельцем 2026-10-03 вне этих документов) ·
+force-push: NOT EXECUTED · push в новые bare/GitHub: NOT EXECUTED ·
+GitHub-репозитории этим документом: NOT CREATED
+(4 пустых репо созданы владельцем 2026-10-03 вне этих документов;
+4 VPS bare подготовлены 2026-10-04) ·
 `master`: NOT MODIFIED · `Animastor/animastor-gpu-hub` / bare
 `animastor-gpu-hub.git`: NOT MODIFIED · hooks: NOT MODIFIED ·
 npm publish: NOT EXECUTED · **R-3 = A (SELECTED) / B = REJECTED** ·

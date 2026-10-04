@@ -709,8 +709,10 @@ backend** — переводятся с source-level на контрактный
 4. **CI** (B9): workflows в монорепо-путях так, чтобы переехали без переписывания.
 5. Создать **4 bare** + **4 GitHub-репо** (пустых: backend/web/android/worker);
    hooks (§7.2) **до** пушей; G7.
-   **Статус 2026-10-04:** GitHub-репо **уже созданы** (4 × 200, `size=0`,
-   0 refs, `default_branch=main`); **4 bare/hook ещё нет**.
+   **Статус 2026-10-04:** GitHub-репо **созданы владельцем** (4 × 200, `size=0`,
+   0 refs, `default_branch=main`, 2026-10-03); **4 bare + hooks + remote `github`
+   созданы 2026-10-04** (0 refs/0 objects, `HEAD=refs/heads/main`, hook
+   **0755/91 байт byte-identical** шаблону) — **push не выполнялся**.
    **GPU Hub — НЕ создаётся** (R-3 = A: `Animastor/animastor-gpu-hub` существует).
 6. Очередь: backend → web → android → worker: filter-repo клон (§8)
    → push в bare → зеркало → smoke (`npm ci && npm test`, G1–G6).
