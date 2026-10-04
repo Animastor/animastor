@@ -8,6 +8,8 @@
 > hooks: NOT MODIFIED · npm publish: NOT EXECUTED**
 > **R-3 = A (SELECTED) · R-3 = B: REJECTED (не исполняется)**
 > **P6 = CLOSED / PASS · P1 = CLOSED (GitHub-repo 2026-10-03 · 4 bare + hook + remote 2026-10-04)**
+> **GO-05 = CLOSED (`NEWBRANCH=main`, owner-confirmation 2026-10-04) ·
+> стадия B = ВЫПОЛНЕНА (GO-08 backup + GO-14 BEFORE-snapshot, 2026-10-04)**
 
 Единственный авторитетный статус-документ финального pre-split gate'а.
 Исторические аудиты на более ранних SHA остаются в
@@ -170,10 +172,11 @@ gpu-hub `run-all` 22 + G4 standalone + `check-artifacts.sh` 6/6).
 | Категория | Что в ней сейчас |
 |---|---|
 | **CLOSED** (закрыто фактически) | **P2** (`master` = `64127b9e` = `origin/master`) · **R-3** (= A, B REJECTED) · **P6** (≥5G: `6 839 934 976 B`, 2026-10-04) · G1–G5 (ALL GREEN) · whitelist 1635/1635 · command-sheet audit · 2 pre-existing теста подтверждены |
-| **READY** (готово, подтверждено read-only, исполнения не требует) | **GO-04** (remote `github` настроен; push не выполнялся) · `NEWBRANCH=main` (GitHub `default_branch` + `symbolic-ref HEAD` всех 4 bare) · P5-facts (`.github/` отсутствует, GitHub 404) · GO-07 (R-3 = A) · GO-09 (N/A) · GO-10…GO-13, GO-15 |
+| **READY** (готово, подтверждено read-only, исполнения не требует) | **GO-04** (remote `github` настроен; push не выполнялся) · P5-facts (`.github/` отсутствует, GitHub 404) · GO-07 (R-3 = A) · GO-09 (N/A) · GO-10…GO-13, GO-15 |
+| **CLOSED (дополнение, 2026-10-04, эта ревизия)** | **GO-05** — `NEWBRANCH=main`, owner-confirmation зафиксирован письменно + сверка GitHub `default_branch=main` ×4 / `symbolic-ref HEAD=refs/heads/main` ×4 · **стадия B**: **GO-08** — durable backup `backups/animastor-pre-split-64127b9e.git` (22 431 724 B, `$SRC` внутри, restore-дрилл пройден) · **GO-14** — BEFORE-snapshot refs `animastor.git` (6 refs) и `animastor-gpu-hub.git` (2 refs, `master=7c7778c6…`) в `backups/before-split-64127b9e-refs/` |
 | **CLOSED** (дополнение) | **P1** целиком — 4 GitHub-repo (200/`size=0`/0 refs) **+ 4 bare + hooks + remote** (2026-10-04); **GO-01, GO-02, GO-03** |
-| **BLOCKED** (владелец/внешнее, без этого запрет) | **GO-05**: письменное подтверждение `$NEWBRANCH` владельцем · **P3**: npm E401 (только post-split publish) |
-| **NOT YET EXECUTED** (сознательно не выполнялось) | **физический split** · **`git filter-repo`** · **force-push** · push в новые bare/GitHub · push/mirror в GPU Hub · **P4-гигиена** (`workflow.json`, android-mount) · удаление `tmp/parser-audit-backup` · авторинг workflows в новых репо · `npm publish` · стадия B (backup / snapshot refs) |
+| **BLOCKED** (владелец/внешнее, без этого запрет) | **P3**: npm E401 (только post-split publish) · **авторизация стадии C** (физический split — отдельное решение владельца, этим gate'ом НЕ выдаётся) |
+| **NOT YET EXECUTED** (сознательно не выполнялось) | **физический split** · **`git filter-repo`** · **force-push** · push в новые bare/GitHub · push/mirror в GPU Hub · **P4-гигиена** (`workflow.json`, android-mount) · удаление `tmp/parser-audit-backup` · авторинг workflows в новых репо · `npm publish` |
 
 **Итоговый вердикт: NO-GO** — физический split **не авторизован**.
 
@@ -200,6 +203,8 @@ tamper-отказ)**, тесты **без новых регрессий** (2 pre
 | **Read-only preflight (2026-10-03, исторический)** | G1–G5 **ALL GREEN** (`scripts/split-guards/run-all.sh`, лог `/tmp/opencode/preflight-g1g5.log`) · whitelist §8 = **1635 / 1635 / 0 uncovered** на `$SRC` · command-sheet audit **PASS** на `$SRC` · gpu-hub `npm test` = **22/0** · `backend` `test:arch` = **979 passing / 2 failing** (IB-G15 `installer-package-boundary.test.js:243`, T9 `phase5-runtime-result.test.js:401` — **pre-existing, воспроизводятся**) · GitHub **4 × 404 + gpu-hub 200** · `npm whoami` **E401** · `.github/` отсутствует · `workflow.json` существует (untracked) · `git filter-repo` **не запускался** (нет выходных каталогов split), force-push не выполнялся |
 | **Read-only перепроверка (2026-10-04, эта ревизия)** | `df -B1 /` → avail **6 839 934 976 B** → **P6 PASS** · GitHub API ×7 → **backend/web/android/worker = 200, `size=0`, 0 refs** (`git ls-remote` ssh rc=0), `animastor` = 200, `animastor-gpu-hub` = 200 (releases 0, tags 0) · `/home/animastor/repos/` → **на момент этой перепроверки 4 bare отсутствовали** (созданы ниже, та же ревизия) · `workflow.json` **существует** (пустой каталог) · `frontends/android/docker-compose.yml:41` mount **остался** · контейнер `animastor-backend` несёт stale bind-mount `workflow.json` · ветка `tmp/parser-audit-backup` (`db5ff61f`) **существует** локально и в bare · `master` = `64127b9e` = `origin/master`, HEAD впереди на 10 doc-коммитов · `.github/` отсутствует (tree + GitHub 404) · `npm whoami` → **E401** · `/tmp/split` отсутствует · **ничего не создавалось/не удалялось/не перезаписывалось** |
 | **Подготовка bare (2026-10-04, эта ревизия)** | Созданы **4 bare** `animastor-{backend,web,android,worker}.git` — `refs=0`, `objects=0`, `HEAD=refs/heads/main`; в каждом `hooks/post-receive` **0755 / 91 байт / `cmp` байт-в-байт идентичен шаблону монорепо** (sha256 `6a63cb14…`); `remote.github.url = git@github.com:Animastor/<name>.git`. **Push НЕ выполнялся**: 4 bare пусты, GitHub по-прежнему `size=0` / 0 refs. **BEFORE/AFTER старых bare:** `refs`, `HEAD`, `config`, `count-objects`, hook (+mode/size) — **14/14 файлов IDENTICAL**; `animastor.master = 64127b9e…`, `animastor-gpu-hub.master = 7c7778c…` → **GO-02 = GO-03 = GO-04 = CLOSED/READY** |
+| **GO-05 (2026-10-04, эта ревизия)** | **`NEWBRANCH=main`** — owner-confirmation владельца зафиксирован письменно в задаче этого этапа и записан в `repository-split-pre-split-go-blockers.md` §6/§7.1; сверка read-only: GitHub API `default_branch=main` ×4 (`animastor-backend/-web/-android/-worker`), `git symbolic-ref HEAD = refs/heads/main` ×4, `$NEWBRANCH` — единственная переменная (`next-blockers` §4.1.0) → **GO-05 = CLOSED** |
+| **Стадия B (2026-10-04, эта ревизия)** | **GO-08**: `git clone --mirror --no-local` → `/home/animastor/backups/animastor-pre-split-64127b9e.git` (**22 431 724 B**, независимая копия — 0 общих inode'ов; `rev-parse $SRC` = `64127b9e`, `master=$SRC`, 1653 коммита / 1635 файлов, `fsck` чисто, refs == `$BARE` 6/6; **restore-дрилл**: fetch в чистый bare + checkout worktree → `master=64127b9e`, status 0). **GO-14**: BEFORE-snapshot `/home/animastor/backups/before-split-64127b9e-refs/` — `animastor.git` (6 refs, `master=64127b9e`) и `animastor-gpu-hub.git` (2 refs, **`master=HEAD=7c7778c6f313dad19eb403d8509cd297226ec7ea`**), +HEAD/config/count-objects/hook sha256, `MANIFEST.sha256` = 11/11 OK, режим только-чтение. **Писали только в новые каталоги `backups/`**: `$BARE`, GPU Hub, hook'и, 4 новых bare/GitHub — **не изменялись**; `filter-repo` / push / force-push / новый GPU Hub — **НЕ ВЫПОЛНЯЛИСЬ** |
 
 Остаются **реальные pre-split блокеры**:
 
@@ -209,8 +214,10 @@ tamper-отказ)**, тесты **без новых регрессий** (2 pre
    (4 × 200, `size=0`, 0 refs) **+ 4 bare + hooks (0755/91 байт byte-identical)
    + remote `github`** (GO-01…GO-04 = CLOSED/READY, I-16 закрыт);
    **push не выполнялся**;
-3. **GO-05** — подтверждение владельцем `$NEWBRANCH = main` (значение есть,
-   подтверждения нет);
+3. ~~**GO-05** — подтверждение владельцем `$NEWBRANCH = main`~~ → **ЗАКРЫТ
+   (2026-10-04)**: `NEWBRANCH=main` подтверждён владельцем письменно (задача
+   этого этапа) и зафиксирован в docs; сверка: GitHub `default_branch=main` ×4
+   + `symbolic-ref HEAD = refs/heads/main` ×4;
 4. **P4-гигиена — NOT YET EXECUTED**: каталог `workflow.json` существует,
    строка mount в `frontends/android/docker-compose.yml:41` не удалена
    (гигиена, не блокирует `filter-repo`);
@@ -218,6 +225,10 @@ tamper-отказ)**, тесты **без новых регрессий** (2 pre
    **письменного подтверждения владельца нет** (§FPSG.8 п.6);
 6. **`tmp/parser-audit-backup`** — ветка `db5ff61f` **не удалена**; удаление —
    решение владельца (до него НЕ удалять).
+7. ~~**стадия B — GO-08 / GO-14**~~ → **ВЫПОЛНЕНА (2026-10-04)**: durable
+   backup `$BK` + BEFORE-snapshot refs обоих существующих bare; писали **только**
+   в новые каталоги `backups/`; **авторизация стадии C (физический split) этим
+   gate'ом НЕ выдаётся** — это отдельное решение владельца.
 
 **R-3 снят** (A = SELECTED, B = REJECTED — `repository-split-r3-decision.md`):
 авторинг hub-CI разблокирован (в существующем репо), шаг 5 из очереди

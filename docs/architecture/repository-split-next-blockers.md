@@ -981,14 +981,17 @@ execution (X-1, X-2, регенерация package-lock), остаётся ре
   выполнен и запушен) · **P1** (создать 4 репо backend/web/android/worker;
   gpu-hub существует — не трогать; **R-3 = A**: `filter-repo` gpu-hub не
   выполняется, новый репо не создаётся, force-push/overwrite/delete запрещены,
-  standalone history канонична) · **P5-интерпретация** · **удаление
+  standalone history канонична) · **`NEWBRANCH = main` — ПОДТВЕРЖДЁН
+  (GO-05, 2026-10-04)** · **P5-интерпретация** · **удаление
   `tmp/parser-audit-backup`**.
 - **External blockers:** ~~**P1**~~ **СНЯТ / CLOSED (2026-10-04)** —
   GitHub-repo 4 × 200 пустых **+ 4 bare + hooks + remote `github`** (push не
   выполнялся, все стороны пусты) · **P3** (npm E401 — publish
   только; install работает) · ~~**P6**~~ **СНЯТ (6.4G ≥ 5G, 2026-10-04)** ·
   **R-3 — СНЯТ (A = SELECTED, B = REJECTED)**. **P2 снят.**
-  **GO-05 остаётся**: письменное подтверждение `$NEWBRANCH = main` владельцем.
+  **GO-05 — ЗАКРЫТ (2026-10-04)**: `NEWBRANCH = main` подтверждён владельцем
+  письменно и зафиксирован в docs (owner-confirmation — pre-split-go-blockers
+  §7.1); **стадия B ВЫПОЛНЕНА** (GO-08 backup + GO-14 BEFORE-snapshot).
 - **Physical split:** **NOT EXECUTED** (нет filter-repo, force-push, новых
   GitHub-репо, изменений существующего GPU Hub/его hook, npm publish,
   изменений B7/production; изменены только документы `docs/architecture/*.md`).
@@ -996,7 +999,9 @@ execution (X-1, X-2, регенерация package-lock), остаётся ре
   ~~1) ≥5G диска (P6)~~ **(выполнено без очистки: 6.4G ≥ 5G, 2026-10-04)**;
   ~~2) 4 bare + hook + remote `github`~~ **(выполнено 2026-10-04: 4 bare пустые,
   hook 0755/91 байт byte-identical, remote настроен; push не выполнялся)**;
-  3) подтверждение `$NEWBRANCH = main` владельцем (GO-05);
+  ~~3) подтверждение `$NEWBRANCH = main` владельцем (GO-05)~~ **(закрыто
+  2026-10-04)**; ~~backup + BEFORE-snapshot (стадия B, GO-08/GO-14)~~
+  **(выполнено 2026-10-04)**;
   4) подтверждение P5-интерпретации и решение по `tmp/parser-audit-backup`;
   5) P4-гигиена (`rmdir workflow.json`, android-mount) — **гигиена, не
   блокирует**; 6) P3 — до первого publish. Тогда шаги §FPSG.5:
@@ -1139,6 +1144,10 @@ P3 (npm) — **не** часть split-очереди: он нужен толь�
 > — отдельный `test` в `&&`-списке **исключён** из `set -e` и молча
 > пропускается; (3) добавлены guard'ы повторного запуска и durable-бэкап;
 > (4) проверка версии через метаданные пакета.
+> **(5) 2026-10-04: стадия B ВЫПОЛНЕНА** — `$BK` создан (`--no-local`,
+> независимая копия), BEFORE-snapshot снят на диск; блок №0 переписан из
+> «создать» в «**проверить**» (идемпотентен, повторный запуск не перезаписывает
+> backup) и дополнительно сверяет GPU Hub (R-3 = A: только чтение).
 
 ```sh
 set -euo pipefail
@@ -1146,28 +1155,42 @@ SRC=64127b9e1dea2ac528a572b51b90a542b70c5ebb
 BARE=/home/animastor/repos/animastor.git
 SPLIT=/tmp/split
 BRANCH=c21.4-physically-extract-analysis-from-backend
-NEWBRANCH=main            # имя корневой ветки НОВЫХ репо — решение владельца (п.10).
+NEWBRANCH=main            # имя корневой ветки НОВЫХ репо — решение владельца (п.10 №12);
+                          # **GO-05 = CLOSED (2026-10-04): NEWBRANCH=main подтверждён
+                          # владельцем письменно** + сверён с GitHub default_branch=main (×4)
+                          # и symbolic-ref HEAD=refs/heads/main (×4).
                           # §FPSG.5 Этап 1 говорит `master`, триггеры §B9.2 — `main`:
-                          # имя ветки правится ТОЛЬКО здесь и сверяется с hook'ами P1
-                          # ДО первого push (I-12).
+                          # имя ветки правится ТОЛЬКО здесь (I-12).
 
 # версия: `git filter-repo --version` печатает хеш сборки (`a40bce548d2c`), а НЕ номер
 # версии — 2.47.0 читается только из метаданных пакета
 python3 -c "import importlib.metadata as m; v=m.version('git-filter-repo'); assert v=='2.47.0', v"
 test -x /home/animastor/.local/bin/git-filter-repo
 
-# 0) backup + контроль неизменности источника (отдельная mirror-копия; её размер — не нулевой)
+# 0) backup + контроль неизменности источника — ВЫПОЛНЕНО 2026-10-04 (GO-08 + GO-14).
+#    $BK и BEFORE-snapshot уже созданы подготовительной ревизией: блок стал
+#    ИДЕМПОТЕНТНЫМ — при повторном запуске backup только ПРОВЕРЯЕТСЯ (не создаётся,
+#    не перезаписывается), BEFORE берётся из snapshot-файла и сверяется с живыми refs.
 mkdir -p "$SPLIT"
 BK=/home/animastor/backups/animastor-pre-split-64127b9e.git   # durable; /tmp НЕ годится для backup:
                                                               # volatile и тот же FS `/`, что P6-очистка (I-7)
-test ! -e "$BK" || { echo "FAIL: $BK уже существует — не перезаписывать"; exit 1; }
+SNAP=/home/animastor/backups/before-split-64127b9e-refs       # BEFORE-snapshot refs (GO-14), режим только чтение
+GPUHUB=/home/animastor/repos/animastor-gpu-hub.git            # R-3 = A: только сверка, НИКОГДА не пишется
+test -d "$BK" || { echo "FAIL: backup отсутствует — GO-08 не выполнен"; exit 1; }
+test -f "$SNAP/animastor.git.refs.txt" || { echo "FAIL: BEFORE-snapshot отсутствует — GO-14 не выполнен"; exit 1; }
+test "$(git -C "$BK" rev-parse "$SRC^{commit}")" = "$SRC" || { echo "FAIL: backup не содержит $SRC"; exit 1; }
+git -C "$BK" fsck --no-progress || { echo "FAIL: backup не проходит fsck"; exit 1; }
 test "$(git -C "$BARE" rev-parse "$SRC^{commit}")" = "$SRC" || { echo "FAIL: $SRC не найден в bare"; exit 1; }
 git -C "$BARE" merge-base --is-ancestor "$SRC" "$BRANCH" || { echo "FAIL: $SRC не предок $BRANCH"; exit 1; }
 test "$BRANCH" != master || { echo "FAIL: BRANCH не должен быть master"; exit 1; }
 BEFORE=$(git -C "$BARE" for-each-ref --format='%(objectname) %(refname)' | sort)
-git clone --mirror "$BARE" "$BK"     # обычная отдельная mirror-копия git-репозитория (fallback/backup) — НЕ hardlink-клон и НЕ «≈0 байт»: фактический размер равен размеру копируемых данных (≈38M); оригинал не пишется
-test "$(git -C "$BK" rev-parse "$SRC")" = "$SRC" || { echo "FAIL: backup не содержит $SRC"; exit 1; }
-echo "OK: backup $BK"
+test "$BEFORE" = "$(cat "$SNAP/animastor.git.refs.txt")" || { echo "FAIL: refs монорепо != BEFORE-snapshot (GO-14)"; exit 1; }
+test "$(git -C "$GPUHUB" for-each-ref --format='%(objectname) %(refname)' | sort)" = "$(cat "$SNAP/animastor-gpu-hub.git.refs.txt")" || { echo "FAIL: refs GPU Hub != BEFORE-snapshot (R-3 = A, GO-14)"; exit 1; }
+test "$(git -C "$GPUHUB" rev-parse refs/heads/master)" = "7c7778c6f313dad19eb403d8509cd297226ec7ea" || { echo "FAIL: GPU Hub master изменился"; exit 1; }
+# исходная команда создания (ВЫПОЛНЕНА 2026-10-04; при повторном запуске НЕ запускать — guard выше):
+# git clone --mirror --no-local "$BARE" "$BK"   # отдельная mirror-копия (НЕ hardlink: обычный
+#                                               # локальный clone хардлинкует pack'и), ≈22M; оригинал не пишется
+echo "OK: backup $BK + BEFORE-snapshot $SNAP (GO-08/GO-14)"
 
 # 1) P2-проверка (после FF master)
 test "$(git -C "$BARE" rev-parse refs/heads/master)" = "$SRC" || { echo "FAIL: master != frozen source"; exit 1; }
@@ -1187,6 +1210,12 @@ echo "OK: master == source"
 AFTER=$(git -C "$BARE" for-each-ref --format='%(objectname) %(refname)' | sort)
 test "$BEFORE" = "$AFTER" || { echo "FAIL: refs монорепо изменились"; exit 1; }
 echo "OK: monorepo untouched"
+# та же сверка по durable-сnapshot'у (переживает перезапуск сессии) + GPU Hub (R-3 = A):
+diff "$SNAP/animastor.git.refs.txt" <(git -C "$BARE" for-each-ref --format='%(objectname) %(refname)' | sort) \
+  || { echo "FAIL: refs монорепо != BEFORE-snapshot"; exit 1; }
+diff "$SNAP/animastor-gpu-hub.git.refs.txt" <(git -C "$GPUHUB" for-each-ref --format='%(objectname) %(refname)' | sort) \
+  || { echo "FAIL: refs GPU Hub изменились"; exit 1; }
+echo "OK: monorepo + GPU Hub == BEFORE-snapshot"
 ```
 
 > **Почему три строки `reset` + `update-ref` + `reflog expire` (сверено с
@@ -1927,3 +1956,16 @@ D6/D7 оставить в backend-repo, в worker-repo оставить D1/D2/D3
     (в т.ч. ~~исключение `--path gpu-hub-rebuild.sh`~~ — §8.5 не применяется,
     R-3 = A, и обновление
     `repository.url`/`directory` перед publish).
+12. **`NEWBRANCH = main` — ПОДТВЕРЖДЁН владельцем (GO-05 = CLOSED, 2026-10-04)**:
+    письменное owner-confirmation зафиксировано в
+    `repository-split-pre-split-go-blockers.md` §6/§7.1; сверено read-only:
+    GitHub API `default_branch = main` ×4, `git -C <new> symbolic-ref HEAD` =
+    `refs/heads/main` ×4, переменная `NEWBRANCH` объявлена **только** в §4.1.0
+    (I-12). **Имя ветки правится только там** — любое иное значение требует
+    нового письменного подтверждения владельца.
+13. **Стадия B ВЫПОЛНЕНА (2026-10-04) — GO-08 + GO-14**: durable backup
+    `$BK = backups/animastor-pre-split-64127b9e.git` (22 431 724 B, содержит
+    `$SRC`, restore-дрилл пройден) и BEFORE-snapshot
+    `backups/before-split-64127b9e-refs/` (`animastor.git` — 6 refs,
+    `animastor-gpu-hub.git` — 2 refs, `master = 7c7778c6…`). **Повторно не
+    создавать и не перезаписывать** — §4.1.0 только проверяет их.

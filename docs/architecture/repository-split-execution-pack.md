@@ -8,12 +8,19 @@
 > **R-3 = A (SELECTED) · R-3 = B: REJECTED (не исполняется)**
 > **P6 = CLOSED / PASS (6.4G ≥ 5G, 2026-10-04) · P1 = CLOSED (4 пустых GitHub-репо
 > 2026-10-03 + 4 VPS bare/hooks/remote 2026-10-04, push не выполнялся)**
+> **GO-05 = CLOSED (`NEWBRANCH=main`, owner-confirmation) · стадия B =
+> ВЫПОЛНЕНА (GO-08 backup + GO-14 BEFORE-snapshot, 2026-10-04)**
 
-> **Статус этого документа: read-only deliverable.** Все команды ниже
-> **исполнялись только в read-only режиме** (`ls-tree`, `rev-list`, `log`,
-> `count-objects`, `du`, `df`, `show-ref`) против frozen source и существующих
-> bare-репозиториев. `git filter-repo` **не запускался**, клонов `$SPLIT` **не
-> существует** (`/tmp/split` отсутствует), новые bare **не создавались**.
+> **Статус этого документа: read-only deliverable + статус стадии B.**
+> Все команды ниже **исполнялись только в read-only режиме** (`ls-tree`,
+> `rev-list`, `log`, `count-objects`, `du`, `df`, `show-ref`) против frozen
+> source и существующих bare-репозиториев. `git filter-repo` **не запускался**,
+> клонов `$SPLIT` **не существует** (`/tmp/split` отсутствует), **push'ей нет**
+> (новые bare/GitHub пусты). Единственное, что **создавалось** подготовительными
+> ревизиями: 4 пустых bare + hook + remote (P1, 2026-10-04) и **артефакты стадии
+> B** — `backups/animastor-pre-split-64127b9e.git` и
+> `backups/before-split-64127b9e-refs/` (2026-10-04); production-репозиторий,
+> GPU Hub, hook'и и GitHub при этом **не изменялись**.
 
 Авторитетный GO/NO-GO — `repository-split-final-gate.md`.
 Исполняемый командный лист — `repository-split-next-blockers.md` §4.1.0–§4.1.6.
@@ -51,7 +58,7 @@ per-repo спеки с проверяемыми grep/`--follow`-командам
 | Стадия | Что делает | Пишет куда-либо? | Блокеры, которые должны быть сняты ДО неё |
 |---|---|---|---|
 | **A — read-only preflight** | `df`, `git rev-parse`, `git ls-remote`, `git for-each-ref`, GitHub API, `npm whoami`, whitelist/счётчики | **нет** | ничего (можно выполнять всегда) |
-| **B — backup** | `git clone --mirror` монорепо в `backups/` | **только** в новый backup-каталог; `$BARE` **не пишется**; **GPU Hub не затрагивается** (R-3=A — см. `repository-split-r3-decision.md`) | A зелёный; P6-бюджет на backup учтён |
+| **B — backup** | `git clone --mirror` монорепо в `backups/` | **только** в новый backup-каталог; `$BARE` **не пишется**; **GPU Hub не затрагивается** (R-3=A — см. `repository-split-r3-decision.md`) | **ВЫПОЛНЕНА (2026-10-04)**: `$BK = backups/animastor-pre-split-64127b9e.git` (`--mirror --no-local`, 22 431 724 B, restore-дрилл OK) + BEFORE-snapshot `backups/before-split-64127b9e-refs/`; A зелёный, P6-бюджет учтён |
 | **C — destructive / rewrite** | `git filter-repo` в **свежем клоне**, `git push` в **новый** bare | клон `$SPLIT/{backend,web,android,worker}`, новые bare. **Никаких push в существующий GPU Hub bare или GitHub** | **все** пункты GO-чеклиста §6: P1, P6, **R-3 = A зафиксирован**, B-бэкап подтверждён, `$SRC` сверён |
 | **D — cleanup / пост-контроль** | `git fsck`, leak-чеки, `--follow`, smoke-matrix, freeze монорепо, cutover B11 | пост-контроль + compose/nginx | C по каждому репо успешен |
 
@@ -253,9 +260,10 @@ I-2 — контроли молчат при провале). После пра�
 
 | Артефакт | Команда | Где | Что даёт |
 |---|---|---|---|
-| **Mirror-копия монорепо** | `git clone --mirror "$BARE" "$BK"` с `$BK=/home/animastor/backups/animastor-pre-split-64127b9e.git` | `/home/animastor/backups/` (durable, тот же FS, но вне `/tmp`) | полный откат: `$BARE` **вообще не пишется** на стадиях C/D для backend/web/android/worker, но backup страхует от случайной записи на стадии D и от сбоя диска |
-| **`$BARE` нетронут** | `BEFORE=$(git -C "$BARE" for-each-ref … \| sort)` → сверка `AFTER` после каждого репо | монорепо | доказательство неизменности; при расхождении — **стоп** |
-| **Реестр refs на момент старта** | `git -C "$BARE" for-each-ref` сохранён в `BEFORE` | переменная сессии | тот же контроль |
+| **Mirror-копия монорепо** | `git clone --mirror --no-local "$BARE" "$BK"` с `$BK=/home/animastor/backups/animastor-pre-split-64127b9e.git` | `/home/animastor/backups/` (durable, тот же FS, но вне `/tmp`) | полный откат: `$BARE` **вообще не пишется** на стадиях C/D для backend/web/android/worker, но backup страхует от случайной записи на стадии D и от сбоя диска — **СОЗДАН 2026-10-04** (**22 431 724 B**, `$SRC` внутри, refs == `$BARE`, `fsck` чисто, restore-дрилл пройден; `--no-local`, т.к. обычный локальный clone хардлинкует pack'и и не даёт независимой копии) |
+| **`$BARE` нетронут** | `BEFORE=$(git -C "$BARE" for-each-ref … \| sort)` → сверка `AFTER` после каждого репо | монорепо | доказательство неизменности; при расхождении — **стоп** — **СНЯТО НА ДИСК 2026-10-04**: `backups/before-split-64127b9e-refs/animastor.git.refs.txt` (+ HEAD/config/count-objects/hook sha256, `MANIFEST.sha256`) |
+| **Реестр refs на момент старта** | `git -C "$BARE" for-each-ref` сохранён в `BEFORE` | переменная сессии | тот же контроль — **дублирован файлом snapshot'а** (работает и после перезапуска сессии) |
+| **Snapshot GPU Hub (R-3 = A)** | `git -C /home/animastor/repos/animastor-gpu-hub.git for-each-ref` → `backups/before-split-64127b9e-refs/animastor-gpu-hub.git.refs.txt` | `backups/` (только чтение) | **2 refs, `master = HEAD = 7c7778c6…`** — доказательство, что существующий GPU Hub не менялся; сам GPU Hub **не клонируется и не пишется** |
 | **GPU Hub** | — (не выполняется) | — | **NOT APPLICABLE при R-3 = A**: существующий GPU Hub bare/GitHub **никогда не пишется** → mirror-backup и заморозка hook ему не нужны. Строка «R-3=B» удалена как неприменимая (`repository-split-r3-decision.md` §2) |
 | **Текущий tip ветки документации** | `git rev-parse HEAD` | в логе старта | восстановить docs-ветку |
 
@@ -294,21 +302,24 @@ GPU Hub bare или GitHub, — **staged action**: требует письмен
 | **G-E** | **P1** — 4 целевых репо + bare + hooks | `git ls-remote https://github.com/Animastor/animastor-backend.git` (×4) + наличие `$NEW` + `post-receive` | HTTP 200 (не 404), bare есть, hook есть **до** push | **PASS / CLOSED (2026-10-04)** — GitHub: 4 × 200 / 0 refs; VPS: 4 bare созданы (0 refs/0 objects, `HEAD=refs/heads/main`), `hooks/post-receive` **0755 / 91 байт / byte-identical** шаблону, remote `github` настроен → **I-16 закрыт**; **push не выполнялся** |
 | **G-F** | **P6** — диск ≥5G | `df -B1 /` | avail ≥ 5 368 709 120 | **PASS (CLOSED, 2026-10-04)** — **6 839 934 976 B** (≈6.4 GiB) ≥ 5 368 709 120 → **1.27×**; историческое значение pre-cleanup **2 971 721 728 B — FAIL** (2026-10-03, только audit trail); значение колеблется — источник истины **команда**, не число; **очистка не выполнялась и не требуется** |
 | **G-G** | **R-3** — вариант зафиксирован | решение владельца | записано явно | **READY = A (SELECTED)** — `repository-split-r3-decision.md`; B → REJECTED |
-| **G-H** | Backup монорепо создан | `test -d "$BK" && git -C "$BK" rev-parse "$SRC"` | exit 0 | не выполнялся (стадия B) |
+| **G-H** | Backup монорепо создан | `test -d "$BK" && git -C "$BK" rev-parse "$SRC"` | exit 0 | **PASS / CLOSED (2026-10-04)** — `$BK` создан `--mirror --no-local` (22 431 724 B), `rev-parse $SRC` = `$SRC`, `fsck` чисто, refs == `$BARE`, restore-дрилл пройден |
 | **G-I** | ~~Backup/freeze GPU Hub~~ | — | — | **NOT APPLICABLE при R-3 = A** — пункт исключён из GO-условий (GPU Hub не пишется) |
-| **G-J** | `$NEWBRANCH` сверён с hook'ами P1 | `grep` hook'а | имя совпадает | не выполнялся (требует G-E) |
+| **G-J** | `$NEWBRANCH` сверён с hook'ами P1 | `grep` hook'а | имя совпадает | **PASS (2026-10-04)** — hook `post-receive` **не содержит имён веток** (только `git push --mirror github`) → сверять не с чем; фактическая сверка `$NEWBRANCH=main` = GitHub `default_branch=main` ×4 + `symbolic-ref HEAD=refs/heads/main` ×4 (**GO-05 = CLOSED**, owner-confirmation) |
 | **G-K** | `$SPLIT` пуст / целевые каталоги отсутствуют | `test ! -e "$SPLIT/backend"` (и т.д.) | exit 0 | **READY** (`/tmp/split` отсутствует) |
 | **G-L** | Whitelist не изменился | `git ls-tree -r --name-only $SRC \| wc -l` | 1635 | **READY** |
-| **G-M** | `$BARE` не тронут (`BEFORE` сохранён) | `git -C $BARE for-each-ref \| sort` | сохранено в переменную; **после каждого репо** — сверка `AFTER` | стадия B |
-| **G-N** | **P1** — remote `github` в каждом bare (**I-16**) | `git -C "$NEW" config --get remote.github.url` | `git@github.com:Animastor/<name>.git` для всех 4 | **BLOCKED** (bare не созданы) |
+| **G-M** | `$BARE` не тронут (`BEFORE` сохранён) | `git -C $BARE for-each-ref \| sort` | сохранено в переменную; **после каждого репо** — сверка `AFTER` | **PASS (2026-10-04)** — сохранено **на диск**: `backups/before-split-64127b9e-refs/animastor.git.refs.txt` (6 refs) и `…/animastor-gpu-hub.git.refs.txt` (2 refs, `master=7c7778c6…`) + HEAD/config/count-objects/hook sha256 + `MANIFEST.sha256` (11/11 OK, только-чтение); **после каждого репо** — `diff` snapshot ↔ живые refs |
+| **G-N** | **P1** — remote `github` в каждом bare (**I-16**) | `git -C "$NEW" config --get remote.github.url` | `git@github.com:Animastor/<name>.git` для всех 4 | **PASS / CLOSED (2026-10-04)** — 4/4 настроены до push (push не выполнялся) |
 | **G-O** | **P1** — репозитории **пустые** + public (**I-17**, **I-18**) | `curl … /repos/Animastor/<name>`; `git ls-remote` (GitHub и `git -C $NEW ls-remote github`) | **`size=0` и 0 refs**, `private=false`, `default_branch=main` (`pushed_at`/`default_branch=""` — устаревшие критерии, см. go-blockers §2.1) | **PASS / READY (2026-10-04)** — GitHub: 4 × 200, `size=0`, **0 refs**, `private=false`; новые bare: **0 refs / 0 objects**; **push не выполнялся** → **I-17** подтверждён, **I-18** SSH read rc=0 |
-| **G-P** | **P1** — hook 91 байт, 0755, до первого push | `test -x "$NEW/hooks/post-receive" && test "$(wc -c < "$NEW/hooks/post-receive")" -eq 91` | совпадает с §2.2 pre-split-go-blockers | **BLOCKED** |
+| **G-P** | **P1** — hook 91 байт, 0755, до первого push | `test -x "$NEW/hooks/post-receive" && test "$(wc -c < "$NEW/hooks/post-receive")" -eq 91` | совпадает с §2.2 pre-split-go-blockers | **PASS / CLOSED (2026-10-04)** — 4 × `0755 / 91 байт`, `cmp` байт-в-байт с шаблоном (sha256 `6a63cb14…`); **до** первого push |
 
-**Сейчас: G-E / G-N / G-O / G-P = BLOCKED, G-F = FAIL, G-G = READY (R-3 = A),
-G-I = NOT APPLICABLE, G-H / G-J / G-M = не выполнялись → GO-состояние НЕ
-достигнуто** (остались P1 и P6). Физический split не выполняется.
+**Сейчас (перепроверка 2026-10-04):** **G-E / G-H / G-J / G-M / G-N / G-O /
+G-P = PASS** (P1 закрыт, P6 = PASS, стадия B выполнена: backup + BEFORE-snapshot),
+**G-F = PASS** (6 781 632 512 B ≥ 5G на момент backup), **G-G = READY
+(R-3 = A)**, **G-I = NOT APPLICABLE**, **G-A…G-D, G-K…G-L = READY** →
+**все пункты чеклиста §6 выполнены, НО GO НЕ установлен автоматически**:
+стадия C (первый `git filter-repo`) требует **отдельной авторизации владельца**.
 Детальная раскладка P1 / P6 и сквозной чеклист GO-01…GO-15 —
-`repository-split-pre-split-go-blockers.md` §2–§6; решение R-3 —
+`repository-split-pre-split-go-blockers.md` §2–§7; решение R-3 —
 `repository-split-r3-decision.md`.
 
 ---
@@ -364,6 +375,25 @@ G-I = NOT APPLICABLE, G-H / G-J / G-M = не выполнялись → GO-со�
 | Каталоги | `ls -d /tmp/split` | **отсутствует** → ничего не исполнялось |
 | Запрещённые операции | grep по §4.1 | `--path-rename` **нет**, `--force` **нет**, URL только `github.com/Animastor/` |
 
+### 8.1 Стадия B и GO-05 (2026-10-04, эта ревизия)
+
+| Проверка | Команда | Результат |
+|---|---|---|
+| `NEWBRANCH` | `grep -c NEWBRANCH docs/architecture/repository-split-next-blockers.md` + API/`symbolic-ref` | одна переменная `main`; GitHub `default_branch=main` ×4; `symbolic-ref HEAD=refs/heads/main` ×4 → **GO-05 = CLOSED** (owner-confirmation записан в pre-split-go-blockers §7.1) |
+| hook не знает веток | `grep -c 'main\|master\|NEWBRANCH' hooks/post-receive` | **0** → G-J сверяется с GitHub/bare, а не с hook'ом |
+| backup создан | `git clone --mirror --no-local $BARE $BK` | `$BK = /home/animastor/backups/animastor-pre-split-64127b9e.git`, **22 431 724 B** |
+| backup содержимое | `rev-parse $SRC` / `rev-list --count` / `ls-tree \| wc -l` | `64127b9e…` / **1653** / **1635** |
+| backup целостность | `git -C $BK fsck --no-progress` | чисто |
+| backup ↔ `$BARE` refs | `diff` `for-each-ref` | **IDENTICAL** (6/6) |
+| независимость копии | `ls -i …/*.pack` (inode'ы `$BK` ↔ `$BARE`) | **0 общих inode'ов** (`--no-local`; обычный локальный clone хардлинкует — проверено на тестовом клоне) |
+| restore-дрилл №1 | `git init --bare /tmp/… && git fetch $BK '+refs/*:refs/*'` | refs IDENTICAL, `fsck` чисто, `master=64127b9e` |
+| restore-дрилл №2 | `git clone --single-branch --branch master $BK /tmp/…/wt` | `HEAD=64127b9e`, `status` 0, **1635** файлов; временные каталоги удалены |
+| `$BARE` после backup | `rev-parse master`, `for-each-ref`, `count-objects` | `64127b9e`, 6 refs, `count 1743 / packs 4 / size-pack 22797` — **не изменился** |
+| BEFORE-snapshot | `for-each-ref` двух bare → `backups/before-split-64127b9e-refs/` | `animastor.git` 6 refs (`master=64127b9e`), `animastor-gpu-hub.git` 2 refs (**`master=HEAD=7c7778c6f313dad19eb403d8509cd297226ec7ea`**); `MANIFEST.sha256` **11/11 OK**; файлы 0444, каталог 0555 |
+| GPU Hub | `rev-parse refs/heads/master` в `animastor-gpu-hub.git` | `7c7778c6…` — **не создавался, не фильтровался, не пушится** |
+| 4 новых bare / GitHub | `for-each-ref`, `count-objects`, `ls-remote` | **0 refs / 0 objects** локально; GitHub **0 refs**, `size=0` |
+| hooks/remote | `sha256sum` hook'ов, `config --get remote.github.url` | `6a63cb14…` у всех 6 bare (монорепо/GPU Hub — mtime не менялись); remote `github` на месте |
+
 ---
 
 ## 9. NOT EXECUTED
@@ -375,11 +405,18 @@ G-I = NOT APPLICABLE, G-H / G-J / G-M = не выполнялись → GO-со�
 hooks: NOT MODIFIED · npm publish: NOT EXECUTED.**
 
 Этот документ **не выполнял** и **не авторизует**: создание репозиториев (P1;
-4 пустых GitHub-репо созданы владельцем 2026-10-03 **вне** этого документа —
-bare/hook ещё нет), очистку диска (**не требуется: P6 закрыт без очистки**),
-выбор R-3 (решён ранее: A), `git filter-repo`, force-push, `--path-rename`,
-изменение `master`, hook'ов, production-кода и B7-тестов, регенерацию текущих
-monorepo lock-файлов, удаление `tmp/parser-audit-backup`.
+4 пустых GitHub-репо созданы владельцем 2026-10-03, 4 VPS bare + hook + remote —
+подготовительной ревизией 2026-10-04), очистку диска (**не требуется: P6 закрыт
+без очистки**), выбор R-3 (решён ранее: A), `git filter-repo`, force-push,
+`--path-rename`, изменение `master`, hook'ов, production-кода и B7-тестов,
+регенерацию текущих monorepo lock-файлов, удаление `tmp/parser-audit-backup`,
+push в новые bare/GitHub и **авторизацию стадии C**.
+
+**Выполнено подготовительными ревизиями (не этим документом как инструкцией, а
+фактически, 2026-10-04): стадия B** — только запись в **новые** каталоги
+`backups/`: mirror-backup монорепо (GO-08) и BEFORE-snapshot refs `animastor.git`
++ `animastor-gpu-hub.git` (GO-14), плюс owner-confirmation `NEWBRANCH=main`
+(GO-05). `$BARE`, GPU Hub, hook'и и GitHub при этом не изменялись.
 
 Изменены **только** `docs/architecture/*.md` — этим **одним** docs-only commit'ом
 (см. final-gate §0/§6 и handoff §1).
