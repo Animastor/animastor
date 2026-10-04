@@ -5,6 +5,14 @@ HEAD: `7848b49d` (execution readiness, unambiguous contract)
 База: `repository-split-preparation-plan.md` (rev 3.2, НЕ менялся),
 `repository-split-execution-readiness.md` (НЕ менялся).
 
+> **Обновление статуса (документационная ревизия): R-3 решён —
+> вариант A = SELECTED, B = REJECTED**
+> (`repository-split-r3-decision.md`). Все упоминания «R-3 OPEN /
+> решение не принято» ниже — **исторический статус на 2026-10-01**.
+> Существующий `Animastor/animastor-gpu-hub` сохраняется без изменений,
+> `filter-repo` для GPU Hub не выполняется, новый репозиторий не создаётся,
+> force-push/overwrite/delete запрещены, его standalone history канонична.
+
 Метод: только чтение и анализ. `npm view` против registry.npmjs.org,
 `git ls-files` против §8.1–8.5, grep по `backend/src`, `backend/tests`,
 `packages/*/src`, `tools/`; локальные прогоны (`sync-protocol.cjs --check`).

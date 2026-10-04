@@ -517,6 +517,17 @@ worker получает его snapshot по §5-механизму (владе�
 
 ### 8.5 animastor-gpu-hub
 
+> **⛔ R-3 = A (SELECTED) → §8.5 НЕ ИСПОЛНЯЕТСЯ.**
+> `git filter-repo` для GPU Hub **не выполняется**, существующий
+> `Animastor/animastor-gpu-hub` (bare = GitHub = `7c7778c`, 43 коммита)
+> **не перезаписывается и не force-push'ится**, новый репозиторий **не
+> создаётся**; его standalone history **канонична**.
+> Нижайший блок `--path …` сохранён **только как историческая запись**
+> отклонённого варианта B (**REJECTED / NOT SELECTED**).
+> Норматив: `repository-split-r3-decision.md`.
+> Исполняемый лист §4.1.5 и карта §5.5 в `repository-split-next-blockers.md`
+> помечены **REJECTED / DO NOT EXECUTE**.
+
 ```sh
 git filter-repo \
   --path packages/animastor-gpu-hub \

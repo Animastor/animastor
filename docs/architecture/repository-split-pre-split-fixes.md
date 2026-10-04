@@ -121,11 +121,11 @@ B1/B2/B3/B6/B8/B12 + подготовка B7. Физический split НЕ в
 | P5: CI отсутствует | создание запрещено ТЗ; G1–G5 подтверждены локально |
 | P6: диск 3.5 GB | без изменений |
 | P3: npm-токен E401 | POST-SPLIT requirement, без изменений |
-| R-3: GPU Hub decision | см. §5 — DECISION REQUIRED |
+| R-3: GPU Hub decision | **ЗАКРЫТ — вариант A = SELECTED, B = REJECTED** (`repository-split-r3-decision.md`); §5 ниже — актуальный статус |
 | R-5: расхождение readiness §2.3 ↔ prep plan §8.3 (parity) | зафиксировано в final-readiness; документы по ТЗ не менялись; правило исполнения — §6 |
 | R-7: числа readiness (136→141+) | обновляется фактом FF master |
 
-## 5. GPU HUB — DECISION REQUIRED
+## 5. GPU HUB — **DECIDED: вариант A = SELECTED, вариант B = REJECTED**
 
 Read-only анализ (изменений не вносилось, ничего не перезаписано):
 
@@ -170,7 +170,7 @@ GHCR workflow-фиксации) перестанут резолвиться — 
 mirror при ошибке очередности шагов может вытолкнуть частичную/старую историю
 в GitHub до завершения проверок.
 
-### Вариант A — сохранить существующий GPU Hub (рекомендуемый к рассмотрению)
+### Вариант A — сохранить существующий GPU Hub — **✅ ВЫБРАН (SELECTED)**
 
 1. Заархивировать состояние monorepo-пакета: тег/ветка в монорепо до filter-repo
    (`pre-split/packages-animastor-gpu-hub`).
@@ -190,7 +190,13 @@ mirror при ошибке очередности шагов может выто
 останется только в архиве монорепо + §8.5-фильтрате, если его сделать отдельно);
 нужен аккуратный merge/бэкпорт.
 
-### Вариант B — заменить историей monorepo (как §8.5), но безопасно
+### Вариант B — заменить историей monorepo — **⛔ REJECTED / NOT SELECTED (НЕ ИСПОЛНЯТЬ)**
+
+> **Отказ от исполнения.** Ни одна из команд ниже (mirror-backup с целью
+> последующей перезаписи, заморозка `hooks/post-receive`, `filter-repo` §8.5,
+> `push --force` / `push --mirror` в существующий bare/GitHub) **не должна
+> выполняться**. R-3 = **A**; норматив — `repository-split-r3-decision.md`
+> §1.1, §3.1. Текст ниже сохранён только как историческая запись.
 
 1. `git clone --mirror` существующего bare в `/home/animastor/backups/animastor-gpu-hub-pre-split.git`
    (+ не забыть GitHub уже содержит то же).
@@ -204,9 +210,20 @@ mirror при ошибке очередности шагов может выто
 по коду hub из monorepo. Минусы: старая история де-факто выводится из оборота;
 SHA-ссылки ломаются.
 
-**Решение НЕ принимается** (по ТЗ). До решения — filter-repo gpu-hub = NO-GO.
-Очередь filter-repo (backend → web → android → worker) от решения не зависит —
-gpu-hub последний и может исполняться после выбора варианта.
+**Решение принято: R-3 = A (SELECTED), B = REJECTED** —
+`repository-split-r3-decision.md`.
+
+- **A действует:** существующий `Animastor/animastor-gpu-hub` сохраняется
+  без изменений; `filter-repo` для GPU Hub **не выполняется**; новый
+  репозиторий **не создаётся**; force-push/overwrite/delete **запрещены
+  бессрочно**; его standalone history (bare = GitHub = `7c7778c`, 43 коммита)
+  **канонична**.
+- **B помечен REJECTED / NOT SELECTED** и сохранён **только как историческая
+  запись**. Всё, что в нём исполнимо (`filter-repo` §8.5, заморозка
+  `hooks/post-receive`, `push --force` / `--mirror` в существующий bare),
+  **запрещено**.
+- Очередь filter-repo: **backend → web → android → worker** (шаг gpu-hub
+  исключён из очереди навсегда, пока не появится новое письменное решение).
 
 ## 6. Единое правило ANDROID_WEB_PARITY (исполнение R-5)
 
@@ -232,15 +249,20 @@ readiness §2.3/§5. Найденное расхождение: §8.3 перен
 
 1. **filter-repo до FF `master`** (P2).
 2. **filter-repo при невыполненном B5** — hub-Dockerfile монорепо не собирается
-   из hub-репо; stager на Release-артефактах обязателен до filter-repo hub.
+   из hub-репо; stager на Release-артефактах обязателен **до** filter-repo hub.
+   **При R-3 = A `filter-repo` hub не выполняется → условие неприменимо;
+   B5 остаётся пост-сплит требованием к самому hub-образу.**
 3. **filter-repo при < ~3 GB свободно** (P6).
 4. **filter-repo при G1–G5 не зелёных / без CI-workflows** (P5, B9) — для G4/G5.
-5. **filter-repo gpu-hub до решения R-3** (§5).
+5. **`filter-repo` gpu-hub — запрещён вовсе при R-3 = A** (§5, B = REJECTED);
+   решение принято — `repository-split-r3-decision.md` §3.1.
 6. **Прямой push из временного клона в GitHub** — запрещён §7.3 prep plan.
 7. **npm publish при недействительном токене** (P3, E401).
 8. **Изменение monorepo `post-receive` hook** (§7.2).
 9. **Создание `Animastor/animastor-gpu-hub` заново** — репо существует.
-10. **`push --mirror`/force в существующий gpu-hub bare/GitHub** без backup + заморозки hook (вариант B §5) или вместо адаптации (вариант A §5).
+10. **`push --mirror` / force в существующий gpu-hub bare или GitHub** —
+    **запрещено бессрочно, без оговорок про backup/заморозку hook**: вариант B
+    REJECTED, вариант A действует (`repository-split-r3-decision.md` §3.1).
 11. **Удаление `backend/tests/architecture` dispositions без переноса** при filter-repo (§9 prep plan + закрытые R-2/R-4 — перенесённые части уже на npm-пути).
 
 ## 8. Точный порядок следующих действий перед первым filter-repo
@@ -250,9 +272,15 @@ readiness §2.3/§5. Найденное расхождение: §8.3 перен
 3. **P6**: освободить ≥3 GB.
 4. **P2**: FF `master` до рабочей ветки (включая этот коммит) + push.
 5. **P4-гигиена**: физически удалить пустой каталог `workflow.json` на VPS (untracked).
-6. **R-3**: письменное решение владельца по §5 (вариант A или B).
-7. **P1**: создать 4 bare (`backend`, `web`, `android`, `worker`) + 4 пустых GitHub-репо + hooks до первых push; для gpu-hub — по выбранному варианту §5.
-8. **filter-repo** (очередь: backend → web → android → worker → gpu-hub) c override'ами readiness §9-6b (`workflow.json`, `local.properties` исключены) и parity-правилом §6; после каждого — §6/§7 readiness verification.
+6. **R-3 — ВЫПОЛНЕНО**: вариант **A = SELECTED**, B = REJECTED
+   (`repository-split-r3-decision.md`).
+7. **P1**: создать 4 bare (`backend`, `web`, `android`, `worker`) + 4 пустых
+   GitHub-репо + hooks до первых push; **для gpu-hub — ничего не создавать**
+   (репозиторий существует, R-3 = A).
+8. **filter-repo** (очередь: **backend → web → android → worker**; **gpu-hub
+   исключён — R-3 = A**) c override'ами readiness §9-6b (`workflow.json`,
+   `local.properties` исключены) и parity-правилом §6; после каждого —
+   §6/§7 readiness verification.
 9. **Freeze монорепо → deployment cutover (B11)**.
 
 ---
