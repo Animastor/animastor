@@ -1083,7 +1083,7 @@ worker; **gpu-hub не фильтруется — R-3 = A**, `repository-split-r
 | **P3** | npm credentials: **`npm whoami` → E401**, токен в `~/.npmrc` недействителен (1 `_authToken`); `npm view`/install работают | Без валидного токена закрыты **publish** и **Release**-путь B5 (4 zip + digest в `artifacts.lock.json`), а также публикация 15 backend + 13 web пакетов | Разблокируется первый publish из новых репо; **сам filter-repo НЕ блокируется** — позиционируется как POST-SPLIT requirement (до первого publish, не до split) |
 | **P6** | Минимальный свободный диск: **≥5G** (рекомендуется ≥8G) | **CLOSED / PASS (2026-10-04)**: `df -B1 /` → **6 839 934 976 B (≈6.4 GiB) ≥ 5G** → 1.27× порога, 6.4× измеренного минимума 1 GiB (пик ≈431 MB). Исторически (audit trail): 2.9G / 2.8G — **FAIL** | **Решение не требуется, очистка не требуется**; ранее предложенные `pip cache purge` ≈4.4G и `/tmp`-шаги **отозваны** (выполнять только по отдельному распоряжению владельца). Перед запуском — контрольная `df -B1 /` |
 | **P5** | Интерпретация: workflows создаются **в новых репо**, а не в монорепо (расхождение с prep-plan §11.4) | `.github/` отсутствует в монорепо; CI в монорепо бессмыслен | Подтверждение снимает §FPSG.4 п.2 / §FPSG.8 п.6 |
-| **P4** | Гигиена: `rmdir /home/animastor/animastor/workflow.json` (пустой untracked-каталог) + снять stale android-compose-mount. **НЕ удалять** `workflow.json` как git-объект — его в дереве нет (no-op `--path`) | Каталог в корне мешает чистому `git status` в новых репо и попадает в whitelist §8.1 как no-op | Освобождает precondition §4 перед шагом 1; `--path workflow.json` исключается из команды backend (§4.1.1) |
+| **P4** | Гигиена: `rmdir /home/animastor/animastor/workflow.json` (пустой untracked-каталог) + снять stale android-compose-mount. **НЕ удалять** `workflow.json` как git-объект — его в дереве нет (no-op `--path`) | ~~Каталог в корне мешает чистому `git status` в новых репо~~ → **неточность, исправлено (2026-10-04)**: пустой untracked-каталог **не виден** `git status` (проверено: `--porcelain` = 0 строк) и **не попадает** в клон `$SPLIT` (клонирует только tracked-дерево) — реальный вред ограничивается рабочим деревом монорепо и **stale bind-mount** у живого контейнера; в whitelist §8.1 каталог входит как no-op | Освобождает precondition §4 перед шагом 1; `--path workflow.json` исключается из команды backend (§4.1.1) |
 | **`tmp/parser-audit-backup`** | Подтвердить удаление ветки **`db5ff61f`** (`refs/heads/tmp/parser-audit-backup`, есть и в bare). **Сам подтверждение — решение владельца; до него ветку НЕ удалять** | Ветка пережила split-подготовку; её наличие в новом bare дало бы лишнюю ref | После подтверждения — `git branch -D tmp/parser-audit-backup` в монорепо и в backup-клоне; на извлечение не влияет |
 
 ### 4. Exact split order
@@ -1184,7 +1184,34 @@ test "$(git -C "$BARE" rev-parse "$SRC^{commit}")" = "$SRC" || { echo "FAIL: $SR
 git -C "$BARE" merge-base --is-ancestor "$SRC" "$BRANCH" || { echo "FAIL: $SRC не предок $BRANCH"; exit 1; }
 test "$BRANCH" != master || { echo "FAIL: BRANCH не должен быть master"; exit 1; }
 BEFORE=$(git -C "$BARE" for-each-ref --format='%(objectname) %(refname)' | sort)
-test "$BEFORE" = "$(cat "$SNAP/animastor.git.refs.txt")" || { echo "FAIL: refs монорепо != BEFORE-snapshot (GO-14)"; exit 1; }
+# GO-14: сверка живых refs с BEFORE-snapshot. ДОСЛОВНО сравниваются только
+# неизменяемые refs (master, tmp/parser-audit-backup и их refs/remotes/github/*)
+# и общее число refs; docs-ветка c21.4-physically-extract-analysis-from-backend
+# законно продвигается КАЖДЫМ docs-only коммитом (в т.ч. коммитом, записавшим эту
+# строку) — для неё требуется только fast-forward от snapshot-тапа. Жёсткое
+# равенство «все 6 refs дословно» давало бы ложный FAIL после любого doc-коммита.
+# GPU Hub (R-3 = A, 2 refs, неизменяем) сверяется дословно — без исключений.
+check_bare_snapshot() {
+  local snapf="$SNAP/animastor.git.refs.txt" r snap_sha n_snap n_live
+  test -f "$snapf" || { echo "FAIL: $snapf отсутствует (GO-14)"; return 1; }
+  for r in refs/heads/master refs/remotes/github/master \
+           refs/heads/tmp/parser-audit-backup refs/remotes/github/tmp/parser-audit-backup; do
+    snap_sha=$(awk -v r="$r" '$2==r{print $1}' "$snapf")
+    test -n "$snap_sha" || { echo "FAIL: $r нет в BEFORE-snapshot (GO-14)"; return 1; }
+    test "$(git -C "$BARE" rev-parse "$r")" = "$snap_sha" || { echo "FAIL: $r изменился (GO-14)"; return 1; }
+  done
+  n_snap=$(awk 'END{print NR}' "$snapf")
+  n_live=$(git -C "$BARE" for-each-ref | awk 'END{print NR}')
+  test "$n_snap" = "$n_live" || { echo "FAIL: refs монорепо $n_live != snapshot $n_snap (GO-14)"; return 1; }
+  for r in "refs/heads/$BRANCH" "refs/remotes/github/$BRANCH"; do
+    snap_sha=$(awk -v r="$r" '$2==r{print $1}' "$snapf")
+    test -n "$snap_sha" || { echo "FAIL: $r нет в BEFORE-snapshot (GO-14)"; return 1; }
+    git -C "$BARE" merge-base --is-ancestor "$snap_sha" "$(git -C "$BARE" rev-parse "$r")" \
+      || { echo "FAIL: $r не fast-forward от BEFORE-snapshot (GO-14)"; return 1; }
+  done
+}
+check_bare_snapshot || { echo "FAIL: монорепо не соответствует BEFORE-snapshot (GO-14)"; exit 1; }
+echo "OK: monorepo == BEFORE-snapshot (неизменяемые refs дословно, docs-ветка fast-forward)"
 test "$(git -C "$GPUHUB" for-each-ref --format='%(objectname) %(refname)' | sort)" = "$(cat "$SNAP/animastor-gpu-hub.git.refs.txt")" || { echo "FAIL: refs GPU Hub != BEFORE-snapshot (R-3 = A, GO-14)"; exit 1; }
 test "$(git -C "$GPUHUB" rev-parse refs/heads/master)" = "7c7778c6f313dad19eb403d8509cd297226ec7ea" || { echo "FAIL: GPU Hub master изменился"; exit 1; }
 # исходная команда создания (ВЫПОЛНЕНА 2026-10-04; при повторном запуске НЕ запускать — guard выше):
@@ -1210,12 +1237,11 @@ echo "OK: master == source"
 AFTER=$(git -C "$BARE" for-each-ref --format='%(objectname) %(refname)' | sort)
 test "$BEFORE" = "$AFTER" || { echo "FAIL: refs монорепо изменились"; exit 1; }
 echo "OK: monorepo untouched"
-# та же сверка по durable-сnapshot'у (переживает перезапуск сессии) + GPU Hub (R-3 = A):
-diff "$SNAP/animastor.git.refs.txt" <(git -C "$BARE" for-each-ref --format='%(objectname) %(refname)' | sort) \
-  || { echo "FAIL: refs монорепо != BEFORE-snapshot"; exit 1; }
+# та же сверка по durable-snapshot'у (переживает перезапуск сессии) + GPU Hub (R-3 = A):
+check_bare_snapshot || { echo "FAIL: монорепо != BEFORE-snapshot (GO-14)"; exit 1; }
 diff "$SNAP/animastor-gpu-hub.git.refs.txt" <(git -C "$GPUHUB" for-each-ref --format='%(objectname) %(refname)' | sort) \
   || { echo "FAIL: refs GPU Hub изменились"; exit 1; }
-echo "OK: monorepo + GPU Hub == BEFORE-snapshot"
+echo "OK: monorepo (GO-14) + GPU Hub == BEFORE-snapshot"
 ```
 
 > **Почему три строки `reset` + `update-ref` + `reflog expire` (сверено с
@@ -1308,7 +1334,9 @@ git log --follow --format='%h %ad %s' --date=short -- docs/architecture/GPU_HUB_
 # первый push (bare создаётся в P1 владельцем)
 NEW=/home/animastor/repos/animastor-backend.git
 test -d "$NEW" || git init --bare "$NEW"
+test -z "$(git -C "$NEW" for-each-ref)" || { echo "FAIL: $NEW не пуст (I-17) — первый push требует пустого bare"; exit 1; }
 git remote add origin "$NEW"
+test "$(git remote get-url origin)" = "$NEW" || { echo "FAIL: origin = $(git remote get-url origin), ожидался $NEW — push НЕ в тот remote"; exit 1; }
 git -C "$NEW" symbolic-ref HEAD "refs/heads/$NEWBRANCH"
 git push -u origin "HEAD:refs/heads/$NEWBRANCH"
 git ls-remote https://github.com/Animastor/animastor-backend.git "refs/heads/$NEWBRANCH"
@@ -1374,7 +1402,9 @@ if test ! -e .gitignore; then echo "WARN: корневого .gitignore нет �
 
 NEW=/home/animastor/repos/animastor-web.git
 test -d "$NEW" || git init --bare "$NEW"
+test -z "$(git -C "$NEW" for-each-ref)" || { echo "FAIL: $NEW не пуст (I-17) — первый push требует пустого bare"; exit 1; }
 git remote add origin "$NEW"
+test "$(git remote get-url origin)" = "$NEW" || { echo "FAIL: origin = $(git remote get-url origin), ожидался $NEW — push НЕ в тот remote"; exit 1; }
 git -C "$NEW" symbolic-ref HEAD "refs/heads/$NEWBRANCH"
 git push -u origin "HEAD:refs/heads/$NEWBRANCH"
 git ls-remote https://github.com/Animastor/animastor-web.git "refs/heads/$NEWBRANCH"
@@ -1411,7 +1441,9 @@ if test ! -e .gitignore; then echo "WARN: корневого .gitignore нет �
 
 NEW=/home/animastor/repos/animastor-android.git
 test -d "$NEW" || git init --bare "$NEW"
+test -z "$(git -C "$NEW" for-each-ref)" || { echo "FAIL: $NEW не пуст (I-17) — первый push требует пустого bare"; exit 1; }
 git remote add origin "$NEW"
+test "$(git remote get-url origin)" = "$NEW" || { echo "FAIL: origin = $(git remote get-url origin), ожидался $NEW — push НЕ в тот remote"; exit 1; }
 git -C "$NEW" symbolic-ref HEAD "refs/heads/$NEWBRANCH"
 git push -u origin "HEAD:refs/heads/$NEWBRANCH"
 git ls-remote https://github.com/Animastor/animastor-android.git "refs/heads/$NEWBRANCH"
@@ -1461,7 +1493,9 @@ if test ! -e .gitignore; then echo "WARN: корневого .gitignore нет �
 
 NEW=/home/animastor/repos/animastor-worker.git
 test -d "$NEW" || git init --bare "$NEW"
+test -z "$(git -C "$NEW" for-each-ref)" || { echo "FAIL: $NEW не пуст (I-17) — первый push требует пустого bare"; exit 1; }
 git remote add origin "$NEW"
+test "$(git remote get-url origin)" = "$NEW" || { echo "FAIL: origin = $(git remote get-url origin), ожидался $NEW — push НЕ в тот remote"; exit 1; }
 git -C "$NEW" symbolic-ref HEAD "refs/heads/$NEWBRANCH"
 git push -u origin "HEAD:refs/heads/$NEWBRANCH"
 git ls-remote https://github.com/Animastor/animastor-worker.git "refs/heads/$NEWBRANCH"
