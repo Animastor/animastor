@@ -6,10 +6,11 @@
 > **не архивируются** в git.
 >
 > **Дата прогона:** 2026-10-05.
+> **Обновление:** 2026-10-05 — оба NEW-блокера (§3 N-1, N-2) устранены,
+> см. §6 и §10.
 > **Ветка монорепо:** `c21.4-physically-extract-analysis-from-backend`.
 > **Окружение:** `node v22.22.3`, `npm 10.9.8`, JDK 17 (OpenJDK 17.0.20.1),
-> Gradle 8.12 (внешний, `/home/animastor/animastor/frontends/android/gradle-8.12/bin/gradle`),
-> Linux, `/` 3.8G avail.
+> Gradle 8.12, Linux, `/` 3.8G avail.
 >
 > **Предшественники по теме:** `repository-split-final-verification.md`,
 > `repository-split-final-gate.md`, `repository-split-next-blockers.md`,
@@ -42,51 +43,61 @@
 | gRPC / Protocol | N/A — gRPC в проекте отсутствует (0 совпадений по `*.proto`), фактический контракт — Job Protocol v2 | `npm run check:protocol` rc=0 | — | 0 | 0 | **PASS** |
 | Worker | PASS (`npm ci` rc=0; `node --check` OK по `worker.cjs` и `job-protocol-v2.cjs`) | **PASS** 45/45, 0 fail (2 skip — parity/manifest, ожидаемо для standalone) | PASS (entrypoint без токена корректно отказывает) | 0 | 0 | **PASS** |
 | Web | PASS (`build:packages` rc=0 — 13 пакетов; `vite build` rc=0, 404.92 kB / gzip 118.03, built in 1.62s) | **PASS** 201/201 в 15 файлах; `tsc --noEmit` rc=0 | **UNVERIFIED** — нет `vercel` CLI, `~/.vercel`, `vercel.json` | 0 | 0 (`npm ci` — 0 warnings) | **PASS WITH WARNINGS** |
-| Android | PASS **только внешним Gradle 8.12**: `clean :app:assembleDebug --warning-mode all` rc=0, BUILD SUCCESSFUL in 1m48s, 0 warnings; APK 12 677 548 B. **`./gradlew` в клоне — exit 127** | тестов в standalone-репо нет | FAIL — `./gradlew` нерабочий; release невозможен (нет `release-key.jks`) | 1 (NEW, standalone-экспозиция) | 0 | **FAIL** |
+| Android | PASS `./gradlew clean assembleDebug --warning-mode all` rc=0, BUILD SUCCESSFUL (wrapper закоммичен, см. §3 N-1 — **FIXED**), APK 12 677 548 B | тестов в standalone-репо нет | release невозможен (нет `release-key.jks`) | 0 (**N-1 устранён**) | 0 | **PASS** |
 | Vercel | — | — | **UNVERIFIED** — доступа нет | — | — | **UNVERIFIED** |
 | npm packages (`@animastor/*`) | 27 scoped + 1 unscoped опубликованы; все 28 установленных пакетов проходят health-check `main`/`types`/`exports` | — | registry tarballs во всех 4 репо, ноль `file:`/`link:`/`workspace:` | 0 | version skew `vbook-runtime` 0.1.0/0.2.0; у `contracts@0.1.1` нет `types` | **PASS WITH WARNINGS** |
 
 ---
 
-## 3. NEW ERRORS (экспозиция standalone-репозиториев)
+## 3. NEW ERRORS (экспозиция standalone-репозиториев) — оба устранены
 
-### N-1. Android: `./gradlew` нерабочий в клоне
+> **Оба NEW-блокера закрыты (2026-10-05).** Ниже сохранено описание исходного
+> дефекта и причина; текущее состояние — в колонке «Устранение».
+> N-2 потребовал **исправления самого отчёта**: отсутствие пакета в backend-репо
+> оказалось корректным, ломаным было предположение диагностики.
 
-- **Где:** репозиторий `animastor-android`, `frontends/android/gradlew`
-- **Команда:** `cd /tmp/verify/android/frontends/android && ./gradlew …`
-- **Результат:** `exit 127` —
-  `./gradlew: line 2: ./gradle-8.12/bin/gradle: No such file or directory`
-- **Причина:** `gradlew` — стаб из двух строк (`./gradle-8.12/bin/gradle "$@"`).
-  Ни `gradle-8.12/`, ни `gradle-wrapper.jar`, ни `gradle-wrapper.properties`
-  **не отслеживаются git** ни в android-репо, ни в монорепо — стаб добавлен
-  коммитом `9d6de986`. В монорепо каталог `gradle-8.12/` присутствует локально
-  как неотслеживаемый, поэтому дефект замаскирован; в свежем клоне репозитория
-  он проявляется.
-- **Обход для проверки:** внешний Gradle 8.12 (см. §2, Android Build) — сборка
-  проходит, т.е. блокер только в способе входа, не в коде приложения.
+### N-1. Android: `./gradlew` нерабочий в клоне — ✅ FIXED (`4660db5`)
 
-### N-2. Backend: `docker-compose.yml` ссылается на отсутствующий build-контекст
+- **Было:** репозиторий `animastor-android`, `frontends/android/gradlew` —
+  `exit 127`, `./gradlew: line 2: ./gradle-8.12/bin/gradle: No such file or directory`.
+- **Причина:** `gradlew` был стабом из двух строк (`./gradle-8.12/bin/gradle "$@"`),
+  а каталог `gradle-8.12/` **явно внесён в `.gitignore` монорепо**
+  (`frontends/android/gradle-8.12`) и не был отслежен ни в одном коммите ни
+  android-репо, ни монорепо. Стаб добавлен коммитом `9d6de986`; настоящего
+  Gradle Wrapper в истории не существовало — `gradlew.bat`,
+  `gradle/wrapper/gradle-wrapper.{jar,properties}` не появлялись ни разу.
+  Монорепо маскировал дефект локально установленным дистрибутивом.
+- **Устранение:** в android-репо закоммичен сгенерированный Gradle 8.12 wrapper
+  (`gradle-wrapper.jar`, `gradle-wrapper.properties`, `gradlew`, `gradlew.bat`).
+  Версия 8.12 сохранена — та же, на которой верифицировались AGP 8.7.3.
+  `networkTimeout` поднят с дефолтных 10 с до 60 с: дистрибутив — 136 МБ за
+  редиректом, дефолтный таймаут истекает до первого байта полезной нагрузки.
 
-- **Где:** `animastor-backend`, `docker-compose.yml:114`
-- **Блок:** сервис `gpu-hub` → `build: { context: ., dockerfile: packages/animastor-gpu-hub/Dockerfile }`
-- **Причина:** build-контекст рассчитан был на монорепо. В standalone
-  backend-репозитории `packages/` присутствует, но содержит только 15
-  vendored-исходников (`animastor-ai-agent`, `ai-analysis`, `ai-connector`,
-  `assistant`, `auth`, `comfyui-workflow-connector`, `contracts`, `editor`,
-  `generation`, `installer`, `orchestration`, `parser`, `player`, `url-safety`,
-  `vbook-runtime`). Отсутствуют как раз те два пути, которые нужны Dockerfile'у:
-  `packages/animastor-gpu-hub/Dockerfile` и `packages/animastor-worker/worker/`
-  (canonical worker bundle source, по комментарию в compose). Оба пакета
-  опубликованы в npm (`@animastor/gpu-hub`, `@animastor/worker-dev` — второй
-  `private: true`), но Dockerfile собирает **из исходников**, а не из registry.
-- **Документированная митигация (присутствует в репо):**
-  `docker/compose/overlay-gpu-hub-standalone.yml` — задаёт
-  `image: ${GPU_HUB_IMAGE:?…}` (pinned digest) и `build: !reset null`.
-  Использование: `docker compose -f docker-compose.yml -f docker/compose/overlay-gpu-hub-standalone.yml up`.
-  Требует `POSTGRES_PASSWORD` в `.env` (проверка `docker compose config`).
-- **Статус:** не дефект кода, а неполная документация standalone-пути в основном
-  compose-файле. Комментарий над сервисом (`docker-compose.yml:105-110`) митигацию
-  упоминает, но дефолтный `build:` остаётся ломаным.
+### N-2. Backend: `docker-compose.yml` ссылался на отсутствующий build-контекст — ✅ FIXED (`ca825d6`)
+
+- **Было:** `docker compose build gpu-hub` → `exit 1`,
+  `resolve : lstat .../packages/animastor-gpu-hub: no such file or directory`.
+  Блок в compose: `build: { context: ., dockerfile: packages/animastor-gpu-hub/Dockerfile }`.
+- **Причина (исследование):** пакет `animastor-gpu-hub` **намеренно вынесен
+  в отдельный репозиторий** `/home/animastor/repos/animastor-gpu-hub.git`
+  (`master` == `github/master` = `7c7778c6`), Dockerfile там самодостаточен
+  (`COPY package.json ./` + `COPY . .`, никаких `packages/`). В backend-репозитории
+  `@animastor/gpu-hub@^0.1.1` — **devDependency**, используемая архитектурными
+  тестами (`require.resolve('@animastor/gpu-hub/gpu-hub.js')`), а не прод-пакет.
+  Пакет возвращать **не нужно** — отсутствие корректно; ломался оставшийся
+  монорепо-период `build:` в базовом compose.
+  Сопутствующий путь `packages/animastor-worker/worker/` из комментария к compose
+  также отсутствует — worker вынесен отдельно (`@animastor/worker-dev`, `private: true`).
+- **Устранение:** мёртвый `build:` удалён; `GPU_HUB_IMAGE` сделан **обязательной**
+  digest-пиннутой переменной (`:?`), что совпадает с правилом из комментариев
+  самого файла. Заодно исправлены два места, дававшие противоположные указания:
+  `.env.example` (советовал оставить переменную незаданной и «собирать из hub-фикстуры»)
+  и `README.md` (gpu-hub и worker указаны в `packages/`, хотя оба вынесены).
+- **Замечание:** guard-тесты compose, фиксировавшие старое поведение
+  (`phase10j-gpu-hub-transitional-fixture.test.js:127,131`,
+  `phase10t-1-artifact-bakein.test.js:69-77`), уже помечены
+  `RETIRE at the split` / `MOVE to hub repo` и не выполняются в standalone —
+  правка с ними согласуется.
 
 ---
 
@@ -177,9 +188,13 @@ namespace `com.example.animastor`, `BASE_URL` default `https://app.animastor.in/
    а не функцию → `TypeError` (`src/routes/book-routes.cjs:41`). Воспроизводится и в монорепо.
 2. **[PRE-EXISTING]** Backend prod: `p-limit` не объявлен → `MODULE_NOT_FOUND`
    при `npm install --omit=dev` (актуально для Dockerfile/прод-образа).
-3. **[NEW]** Android: `./gradlew` → `exit 127` в свежем клоне (нет `gradle-8.12/`, нет gradle-wrapper).
-4. **[NEW]** Backend compose: `dockerfile: packages/animastor-gpu-hub/Dockerfile`
-   отсутствует в standalone-репо (нужен overlay + `GPU_HUB_IMAGE`).
+3. ~~**[NEW]** Android: `./gradlew` → `exit 127` в свежем клоне~~ — **УСТРАНЁН**,
+   коммит `4660db5` в `animastor-android`: Gradle Wrapper 8.12 закоммичен,
+   `./gradlew --version` и `assembleDebug` → `exit 0`.
+4. ~~**[NEW]** Backend compose: `dockerfile: packages/animastor-gpu-hub/Dockerfile`
+   отсутствует в standalone-репо~~ — **УСТРАНЁН**, коммит `ca825d6` в `animastor-backend`:
+   мёртвый `build:` удалён, `GPU_HUB_IMAGE` обязателен и пинуется по digest.
+   Отсутствие самого пакета корректно — он живёт в отдельном репозитории.
 5. **[UNVERIFIED]** Vercel: нет CLI/токена/`vercel.json` — реальный deploy не проверен.
 6. **[UNVERIFIED]** e2e `backend ↔ worker` не запускался (нужен живой GPU Hub / GPU / ComfyUI).
 
@@ -211,8 +226,13 @@ namespace `com.example.animastor`, `BASE_URL` default `https://app.animastor.in/
   dist + DTS собраны. Deep imports `@animastor/*/sub` в `src` — 0.
   Preact не дублируется (единственная копия 10.29.8; 6 web-пакетов объявляют
   peer `preact >=10.5.0`; `vite.config.ts` содержит `resolve.dedupe` для preact).
-- **Android:** сборка внешним Gradle 8.12 — `BUILD SUCCESSFUL`, 0 warnings/deprecations.
+- **Android:** `./gradlew clean assembleDebug --warning-mode all` — `BUILD SUCCESSFUL`
+  (5m 12s, 39 tasks executed), APK 12 677 548 B; версия Gradle 8.12,
+  AGP 8.7.3 / Kotlin 1.9.22 / compileSdk 35 / minSdk 24.
   `local.properties` (gitignored) → `sdk.dir=/home/animastor/Android/Sdk`.
+- **GPU Hub:** Dockerfile в отдельном репо `animastor-gpu-hub` самодостаточен;
+  `docker compose build gpu-hub` → `exit 0` (no-op, «No services to build»),
+  `docker compose pull gpu-hub` → `exit 0` по пиннутому digest.
 - **npm health:** скрипт проверил `main`/`types`/`exports` всех 28 установленных
   пакетов — все `ok` (все указанные файлы существуют).
 
@@ -258,28 +278,40 @@ cd /tmp/verify/web/frontends/app
 npm ci                                                          # rc=0, 0 warnings
 npm run build:packages && npm run typecheck && npm test && npm run build
 
-# §2 android (внешний Gradle 8.12)
+# §2 android (через закоммиченный wrapper)
 cd /tmp/verify/android/frontends/android
-./gradlew --version                                             # exit 127 (N-1)
-/home/animastor/animastor/frontends/android/gradle-8.12/bin/gradle \
-  -p . clean :app:assembleDebug --warning-mode all               # rc=0 (обход N-1)
+GRADLE_USER_HOME=/tmp/guh-test ./gradlew --version                    # rc=0
+GRADLE_USER_HOME=/tmp/guh-test ./gradlew clean assembleDebug \
+  --warning-mode all                                                  # rc=0
 
-# §3 N-2 compose
-grep -n -A3 'gpu-hub:' /tmp/verify/backend/docker-compose.yml
-ls /tmp/verify/backend/packages/animastor-gpu-hub         # No such file → N-2
-ls /tmp/verify/backend/packages/animastor-worker         # No such file → N-2
-cat /tmp/verify/backend/docker/compose/overlay-gpu-hub-standalone.yml
+# §3 N-2 compose (после фикса)
+cd /tmp/verify/backend
+export POSTGRES_PASSWORD=x WORKSPACE_SECRET_KEY=y
+export GPU_HUB_IMAGE=ghcr.io/animastor/animastor-gpu-hub@sha256:eb9a9807b7c20f3fd62d08221be132fdbe9d51070c4b1dd8fd3114a34a7afb2c
+docker compose config                                                # rc=0
+docker compose build gpu-hub                                         # rc=0 (no-op)
+docker compose pull gpu-hub                                          # rc=0
+docker compose -f docker-compose.yml \
+  -f docker/compose/overlay-gpu-hub-standalone.yml config            # rc=0
+
+# §3 N-1/N-2: пакет намеренно живёт в отдельном репо
+git --git-dir=/home/animastor/repos/animastor-gpu-hub.git show-ref    # master == github/master
+git --git-dir=/home/animastor/repos/animastor-gpu-hub.git ls-tree --name-only HEAD
+ls /tmp/verify/backend/packages/animastor-gpu-hub                     # No such file — корректно
 ```
 
 ---
 
 ## 10. FINAL
 
-**FINAL: FAIL**
+**FINAL: FAIL** → **после точечной правки двух NEW-блокеров: FAIL (PRE-EXISTING only)**
 
-Основание — блокеры §6.1–§6.4 (два из них — pre-existing, два — экспозиция
-standalone-репозиториев). Зелёные прогоны (install, web 201/201, worker 45/45,
-android assemble, protocol sync, npm health) подтверждают, что **публикация
+Изначально основанием были блокеры §6.1–§6.4. После коммитов `4660db5`
+(Android wrapper) и `ca825d6` (compose gpu-hub) оба NEW-блокера устранены,
+остались только два PRE-EXISTING (P-1, P-2) и два UNVERIFIED (Vercel, e2e).
+Итог **не меняется**: P-1 роняет backend на старте, P-2 ломает прод-образ.
+Зелёные прогоны (install, web 201/201, worker 45/45, android assemble,
+protocol sync, npm health) подтверждают, что **публикация
 `@animastor/*` и физический split сами по себе выполнены корректно**; блокеры
 лежат в слоях, которые split не покрывал.
 
