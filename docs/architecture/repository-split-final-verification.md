@@ -26,7 +26,7 @@
 |---|---|
 | Скоуп | (1) ISC в `packages/animastor-worker/image/worker/package.json`; (2) остаточные ссылки на `github.com/Animastor/animastor` в 4 новых репо; (3) инварианты split; (4) тесты |
 | Режим | **read-only**, без косметики, без новых коммитов (кроме этого документа) |
-| Монорепо-worktree | `/home/animastor/animastor`, ветка `c21.4-physically-extract-analysis-from-backend`, **HEAD `d1a6cc66`**, `git status --porcelain` = **0 строк** |
+| Монорепо-worktree | `/home/animastor/animastor`, ветка `c21.4-physically-extract-analysis-from-backend`, **HEAD на момент проверки `d1a6cc66`** (этот документ — следующий doc-коммит `2ee1ad3e`), `git status --porcelain` = **0 строк** |
 | Frozen source | `master` bare `/home/animastor/repos/animastor.git` = **`64127b9e1dea2ac528a572b51b90a542b70c5ebb`** — **не тронут** |
 | Клоны-проверяльщики | `/tmp/final/*` (read-only копии HEAD, clean) и `/tmp/verify/*` (рабочие, node_modules; status = 0 строк) |
 | filter-repo metadata | `/tmp/split/{backend,web,android,worker}/.git/filter-repo/{ref-map,commit-map}` |
@@ -83,15 +83,19 @@ git grep -l -i -E "$PAT" HEAD -- docs/architecture                # historical
 - blame остатка: **`a8a296f9`** (2026-09-07, «Move ai-connector into packages»;
   в монорепо тот же коммит — `9fef24ba`, SHA переписан filter-repo) — **pre-split**.
 - Уже исправлено ранее коммитами `b89954fa`/`98c4fbd6`: `package.json`
-  `repository`/`bugs`/`homepage`, README clone-URL, `setup-contract.js:695`.
+  `repository`/`bugs`/`homepage`, README clone-URL,
+  `packages/animastor-installer/src/installer/setup-contract.js:695` (строка —
+  `git clone https://github.com/Animastor/animastor-worker.git…`; со старой
+  формой URL там **0** совпадений).
 - **Фикс в рамках этой проверки НЕ вносился** (скоуп = только проверка; push-путь
   `worktree → bare → GitHub` не использовался). Классификация: **P2, 1 строка**.
 
 **Смежное, НЕ URL (не трогал):** hardcoded `/home/animastor/animastor/…` в
-`scripts/animastor-runtime-audit.sh:415,540,543,544` и
-`docker/e2e/dispatch-task.cjs:11` — задокументированы в
-`repository-split-next-blockers.md` (§779/§1611 → §826/§891/§1958) как
-**EXPECTED PRE-SPLIT → POST-SPLIT ACTION**; это VPS/e2e-пути, а не ссылки на репо.
+  `scripts/animastor-runtime-audit.sh:415,540,543,544` и
+  `docker/e2e/dispatch-task.cjs:11` — задокументированы в
+  `repository-split-next-blockers.md` (строки `:779`, `:1611`; актуальные —
+  `:826`, `:891`, `:1958`) как **EXPECTED PRE-SPLIT → POST-SPLIT ACTION**;
+  это VPS/e2e-пути, а не ссылки на репо.
 
 ### 2.2 Historical `docs/architecture` (не переписывать)
 
@@ -142,7 +146,7 @@ git grep -l -i -E "$PAT" HEAD -- docs/architecture                # historical
 | SHA-only diff vs BEFORE-snapshot | **IDENTICAL** ✓ (расхождение только в колонке типа объекта `commit`) |
 | GitHub (ssh `git@github.com:Animastor/animastor-gpu-hub.git`, 2026-10-05) | **`7c7778c6…`** ✓ == bare == `refs/remotes/github/master` |
 | worktree GPU Hub | status = **0 строк**, HEAD `7c7778c` ✓ |
-| refs монорепо vs snapshot | `master` = **`64127b9e`** идентичны; ветка `c21.4` сдвинулась `40f09946 → d1a6cc66` **только docs-коммитами** — `git diff --name-only 40f09946..d1a6cc66` = **0 файлов вне `docs/architecture/`** ✓ |
+| refs монорепо vs snapshot | `master` = **`64127b9e`** идентичны; ветка `c21.4` сдвинулась `40f09946 → HEAD` (**8** doc-коммитов, **7** файлов) **только внутри `docs/architecture/`** — `git diff --name-only 40f09946 HEAD | grep -vc '^docs/architecture/'` = **0** ✓ (в этот набор входит и данный документ) |
 | force-push | **доказательств нет**: в bare нет `logs/` (reflog отсутствует), все push'и шли обычными (без `--force`) по командным листам execution-pack |
 | npm publish | не выполнялся |
 
@@ -165,7 +169,7 @@ git grep -l -i -E "$PAT" HEAD -- docs/architecture                # historical
 
 1. `installer package boundary guards (@animastor/installer)` →
    `IB-G15: package.json pins (main, bin, private)` —
-   `installer-package-boundary.test.js:243`:
+   `backend/tests/architecture/installer-package-boundary.test.js:243`:
    `AssertionError: package stays private (no publish yet): expected undefined to equal true`
 2. `Phase 5 final audit: full runtime/** boundary` →
    `T9: no dynamic/template/concat require or import() can reach orchestration from runtime/**` —
@@ -205,7 +209,7 @@ git grep -l -i -E "$PAT" HEAD -- docs/architecture                # historical
 |---|---|---|
 | V-1 | 1-строчный фикс `packages/animastor-ai-connector/README.md:209` → `https://github.com/Animastor/animastor-backend` (отдельным коммитом backend-репо) | **P2** |
 | X-3 | Обновить `repository.url`/`bugs`/`homepage` в `package.json` **перед первым npm publish** | blocker publish'а |
-| PR2 | hardcoded `/home/animastor/animastor/…` в `scripts/animastor-runtime-audit.sh`, `docker/e2e/dispatch-task.cjs` → сделать путь переменным | POST-SPLIT ACTION (next-blockers §826/§891/§1958) |
+| PR2 | hardcoded `/home/animastor/animastor/…` в `scripts/animastor-runtime-audit.sh`, `docker/e2e/dispatch-task.cjs` → сделать путь переменным | POST-SPLIT ACTION (`repository-split-next-blockers.md:826`, `:891`, `:1958`) |
 | ISC-смежное | при решении публиковать worker-пакет — привести `image/worker/package.json` к MIT и починить несогласованный lock (`1.0.0` vs `0.1.0`) | только при publish |
 
 ---
