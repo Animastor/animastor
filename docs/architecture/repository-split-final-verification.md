@@ -2,8 +2,9 @@
 
 > **STATUS: READ-ONLY FINAL CHECK = PASS (2026-10-05 UTC).**
 > Проверка выполнена **без изменений** файлов: новых коммитов/правок в 4 новых
-> репозиториях, в `master` монорепо и в GPU Hub — **0** (единственное изменение
-> в этом коммите — **этот** документ в `docs/architecture/`).
+> репозиториях, в `master` монорепо и в GPU Hub — **0**; **единственный** вклад
+> в ветку после проверки — **этот** документ в `docs/architecture/` (и его
+> редакционные правки).
 > **ISC → KEEP** (§1) · активных URL-остатков на старый monorepo: **1** в backend (§2.1)
 > · historical `docs/architecture`: backend **9** + worker **1**, не тронуты (§2.2)
 > · инварианты split: **PASS** (§3) · тесты: backend **923/2 pre-existing**,
@@ -26,7 +27,7 @@
 |---|---|
 | Скоуп | (1) ISC в `packages/animastor-worker/image/worker/package.json`; (2) остаточные ссылки на `github.com/Animastor/animastor` в 4 новых репо; (3) инварианты split; (4) тесты |
 | Режим | **read-only**, без косметики, без новых коммитов (кроме этого документа) |
-| Монорепо-worktree | `/home/animastor/animastor`, ветка `c21.4-physically-extract-analysis-from-backend`, **HEAD на момент проверки `d1a6cc66`** (этот документ — следующий doc-коммит `2ee1ad3e`), `git status --porcelain` = **0 строк** |
+| Монорепо-worktree | `/home/animastor/animastor`, ветка `c21.4-physically-extract-analysis-from-backend`, **HEAD на момент проверки `d1a6cc66`**, далее — только doc-коммиты с этим документом; `git status --porcelain` = **0 строк** |
 | Frozen source | `master` bare `/home/animastor/repos/animastor.git` = **`64127b9e1dea2ac528a572b51b90a542b70c5ebb`** — **не тронут** |
 | Клоны-проверяльщики | `/tmp/final/*` (read-only копии HEAD, clean) и `/tmp/verify/*` (рабочие, node_modules; status = 0 строк) |
 | filter-repo metadata | `/tmp/split/{backend,web,android,worker}/.git/filter-repo/{ref-map,commit-map}` |
@@ -146,7 +147,7 @@ git grep -l -i -E "$PAT" HEAD -- docs/architecture                # historical
 | SHA-only diff vs BEFORE-snapshot | **IDENTICAL** ✓ (расхождение только в колонке типа объекта `commit`) |
 | GitHub (ssh `git@github.com:Animastor/animastor-gpu-hub.git`, 2026-10-05) | **`7c7778c6…`** ✓ == bare == `refs/remotes/github/master` |
 | worktree GPU Hub | status = **0 строк**, HEAD `7c7778c` ✓ |
-| refs монорепо vs snapshot | `master` = **`64127b9e`** идентичны; ветка `c21.4` сдвинулась `40f09946 → HEAD` (**8** doc-коммитов, **7** файлов) **только внутри `docs/architecture/`** — `git diff --name-only 40f09946 HEAD | grep -vc '^docs/architecture/'` = **0** ✓ (в этот набор входит и данный документ) |
+| refs монорепо vs snapshot | `master` = **`64127b9e`** идентичны; ветка `c21.4` сдвинулась `40f09946 → HEAD` **только doc-коммитами внутри `docs/architecture/`** (в т.ч. этот документ) — `git diff --name-only 40f09946 HEAD \| grep -vc '^docs/architecture/'` = **0** ✓ |
 | force-push | **доказательств нет**: в bare нет `logs/` (reflog отсутствует), все push'и шли обычными (без `--force`) по командным листам execution-pack |
 | npm publish | не выполнялся |
 
