@@ -204,3 +204,30 @@ The `.in` hosts present a valid certificate (no TLS error before the redirect).
 
 Note: `scripts/enable-admin-https.sh` was also fixed to derive `WEBROOT` from
 its own location instead of the stale `/home/sureg/animastor/...` path.
+
+---
+
+## Repository consistency check (2026-10-08)
+
+Re-ran `git grep -n -E 'animastor\.in|www\.animastor\.in'` on the whole
+repository: **152 matches, 0 of them active/current public-domain statements**.
+Every active mention (README, `ARCHITECTURE.md`, overview docs, the served docs
+index, the HUB contract, code/config defaults, package metadata) was already
+replaced in commits `60f8b9ee` / `282f3a9c` / `9ae1d7ba`. **No mass replacement
+and no new code change were required in this step**; the remaining matches are
+intentionally preserved by category:
+
+| Category | Matches | Why kept |
+|---|---|---|
+| Redirect / legacy config (`proxy/conf/default.conf`, `proxy/docker-compose.yml`, `scripts/enable-admin-https.sh`) | 25 | `.in` is the redirect source and the legacy certificate's SANs |
+| Migration / redirect documentation (this file) | 22 | `.in` is documented as the legacy domain |
+| Historical records (`docs/CHANGELOG.md`, progress logs, `docs/04-planning/*`, `docs/08-mobile-web-migration/*`, `docs/09-desktop-migration/*`, `docs/README.md`) | 46 | describe past state, not the current address |
+| Audit / reconnaissance / phase reports (`*AUDIT*`, `*RECONNAISSANCE*`, `PHASE_*`, `runtime-audits/*`, parity audits) | 59 | frozen historical state |
+
+`README.md` already reads `# Public website (animastor.org)`.
+
+Out of scope for `git grep`: **GitHub repository metadata** (Settings →
+Description / Website / topics) lives on GitHub, not in the repository. If the
+homepage field still points at `animastor.in`, set it to `https://animastor.org`
+in the GitHub UI. No GitHub Pages / `CNAME` / `.github` config exists in this
+repository, so there is nothing else to update there.
