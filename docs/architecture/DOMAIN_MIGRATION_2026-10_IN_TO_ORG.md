@@ -163,3 +163,44 @@ Production-verification items 1–17 (live `https://animastor.org` / `.in`, DNS
 resolution, real certificates, login/admin/API/upload/WebSocket in production)
 require server access. Redirect behaviour, HTTPS on `.in`, and nginx config
 validity were verified locally in an nginx container.
+
+---
+
+## Deployment status (2026-10-08)
+
+Executed on the production host (DNS already pointed all 8 hostnames at it):
+
+- **Certificates issued** via the official `certbot/certbot` Docker image
+  (host `sudo` is password-protected; the container writes `/etc/letsencrypt`):
+  - `animastor.org` — SAN `animastor.org, www.animastor.org, app.animastor.org, admin.animastor.org`, expires **2027-01-06**;
+  - `animastor.in` — reused, valid until **2026-11-19** (SAN `animastor.in, www, app, admin`).
+- **Renewal webroots repaired.** The new `animastor.org` renewal conf was
+  written with the container path (`/var/www/website`), and the pre-existing
+  `animastor.in` conf pointed at the non-existent legacy path
+  `/home/sureg/animastor/frontends/website`; both were corrected to the real
+  host webroot `/home/animastor/animastor/frontends/website`. `certbot renew
+  --dry-run` succeeds for **both** lineages.
+- **nginx reloaded** with the migrated config; `nginx -t` passes with the real
+  certificates.
+
+Verified live (no `-k`, real DNS):
+
+```
+https://animastor.org/            -> 200 (cert CN=animastor.org, issuer Let's Encrypt)
+https://www.animastor.org/        -> 200
+https://app.animastor.org/        -> 200
+https://admin.animastor.org/      -> 302 -> /admin
+https://app.animastor.org/gpu/health -> 200
+https://animastor.org/health      -> 200
+https://app.animastor.org/library -> 200
+https://animastor.in/             -> 301 -> https://animastor.org/
+https://app.animastor.in/         -> 301 -> https://app.animastor.org/
+https://admin.animastor.in/       -> 301 -> https://admin.animastor.org/
+http://animastor.in/foo/bar?x=123 -> 301 -> https://animastor.org/foo/bar?x=123
+http://animastor.org/             -> 301 -> https://animastor.org/
+```
+
+The `.in` hosts present a valid certificate (no TLS error before the redirect).
+
+Note: `scripts/enable-admin-https.sh` was also fixed to derive `WEBROOT` from
+its own location instead of the stale `/home/sureg/animastor/...` path.

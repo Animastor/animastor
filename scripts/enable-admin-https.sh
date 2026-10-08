@@ -18,7 +18,11 @@
 
 set -euo pipefail
 
-WEBROOT="/home/sureg/animastor/frontends/website"
+# Repo root = parent directory of this script; the ACME webroot is the public
+# website directory served by nginx (bind-mounted at /usr/share/nginx/frontends/website).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+WEBROOT="$REPO_ROOT/frontends/website"
 CERT_NAME_ORG="animastor.org"
 CERT_NAME_LEGACY="animastor.in"
 
