@@ -6,14 +6,14 @@ One page: domain map and repository layout. For humans and AI coders.
 
 | Domain              | What it serves                                                                 | Auth |
 |---------------------|----------------------------------------------------------------------------|------|
-| `animastor.in`     | **Public site**: beta portal, `/docs/` (markdown tree), public Library, login/registration | none |
-| `app.animastor.in` | **Web application** — responsive: `MobileShell` / `DesktopShell`             | Basic Auth, except `/library` |
-| `admin.animastor.in` | **Admin** — same SPA dist, root → `/admin`                            | Basic Auth + backend `requireAdmin` |
+| `animastor.org`     | **Public site**: beta portal, `/docs/` (markdown tree), public Library, login/registration | none |
+| `app.animastor.org` | **Web application** — responsive: `MobileShell` / `DesktopShell`             | Basic Auth, except `/library` |
+| `admin.animastor.org` | **Admin** — same SPA dist, root → `/admin`                            | Basic Auth + backend `requireAdmin` |
 
 The public site and application share **one backend and one authentication
 system** (`/api/v1/auth/*`): session is an HttpOnly cookie
-`animastor_sid` with `Domain=animastor.in` (env `COOKIE_DOMAIN`), so
-logging in on `animastor.in` also works on `app.animastor.in`. Admin is not
+`animastor_sid` with `Domain=animastor.org` (env `COOKIE_DOMAIN`), so
+logging in on `animastor.org` also works on `app.animastor.org`. Admin is not
 mentioned in the public site navigation.
 
 Rule: **hostname determines the application, viewport determines the presentation**.
@@ -28,8 +28,8 @@ One frontend, one API, shared stores. Layout depends solely on viewport width:
 
 ```
 frontends/
-├── website/          ← animastor.in — public site (static + public /library)
-├── app/              ← app.animastor.in — responsive web application (Preact)
+├── website/          ← animastor.org — public site (static + public /library)
+├── app/              ← app.animastor.org — responsive web application (Preact)
 │   └── src/
 │       ├── layouts/  ←   MobileShell / DesktopShell
 │       ├── pages/    ←   File, Generator, Player, Editor, Navigator, Settings…
@@ -49,16 +49,16 @@ docs/                 ← detailed documentation (by migration phases and subsys
 
 ## Key Facts
 
-- `app.animastor.in` is the single application endpoint. `/library` on it is
+- `app.animastor.org` is the single application endpoint. `/library` on it is
   the only public route (nginx `location = /library`, auth off, content from
   the public site). SPA history routes (`/file`, `/generate`, `/play`, `/edit`,
   `/navigate`, `/settings`) are behind Basic Auth (same `proxy/conf/.htpasswd`).
 - API: `/api/v1` → backend:3000, `/gpu` → gpu-hub:5000 — on both domains.
 - Basic Auth at this stage is the existing Nginx authorization; there is no
   separate authorization system.
-- SSL: Let's Encrypt — one certificate covering the entire family: `animastor.in,
-  app.animastor.in, www.animastor.in` (SANs updated 2026-08-12;
-  `m.animastor.in` has been retired). Renewal — webroot on
+- SSL: Let's Encrypt — one certificate covering the entire family: `animastor.org,
+  app.animastor.org, www.animastor.org` (SANs updated 2026-08-12;
+  `m.animastor.org` has been retired). Renewal — webroot on
   `frontends/website` (ACME HTTP-01, `certbot.timer` daily), verified
   `--dry-run` — success.
 - TLS certificates: configurable via `LETS_ENCRYPT_DIR` env var (default: `/etc/letsencrypt`).

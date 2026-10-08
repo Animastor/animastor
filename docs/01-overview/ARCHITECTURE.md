@@ -60,7 +60,7 @@
 - `POST /api/v1/auth/logout` — session/guest identity invalidation.
 - `GET /api/v1/auth/me` — current identity: user | guest | none.
 
-**Sessions:** Server-side in PG (`sessions` table), cookie `animastor_sid`. Cross-subdomain via `COOKIE_DOMAIN=animastor.in`.
+**Sessions:** Server-side in PG (`sessions` table), cookie `animastor_sid`. Cross-subdomain via `COOKIE_DOMAIN=animastor.org`.
 
 ### 2.8 Worker Routes (`backend/src/routes/worker-routes.cjs`)
 **Responsibility:** Workspace worker registration and lifecycle (PW-4 fail-closed model).
@@ -91,7 +91,7 @@
 
 SYSTEM workers workspace-less (workers_scope_check), created ONLY here. Tenant routes reject mode='system'.
 
-**Guard:** `requireAdmin` (role='admin' OR ADMIN_USERNAMES allowlist). Second layer: nginx Basic Auth on `admin.animastor.in`.
+**Guard:** `requireAdmin` (role='admin' OR ADMIN_USERNAMES allowlist). Second layer: nginx Basic Auth on `admin.animastor.org`.
 
 **Note:** admin-routes receives `redis` (for worker auth mirror updates on create/rotate/revoke).
 
@@ -416,7 +416,7 @@ system now stores:
 **Key models:**
 - **Guest Workspace MVP:** anonymous user gets a temporary workspace (TTL 7 + grace 23 days). Cookie `animastor_gid`.
 - **Registered User:** username/password → session cookie `animastor_sid` (30 days). Personal workspace tied to user.
-- **Cross-subdomain sessions:** `COOKIE_DOMAIN=animastor.in` — one session for animastor.in + app.animastor.in.
+- **Cross-subdomain sessions:** `COOKIE_DOMAIN=animastor.org` — one session for animastor.org + app.animastor.org.
 - **Guest→User conversion:** on register with live guest cookie — in-place workspace conversion.
 
 ### 4.25 Auth Middleware (`backend/src/middleware/`)

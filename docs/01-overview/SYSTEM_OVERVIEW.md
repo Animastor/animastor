@@ -46,7 +46,7 @@ Central API server + orchestrator. Manages book state, scenes, and GPU task disp
 ### Auth & Identity (August 2026)
 - **Authentication MVP:** register/login/logout (auth-service.js), server-side sessions in PG (token-hash-only), scrypt passwords.
 - **Guest Workspace:** anonymous user → temporary workspace (TTL 7 + grace 23 days). Cookie `animastor_gid`.
-- **Session cookie:** `animastor_sid` (HttpOnly, 30 days). Cross-subdomain via COOKIE_DOMAIN=animastor.in.
+- **Session cookie:** `animastor_sid` (HttpOnly, 30 days). Cross-subdomain via COOKIE_DOMAIN=animastor.org.
 - **Workspace ownership:** `resolveWorkspaceForBook` — single point of resolution. Books linked to workspace via books.workspace_id.
 - **Book access guards:** `requireBookAccess` — workspace membership check on all book-keyed endpoints.
 - **Guest→User conversion:** on register with live guest cookie — workspace conversion in-place.
@@ -61,7 +61,7 @@ Central API server + orchestrator. Manages book state, scenes, and GPU task disp
 
 ### Admin System (August 2026)
 - **Admin routes:** /api/v1/admin/system-ai (kill switch + system provider) + /api/v1/admin/workers/system (SYSTEM worker registry: create/list/rotate/revoke).
-- **Guard:** requireAdmin (role='admin' OR ADMIN_USERNAMES allowlist). Second layer: nginx Basic Auth on admin.animastor.in.
+- **Guard:** requireAdmin (role='admin' OR ADMIN_USERNAMES allowlist). Second layer: nginx Basic Auth on admin.animastor.org.
 - **System AI control:** kill switch + system provider (admin-configured endpoint/key/model).
 
 ### Workspace AI Provider (August 2026)

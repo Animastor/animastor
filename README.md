@@ -147,7 +147,7 @@ animastor/
 ├── frontends/
 │   ├── app/           # Responsive web app (Preact + Vite)
 │   ├── android/       # Native Android app (Kotlin)
-│   └── website/       # Public website (animastor.in)
+│   └── website/       # Public website (animastor.org)
 ├── gpu-hub/           # GPU compute dispatcher
 ├── worker/            # GPU workers (ComfyUI)
 ├── proxy/             # Nginx reverse proxy

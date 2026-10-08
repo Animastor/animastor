@@ -2,7 +2,7 @@
 // ANIMASTOR BACKEND — ADMIN ROUTES (Admin Foundation)
 // ======================================================
 // Platform-level admin surface, guarded by requireAdmin (role='admin' OR
-// ADMIN_USERNAMES allowlist). Served on admin.animastor.in behind nginx
+// ADMIN_USERNAMES allowlist). Served on admin.animastor.org behind nginx
 // Basic Auth as a second layer.
 //
 //   GET  /api/v1/admin/system-ai        — kill switch state + provider meta

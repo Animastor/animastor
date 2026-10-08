@@ -18,7 +18,7 @@ DATA=/data/animastor
 INSTALLER_DIR="$DATA/installer"
 CLI="$INSTALLER_DIR/src/installer/cli.js"
 STATE="$DATA/comfyui/.animastor-installer/install-state.json"
-HUB_URL="${ANIMASTOR_HUB_URL:-https://animastor.in/gpu}"
+HUB_URL="${ANIMASTOR_HUB_URL:-https://animastor.org/gpu}"
 PROFILE="${ANIMASTOR_PROFILE:-audio/qwen-tts}"
 MODE="${ANIMASTOR_MODE:-managed}"
 

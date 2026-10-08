@@ -36,7 +36,7 @@ Animastor (`frontends/app`). Открывает приложение в WebView 
 Поддерживается JS, localStorage, cookies, touch, скролл, видео-аудио без жеста
 пользователя, mixed content (для dev-сервера по http).
 
-**Basic Auth на `https://app.animastor.in`**: тестер авторизуется автоматически
+**Basic Auth на `https://app.animastor.org`**: тестер авторизуется автоматически
 (логин/пароль зашиты в `MainActivity.kt`, константы `AUTH_USER` / `AUTH_PASS`).
 Если пароль на сервере поменяют — правь константы или сбрось кэш авторизации
 долгим нажатием на ⟳.
@@ -64,11 +64,11 @@ tools/desktop-web-tester/
 `/home/sureg/net-disk/desktop-web-tester.apk`.
 
 Установка на планшет (как обычно):
-`https://animastor.in/net-disk/desktop-web-tester.apk`
+`https://animastor.org/net-disk/desktop-web-tester.apk`
 
 ### URL по умолчанию
 
-- По умолчанию: `https://app.animastor.in` (продакшен).
+- По умолчанию: `https://app.animastor.org` (продакшен).
 - Заменить при сборке:
   ```bash
   cd tools/desktop-web-tester

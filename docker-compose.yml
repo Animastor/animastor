@@ -69,9 +69,9 @@ services:
       - GPU_HUB_API_KEY=${GPU_HUB_API_KEY:-}
       # Cross-subdomain session/guest cookie scope (public website + app on
       # one parent domain). Empty = host-only (legacy single-host behavior);
-      # set to your registered domain (e.g. `animastor.in`) so one backend
+      # set to your registered domain (e.g. `animastor.org`) so one backend
       # cookie authenticates on every subdomain.
-      - COOKIE_DOMAIN=${COOKIE_DOMAIN:-animastor.in}
+      - COOKIE_DOMAIN=${COOKIE_DOMAIN:-animastor.org}
       # TEMPORARY (research): keep source audio chunks after merge
       # (set KEEP_AUDIO_CHUNKS=1 in .env to measure chunk durations)
       - KEEP_AUDIO_CHUNKS=${KEEP_AUDIO_CHUNKS:-}
@@ -147,7 +147,7 @@ services:
       - ${LETS_ENCRYPT_DIR:-/etc/letsencrypt}:/etc/letsencrypt:ro
       - ./frontends/website:/usr/share/nginx/frontends/website:ro
       - ./frontends/app:/usr/share/nginx/frontends/app:ro
-      # Public documentation portal (animastor.in/docs/) — read-only static
+      # Public documentation portal (animastor.org/docs/) — read-only static
       # markdown tree; no secrets live in docs/ (audited before mounting).
       - ./docs:/usr/share/nginx/docs:ro
       - ./proxy/conf/.htpasswd:/etc/nginx/.htpasswd:ro

@@ -130,7 +130,7 @@ fi
 # 8. ENV
 # ======================================================
 
-export HUB_URL="https://animastor.in/gpu"
+export HUB_URL="https://animastor.org/gpu"
 export NOTEBOOK_PATH="$NOTEBOOK_PATH"
 export COMFY_PORT="$COMFY_PORT"
 export WORKER_TYPE="$WORKER_TYPE"

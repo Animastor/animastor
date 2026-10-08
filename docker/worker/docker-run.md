@@ -6,7 +6,7 @@
 #     -v ~/animastor/data:/data/animastor \
 #     --entrypoint /usr/local/bin/entrypoint.sh \
 #     -e ANIMASTOR_EXIT_AFTER_INSTALL=1 \
-#     -e ANIMASTOR_HUB_URL=https://animastor.in/gpu \
+#     -e ANIMASTOR_HUB_URL=https://animastor.org/gpu \
 #     -e ANIMASTOR_PROFILE=audio/qwen-tts \
 #     animastor-worker install
 #

@@ -4,7 +4,7 @@
 // hub's result key in Redis until the worker delivers.
 //
 // Usage: node dispatch-task.cjs <workflow.json> [text] [timeout_sec]
-// Env:   E2E_WORKSPACE_ID (private worker's workspace), E2E_HUB=https://animastor.in/gpu
+// Env:   E2E_WORKSPACE_ID (private worker's workspace), E2E_HUB=https://animastor.org/gpu
 const { execSync, execFileSync } = require('child_process');
 const fs = require('fs');
 
@@ -14,7 +14,7 @@ const POLL_TIMEOUT_MS = Number(process.argv[4] || 2400) * 1000;
 
 const WORKSPACE_ID = process.env.E2E_WORKSPACE_ID;
 if (!WORKSPACE_ID) { console.error('E2E_WORKSPACE_ID required'); process.exit(1); }
-const HUB = process.env.E2E_HUB || 'https://animastor.in/gpu';
+const HUB = process.env.E2E_HUB || 'https://animastor.org/gpu';
 
 const API_KEY = execSync('docker exec gpu-hub printenv GPU_HUB_API_KEY').toString().trim();
 if (!API_KEY) { console.error('GPU_HUB_API_KEY not found in hub container'); process.exit(1); }

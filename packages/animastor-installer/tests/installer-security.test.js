@@ -215,7 +215,7 @@ t('SEC3: Worker Key absent from registration-failure reason (401/403)', async ()
     for (const status of [401, 403]) {
         const io = createIo({});
         io.http.fetchJson = async () => ({ status, json: () => ({}) });
-        const res = await workerOps.verifyRegistration(io, { hubUrl: 'https://animastor.in/gpu', token: WORKER_KEY, expectedType: 'image' });
+        const res = await workerOps.verifyRegistration(io, { hubUrl: 'https://animastor.org/gpu', token: WORKER_KEY, expectedType: 'image' });
         assert.strictEqual(res.registered, false);
         assert.ok(!JSON.stringify(res).includes(WORKER_KEY), `token leaked into ${status} registration result`);
         assert.ok(/credential rejected/i.test(res.reason), `${status} reason explains rejection without the secret`);

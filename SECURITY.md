@@ -46,5 +46,5 @@ Animastor handles several security-sensitive areas:
 - Use strong, unique values for `POSTGRES_PASSWORD` and `WORKSPACE_SECRET_KEY`
 - Keep `.env` out of version control (it is in `.gitignore`)
 - Use HTTPS in production (TLS certificates via Let's Encrypt)
-- Restrict admin access to `admin.animastor.in` with Basic Auth
+- Restrict admin access to `admin.animastor.org` with Basic Auth
 - Regularly update dependencies: `npm audit`

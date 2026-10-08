@@ -707,10 +707,10 @@ collectAsync('16. invalid checksum fails download', async () => {
 collectAsync('17. worker registration success', async () => {
     const { io } = createMockIo({
         httpResults: {
-            'https://animastor.in/api/v1/worker/verify': { status: 200, json: () => ({ verified: true, worker_id: 'w1', worker_type: 'image', mode: 'private' }) },
+            'https://animastor.org/api/v1/worker/verify': { status: 200, json: () => ({ verified: true, worker_id: 'w1', worker_type: 'image', mode: 'private' }) },
         },
     });
-    const result = await workerOps.verifyRegistration(io, { hubUrl: 'https://animastor.in/gpu', token: 'wrk.w1.secret123', expectedType: 'image' });
+    const result = await workerOps.verifyRegistration(io, { hubUrl: 'https://animastor.org/gpu', token: 'wrk.w1.secret123', expectedType: 'image' });
     assert.strictEqual(result.registered, true);
     assert.strictEqual(result.worker_type, 'image');
 });
@@ -719,10 +719,10 @@ collectAsync('17. worker registration success', async () => {
 collectAsync('18. worker registration failure (401)', async () => {
     const { io } = createMockIo({
         httpResults: {
-            'https://animastor.in/api/v1/worker/verify': { status: 401, json: () => ({}) },
+            'https://animastor.org/api/v1/worker/verify': { status: 401, json: () => ({}) },
         },
     });
-    const result = await workerOps.verifyRegistration(io, { hubUrl: 'https://animastor.in/gpu', token: 'bad-token', expectedType: 'image' });
+    const result = await workerOps.verifyRegistration(io, { hubUrl: 'https://animastor.org/gpu', token: 'bad-token', expectedType: 'image' });
     assert.strictEqual(result.registered, false);
     assert.ok(result.reason.includes('credential rejected'));
 });

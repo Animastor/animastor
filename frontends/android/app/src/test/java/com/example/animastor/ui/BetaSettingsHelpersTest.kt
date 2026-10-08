@@ -154,20 +154,20 @@ class BetaSettingsHelpersTest {
     @Test
     fun worker_setupContract_matchesWorkerCjsEnv() {
         val c = BetaSettingsHelpers.buildSetupContract(
-            baseUrl = "https://app.animastor.in/",
+            baseUrl = "https://app.animastor.org/",
             token = "wrk.abc.secret",
             workerType = "image",
             workerName = "Home RTX 3090"
         )
-        assertEquals("https://app.animastor.in/gpu", c.hubUrl)
-        assertEquals("https://app.animastor.in/gpu/worker-source", c.sourceUrl)
-        assertEquals("curl -o worker.cjs https://app.animastor.in/gpu/worker-source", c.downloadCommand)
+        assertEquals("https://app.animastor.org/gpu", c.hubUrl)
+        assertEquals("https://app.animastor.org/gpu/worker-source", c.sourceUrl)
+        assertEquals("curl -o worker.cjs https://app.animastor.org/gpu/worker-source", c.downloadCommand)
         assertEquals("node worker.cjs", c.runCommand)
         assertEquals("home-rtx-3090", c.workerId)
 
         // EXACT env var names worker.cjs reads — the contract must not drift.
         assertEquals(
-            "HUB_URL=https://app.animastor.in/gpu\n" +
+            "HUB_URL=https://app.animastor.org/gpu\n" +
                 "ANIMASTOR_WORKER_TOKEN=wrk.abc.secret\n" +
                 "WORKER_TYPE=image\n" +
                 "WORKER_ID=home-rtx-3090",

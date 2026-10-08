@@ -1,9 +1,9 @@
 import { t } from '../app/i18n';
 
 // Library — 1:1 with LibraryFragment (WebView → iframe of the public library).
-// The app lives on app.animastor.in behind nginx Basic Auth; /library is the one
+// The app lives on app.animastor.org behind nginx Basic Auth; /library is the one
 // public route (nginx serves it without auth), so a relative URL is used — it
-// resolves on any host (prod app.animastor.in, dev :5174 via vite proxy).
+// resolves on any host (prod app.animastor.org, dev :5174 via vite proxy).
 const LIBRARY_URL = '/library';
 
 export function LibraryPage(props: { path?: string }) {

@@ -447,7 +447,7 @@ describe('GPU hub — setup contract artifacts (Phase 3)', function () {
         it('serves an auditable shell script, not a tarball', async () => {
             hub = await startHub(ARTIFACT_CONFIG);
             const res = await fetch(`${hub.base}/installer?profile=image%2Fqwen-image&mode=managed`, {
-                headers: { host: 'app.animastor.in' },
+                headers: { host: 'app.animastor.org' },
             });
             expect(res.status).to.equal(200);
             expect(res.headers.get('content-type')).to.contain('text/x-shellscript');
@@ -460,8 +460,8 @@ describe('GPU hub — setup contract artifacts (Phase 3)', function () {
 
         it('embeds the request origin, profile and mode — the user types nothing', async () => {
             hub = await startHub(ARTIFACT_CONFIG);
-            const script = await hub.getWithHost('/installer?profile=image%2Fqwen-image&mode=managed', 'app.animastor.in');
-            expect(script).to.contain('HUB_URL="${ANIMASTOR_HUB_URL:-https://app.animastor.in/gpu}"');
+            const script = await hub.getWithHost('/installer?profile=image%2Fqwen-image&mode=managed', 'app.animastor.org');
+            expect(script).to.contain('HUB_URL="${ANIMASTOR_HUB_URL:-https://app.animastor.org/gpu}"');
             expect(script).to.contain('INSTALL_PROFILE="${ANIMASTOR_PROFILE:-image/qwen-image}"');
             expect(script).to.contain('INSTALL_MODE="${ANIMASTOR_MODE:-managed}"');
             // the real installer is invoked with the embedded profile/mode
@@ -470,23 +470,23 @@ describe('GPU hub — setup contract artifacts (Phase 3)', function () {
 
         it('PUBLIC_HUB_URL overrides the Host-derived origin; malformed Host falls back to the canonical origin', async () => {
             // explicit override wins
-            const overrideHub = await startHub({ ...ARTIFACT_CONFIG, PUBLIC_HUB_URL: 'https://gpu.animastor.in/gpu' });
+            const overrideHub = await startHub({ ...ARTIFACT_CONFIG, PUBLIC_HUB_URL: 'https://gpu.animastor.org/gpu' });
             try {
                 const script = await (await fetch(`${overrideHub.base}/installer?profile=image%2Fqwen-image&mode=managed`)).text();
-                expect(script).to.contain('https://gpu.animastor.in/gpu');
+                expect(script).to.contain('https://gpu.animastor.org/gpu');
             } finally {
                 await new Promise((r) => overrideHub.server.close(r));
             }
             // a malformed Host never reaches the script (no header injection)
             hub = await startHub(ARTIFACT_CONFIG);
             const evil = await hub.getWithHost('/installer?profile=image%2Fqwen-image&mode=managed', 'evil.example.com:1; rm -rf /');
-            expect(evil).to.contain('https://animastor.in/gpu');
+            expect(evil).to.contain('https://animastor.org/gpu');
             expect(evil).to.not.contain('evil.example.com');
         });
 
         it('WITHOUT query params: valid script with empty profile (run-time guard)', async () => {
             hub = await startHub(ARTIFACT_CONFIG);
-            const res = await fetch(`${hub.base}/installer`, { headers: { host: 'app.animastor.in' } });
+            const res = await fetch(`${hub.base}/installer`, { headers: { host: 'app.animastor.org' } });
             expect(res.status).to.equal(200);
             const script = await res.text();
             expect(script).to.contain('INSTALL_PROFILE="${ANIMASTOR_PROFILE:-}"');
@@ -528,7 +528,7 @@ describe('GPU hub — setup contract artifacts (Phase 3)', function () {
         it('SECURITY: the bootstrap never contains credential material', async () => {
             hub = await startHub(ARTIFACT_CONFIG);
             const script = await (await fetch(`${hub.base}/installer?profile=image%2Fqwen-image&mode=managed`, {
-                headers: { host: 'app.animastor.in' },
+                headers: { host: 'app.animastor.org' },
             })).text();
             // no Worker Key patterns
             expect(script).to.not.match(/wrk\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/);
@@ -542,8 +542,8 @@ describe('GPU hub — setup contract artifacts (Phase 3)', function () {
         it('same parameters → byte-identical script (deterministic, diffable)', async () => {
             hub = await startHub(ARTIFACT_CONFIG);
             const url = `${hub.base}/installer?profile=image%2Fqwen-image&mode=managed`;
-            const a = await (await fetch(url, { headers: { host: 'app.animastor.in' } })).text();
-            const b = await (await fetch(url, { headers: { host: 'app.animastor.in' } })).text();
+            const a = await (await fetch(url, { headers: { host: 'app.animastor.org' } })).text();
+            const b = await (await fetch(url, { headers: { host: 'app.animastor.org' } })).text();
             expect(a).to.equal(b);
         });
     });

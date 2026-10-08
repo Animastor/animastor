@@ -115,7 +115,7 @@ module.exports = function registerCacheRoutes(app, ctx) {
 
             // Clear gpu-hub queue
             try {
-                const HUB_URL = process.env.HUB_URL || 'https://animastor.in/gpu';
+                const HUB_URL = process.env.HUB_URL || 'https://animastor.org/gpu';
                 const hubHeaders = { method: 'DELETE' };
                 const apiKey = config.GPU_HUB_API_KEY || process.env.GPU_HUB_API_KEY;
                 if (apiKey) {

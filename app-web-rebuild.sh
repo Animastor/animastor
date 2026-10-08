@@ -38,7 +38,7 @@ echo "=================================="
 echo
 
 echo "Build output: $MOBILE_DIR/dist"
-echo "Served at:    https://app.animastor.in/"
+echo "Served at:    https://app.animastor.org/"
 echo "Note: nginx serves ./frontends/app via bind-mount,"
 echo "      so the new dist is live immediately — no restart needed."
 echo

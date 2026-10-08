@@ -202,7 +202,7 @@ function createBookDeletion(deps) {
 
         // ── 6. GPU-hub queue clear (best-effort, external runtime) ──
         try {
-            const HUB_URL = process.env.HUB_URL || 'https://animastor.in/gpu';
+            const HUB_URL = process.env.HUB_URL || 'https://animastor.org/gpu';
             const hubHeaders = { method: 'DELETE' };
             const apiKey = process.env.GPU_HUB_API_KEY;
             if (apiKey) {

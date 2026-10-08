@@ -76,7 +76,7 @@ const auth = createAuthService({
         users, sessions, guests, workspaces, bookOwnership, registrationTx,
     }),
     config: normalizeAuthConfig({
-        cookieDomain: 'animastor.in',   // '' → host-only cookies
+        cookieDomain: 'animastor.org',   // '' → host-only cookies
         sessionTtlMs: 30 * 24 * 3600e3, // all TTLs optional — frozen defaults
     }),
 });

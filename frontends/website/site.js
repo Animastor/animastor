@@ -1,6 +1,6 @@
-// Animastor public website (animastor.in).
+// Animastor public website (animastor.org).
 // Public landing page — no auth on this site itself. The application at
-// app.animastor.in still has its own authentication, but this page is open
+// app.animastor.org still has its own authentication, but this page is open
 // to anyone. Handles Android version badge + theme toggle.
 (function () {
   'use strict';

@@ -1,14 +1,21 @@
 resolver 127.0.0.11 ipv6=off valid=30s;
 
+# Domain migration (2026-10): canonical host is animastor.org.
+map $host $animastor_canonical_host {
+    animastor.in     animastor.org;
+    www.animastor.in animastor.org;
+    default          $host;
+}
+
+# Legacy .in → canonical .org (HTTP + HTTPS 301, path/query preserved).
 server {
     listen 80;
     server_name animastor.in www.animastor.in;
 
-    return 301 https://$host$request_uri;
+    return 301 https://$animastor_canonical_host$request_uri;
 }
 
 server {
-
     listen 443 ssl;
     server_name animastor.in www.animastor.in;
 
@@ -16,6 +23,26 @@ server {
 
     ssl_certificate     /etc/letsencrypt/live/animastor.in/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/animastor.in/privkey.pem;
+
+    return 301 https://$animastor_canonical_host$request_uri;
+}
+
+server {
+    listen 80;
+    server_name animastor.org www.animastor.org;
+
+    return 301 https://$host$request_uri;
+}
+
+server {
+
+    listen 443 ssl;
+    server_name animastor.org www.animastor.org;
+
+    server_tokens off;
+
+    ssl_certificate     /etc/letsencrypt/live/animastor.org/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/animastor.org/privkey.pem;
 
     root /usr/share/nginx/html;
     index index.html;

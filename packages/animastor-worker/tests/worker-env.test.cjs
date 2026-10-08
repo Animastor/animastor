@@ -55,12 +55,12 @@ describe('worker bundle — .env loader (worker-env.cjs)', () => {
         delete process.env.WORKER_TYPE;
         fs.writeFileSync(path.join(tmpDir, '.env'), [
             '# Animastor worker env',
-            'HUB_URL=https://animastor.in/gpu',
+            'HUB_URL=https://animastor.org/gpu',
             '',
             'WORKER_TYPE=image',
         ].join('\n'));
         expect.equal(loadDotEnv(tmpDir), true);
-        expect.equal(process.env.HUB_URL, 'https://animastor.in/gpu');
+        expect.equal(process.env.HUB_URL, 'https://animastor.org/gpu');
         expect.equal(process.env.WORKER_TYPE, 'image');
         fs.rmSync(tmpDir, { recursive: true, force: true });
         track('HUB_URL', undefined); delete process.env.HUB_URL;

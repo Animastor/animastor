@@ -990,7 +990,7 @@ function findModelDep(manifests, id) {
 }
 
 function defaultEnvValue(key, { hubUrl, manifests }) {
-    if (key === 'HUB_URL') return hubUrl || 'https://animastor.in/gpu';
+    if (key === 'HUB_URL') return hubUrl || 'https://animastor.org/gpu';
     if (key === 'WORKER_TYPE') return (manifests[0].worker_bundle || {}).worker_type || 'image';
     if (key === 'WORKER_ID') return `gpu-${Date.now().toString(36)}`;
     return '';

@@ -269,9 +269,9 @@
 │
 ├── frontends/
 │   ├── website/
-│   │   ├── index.html                       # Public site (animastor.in)
+│   │   ├── index.html                       # Public site (animastor.org)
 │   │   └── library/index.html               # Public Library (/library, no auth)
-│   ├── app/                                 # Responsive web application (app.animastor.in, Preact + Vite)
+│   ├── app/                                 # Responsive web application (app.animastor.org, Preact + Vite)
 │   │   ├── package.json
 │   │   ├── vite.config.ts
 │   │   └── src/

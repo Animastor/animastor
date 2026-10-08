@@ -8,7 +8,7 @@
       "sha256_asset": null,
       "version": "2.1.1",
       "files": 7,
-      "sha256_tree": "713ac0118672a1c27fdf004b6db7dd09eefb0a1493fc96163f0e1dc611403d44"
+      "sha256_tree": "c59dab5d73ff0d56d8e15298a16836b26fb5ab2ec84f04f75d3f676b5a195150"
     },
     "hub-workflows": {
       "source_repository": "animastor-backend",
@@ -26,7 +26,7 @@
       "sha256_asset": null,
       "version": "0.1.0",
       "files": 32,
-      "sha256_tree": "6230aba4c8efc7256dfb55ec50300624ea02f6380198b8e37e5d62b4b3ac83ac"
+      "sha256_tree": "8c2612197cec23f7bf457ed4445488c7c1ac2d3357c1a89c96d0a9ffce0e8ef0"
     },
     "install-manifests": {
       "source_repository": "animastor-backend",

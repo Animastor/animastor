@@ -471,7 +471,7 @@ collectAsync('11. engine: managed CPU install → CPU torch index, --cpu flag, o
         httpResults: {
             'http://127.0.0.1:8188/system_stats': { status: 200, json: () => ({ system: {} }) },
             'http://127.0.0.1:8188/object_info': { status: 200, json: () => ({ Qwen3TTSLoader: {} }) },
-            'https://animastor.in/api/v1/worker/verify': { status: 200, json: () => ({ verified: true, worker_id: 'w1', worker_type: 'audio' }) },
+            'https://animastor.org/api/v1/worker/verify': { status: 200, json: () => ({ verified: true, worker_id: 'w1', worker_type: 'audio' }) },
         },
     });
     const log = createMockLogger();
@@ -480,7 +480,7 @@ collectAsync('11. engine: managed CPU install → CPU torch index, --cpu flag, o
         roots: {
             comfyuiRoot: '/tmp/comfy', workerDir: '/tmp/animastor/worker',
             statePath: '/tmp/comfy/.animastor-installer/install-state.json',
-            repoRoot: '/tmp/repo', hubUrl: 'https://animastor.in/gpu',
+            repoRoot: '/tmp/repo', hubUrl: 'https://animastor.org/gpu',
         },
         decisions: { comfyui_update: 'yes', install_custom_nodes: true, install_models: true, workflows: 'all', worker_setup: true, worker_key_provided: true },
         secretProvider: async (name) => (name === 'ANIMASTOR_WORKER_TOKEN' ? 'wrk.test-token' : null),
@@ -704,7 +704,7 @@ function createRealManifestEngineIo(overrides = {}) {
             // ModelScope listing — real API shape: Data.Files, tree recursion via Root=
             // (generated from the real manifest's expected_files — full snapshot)
             ...modelScopeHttpMocks(),
-            'https://animastor.in/api/v1/worker/verify': { status: 200, json: () => ({ verified: true, worker_id: 'w-cpu-test', worker_type: 'audio' }) },
+            'https://animastor.org/api/v1/worker/verify': { status: 200, json: () => ({ verified: true, worker_id: 'w-cpu-test', worker_type: 'audio' }) },
             'http://127.0.0.1:8188/system_stats': { status: 200, json: () => ({ system: {} }) },
             'http://127.0.0.1:8188/object_info': {
                 status: 200,
@@ -733,7 +733,7 @@ collectAsync('16b. engine: real manifest WITHOUT accept_reference_runtime → aw
         roots: {
             comfyuiRoot: '/tmp/comfy', workerDir: '/tmp/animastor/worker',
             statePath: '/tmp/comfy/.animastor-installer/install-state.json',
-            repoRoot: '/tmp/repo', hubUrl: 'https://animastor.in/gpu',
+            repoRoot: '/tmp/repo', hubUrl: 'https://animastor.org/gpu',
         },
         decisions: {
             install_custom_nodes: false, install_models: false, workflows: 'none',
@@ -762,7 +762,7 @@ collectAsync('16. engine: managed CPU install from REAL audio/qwen-tts manifest 
         roots: {
             comfyuiRoot: '/tmp/comfy', workerDir: '/tmp/animastor/worker',
             statePath: '/tmp/comfy/.animastor-installer/install-state.json',
-            repoRoot: '/tmp/repo', hubUrl: 'https://animastor.in/gpu',
+            repoRoot: '/tmp/repo', hubUrl: 'https://animastor.org/gpu',
         },
         decisions: {
             comfyui_update: 'yes', install_custom_nodes: true, install_models: true,
@@ -961,8 +961,8 @@ collectAsync('18a. fetchHubWorkerBundle downloads, verifies sha256, and extracts
     const { io, fs } = createMockIo({
         files: { '/tmp/wdir/.env': 'HUB_URL=https://x\n' },
         httpResults: {
-            'https://animastor.in/gpu/worker-bundle/sha256': { status: 200, json: () => ({ sha256: fakeSha }) },
-            'https://animastor.in/gpu/worker-bundle': async ({ dest }) => {
+            'https://animastor.org/gpu/worker-bundle/sha256': { status: 200, json: () => ({ sha256: fakeSha }) },
+            'https://animastor.org/gpu/worker-bundle': async ({ dest }) => {
                 fs.writeFileSync(dest, tarGzContent);
                 return { status: 200, bytes: 1024, total: 1024, resumed: false };
             },
@@ -986,7 +986,7 @@ collectAsync('18a. fetchHubWorkerBundle downloads, verifies sha256, and extracts
         }
         return { code: 0, stdout: '', stderr: '' };
     };
-    const result = await workerMod.fetchHubWorkerBundle(io, { hubUrl: 'https://animastor.in/gpu', tmpRoot: '/tmp/bundle-test' });
+    const result = await workerMod.fetchHubWorkerBundle(io, { hubUrl: 'https://animastor.org/gpu', tmpRoot: '/tmp/bundle-test' });
     assert.ok(result.bundleDir, `bundleDir set: ${result.reason || 'ok'}`);
     assert.ok(result.bundleDir.includes('animastor-worker'), `bundleDir contains animastor-worker: ${result.bundleDir}`);
     assert.ok(fs.existsSync(`${result.bundleDir}/worker.cjs`), 'extracted files present');
@@ -1104,7 +1104,7 @@ test('20d. startWorker restarts a running worker whose .env changed after its st
         files: {
             '/tmp/wdir/worker.cjs': '// worker',
             '/tmp/wdir/package.json': '{}',
-            '/tmp/wdir/.env': 'HUB_URL=https://animastor.in/gpu\nCOMFY_PORT=8288\n',
+            '/tmp/wdir/.env': 'HUB_URL=https://animastor.org/gpu\nCOMFY_PORT=8288\n',
             '/proc/222': 'proc-entry',
         },
         preDirs: ['/tmp/wdir'],
@@ -1163,7 +1163,7 @@ collectAsync('21. engine passes COMFY_PORT to .env when --comfy-port is given', 
         roots: {
             comfyuiRoot: '/tmp/comfy', workerDir: '/tmp/animastor/worker',
             statePath: '/tmp/comfy/.animastor-installer/install-state.json',
-            repoRoot: '/tmp/repo', hubUrl: 'https://animastor.in/gpu',
+            repoRoot: '/tmp/repo', hubUrl: 'https://animastor.org/gpu',
         },
         decisions: {
             comfyui_update: 'yes', install_custom_nodes: true, install_models: true,
@@ -1185,7 +1185,7 @@ collectAsync('21b. a bare re-run inherits remembered --comfy-port/--start flags 
     const roots = {
         comfyuiRoot: '/tmp/comfy', workerDir: '/tmp/animastor/worker',
         statePath: '/tmp/comfy/.animastor-installer/install-state.json',
-        repoRoot: '/tmp/repo', hubUrl: 'https://animastor.in/gpu',
+        repoRoot: '/tmp/repo', hubUrl: 'https://animastor.org/gpu',
     };
     const decisions = {
         comfyui_update: 'yes', install_custom_nodes: true, install_models: true,
@@ -1271,7 +1271,7 @@ collectAsync('21c. bare managed run: foreign 8188 avoided, services start by def
         roots: {
             comfyuiRoot: '/tmp/comfy', workerDir: '/tmp/animastor/worker',
             statePath: '/tmp/comfy/.animastor-installer/install-state.json',
-            repoRoot: '/tmp/repo', hubUrl: 'https://animastor.in/gpu',
+            repoRoot: '/tmp/repo', hubUrl: 'https://animastor.org/gpu',
         },
         decisions: {
             comfyui_update: 'yes', install_custom_nodes: true, install_models: true,
@@ -1471,7 +1471,7 @@ collectAsync('24. engine: adopt partial root + COMFY_PORT + worker start (end-to
             'node --version': { code: 0, stdout: 'v22.0.0', stderr: '' },
         },
         httpResults: {
-            'https://animastor.in/api/v1/worker/verify': { status: 200, json: () => ({ verified: true, worker_id: 'w-adopt-test', worker_type: 'audio' }) },
+            'https://animastor.org/api/v1/worker/verify': { status: 200, json: () => ({ verified: true, worker_id: 'w-adopt-test', worker_type: 'audio' }) },
             'http://127.0.0.1:8288/system_stats': { status: 200, json: () => ({ system: {} }) },
             'http://127.0.0.1:8288/object_info': {
                 status: 200,
@@ -1490,7 +1490,7 @@ collectAsync('24. engine: adopt partial root + COMFY_PORT + worker start (end-to
         roots: {
             comfyuiRoot: '/tmp/comfy', workerDir: '/tmp/animastor/worker',
             statePath: '/tmp/comfy/.animastor-installer/install-state.json',
-            repoRoot: '/tmp/repo', hubUrl: 'https://animastor.in/gpu',
+            repoRoot: '/tmp/repo', hubUrl: 'https://animastor.org/gpu',
         },
         decisions: {
             comfyui_update: 'yes', install_custom_nodes: true, install_models: true,
@@ -1623,7 +1623,7 @@ collectAsync('25. engine: re-run heals a present-but-broken node (deps retry + m
         roots: {
             comfyuiRoot: '/tmp/comfy', workerDir: '/tmp/animastor/worker',
             statePath: '/tmp/comfy/.animastor-installer/install-state.json',
-            repoRoot: '/tmp/repo', hubUrl: 'https://animastor.in/gpu',
+            repoRoot: '/tmp/repo', hubUrl: 'https://animastor.org/gpu',
         },
         decisions: {
             comfyui_update: 'yes', install_custom_nodes: true, install_models: true,

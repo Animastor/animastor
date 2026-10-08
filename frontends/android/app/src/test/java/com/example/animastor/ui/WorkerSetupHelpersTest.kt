@@ -391,12 +391,12 @@ class WorkerSetupHelpersTest {
             platform = "linux", mode = "managed",
             installer = SetupInstructionsInstaller(
                 version = "1.2.3", sha256 = "b".repeat(64), status = "available",
-                download_url = "https://animastor.in/gpu/installer?profile=image%2Fqwen-image&mode=managed"
+                download_url = "https://animastor.org/gpu/installer?profile=image%2Fqwen-image&mode=managed"
             ),
             verify_command = "\$HOME/animastor/tools/status.sh"
         )
         // instructions.installer wins (profile-embedded bootstrap)
-        assertEquals("https://animastor.in/gpu/installer?profile=image%2Fqwen-image&mode=managed",
+        assertEquals("https://animastor.org/gpu/installer?profile=image%2Fqwen-image&mode=managed",
             WorkerSetupHelpers.installerDownloadUrl(bootstrap, m))
         assertEquals("1.2.3", WorkerSetupHelpers.installerVersion(bootstrap, m))
         assertEquals("b".repeat(64), WorkerSetupHelpers.installerSha256(bootstrap, m))

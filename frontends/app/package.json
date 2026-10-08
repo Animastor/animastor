@@ -2,7 +2,7 @@
   "name": "animastor-app",
   "private": true,
   "version": "0.0.0",
-  "description": "Responsive web application for Animastor (app.animastor.in)",
+  "description": "Responsive web application for Animastor (app.animastor.org)",
   "type": "module",
   "scripts": {
     "dev": "vite --host --port 5174",

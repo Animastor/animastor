@@ -485,17 +485,17 @@ describe('Authentication MVP', () => {
         });
 
         it('set → session, guest and clear cookies carry the Domain suffix', () => {
-            process.env.COOKIE_DOMAIN = 'animastor.in';
-            expect(authService.sessionCookieHeader('tok', { secure: true })).to.contain('; Domain=animastor.in');
-            expect(authService.clearSessionCookieHeader({ secure: true })).to.contain('; Domain=animastor.in');
-            expect(authService.guestCookieHeader('tok', { secure: false })).to.contain('; Domain=animastor.in');
-            expect(authService.clearGuestCookieHeader({ secure: false })).to.contain('; Domain=animastor.in');
+            process.env.COOKIE_DOMAIN = 'animastor.org';
+            expect(authService.sessionCookieHeader('tok', { secure: true })).to.contain('; Domain=animastor.org');
+            expect(authService.clearSessionCookieHeader({ secure: true })).to.contain('; Domain=animastor.org');
+            expect(authService.guestCookieHeader('tok', { secure: false })).to.contain('; Domain=animastor.org');
+            expect(authService.clearGuestCookieHeader({ secure: false })).to.contain('; Domain=animastor.org');
         });
 
         it('leading dot is normalized; invalid values fall back to host-only', () => {
-            process.env.COOKIE_DOMAIN = '.animastor.in';
-            expect(authService.sessionCookieHeader('tok', { secure: true })).to.contain('; Domain=animastor.in');
-            for (const bad of ['animastor.in; Path=/x', 'evil com', 'a b', '']) {
+            process.env.COOKIE_DOMAIN = '.animastor.org';
+            expect(authService.sessionCookieHeader('tok', { secure: true })).to.contain('; Domain=animastor.org');
+            for (const bad of ['animastor.org; Path=/x', 'evil com', 'a b', '']) {
                 process.env.COOKIE_DOMAIN = bad;
                 expect(authService.sessionCookieHeader('tok', { secure: true })).to.not.contain('Domain=');
             }

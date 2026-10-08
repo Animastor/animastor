@@ -28,7 +28,7 @@ echo
 if [ -d /home/sureg/net-disk ]; then
     cp "$APK" /home/sureg/net-disk/mobile-web-tester.apk
     echo "Installed on the tablet via:"
-    echo "  https://animastor.in/net-disk/mobile-web-tester.apk"
+    echo "  https://animastor.org/net-disk/mobile-web-tester.apk"
 fi
 
 echo

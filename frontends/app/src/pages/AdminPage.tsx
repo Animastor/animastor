@@ -17,7 +17,7 @@ import {
 } from '../features/admin/systemAi';
 
 // AdminPage — System AI Control (Admin Foundation).
-// Served on admin.animastor.in — no Basic Auth, internal app login only.
+// Served on admin.animastor.org — no Basic Auth, internal app login only.
 // Two concerns:
 //   1. Kill switch — toggle platform/system AI on or off. Personal (workspace)
 //      providers are unaffected.

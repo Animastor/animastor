@@ -25,7 +25,7 @@ loadDotEnv(__dirname);
 // CONFIG
 // ======================================================
 
-const HUB_URL = process.env.HUB_URL || "https://animastor.in/gpu";
+const HUB_URL = process.env.HUB_URL || "https://animastor.org/gpu";
 const COMFY_PORT = process.env.COMFY_PORT || 8188;
 const WORKER_TYPE = process.env.WORKER_TYPE || "image";
 

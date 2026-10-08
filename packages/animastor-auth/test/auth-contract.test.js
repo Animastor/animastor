@@ -194,13 +194,13 @@ describe('auth contract: config', () => {
     });
 
     it('normalizes a valid cookie domain (leading dot stripped, lowercased)', () => {
-        expect(normalizeCookieDomain('animastor.in')).to.equal('animastor.in');
-        expect(normalizeCookieDomain('.animastor.in')).to.equal('animastor.in');
-        expect(normalizeCookieDomain('  ANIMASTOR.IN ')).to.equal('animastor.in');
+        expect(normalizeCookieDomain('animastor.org')).to.equal('animastor.org');
+        expect(normalizeCookieDomain('.animastor.org')).to.equal('animastor.org');
+        expect(normalizeCookieDomain('  ANIMASTOR.ORG ')).to.equal('animastor.org');
     });
 
     it('rejects injection attempts and garbage → host-only cookies', () => {
-        for (const bad of ['animastor.in; Path=/x', 'evil com', 'a b', '', null, undefined]) {
+        for (const bad of ['animastor.org; Path=/x', 'evil com', 'a b', '', null, undefined]) {
             expect(normalizeCookieDomain(bad), JSON.stringify(bad)).to.equal('');
         }
     });
@@ -246,11 +246,11 @@ describe('auth contract: cookie grammar', () => {
     });
 
     it('Domain attribute appended only when a validated domain is configured', () => {
-        const cfg = { cookieDomain: 'animastor.in' };
-        expect(cookies.sessionCookieHeader('t', base, cfg)).to.contain('; Domain=animastor.in');
-        expect(cookies.clearSessionCookieHeader(base, cfg)).to.contain('; Domain=animastor.in');
-        expect(cookies.guestCookieHeader('t', base, cfg)).to.contain('; Domain=animastor.in');
-        expect(cookies.clearGuestCookieHeader(base, cfg)).to.contain('; Domain=animastor.in');
+        const cfg = { cookieDomain: 'animastor.org' };
+        expect(cookies.sessionCookieHeader('t', base, cfg)).to.contain('; Domain=animastor.org');
+        expect(cookies.clearSessionCookieHeader(base, cfg)).to.contain('; Domain=animastor.org');
+        expect(cookies.guestCookieHeader('t', base, cfg)).to.contain('; Domain=animastor.org');
+        expect(cookies.clearGuestCookieHeader(base, cfg)).to.contain('; Domain=animastor.org');
         expect(cookies.sessionCookieHeader('t', base)).to.not.contain('Domain=');
     });
 

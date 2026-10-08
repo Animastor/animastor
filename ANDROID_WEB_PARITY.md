@@ -331,7 +331,7 @@ the «воркер» wording from the start. EN dictionary unchanged (web parity
 |---|---|---|
 | Cookie persistence | `PersistentCookieJar` in SharedPreferences vs browser native | Android has no browser cookie jar; this is the standard native approach |
 | File picker | SAF `ActivityResultContracts.OpenDocument` vs `<input type="file">` | Standard Android file access |
-| Library view | WebView loading `app.animastor.in/library` | Reuses web library; WebView has a separate CookieManager (separate session). Acceptable native detail — native book list UI would be a separate feature |
+| Library view | WebView loading `app.animastor.org/library` | Reuses web library; WebView has a separate CookieManager (separate session). Acceptable native detail — native book list UI would be a separate feature |
 | Offline resilience | `restoreBookSession` keeps book on IOException | Android-specific: mobile networks are less reliable. Cross-user risk eliminated by stash-on-logout |
 | Playback position | In-memory only (`SharedPositionManager`) | Position is not persisted to SharedPreferences; same as web (in-memory signals). Acceptable for both |
 | Process recreation | Book session survives via SharedPreferences + init{} re-read | Equivalent to web localStorage restore on page reload |

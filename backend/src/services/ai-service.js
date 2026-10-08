@@ -57,7 +57,7 @@ async function callAI(messages, options = {}, provider = null) {
         'Authorization': `Bearer ${apiKey}`,
     };
 
-    headers['HTTP-Referer'] = 'https://animastor.in';
+    headers['HTTP-Referer'] = 'https://animastor.org';
     headers['X-Title'] = 'Animastor';
 
     const maxRetries = 3;

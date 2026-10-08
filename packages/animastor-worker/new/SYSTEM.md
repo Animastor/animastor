@@ -5,7 +5,7 @@
 ## 1. Что это
 
 Инстанс на GPU-конторе (E2E Networks, индийская) с NVIDIA **L40S 46GB**, драйвер 550.127.08, CUDA 12.4.
-Роль: **video worker** для платформы Animastor — поднимает ComfyUI + Node.js worker, который забирает задачи с `https://animastor.in/gpu`.
+Роль: **video worker** для платформы Animastor — поднимает ComfyUI + Node.js worker, который забирает задачи с `https://animastor.org/gpu`.
 
 **Поведение инстанса**: обнуляется только системная часть (`/opt/venv`, `/usr/local`, системный python).
 Всё в `~/` (в т.ч. `~/ComfyUI`, `custom_nodes`, модели, скрипты) **персистентно** и переживает перезагрузки.
@@ -28,7 +28,7 @@
 ## 3. Матрёшка зависимостей
 
 ```
-Animastor (worker.cjs → https://animastor.in/gpu)
+Animastor (worker.cjs → https://animastor.org/gpu)
   └── ComfyUI backend v0.27.0 (git tag bb131be9)
         └── comfyui-frontend-package 1.45.20 (пинится тегом)
               └── comfy-kitchen 0.2.16 (пинится тегом)
@@ -71,7 +71,7 @@ Animastor (worker.cjs → https://animastor.in/gpu)
 |---|---|
 | `~/animastor/start-video.sh` | **Главный скрипт установки/запуска** ComfyUI (см. раздел 7) |
 | `~/animastor/start-worker.sh` | Запуск worker.cjs (image/audio/video) |
-| `~/animastor/worker/worker.cjs` | Код video-воркера (забирает задачи с animastor.in/gpu) |
+| `~/animastor/worker/worker.cjs` | Код video-воркера (забирает задачи с animastor.org/gpu) |
 | `~/animastor/bootstrap-video.sh` | Автозапуск при старте (вызывает start-video.sh) |
 | `~/animastor/bootstrap-light.sh` | Автозапуск (image worker) |
 | `~/animastor/fix-nodes-*.sh` | Доп. установка зависимостей нод |

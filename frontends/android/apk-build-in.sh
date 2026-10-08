@@ -20,4 +20,4 @@ cp app/build/outputs/apk/debug/app-debug.apk \
 echo "Done."
 
 echo "Download:"
-echo "https://animastor.in/net-disk/app-debug.apk"
+echo "https://animastor.org/net-disk/app-debug.apk"

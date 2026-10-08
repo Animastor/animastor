@@ -459,13 +459,13 @@ t('R8: worker registration failure recorded; files intact; state saved', async (
         files: workerRepoFiles(),
         http: {
             ...MODEL_URLS,
-            'https://animastor.in/api/v1/worker/verify': () => ({ status: 401, json: () => ({}) }),
+            'https://animastor.org/api/v1/worker/verify': () => ({ status: 401, json: () => ({}) }),
         },
     }));
     const log = createLogger({ io: io, quiet: true });
     const result = await runInstallation({
         manifests: [baseManifest()], mode: 'existing', io,
-        roots: { comfyuiRoot: '/comfy', workerDir: '/worker', statePath: '/state/install-state.json', repoRoot: '/repo', hubUrl: 'https://animastor.in/gpu' },
+        roots: { comfyuiRoot: '/comfy', workerDir: '/worker', statePath: '/state/install-state.json', repoRoot: '/repo', hubUrl: 'https://animastor.org/gpu' },
         decisions: ALL_YES, logger: log, crypto,
         secretProvider: secretProvider('wrk.test.register-secret-value'),
         options: { startComfyui: false },

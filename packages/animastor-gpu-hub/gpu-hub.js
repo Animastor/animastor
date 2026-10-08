@@ -1576,7 +1576,7 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
     if (config.PUBLIC_HUB_URL) return String(config.PUBLIC_HUB_URL).replace(/\/$/, "");
     const host = req && req.headers && typeof req.headers.host === "string" ? req.headers.host : "";
     if (HOSTNAME_RE.test(host)) return `https://${host}/gpu`;
-    return "https://animastor.in/gpu";
+    return "https://animastor.org/gpu";
   }
 
   app.get("/installer", (req, res) => {

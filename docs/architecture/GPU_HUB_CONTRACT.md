@@ -271,7 +271,7 @@ unauthenticated by design: no Worker Key, no `.env` (the
   without the param a Windows User-Agent gets the PowerShell launcher.
 - Embeds the public hub URL: `config.PUBLIC_HUB_URL` if set; else a clean
   DNS-name `Host` header → `https://<host>/gpu`; else
-  `https://animastor.in/gpu`.
+  `https://animastor.org/gpu`.
 - `200` bash (`text/x-shellscript`, `animastor-installer.sh`) or PowerShell
   (`text/plain`, `animastor-installer.ps1`) launcher;
   `Cache-Control: no-store`, `X-Animastor-Bootstrap-Version: <BOOTSTRAP_VERSION>`,

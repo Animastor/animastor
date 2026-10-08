@@ -19,7 +19,7 @@
  *   --mode MODE        managed | existing | shared (default: infer from detection)
  *   --root PATH        ComfyUI root directory (default: ~/ComfyUI)
  *   --worker-dir PATH  Worker bundle directory (default: ~/animastor/worker)
- *   --hub-url URL      GPU Hub base URL (default: https://animastor.in/gpu)
+ *   --hub-url URL      GPU Hub base URL (default: https://animastor.org/gpu)
  *   --repo-root PATH   Animastor repo root (default: derived from cli.js location)
  *   --state PATH       Install state file path
  *   --yes              Auto-confirm all prompts
@@ -86,7 +86,7 @@ function homeDir() {
 
 const DEFAULT_ROOT = PLATFORM_ADAPTER.defaultRoot(homeDir());
 const DEFAULT_WORKER_DIR = PLATFORM_ADAPTER.defaultWorkerDir(homeDir());
-const DEFAULT_HUB_URL = 'https://animastor.in/gpu';
+const DEFAULT_HUB_URL = 'https://animastor.org/gpu';
 
 // ---------------------------------------------------------------------------
 // Argument parsing

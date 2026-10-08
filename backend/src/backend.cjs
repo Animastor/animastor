@@ -280,7 +280,7 @@ const cors = require('cors');
 const multer = require('multer');
 const AdmZip = require('adm-zip');
 const fs = require('fs');
-const { PORT = 3000, HUB_URL = 'https://animastor.in/gpu', BUILD_TTL_HOURS = 48 } = process.env;
+const { PORT = 3000, HUB_URL = 'https://animastor.org/gpu', BUILD_TTL_HOURS = 48 } = process.env;
 const crypto = require('crypto');
 
 const redis = new Redis({ host: 'redis', port: 6379 });
@@ -627,7 +627,7 @@ require('./routes/ai-endpoint-routes.cjs').createAiEndpointRoutes()(app);
 
 // Admin foundation: system AI control (kill switch + system provider) +
 // SYSTEM worker registry (Animastor-operated pool, PW-4 fail-closed model).
-// Guarded by requireAdmin; served on admin.animastor.in behind Basic Auth.
+// Guarded by requireAdmin; served on admin.animastor.org behind Basic Auth.
 require('./routes/admin-routes.cjs')(app, redis);
 
 // Private worker registration & lifecycle (Experimental Beta — Private Worker

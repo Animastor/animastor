@@ -188,7 +188,7 @@ fi
 # Values already present in the environment or loaded from .env WIN over
 # the defaults below (so a private worker token is never overwritten).
 
-export HUB_URL="${HUB_URL:-https://animastor.in/gpu}"
+export HUB_URL="${HUB_URL:-https://animastor.org/gpu}"
 export NOTEBOOK_PATH="$NOTEBOOK_PATH"
 export COMFY_PORT="$COMFY_PORT"
 export WORKER_TYPE="$WORKER_TYPE"

@@ -55,7 +55,7 @@ apt install certbot
 
 # Obtain certificate (stop nginx on port 80 first if running)
 certbot certonly --webroot -w /opt/animastor/frontends/website \
-  -d animastor.in -d www.animastor.in -d app.animastor.in -d admin.animastor.in
+  -d animastor.org -d www.animastor.org -d app.animastor.org -d admin.animastor.org
 ```
 
 **Alternative: place certificates manually**
@@ -63,8 +63,8 @@ certbot certonly --webroot -w /opt/animastor/frontends/website \
 If using a different CA or pre-provisioned certs, place them at:
 
 ```
-/etc/letsencrypt/live/animastor.in/fullchain.pem
-/etc/letsencrypt/live/animastor.in/privkey.pem
+/etc/letsencrypt/live/animastor.org/fullchain.pem
+/etc/letsencrypt/live/animastor.org/privkey.pem
 ```
 
 Or set `LETS_ENCRYPT_DIR` in `.env` to point to your certificate directory.
@@ -91,7 +91,7 @@ docker compose up -d
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LETS_ENCRYPT_DIR` | `/etc/letsencrypt` | Host path to TLS certificates |
-| `COOKIE_DOMAIN` | `animastor.in` | Cross-subdomain session cookie scope. Set to the registered domain so a login on `animastor.in` also authenticates on `app.animastor.in` (one backend, one HttpOnly cookie). Empty = host-only cookies (legacy single-host). |
+| `COOKIE_DOMAIN` | `animastor.org` | Cross-subdomain session cookie scope. Set to the registered domain so a login on `animastor.org` also authenticates on `app.animastor.org` (one backend, one HttpOnly cookie). Empty = host-only cookies (legacy single-host). |
 | `OPENROUTER_API_KEY` | _(empty)_ | Global AI provider key (fallback; workspaces can carry their own) |
 | `GPU_HUB_API_KEY` | _(empty)_ | Shared secret for backend ↔ GPU Hub |
 | `GPU_TIMEOUT` | `600000` | GPU task hard timeout in ms |
@@ -125,8 +125,8 @@ These directories survive container restarts and must be backed up:
 The following certificate files must exist before starting nginx:
 
 ```
-$LETS_ENCRYPT_DIR/live/animastor.in/fullchain.pem
-$LETS_ENCRYPT_DIR/live/animastor.in/privkey.pem
+$LETS_ENCRYPT_DIR/live/animastor.org/fullchain.pem
+$LETS_ENCRYPT_DIR/live/animastor.org/privkey.pem
 ```
 
 ---
@@ -135,13 +135,13 @@ $LETS_ENCRYPT_DIR/live/animastor.in/privkey.pem
 
 | Domain | Purpose | Auth |
 |--------|---------|------|
-| `animastor.in` / `www.animastor.in` | Public website, landing, docs, library | None |
-| `app.animastor.in` | Web application (responsive SPA) | Basic Auth (except `/library`) |
-| `admin.animastor.in` | Admin panel | Basic Auth |
+| `animastor.org` / `www.animastor.org` | Public website, landing, docs, library | None |
+| `app.animastor.org` | Web application (responsive SPA) | Basic Auth (except `/library`) |
+| `admin.animastor.org` | Admin panel | Basic Auth |
 
 ### Basic Auth
 
-Basic Auth is **preserved and enabled**. The Beta application at `app.animastor.in` is NOT publicly accessible.
+Basic Auth is **preserved and enabled**. The Beta application at `app.animastor.org` is NOT publicly accessible.
 
 Credentials are in `proxy/conf/.htpasswd`.
 
@@ -166,7 +166,7 @@ Expected result: no matches.
 | `/home/sureg/net-disk:/net-disk:ro` | **Removed** — net-disk is no longer served |
 | `/home/sureg/sureg-dev/site:/usr/share/nginx/sureg:ro` | **Removed** — sureg.dev is not part of the Animastor stack |
 | `/etc/letsencrypt:/etc/letsencrypt:ro` | `${LETS_ENCRYPT_DIR:-/etc/letsencrypt}:/etc/letsencrypt:ro` |
-| sureg.dev blocks in `default.conf` | **Removed** — nginx serves only animastor.in domains |
+| sureg.dev blocks in `default.conf` | **Removed** — nginx serves only animastor.org domains |
 
 ---
 
@@ -174,10 +174,10 @@ Expected result: no matches.
 
 - [ ] `docker compose config` succeeds
 - [ ] `docker compose up -d` starts all services
-- [ ] `curl -k https://app.animastor.in/health` returns 200
-- [ ] Basic Auth prompts on `app.animastor.in`
-- [ ] `/library` on `app.animastor.in` is accessible without auth
-- [ ] `animastor.in` serves the public website
+- [ ] `curl -k https://app.animastor.org/health` returns 200
+- [ ] Basic Auth prompts on `app.animastor.org`
+- [ ] `/library` on `app.animastor.org` is accessible without auth
+- [ ] `animastor.org` serves the public website
 - [ ] No `/home/sureg/` references in deployment config
 - [ ] Persistent data directories exist and are populated
 

@@ -586,14 +586,14 @@ describe('Setup contract — projections (unit)', () => {
         it('linux/managed returns the bootstrap flow (the worker is ALREADY created — no create step)', () => {
             const i = sc.buildInstructions({
                 profileIds: ['image/qwen-image'], platform: 'linux', mode: 'managed',
-                origin: 'https://app.animastor.in', probe: PROBE_OK,
+                origin: 'https://app.animastor.org', probe: PROBE_OK,
             });
             expect(i.steps.map((s) => s.id)).to.deep.equal([
                 'download-bootstrap', 'run-bootstrap', 'verify',
             ]);
             const download = i.steps.find((s) => s.id === 'download-bootstrap');
             // profile/mode are embedded in the download URL — nothing to type
-            expect(download.code).to.contain('https://app.animastor.in/gpu/installer?profile=image%2Fqwen-image&mode=managed');
+            expect(download.code).to.contain('https://app.animastor.org/gpu/installer?profile=image%2Fqwen-image&mode=managed');
             const run = i.steps.find((s) => s.id === 'run-bootstrap');
             expect(run.code).to.equal('bash animastor-installer.sh');
             // the run body points at the interactive Worker Key prompt
@@ -624,7 +624,7 @@ describe('Setup contract — projections (unit)', () => {
         it('windows native (Preview) → PowerShell bootstrap, never Linux commands', () => {
             const i = sc.buildInstructions({
                 profileIds: ['image/qwen-image'], platform: 'windows', mode: 'managed',
-                origin: 'https://app.animastor.in', probe: PROBE_OK,
+                origin: 'https://app.animastor.org', probe: PROBE_OK,
             });
             expect(i.platform).to.equal('windows');
             expect(i.deployment).to.equal('native');
@@ -634,7 +634,7 @@ describe('Setup contract — projections (unit)', () => {
             const download = i.steps.find((s) => s.id === 'download-bootstrap');
             expect(download.code).to.contain('Invoke-WebRequest');
             expect(download.code).to.contain('platform=windows');
-            expect(download.code).to.contain('https://app.animastor.in/gpu/installer?profile=image%2Fqwen-image&mode=managed');
+            expect(download.code).to.contain('https://app.animastor.org/gpu/installer?profile=image%2Fqwen-image&mode=managed');
             const run = i.steps.find((s) => s.id === 'run-bootstrap');
             expect(run.code).to.contain('powershell -ExecutionPolicy Bypass -File');
             const json = JSON.stringify(i);
@@ -648,7 +648,7 @@ describe('Setup contract — projections (unit)', () => {
         it('linux native keeps the stable flow unchanged (curl + bash, explicit platform param)', () => {
             const i = sc.buildInstructions({
                 profileIds: ['image/qwen-image'], platform: 'linux', deployment: 'native', mode: 'managed',
-                origin: 'https://app.animastor.in', probe: PROBE_OK,
+                origin: 'https://app.animastor.org', probe: PROBE_OK,
             });
             expect(i.platform).to.equal('linux');
             expect(i.deployment).to.equal('native');
@@ -664,7 +664,7 @@ describe('Setup contract — projections (unit)', () => {
         it('docker deployment (Experimental) → container flow; profile/mode separate; key never in commands', () => {
             const i = sc.buildInstructions({
                 profileIds: ['audio/qwen-tts'], platform: 'linux', deployment: 'docker', mode: 'managed',
-                origin: 'https://app.animastor.in', probe: PROBE_OK,
+                origin: 'https://app.animastor.org', probe: PROBE_OK,
             });
             expect(i.platform).to.equal('linux');
             expect(i.deployment).to.equal('docker');
@@ -691,14 +691,14 @@ describe('Setup contract — projections (unit)', () => {
             expect(json).to.not.match(/wrk\./);
             // the container fetches the bundle itself; no bash bootstrap here
             expect(json).to.not.contain('bash animastor-installer.sh');
-            expect(i.installer.download_url).to.equal('https://app.animastor.in/gpu/installer/bundle');
+            expect(i.installer.download_url).to.equal('https://app.animastor.org/gpu/installer/bundle');
             expect(i.verify_command).to.equal(null);
         });
 
         it('legacy UI platform docker maps to linux + docker deployment', () => {
             const i = sc.buildInstructions({
                 profileIds: ['audio/qwen-tts'], platform: 'docker', mode: 'managed',
-                origin: 'https://app.animastor.in', probe: PROBE_OK,
+                origin: 'https://app.animastor.org', probe: PROBE_OK,
             });
             expect(i.platform).to.equal('linux');
             expect(i.deployment).to.equal('docker');
@@ -741,7 +741,7 @@ describe('Setup contract — projections (unit)', () => {
         it('existing mode, installer down but bundle served → bundle-based flow (no dead end)', () => {
             const i = sc.buildInstructions({
                 profileIds: ['image/qwen-image'], platform: 'linux', mode: 'existing',
-                origin: 'https://app.animastor.in',
+                origin: 'https://app.animastor.org',
                 probe: {
                     installer: { available: false, status: 'unavailable', version: null, sha256: null },
                     worker_bundle: { available: true, status: 'available', version: sc.getWorkerBundleVersion(), sha256: 'b'.repeat(64) },
@@ -752,13 +752,13 @@ describe('Setup contract — projections (unit)', () => {
                 'configure-worker', 'start-worker', 'verify',
             ]);
             const dl = i.steps.find((s) => s.id === 'download-bundle');
-            expect(dl.code).to.contain('https://app.animastor.in/gpu/worker-bundle');
+            expect(dl.code).to.contain('https://app.animastor.org/gpu/worker-bundle');
             expect(dl.code).to.not.contain('/gpu/installer');
             expect(dl.checksum.value).to.equal('b'.repeat(64));
             const cfg = i.steps.find((s) => s.id === 'configure-worker');
             expect(cfg.code).to.contain('cp .env.example .env');
             expect(cfg.code).to.contain('ANIMASTOR_WORKER_TOKEN=<your-worker-key>');
-            expect(cfg.code).to.contain('HUB_URL=https://app.animastor.in/gpu');
+            expect(cfg.code).to.contain('HUB_URL=https://app.animastor.org/gpu');
             expect(cfg.code).to.contain('WORKER_TYPE=image'); // real type, not a placeholder
             const start = i.steps.find((s) => s.id === 'start-worker');
             expect(start.code).to.contain('node worker.cjs');
@@ -783,9 +783,9 @@ describe('Setup contract — projections (unit)', () => {
         it('env template fills real public values, keeps the key a placeholder', () => {
             const i = sc.buildInstructions({
                 profileIds: ['audio/qwen-tts'], platform: 'linux', mode: 'managed',
-                origin: 'https://app.animastor.in', probe: PROBE_OK,
+                origin: 'https://app.animastor.org', probe: PROBE_OK,
             });
-            expect(i.env.template_block).to.contain('HUB_URL=https://app.animastor.in/gpu');
+            expect(i.env.template_block).to.contain('HUB_URL=https://app.animastor.org/gpu');
             expect(i.env.template_block).to.contain('WORKER_TYPE=audio');
             expect(i.env.template_block).to.contain('ANIMASTOR_WORKER_TOKEN=<your-worker-key>');
             expect(i.env.template_block).to.contain('WORKER_ID=<worker-id>');

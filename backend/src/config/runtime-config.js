@@ -59,7 +59,7 @@
 // ======================================================
 const OUTPUT_DIR = process.env.OUTPUT_DIR || '/data/output';
 const BOOKS_DIR = process.env.BOOKS_DIR || '/data/books';
-const HUB_URL = process.env.HUB_URL || 'https://animastor.in/gpu';
+const HUB_URL = process.env.HUB_URL || 'https://animastor.org/gpu';
 
 // ======================================================
 // VIDEO — PLAYBACK PROFILE
