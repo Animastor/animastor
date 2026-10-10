@@ -5,7 +5,7 @@
       "source_repository": "animastor-worker",
       "release_tag": "worker-bundle-v2.1.1",
       "asset_filename": "animastor-worker-bundle-2.1.1.zip",
-      "sha256_asset": null,
+      "sha256_asset": "4cb6f133ad7984cd491d5f4f5c77e12009c3871ffc912246888e41871d8afdae",
       "version": "2.1.1",
       "files": 7,
       "sha256_tree": "c59dab5d73ff0d56d8e15298a16836b26fb5ab2ec84f04f75d3f676b5a195150"
@@ -14,7 +14,7 @@
       "source_repository": "animastor-backend",
       "release_tag": "hub-artifacts-v1",
       "asset_filename": "hub-workflows-v1.zip",
-      "sha256_asset": null,
+      "sha256_asset": "c484e197a4c8f7cb03bf5a39a971b1ea8b837d6bce3e4e2bf2dab376028b3e04",
       "version": "v1",
       "files": 9,
       "sha256_tree": "0d51107d58f9774fb761fca7319bdeb637b02a18c0f8f92dfec713c97beca738"
@@ -23,7 +23,7 @@
       "source_repository": "animastor-backend",
       "release_tag": "hub-artifacts-v1",
       "asset_filename": "installer-src-v1.zip",
-      "sha256_asset": null,
+      "sha256_asset": "ae589c10b47a8bd200daec7f194f5340b8984922bc26e259f11d2095088c7ece",
       "version": "0.1.1",
       "files": 32,
       "sha256_tree": "777e4aded06909b06febb89164acffc7b08304428e5e2b47b775fb05590dd2d0"
@@ -32,7 +32,7 @@
       "source_repository": "animastor-backend",
       "release_tag": "hub-artifacts-v1",
       "asset_filename": "install-manifests-v1.zip",
-      "sha256_asset": null,
+      "sha256_asset": "1fd9f8adf2e9400a2489dbb0bebbd416331d6401254f8dba4088e8e21a0383f9",
       "version": "v1",
       "files": 3,
       "sha256_tree": "46f3c26a4fd73ae0b70c7f4eb46bff74efb3ef1ba60d2becbe3a7d0393f1f3e3"
