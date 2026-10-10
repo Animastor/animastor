@@ -154,7 +154,7 @@ describe('installer package boundary guards (@animastor/installer)', () => {
         const pkg = JSON.parse(fs.readFileSync(INSTALLER_PKG_JSON, 'utf8'));
         expect(pkg.name, 'package name must be @animastor/installer')
             .to.equal('@animastor/installer');
-        expect(pkg.version, 'package version must be 0.1.0').to.equal('0.1.0');
+        expect(pkg.version, 'package version must be 0.1.1').to.equal('0.1.1');
         expect(pkg.dependencies, 'no runtime npm dependencies')
             .to.be.undefined;
     });

@@ -24,9 +24,9 @@
       "release_tag": "hub-artifacts-v1",
       "asset_filename": "installer-src-v1.zip",
       "sha256_asset": null,
-      "version": "0.1.0",
+      "version": "0.1.1",
       "files": 32,
-      "sha256_tree": "8c2612197cec23f7bf457ed4445488c7c1ac2d3357c1a89c96d0a9ffce0e8ef0"
+      "sha256_tree": "777e4aded06909b06febb89164acffc7b08304428e5e2b47b775fb05590dd2d0"
     },
     "install-manifests": {
       "source_repository": "animastor-backend",

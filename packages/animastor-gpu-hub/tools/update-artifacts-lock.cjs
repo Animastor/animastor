@@ -60,7 +60,7 @@ const GROUPS = [
         source_repository: 'animastor-backend',
         release_tag: 'hub-artifacts-v1',
         asset_filename: 'installer-src-v1.zip',
-        version: '0.1.0',
+        version: '0.1.1',
         // NOTE: the Dockerfile stager flattens this group — src/installer/*
         // contents land at installer-src/ root plus package.json from the
         // package root. The digest must mirror the STAGED layout exactly.

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.2 (2026-10-10)
+
+Canonical domain migration `animastor.in → animastor.org` (commit 60f8b9ee).
+No API or protocol change — defaults only.
+
+### Changed
+
+- `gpu-hub.js` — the canonical fallback hub origin is now
+  `https://animastor.org/gpu` (was `https://animastor.in/gpu`).
+
 ## 0.1.1 (2026-09-26)
 
 Installer version resolution fix after the installer physical move
